@@ -15,10 +15,19 @@ def main() -> None:
         "home_team_name": "PSG",
         "away_team_name": "Arsenal",
     }
-    payload = build_fixture_row(
+    normalized = build_fixture_row(
         raw_payload,
         {"PSG": "Paris Saint-Germain"},
     )
+    payload = {
+        "id": normalized["id"],
+        "competition_id": "epl",
+        "season": normalized["season"],
+        "kickoff_at": normalized["kickoff_at"],
+        "home_team_id": "arsenal",
+        "away_team_id": "chelsea",
+        "final_result": None,
+    }
 
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "fixtures/match_001.json", raw_payload

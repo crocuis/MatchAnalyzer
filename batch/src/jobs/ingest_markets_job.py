@@ -8,7 +8,17 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 def main() -> None:
     settings = load_settings()
-    payload = build_market_snapshot()
+    snapshot = build_market_snapshot()
+    payload = {
+        "id": "market-001",
+        "snapshot_id": "snapshot-001",
+        "source_type": snapshot["source_type"],
+        "source_name": snapshot["source_name"],
+        "home_prob": snapshot["home_prob"],
+        "draw_prob": snapshot["draw_prob"],
+        "away_prob": snapshot["away_prob"],
+        "observed_at": "2026-08-14T15:00:00+00:00",
+    }
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "markets/match_001.json", payload
     )
