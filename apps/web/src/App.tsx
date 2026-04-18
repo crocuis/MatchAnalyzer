@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import type { MatchRow } from "./lib/api";
 import { ClientValidationPanel } from "./components/ClientValidationPanel";
 import CheckpointTimeline from "./components/CheckpointTimeline";
 import MatchTable from "./components/MatchTable";
@@ -7,13 +8,19 @@ import PostMatchReviewCard from "./components/PostMatchReviewCard";
 import PredictionCard from "./components/PredictionCard";
 import { supabase } from "./utils/supabase";
 
+type SupabaseMatchRow = {
+  id: string;
+  kickoff_at: string | null;
+  home_team_id: string | null;
+  away_team_id: string | null;
+  final_result: string | null;
+};
+
 export default function App() {
   const [supabaseStatus, setSupabaseStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
-  const [supabaseMatches, setSupabaseMatches] = useState<Array<{ id: string }>>(
-    [],
-  );
+  const [supabaseMatches, setSupabaseMatches] = useState<SupabaseMatchRow[]>([]);
 
   const matches = [
     {
@@ -58,7 +65,10 @@ export default function App() {
 
       setSupabaseStatus("loading");
 
-      const { data, error } = await supabase.from("matches").select("id").limit(5);
+      const { data, error } = await supabase
+        .from("matches")
+        .select("id, kickoff_at, home_team_id, away_team_id, final_result")
+        .limit(5);
 
       if (error) {
         setSupabaseStatus("error");
@@ -72,6 +82,17 @@ export default function App() {
     void getMatches();
   }, []);
 
+  const renderedMatches: MatchRow[] =
+    supabaseMatches.length > 0
+      ? supabaseMatches.map((match) => ({
+          id: match.id,
+          homeTeam: match.home_team_id ?? "Unknown",
+          awayTeam: match.away_team_id ?? "Unknown",
+          kickoffAt: match.kickoff_at ?? "Kickoff unavailable",
+          status: match.final_result ?? "Scheduled",
+        }))
+      : matches;
+
   return (
     <main>
       <h1>Football Prediction Dashboard</h1>
@@ -81,7 +102,7 @@ export default function App() {
         <p>Status: {supabaseStatus}</p>
         <p>Loaded match ids: {supabaseMatches.length}</p>
       </section>
-      <MatchTable matches={matches} />
+      <MatchTable matches={renderedMatches} />
       <PredictionCard prediction={prediction} />
       <CheckpointTimeline checkpoints={checkpoints} />
       <PostMatchReviewCard review={review} />

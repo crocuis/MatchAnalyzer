@@ -10,7 +10,7 @@ export type AppEnv = {
   supabaseServiceRoleKey: string | null;
 };
 
-export const getEnv = (bindings: AppBindings["Bindings"]): AppEnv => ({
-  supabaseUrl: bindings.SUPABASE_URL ?? null,
-  supabaseServiceRoleKey: bindings.SUPABASE_SERVICE_ROLE_KEY ?? null,
+export const getEnv = (bindings?: AppBindings["Bindings"]): AppEnv => ({
+  supabaseUrl: bindings?.SUPABASE_URL ?? null,
+  supabaseServiceRoleKey: bindings?.SUPABASE_SERVICE_ROLE_KEY ?? null,
 });
