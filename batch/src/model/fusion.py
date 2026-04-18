@@ -14,4 +14,5 @@ def choose_recommended_pick(fused_probs: dict) -> str:
 
 def confidence_score(fused_probs: dict) -> float:
     ordered = sorted(fused_probs.values(), reverse=True)
-    return round(ordered[0] - ordered[1] + 0.5, 4)
+    raw_score = ordered[0] - ordered[1] + 0.5
+    return round(min(max(raw_score, 0.0), 1.0), 4)
