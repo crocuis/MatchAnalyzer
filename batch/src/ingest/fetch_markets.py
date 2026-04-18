@@ -9,11 +9,3 @@ def build_market_snapshot() -> dict:
         "draw_prob": 0.25,
         "away_prob": 0.25,
     }
-
-
-def main() -> None:
-    print(json.dumps(build_market_snapshot(), sort_keys=True))
-
-
-if __name__ == "__main__":
-    main()

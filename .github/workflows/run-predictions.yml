@@ -10,11 +10,15 @@ on:
 
 jobs:
   predict:
+    concurrency:
+      group: run-predictions
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python3 -m pip install -r batch/requirements.txt
-      - run: python3 -m batch.src.model.predict_matches
+      - run: python3 -m batch.src.jobs.run_predictions_job

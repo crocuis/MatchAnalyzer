@@ -10,11 +10,15 @@ on:
 
 jobs:
   review:
+    concurrency:
+      group: post-match-review
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: python3 -m pip install -r batch/requirements.txt
-      - run: python3 -m batch.src.review.post_match_review
+      - run: python3 -m batch.src.jobs.run_post_match_review_job
