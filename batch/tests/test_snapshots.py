@@ -107,6 +107,7 @@ def test_build_snapshot_marks_quality_from_market_data():
         checkpoint="T_MINUS_6H",
         lineup_status="confirmed",
         has_market_data=True,
+        captured_at="2026-08-15T00:00:00+00:00",
     )
     partial_snapshot = build_snapshot(
         match_id="match_001",
@@ -120,8 +121,10 @@ def test_build_snapshot_marks_quality_from_market_data():
         checkpoint="T_MINUS_6H",
         lineup_status="confirmed",
         quality=SnapshotQuality.COMPLETE,
+        captured_at="2026-08-15T00:00:00+00:00",
     )
     assert partial_snapshot.quality is SnapshotQuality.PARTIAL
+    assert complete_snapshot.captured_at == "2026-08-15T00:00:00+00:00"
 
 
 def test_build_feature_vector_includes_rest_and_market_gap():
@@ -139,3 +142,15 @@ def test_build_feature_vector_includes_rest_and_market_gap():
     assert features["form_delta"] == 5
     assert features["rest_delta"] == 3
     assert round(features["market_gap_home"], 2) == 0.05
+
+
+def test_build_feature_vector_rejects_missing_market_probabilities():
+    with pytest.raises(ValueError, match="market probabilities are required"):
+        build_feature_vector(
+            {
+                "home_points_last_5": 11,
+                "away_points_last_5": 6,
+                "home_rest_days": 6,
+                "away_rest_days": 3,
+            }
+        )

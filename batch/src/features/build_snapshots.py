@@ -6,6 +6,7 @@ def build_snapshot(
     checkpoint: Checkpoint,
     lineup_status: str,
     has_market_data: bool,
+    captured_at: str | None = None,
 ) -> MatchSnapshot:
     quality = SnapshotQuality.COMPLETE if has_market_data else SnapshotQuality.PARTIAL
     return MatchSnapshot(
@@ -13,4 +14,5 @@ def build_snapshot(
         checkpoint=checkpoint,
         lineup_status=lineup_status,
         quality=quality,
+        captured_at=captured_at,
     )
