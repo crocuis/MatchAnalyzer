@@ -49,16 +49,30 @@ SAMPLE_PREDICTION_CONTEXT = {
 
 
 def build_market_rows(snapshot_rows: list[dict]) -> list[dict]:
-    return [
-        {
-            "id": f"market_{index + 1:03d}",
-            "snapshot_id": snapshot["id"],
-            "source_type": "bookmaker",
-            "source_name": "sample-book",
-            "home_prob": 0.5,
-            "draw_prob": 0.25,
-            "away_prob": 0.25,
-            "observed_at": "2026-08-14T15:00:00+00:00",
-        }
-        for index, snapshot in enumerate(snapshot_rows)
-    ]
+    market_rows: list[dict] = []
+    for index, snapshot in enumerate(snapshot_rows, start=1):
+        market_rows.extend(
+            [
+                {
+                    "id": f"market_book_{index:03d}",
+                    "snapshot_id": snapshot["id"],
+                    "source_type": "bookmaker",
+                    "source_name": "sample-book",
+                    "home_prob": 0.5,
+                    "draw_prob": 0.25,
+                    "away_prob": 0.25,
+                    "observed_at": "2026-08-14T15:00:00+00:00",
+                },
+                {
+                    "id": f"market_pm_{index:03d}",
+                    "snapshot_id": snapshot["id"],
+                    "source_type": "prediction_market",
+                    "source_name": "sample-market",
+                    "home_prob": 0.48,
+                    "draw_prob": 0.27,
+                    "away_prob": 0.25,
+                    "observed_at": "2026-08-14T15:00:00+00:00",
+                },
+            ]
+        )
+    return market_rows

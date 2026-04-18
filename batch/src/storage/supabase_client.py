@@ -1,6 +1,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def validate_table_name(table: str) -> str:
@@ -14,8 +15,31 @@ class SupabaseClient:
         self.base_url = base_url
         self.service_key = service_key
 
+    def _use_file_backend(self) -> bool:
+        hostname = urlparse(self.base_url).hostname or ""
+        return hostname.endswith("placeholder.supabase.local") or hostname == "example.supabase.co"
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "apikey": self.service_key,
+            "Authorization": f"Bearer {self.service_key}",
+            "Content-Type": "application/json",
+        }
+
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
+        if not self._use_file_backend():
+            import requests
+
+            response = requests.post(
+                f"{self.base_url}/rest/v1/{table_name}",
+                headers={**self._headers(), "Prefer": "return=minimal"},
+                json=rows,
+                timeout=30,
+            )
+            response.raise_for_status()
+            return len(rows)
+
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -24,6 +48,18 @@ class SupabaseClient:
 
     def read_rows(self, table: str) -> list[dict]:
         table_name = validate_table_name(table)
+        if not self._use_file_backend():
+            import requests
+
+            response = requests.get(
+                f"{self.base_url}/rest/v1/{table_name}",
+                headers=self._headers(),
+                params={"select": "*"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            return response.json()
+
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
         if not target.exists():

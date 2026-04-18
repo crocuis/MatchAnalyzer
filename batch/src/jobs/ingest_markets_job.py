@@ -1,6 +1,6 @@
 import json
 
-from batch.src.jobs.sample_data import build_market_rows
+from batch.src.ingest.fetch_markets import build_market_snapshots
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -13,7 +13,22 @@ def main() -> None:
     if not snapshot_rows:
         raise ValueError("match_snapshots must exist before ingesting markets")
 
-    payload = build_market_rows(snapshot_rows)
+    market_snapshots = build_market_snapshots()
+    payload = []
+    for index, snapshot_row in enumerate(snapshot_rows, start=1):
+        for market_snapshot in market_snapshots:
+            payload.append(
+                {
+                    "id": f"{snapshot_row['id']}_{market_snapshot['source_type']}_{index:03d}",
+                    "snapshot_id": snapshot_row["id"],
+                    "source_type": market_snapshot["source_type"],
+                    "source_name": market_snapshot["source_name"],
+                    "home_prob": market_snapshot["home_prob"],
+                    "draw_prob": market_snapshot["draw_prob"],
+                    "away_prob": market_snapshot["away_prob"],
+                    "observed_at": "2026-08-14T15:00:00+00:00",
+                }
+            )
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "markets/match_001.json", payload
     )

@@ -20,23 +20,27 @@ def main() -> None:
     if not market_rows:
         raise ValueError("market_probabilities must exist before running predictions")
 
-    market_by_snapshot = {row["snapshot_id"]: row for row in market_rows}
+    market_by_snapshot: dict[str, dict[str, dict]] = {}
+    for row in market_rows:
+        market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row
     payload = []
     for index, snapshot in enumerate(snapshot_rows):
-        market = market_by_snapshot[snapshot["id"]]
+        market_sources = market_by_snapshot[snapshot["id"]]
+        bookmaker = market_sources["bookmaker"]
+        prediction_market = market_sources["prediction_market"]
         row = build_prediction_row(
             match_id=snapshot["match_id"],
             checkpoint=snapshot["checkpoint_type"],
             base_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
             book_probs={
-                "home": market["home_prob"],
-                "draw": market["draw_prob"],
-                "away": market["away_prob"],
+                "home": bookmaker["home_prob"],
+                "draw": bookmaker["draw_prob"],
+                "away": bookmaker["away_prob"],
             },
             market_probs={
-                "home": market["home_prob"],
-                "draw": market["draw_prob"],
-                "away": market["away_prob"],
+                "home": prediction_market["home_prob"],
+                "draw": prediction_market["draw_prob"],
+                "away": prediction_market["away_prob"],
             },
             context=SAMPLE_PREDICTION_CONTEXT,
         )

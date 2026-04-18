@@ -19,6 +19,8 @@
 5. `supabase/seed.sql`로 초기 데이터를 적재한다.
 6. API와 웹 앱 개발 서버를 각각 실행한다.
 
+   각 명령은 별도의 터미널 또는 tmux pane에서 실행한다.
+
    ```bash
    npm --workspace apps/api run dev
    npm --workspace apps/web run dev
