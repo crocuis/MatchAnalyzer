@@ -1,6 +1,6 @@
 import json
 
-from batch.src.jobs.sample_data import SAMPLE_RESULT_ROWS
+from batch.src.jobs.sample_data import SAMPLE_MATCH_ID, SAMPLE_RESULT_ROWS
 from batch.src.review.post_match_review import build_review
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
@@ -8,13 +8,18 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
     predictions = client.read_rows("predictions")
     market_rows = client.read_rows("market_probabilities")
     if not predictions:
         raise ValueError("predictions must exist before post-match review")
     if not market_rows:
         raise ValueError("market_probabilities must exist before post-match review")
+    predictions = [
+        prediction
+        for prediction in predictions
+        if prediction.get("match_id") == SAMPLE_MATCH_ID
+    ]
     result_rows = SAMPLE_RESULT_ROWS
     result_count = client.upsert_rows("matches", result_rows)
     results_by_match = {row["id"]: row for row in client.read_rows("matches")}

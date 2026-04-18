@@ -30,7 +30,7 @@
 
    ```bash
    export SUPABASE_URL=https://placeholder.supabase.local
-   export SUPABASE_SERVICE_KEY=local-service-key
+    export SUPABASE_PUBLISHABLE_KEY=local-publishable-key
    export R2_BUCKET=workflow-artifacts
    ```
 

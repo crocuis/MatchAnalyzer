@@ -13,6 +13,10 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
+    env:
+      SUPABASE_URL: https://placeholder.supabase.local
+      SUPABASE_SERVICE_KEY: placeholder-service-key
+      R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,3 +33,7 @@ jobs:
       - run: npm --workspace apps/api run test
       - run: npm --workspace apps/web run test
       - run: python3 -m pytest
+      - run: python3 -m batch.src.jobs.ingest_fixtures_job
+      - run: python3 -m batch.src.jobs.ingest_markets_job
+      - run: python3 -m batch.src.jobs.run_predictions_job
+      - run: python3 -m batch.src.jobs.run_post_match_review_job

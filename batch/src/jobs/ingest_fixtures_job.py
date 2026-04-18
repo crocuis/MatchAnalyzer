@@ -24,7 +24,7 @@ def main() -> None:
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "fixtures/match_001.json", SAMPLE_RAW_FIXTURE
     )
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
     fixture_rows = client.upsert_rows("matches", [payload])
     snapshot_rows = client.upsert_rows("match_snapshots", SAMPLE_SNAPSHOT_ROWS)
 

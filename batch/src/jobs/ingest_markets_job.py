@@ -1,6 +1,7 @@
 import json
 
 from batch.src.ingest.fetch_markets import build_market_snapshots
+from batch.src.jobs.sample_data import SAMPLE_MATCH_ID
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -8,10 +9,15 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
     snapshot_rows = client.read_rows("match_snapshots")
     if not snapshot_rows:
         raise ValueError("match_snapshots must exist before ingesting markets")
+    snapshot_rows = [
+        row for row in snapshot_rows if row.get("match_id") == SAMPLE_MATCH_ID
+    ]
+    if not snapshot_rows:
+        raise ValueError("sample match_snapshots must exist before ingesting markets")
 
     market_snapshots = build_market_snapshots()
     payload = []

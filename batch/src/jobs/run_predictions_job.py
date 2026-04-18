@@ -1,6 +1,7 @@
 import json
 
 from batch.src.jobs.sample_data import (
+    SAMPLE_MATCH_ID,
     SAMPLE_MODEL_VERSION_ID,
     SAMPLE_MODEL_VERSION_ROW,
     SAMPLE_PREDICTION_CONTEXT,
@@ -12,7 +13,7 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     if not snapshot_rows:
@@ -20,6 +21,14 @@ def main() -> None:
     if not market_rows:
         raise ValueError("market_probabilities must exist before running predictions")
 
+    snapshot_rows = [
+        row for row in snapshot_rows if row.get("match_id") == SAMPLE_MATCH_ID
+    ]
+    market_rows = [
+        row
+        for row in market_rows
+        if any(snapshot["id"] == row.get("snapshot_id") for snapshot in snapshot_rows)
+    ]
     market_by_snapshot: dict[str, dict[str, dict]] = {}
     for row in market_rows:
         market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row

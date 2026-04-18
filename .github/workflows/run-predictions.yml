@@ -15,7 +15,7 @@ jobs:
       cancel-in-progress: false
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-      SUPABASE_SERVICE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,7 +26,7 @@ jobs:
           python-version: "3.12"
       - run: |
           test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SERVICE_KEY"
+          test -n "$SUPABASE_PUBLISHABLE_KEY"
           test -n "$R2_BUCKET"
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_predictions_job
