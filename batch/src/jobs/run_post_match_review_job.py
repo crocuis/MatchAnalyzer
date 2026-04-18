@@ -1,5 +1,6 @@
 import json
 
+from batch.src.jobs.sample_data import SAMPLE_MATCH_ID, SAMPLE_REVIEW_ID
 from batch.src.review.post_match_review import build_review
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
@@ -18,9 +19,9 @@ def main() -> None:
         market_probs={"home": 0.55, "draw": 0.25, "away": 0.20},
     )
     payload = {
-        "id": "review-001",
-        "match_id": "match-001",
-        "prediction_id": "prediction-001",
+        "id": SAMPLE_REVIEW_ID,
+        "match_id": SAMPLE_MATCH_ID,
+        "prediction_id": "prediction_001",
         "actual_outcome": review["actual_outcome"],
         "error_summary": "Prediction missed the actual away result.",
         "cause_tags": review["cause_tags"],

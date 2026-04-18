@@ -1,6 +1,7 @@
 import json
 
 from batch.src.ingest.fetch_markets import build_market_snapshot
+from batch.src.jobs.sample_data import SAMPLE_MARKET_ID, SAMPLE_SNAPSHOT_ROW
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -10,8 +11,8 @@ def main() -> None:
     settings = load_settings()
     snapshot = build_market_snapshot()
     payload = {
-        "id": "market-001",
-        "snapshot_id": "snapshot-001",
+        "id": SAMPLE_MARKET_ID,
+        "snapshot_id": SAMPLE_SNAPSHOT_ROW["id"],
         "source_type": snapshot["source_type"],
         "source_name": snapshot["source_name"],
         "home_prob": snapshot["home_prob"],
@@ -22,12 +23,20 @@ def main() -> None:
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "markets/match_001.json", payload
     )
+    snapshot_rows = SupabaseClient(
+        settings.supabase_url, settings.supabase_service_key
+    ).upsert_rows("match_snapshots", [SAMPLE_SNAPSHOT_ROW])
     inserted = SupabaseClient(
         settings.supabase_url, settings.supabase_service_key
     ).upsert_rows("market_probabilities", [payload])
     print(
         json.dumps(
-            {"archive_uri": archive_uri, "inserted_rows": inserted, "payload": payload},
+            {
+                "archive_uri": archive_uri,
+                "snapshot_rows": snapshot_rows,
+                "inserted_rows": inserted,
+                "payload": payload,
+            },
             sort_keys=True,
         )
     )
