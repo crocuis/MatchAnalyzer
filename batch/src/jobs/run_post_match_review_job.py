@@ -14,11 +14,15 @@ def main() -> None:
         raise ValueError("predictions must exist before post-match review")
     result_rows = SAMPLE_RESULT_ROWS
     result_count = client.upsert_rows("matches", result_rows)
-    results_by_match = {row["id"]: row for row in result_rows}
+    results_by_match = {row["id"]: row for row in client.read_rows("matches")}
 
     payload = []
+    skipped_predictions = []
     for index, prediction in enumerate(predictions):
-        match_result = results_by_match[prediction["match_id"]]
+        match_result = results_by_match.get(prediction["match_id"])
+        if not match_result or not match_result.get("final_result"):
+            skipped_predictions.append(prediction["id"])
+            continue
         review = build_review(
             prediction=prediction,
             actual_outcome=match_result["final_result"],
@@ -44,7 +48,12 @@ def main() -> None:
     inserted = client.upsert_rows("post_match_reviews", payload)
     print(
         json.dumps(
-            {"result_rows": result_count, "inserted_rows": inserted, "payload": payload},
+            {
+                "result_rows": result_count,
+                "inserted_rows": inserted,
+                "skipped_predictions": skipped_predictions,
+                "payload": payload,
+            },
             sort_keys=True,
         )
     )

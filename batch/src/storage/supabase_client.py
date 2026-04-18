@@ -47,7 +47,13 @@ class SupabaseClient:
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(rows, sort_keys=True))
+        existing_rows = json.loads(target.read_text()) if target.exists() else []
+        merged_rows = {
+            row["id"]: row for row in existing_rows if isinstance(row, dict) and "id" in row
+        }
+        for row in rows:
+            merged_rows[row["id"]] = row
+        target.write_text(json.dumps(list(merged_rows.values()), sort_keys=True))
         return len(rows)
 
     def read_rows(self, table: str) -> list[dict]:

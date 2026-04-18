@@ -24,10 +24,14 @@ def main() -> None:
     for row in market_rows:
         market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row
     payload = []
+    skipped_snapshots = []
     for index, snapshot in enumerate(snapshot_rows):
-        market_sources = market_by_snapshot[snapshot["id"]]
-        bookmaker = market_sources["bookmaker"]
-        prediction_market = market_sources["prediction_market"]
+        market_sources = market_by_snapshot.get(snapshot["id"], {})
+        bookmaker = market_sources.get("bookmaker")
+        prediction_market = market_sources.get("prediction_market")
+        if not bookmaker or not prediction_market:
+            skipped_snapshots.append(snapshot["id"])
+            continue
         row = build_prediction_row(
             match_id=snapshot["match_id"],
             checkpoint=snapshot["checkpoint_type"],
@@ -67,6 +71,7 @@ def main() -> None:
                 "snapshot_rows": len(snapshot_rows),
                 "model_rows": model_rows,
                 "inserted_rows": inserted,
+                "skipped_snapshots": skipped_snapshots,
                 "payload": payload,
             },
             sort_keys=True,
