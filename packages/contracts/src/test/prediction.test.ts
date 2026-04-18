@@ -1,11 +1,11 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import * as contracts from "../index.ts";
+import * as contracts from "@match-analyzer/contracts";
 import {
   CHECKPOINTS,
   isTerminalCheckpoint,
   type Checkpoint,
   type PredictionRecord,
-} from "../index.ts";
+} from "@match-analyzer/contracts";
 
 describe("prediction contracts", () => {
   it("exposes the public barrel surface", () => {
@@ -13,6 +13,13 @@ describe("prediction contracts", () => {
       "CHECKPOINTS",
       "isTerminalCheckpoint",
     ]);
+  });
+
+  it("supports package-boundary imports", async () => {
+    const imported = await import("@match-analyzer/contracts");
+
+    expect(imported.CHECKPOINTS).toEqual(CHECKPOINTS);
+    expect(imported.isTerminalCheckpoint("LINEUP_CONFIRMED")).toBe(true);
   });
 
   it("keeps checkpoints in a fixed order", () => {
