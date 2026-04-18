@@ -30,14 +30,14 @@
 
    ```bash
    export SUPABASE_URL=https://placeholder.supabase.local
-    export SUPABASE_PUBLISHABLE_KEY=local-publishable-key
+   export SUPABASE_SERVICE_ROLE_KEY=local-service-role-key
    export R2_BUCKET=workflow-artifacts
    ```
 
 8. GitHub Actions 샘플 워크플로는 실제 운영 비밀값 대신 아래 샘플 전용 설정을 사용한다.
 
    - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
 
    GitHub Actions의 Task 10 샘플 워크플로는 위 값을 읽어 지속형 sample Supabase 프로젝트를 대상으로 실행한다.
    이 sample Supabase 프로젝트에는 미리 현재 저장소의 스키마와 seed 데이터가 적용되어 있어야 한다.
