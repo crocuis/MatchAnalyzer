@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+from pathlib import Path
+import sys
+from typing import Any
 
 from batch.src.ingest.normalizers import normalize_team_name
 
@@ -17,4 +20,90 @@ def build_fixture_row(raw_match: dict, aliases: dict[str, str]) -> dict:
         "kickoff_at": normalize_kickoff_at(raw_match["kickoff_at"]),
         "home_team_name": normalize_team_name(raw_match["home_team_name"], aliases),
         "away_team_name": normalize_team_name(raw_match["away_team_name"], aliases),
+    }
+
+
+def load_sports_skills_football():
+    vendor_path = Path(__file__).resolve().parents[3] / ".vendor"
+    if vendor_path.exists() and str(vendor_path) not in sys.path:
+        sys.path.insert(0, str(vendor_path))
+
+    from sports_skills import football
+
+    return football
+
+
+def fetch_daily_schedule(date: str) -> dict[str, Any]:
+    football = load_sports_skills_football()
+    return football.get_daily_schedule(date=date)
+
+
+def infer_competition_type(competition_id: str) -> str:
+    if competition_id in {"fifa-world-cup", "european-championship"}:
+        return "international"
+    if competition_id in {"champions-league", "europa-league"}:
+        return "cup"
+    return "league"
+
+
+def build_competition_row_from_event(event: dict[str, Any]) -> dict[str, str]:
+    competition = event["competition"]
+    venue_country = event.get("venue", {}).get("country") or "Unknown"
+    return {
+        "id": competition["id"],
+        "name": competition["name"],
+        "competition_type": infer_competition_type(competition["id"]),
+        "region": venue_country,
+    }
+
+
+def build_team_rows_from_event(event: dict[str, Any]) -> list[dict[str, str]]:
+    venue_country = event.get("venue", {}).get("country") or "Unknown"
+    rows = []
+    for competitor in event["competitors"]:
+        team = competitor["team"]
+        rows.append(
+            {
+                "id": team["id"],
+                "name": team["name"],
+                "team_type": "national"
+                if event["competition"]["id"] in {"fifa-world-cup", "european-championship"}
+                else "club",
+                "country": venue_country,
+            }
+        )
+    return rows
+
+
+def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
+    home_team = next(
+        competitor["team"]
+        for competitor in event["competitors"]
+        if competitor["qualifier"] == "home"
+    )
+    away_team = next(
+        competitor["team"]
+        for competitor in event["competitors"]
+        if competitor["qualifier"] == "away"
+    )
+    status = event["status"]
+    final_result = None
+    if status == "closed":
+        home_score = event["scores"]["home"]
+        away_score = event["scores"]["away"]
+        if home_score > away_score:
+            final_result = "HOME"
+        elif home_score < away_score:
+            final_result = "AWAY"
+        else:
+            final_result = "DRAW"
+
+    return {
+        "id": event["id"],
+        "competition_id": event["competition"]["id"],
+        "season": event["season"]["id"],
+        "kickoff_at": normalize_kickoff_at(event["start_time"]),
+        "home_team_id": home_team["id"],
+        "away_team_id": away_team["id"],
+        "final_result": final_result,
     }

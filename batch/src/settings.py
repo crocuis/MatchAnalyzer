@@ -1,5 +1,20 @@
 from dataclasses import dataclass
 import os
+from pathlib import Path
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
 
 
 @dataclass(slots=True)
@@ -21,10 +36,33 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    supabase_key = (
-        os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-        or os.environ.get("SUPABASE_SERVICE_KEY")
-        or os.environ.get("SUPABASE_PUBLISHABLE_KEY")
+    repo_root = Path(__file__).resolve().parents[2]
+    batch_root = Path(__file__).resolve().parents[1]
+
+    file_env = {}
+    for candidate in (
+        repo_root / ".env",
+        batch_root / ".env",
+        batch_root / ".env.local",
+    ):
+        file_env.update(load_env_file(candidate))
+
+    def env(name: str) -> str | None:
+        return os.environ.get(name) or file_env.get(name)
+
+    def env_prefer_process(*names: str) -> str | None:
+        for name in names:
+            if os.environ.get(name):
+                return os.environ[name]
+        for name in names:
+            if file_env.get(name):
+                return file_env[name]
+        return None
+
+    supabase_key = env_prefer_process(
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_PUBLISHABLE_KEY",
     )
     if not supabase_key:
         raise KeyError(
@@ -32,10 +70,11 @@ def load_settings() -> Settings:
         )
 
     return Settings(
-        supabase_url=os.environ["SUPABASE_URL"],
+        supabase_url=env("SUPABASE_URL")
+        or (_ for _ in ()).throw(KeyError("SUPABASE_URL")),
         supabase_key=supabase_key,
-        r2_bucket=os.environ["R2_BUCKET"],
-        r2_access_key_id=os.environ.get("R2_ACCESS_KEY_ID"),
-        r2_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY"),
-        r2_s3_endpoint=os.environ.get("R2_S3_ENDPOINT"),
+        r2_bucket=env("R2_BUCKET") or (_ for _ in ()).throw(KeyError("R2_BUCKET")),
+        r2_access_key_id=env("R2_ACCESS_KEY_ID"),
+        r2_secret_access_key=env("R2_SECRET_ACCESS_KEY"),
+        r2_s3_endpoint=env("R2_S3_ENDPOINT"),
     )

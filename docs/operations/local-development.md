@@ -34,6 +34,8 @@
    export R2_BUCKET=workflow-artifacts
    ```
 
+   또는 `batch/.env.local` 파일을 만들어 같은 값을 저장해도 된다. 템플릿은 `batch/.env.example`을 기준으로 맞춘다.
+
 8. GitHub Actions 샘플 워크플로는 실제 운영 비밀값 대신 아래 샘플 전용 설정을 사용한다.
 
    - `VITE_SUPABASE_URL`
