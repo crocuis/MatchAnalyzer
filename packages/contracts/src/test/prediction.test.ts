@@ -4,7 +4,9 @@ import {
   CHECKPOINTS,
   isTerminalCheckpoint,
   type Checkpoint,
+  type MatchSnapshotRecord,
   type PredictionRecord,
+  type SnapshotQuality,
 } from "@match-analyzer/contracts";
 
 describe("prediction contracts", () => {
@@ -58,5 +60,18 @@ describe("prediction contracts", () => {
   it("keeps checkpoint types aligned with the public constant tuple", () => {
     expectTypeOf<PredictionRecord["checkpoint"]>().toEqualTypeOf<Checkpoint>();
     expectTypeOf<Checkpoint>().toEqualTypeOf<(typeof CHECKPOINTS)[number]>();
+  });
+
+  it("shares snapshot checkpoint and quality types", () => {
+    const snapshot: MatchSnapshotRecord = {
+      matchId: "match_001",
+      checkpoint: "T_MINUS_24H",
+      lineupStatus: "unknown",
+      quality: "complete",
+    };
+
+    expect(snapshot.checkpoint).toBe("T_MINUS_24H");
+    expectTypeOf<MatchSnapshotRecord["checkpoint"]>().toEqualTypeOf<Checkpoint>();
+    expectTypeOf<MatchSnapshotRecord["quality"]>().toEqualTypeOf<SnapshotQuality>();
   });
 });

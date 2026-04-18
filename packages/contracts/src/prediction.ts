@@ -7,6 +7,14 @@ export const CHECKPOINTS = [
 
 export type Checkpoint = (typeof CHECKPOINTS)[number];
 export type PickSide = "HOME" | "DRAW" | "AWAY";
+export type SnapshotQuality = "complete" | "partial";
+
+export type MatchSnapshotRecord = {
+  matchId: string;
+  checkpoint: Checkpoint;
+  lineupStatus: string;
+  quality: SnapshotQuality;
+};
 
 export type PredictionRecord = {
   matchId: string;
