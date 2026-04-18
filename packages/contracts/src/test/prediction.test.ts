@@ -1,11 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import * as contracts from "../index.ts";
 import {
   CHECKPOINTS,
   isTerminalCheckpoint,
+  type Checkpoint,
   type PredictionRecord,
-} from "../prediction";
+} from "../index.ts";
 
 describe("prediction contracts", () => {
+  it("exposes the public barrel surface", () => {
+    expect(Object.keys(contracts).sort()).toEqual([
+      "CHECKPOINTS",
+      "isTerminalCheckpoint",
+    ]);
+  });
+
   it("keeps checkpoints in a fixed order", () => {
     expect(CHECKPOINTS).toEqual([
       "T_MINUS_24H",
@@ -37,5 +46,10 @@ describe("prediction contracts", () => {
     };
 
     expect(record.explanationBullets).toHaveLength(3);
+  });
+
+  it("keeps checkpoint types aligned with the public constant tuple", () => {
+    expectTypeOf<PredictionRecord["checkpoint"]>().toEqualTypeOf<Checkpoint>();
+    expectTypeOf<Checkpoint>().toEqualTypeOf<(typeof CHECKPOINTS)[number]>();
   });
 });
