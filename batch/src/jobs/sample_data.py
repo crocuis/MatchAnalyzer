@@ -27,7 +27,7 @@ SAMPLE_SNAPSHOT_ROWS = [
         "id": f"snapshot_{index + 1:03d}",
         "match_id": SAMPLE_MATCH_ID,
         "checkpoint_type": checkpoint,
-        "lineup_status": "unknown",
+        "lineup_status": "confirmed" if checkpoint == "LINEUP_CONFIRMED" else "unknown",
         "snapshot_quality": "complete",
     }
     for index, checkpoint in enumerate(CHECKPOINTS)
