@@ -1,8 +1,8 @@
+from batch.src.domain import CHECKPOINTS
+
 SAMPLE_MATCH_ID = "match_001"
-SAMPLE_SNAPSHOT_ID = "snapshot_001"
 SAMPLE_MODEL_VERSION_ID = "model_v1"
 SAMPLE_REVIEW_ID = "review_001"
-SAMPLE_MARKET_ID = "market_001"
 
 SAMPLE_RAW_FIXTURE = {
     "id": SAMPLE_MATCH_ID,
@@ -22,13 +22,30 @@ SAMPLE_FIXTURE_ROW = {
     "final_result": None,
 }
 
-SAMPLE_SNAPSHOT_ROW = {
-    "id": SAMPLE_SNAPSHOT_ID,
-    "match_id": SAMPLE_MATCH_ID,
-    "checkpoint_type": "T_MINUS_24H",
-    "lineup_status": "unknown",
-    "snapshot_quality": "complete",
-}
+SAMPLE_SNAPSHOT_ROWS = [
+    {
+        "id": f"snapshot_{index + 1:03d}",
+        "match_id": SAMPLE_MATCH_ID,
+        "checkpoint_type": checkpoint,
+        "lineup_status": "unknown",
+        "snapshot_quality": "complete",
+    }
+    for index, checkpoint in enumerate(CHECKPOINTS)
+]
+
+SAMPLE_MARKET_ROWS = [
+    {
+        "id": f"market_{index + 1:03d}",
+        "snapshot_id": snapshot["id"],
+        "source_type": "bookmaker",
+        "source_name": "sample-book",
+        "home_prob": 0.5,
+        "draw_prob": 0.25,
+        "away_prob": 0.25,
+        "observed_at": "2026-08-14T15:00:00+00:00",
+    }
+    for index, snapshot in enumerate(SAMPLE_SNAPSHOT_ROWS)
+]
 
 SAMPLE_MODEL_VERSION_ROW = {
     "id": SAMPLE_MODEL_VERSION_ID,
@@ -36,4 +53,10 @@ SAMPLE_MODEL_VERSION_ROW = {
     "training_window": "2024-2026",
     "feature_version": "features_v1",
     "calibration_version": "isotonic_v1",
+}
+
+SAMPLE_PREDICTION_CONTEXT = {
+    "form_delta": 2,
+    "rest_delta": 1,
+    "market_gap_home": 0.05,
 }

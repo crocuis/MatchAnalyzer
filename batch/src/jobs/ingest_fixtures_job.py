@@ -1,7 +1,11 @@
 import json
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
-from batch.src.jobs.sample_data import SAMPLE_FIXTURE_ROW, SAMPLE_RAW_FIXTURE
+from batch.src.jobs.sample_data import (
+    SAMPLE_FIXTURE_ROW,
+    SAMPLE_RAW_FIXTURE,
+    SAMPLE_SNAPSHOT_ROWS,
+)
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -15,13 +19,18 @@ def main() -> None:
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "fixtures/match_001.json", SAMPLE_RAW_FIXTURE
     )
-    inserted = SupabaseClient(
-        settings.supabase_url, settings.supabase_service_key
-    ).upsert_rows("matches", [payload])
+    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    fixture_rows = client.upsert_rows("matches", [payload])
+    snapshot_rows = client.upsert_rows("match_snapshots", SAMPLE_SNAPSHOT_ROWS)
 
     print(
         json.dumps(
-            {"archive_uri": archive_uri, "inserted_rows": inserted, "payload": payload},
+            {
+                "archive_uri": archive_uri,
+                "fixture_rows": fixture_rows,
+                "snapshot_rows": snapshot_rows,
+                "payload": payload,
+            },
             sort_keys=True,
         )
     )
