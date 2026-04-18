@@ -21,7 +21,12 @@ def main() -> None:
         "kickoff_at": normalized["kickoff_at"],
     }
 
-    archive_uri = R2Client(settings.r2_bucket).archive_json(
+    archive_uri = R2Client(
+        settings.r2_bucket,
+        access_key_id=settings.r2_access_key_id,
+        secret_access_key=settings.r2_secret_access_key,
+        s3_endpoint=settings.r2_s3_endpoint,
+    ).archive_json(
         "fixtures/match_001.json", SAMPLE_RAW_FIXTURE
     )
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)

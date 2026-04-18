@@ -35,7 +35,12 @@ def main() -> None:
                     "observed_at": "2026-08-14T15:00:00+00:00",
                 }
             )
-    archive_uri = R2Client(settings.r2_bucket).archive_json(
+    archive_uri = R2Client(
+        settings.r2_bucket,
+        access_key_id=settings.r2_access_key_id,
+        secret_access_key=settings.r2_secret_access_key,
+        s3_endpoint=settings.r2_s3_endpoint,
+    ).archive_json(
         "markets/match_001.json", payload
     )
     inserted = client.upsert_rows("market_probabilities", payload)
