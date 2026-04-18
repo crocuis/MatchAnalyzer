@@ -3,13 +3,15 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
     "hono": "^4.7.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
+    "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }
 }
