@@ -1,10 +1,12 @@
 import json
 import os
+from datetime import datetime, timezone
 
 from batch.src.ingest.fetch_fixtures import (
     build_competition_row_from_event,
     build_fixture_row,
     build_match_row_from_event,
+    build_snapshot_rows_from_matches,
     build_team_rows_from_event,
     fetch_daily_schedule,
 )
@@ -34,7 +36,10 @@ def main() -> None:
             payload.append(build_match_row_from_event(event))
         archive_payload = schedule
         archive_key = f"fixtures/{use_real_schedule}.json"
-        snapshot_rows_payload = []
+        snapshot_rows_payload = build_snapshot_rows_from_matches(
+            payload,
+            captured_at=datetime.now(timezone.utc).isoformat(),
+        )
     else:
         normalized = build_fixture_row(SAMPLE_RAW_FIXTURE, {})
         payload = [

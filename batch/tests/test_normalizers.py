@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
@@ -54,6 +55,34 @@ def test_build_fixture_row_rejects_naive_timestamp():
             },
             {"PSG": "Paris Saint-Germain"},
         )
+
+
+def test_build_snapshot_rows_from_matches_uses_real_match_ids():
+    rows = build_snapshot_rows_from_matches(
+        [
+            {
+                "id": "match_001",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-08-14T15:00:00+00:00",
+    )
+
+    assert rows == [
+        {
+            "id": "match_001_t_minus_24h",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_24H",
+            "captured_at": "2026-08-14T15:00:00+00:00",
+            "lineup_status": "unknown",
+            "snapshot_quality": "partial",
+        }
+    ]
 
 
 def test_load_settings_reads_required_environment_variables(monkeypatch):

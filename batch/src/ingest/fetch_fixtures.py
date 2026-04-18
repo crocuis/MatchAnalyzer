@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from batch.src.features.build_snapshots import build_snapshot
 from batch.src.ingest.normalizers import normalize_team_name
 
 
@@ -107,3 +108,30 @@ def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
         "away_team_id": away_team["id"],
         "final_result": final_result,
     }
+
+
+def build_snapshot_rows_from_matches(
+    matches: list[dict[str, Any]],
+    checkpoint: str = "T_MINUS_24H",
+    captured_at: str | None = None,
+) -> list[dict[str, Any]]:
+    snapshot_rows = []
+    for match in matches:
+        snapshot = build_snapshot(
+            match_id=match["id"],
+            checkpoint=checkpoint,
+            lineup_status="unknown",
+            has_market_data=False,
+            captured_at=captured_at,
+        )
+        snapshot_rows.append(
+            {
+                "id": f"{match['id']}_{checkpoint.lower()}",
+                "match_id": snapshot.match_id,
+                "checkpoint_type": snapshot.checkpoint,
+                "captured_at": snapshot.captured_at,
+                "lineup_status": snapshot.lineup_status,
+                "snapshot_quality": snapshot.quality.value,
+            }
+        )
+    return snapshot_rows

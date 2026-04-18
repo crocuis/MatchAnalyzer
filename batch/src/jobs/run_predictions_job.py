@@ -1,4 +1,5 @@
 import json
+import os
 
 from batch.src.jobs.sample_data import (
     SAMPLE_MATCH_ID,
@@ -11,32 +12,73 @@ from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
 
+def select_real_prediction_inputs(
+    snapshot_rows: list[dict],
+    market_rows: list[dict],
+    match_rows: list[dict],
+    target_date: str,
+) -> tuple[list[dict], list[dict]]:
+    eligible_match_ids = {
+        row["id"]
+        for row in match_rows
+        if row.get("kickoff_at", "").startswith(target_date)
+    }
+    selected_snapshots = [
+        row
+        for row in snapshot_rows
+        if row.get("checkpoint_type") == "T_MINUS_24H"
+        and row.get("match_id") in eligible_match_ids
+    ]
+    selected_snapshot_ids = {row["id"] for row in selected_snapshots}
+    selected_markets = [
+        row
+        for row in market_rows
+        if row.get("snapshot_id") in selected_snapshot_ids
+        and row.get("source_type") in {"bookmaker", "prediction_market"}
+    ]
+    return selected_snapshots, selected_markets
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
+    use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
     if not snapshot_rows:
         raise ValueError("match_snapshots must exist before running predictions")
-    if not market_rows:
+    if not market_rows and not use_real_predictions:
         raise ValueError("market_probabilities must exist before running predictions")
 
-    snapshot_rows = [
-        row for row in snapshot_rows if row.get("match_id") == SAMPLE_MATCH_ID
-    ]
-    market_rows = [
-        row
-        for row in market_rows
-        if any(snapshot["id"] == row.get("snapshot_id") for snapshot in snapshot_rows)
-    ]
-    if not snapshot_rows:
-        raise ValueError("sample match_snapshots must exist before running predictions")
-    if not market_rows:
-        raise ValueError(
-            "sample market_probabilities must exist before running predictions"
+    if use_real_predictions:
+        match_rows = client.read_rows("matches")
+        snapshot_rows, market_rows = select_real_prediction_inputs(
+            snapshot_rows=snapshot_rows,
+            market_rows=market_rows,
+            match_rows=match_rows,
+            target_date=use_real_predictions,
         )
-    if len(snapshot_rows) != 4:
-        raise ValueError("sample pipeline expects exactly 4 snapshots")
+        if not snapshot_rows:
+            raise ValueError(
+                "T_MINUS_24H match_snapshots must exist before running real predictions"
+            )
+    else:
+        snapshot_rows = [
+            row for row in snapshot_rows if row.get("match_id") == SAMPLE_MATCH_ID
+        ]
+        market_rows = [
+            row
+            for row in market_rows
+            if any(snapshot["id"] == row.get("snapshot_id") for snapshot in snapshot_rows)
+        ]
+        if not snapshot_rows:
+            raise ValueError("sample match_snapshots must exist before running predictions")
+        if not market_rows:
+            raise ValueError(
+                "sample market_probabilities must exist before running predictions"
+            )
+        if len(snapshot_rows) != 4:
+            raise ValueError("sample pipeline expects exactly 4 snapshots")
     market_by_snapshot: dict[str, dict[str, dict]] = {}
     for row in market_rows:
         market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row
@@ -46,22 +88,39 @@ def main() -> None:
         market_sources = market_by_snapshot.get(snapshot["id"], {})
         bookmaker = market_sources.get("bookmaker")
         prediction_market = market_sources.get("prediction_market")
-        if not bookmaker or not prediction_market:
+        if use_real_predictions:
+            if bookmaker:
+                book_probs = {
+                    "home": bookmaker["home_prob"],
+                    "draw": bookmaker["draw_prob"],
+                    "away": bookmaker["away_prob"],
+                }
+            else:
+                book_probs = {"home": 0.4, "draw": 0.35, "away": 0.25}
+        elif not bookmaker or not prediction_market:
             skipped_snapshots.append(snapshot["id"])
             continue
+        else:
+            book_probs = {
+                "home": bookmaker["home_prob"],
+                "draw": bookmaker["draw_prob"],
+                "away": bookmaker["away_prob"],
+            }
         row = build_prediction_row(
             match_id=snapshot["match_id"],
             checkpoint=snapshot["checkpoint_type"],
             base_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
-            book_probs={
-                "home": bookmaker["home_prob"],
-                "draw": bookmaker["draw_prob"],
-                "away": bookmaker["away_prob"],
-            },
+            book_probs=book_probs,
             market_probs={
-                "home": prediction_market["home_prob"],
-                "draw": prediction_market["draw_prob"],
-                "away": prediction_market["away_prob"],
+                "home": prediction_market["home_prob"]
+                if prediction_market
+                else book_probs["home"],
+                "draw": prediction_market["draw_prob"]
+                if prediction_market
+                else book_probs["draw"],
+                "away": prediction_market["away_prob"]
+                if prediction_market
+                else book_probs["away"],
             },
             context=SAMPLE_PREDICTION_CONTEXT,
         )

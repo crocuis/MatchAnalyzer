@@ -1,6 +1,7 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -40,10 +41,18 @@ class SupabaseClient:
                 },
                 method="POST",
             )
-            with urlopen(request, timeout=30) as response:
-                if response.status >= 400:
-                    raise ValueError(f"Supabase upsert failed with status {response.status}")
-                return len(rows)
+            try:
+                with urlopen(request, timeout=30) as response:
+                    if response.status >= 400:
+                        raise ValueError(
+                            f"Supabase upsert failed with status {response.status}"
+                        )
+                    return len(rows)
+            except HTTPError as exc:
+                body = exc.read().decode("utf-8")
+                raise ValueError(
+                    f"Supabase upsert failed for table={table_name}: status={exc.code}, body={body}"
+                ) from exc
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
@@ -66,10 +75,18 @@ class SupabaseClient:
                 headers=self._headers(),
                 method="GET",
             )
-            with urlopen(request, timeout=30) as response:
-                if response.status >= 400:
-                    raise ValueError(f"Supabase read failed with status {response.status}")
-                return json.loads(response.read().decode("utf-8"))
+            try:
+                with urlopen(request, timeout=30) as response:
+                    if response.status >= 400:
+                        raise ValueError(
+                            f"Supabase read failed with status {response.status}"
+                        )
+                    return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                body = exc.read().decode("utf-8")
+                raise ValueError(
+                    f"Supabase read failed for table={table_name}: status={exc.code}, body={body}"
+                ) from exc
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
