@@ -1,0 +1,15 @@
+{
+  "name": "@match-analyzer/api",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "^4.7.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250410.0",
+    "vitest": "^3.2.4"
+  }
+}
