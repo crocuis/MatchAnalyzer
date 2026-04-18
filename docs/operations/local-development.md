@@ -40,3 +40,4 @@
    - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
    GitHub Actions의 Task 10 샘플 워크플로는 위 값을 읽어 지속형 sample Supabase 프로젝트를 대상으로 실행한다.
+   이 sample Supabase 프로젝트에는 미리 현재 저장소의 스키마와 seed 데이터가 적용되어 있어야 한다.
