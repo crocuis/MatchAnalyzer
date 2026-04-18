@@ -2,7 +2,6 @@ from batch.src.domain import CHECKPOINTS
 
 SAMPLE_MATCH_ID = "match_001"
 SAMPLE_MODEL_VERSION_ID = "model_v1"
-SAMPLE_REVIEW_ID = "review_001"
 
 SAMPLE_RAW_FIXTURE = {
     "id": SAMPLE_MATCH_ID,

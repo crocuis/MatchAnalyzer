@@ -26,10 +26,16 @@
    npm --workspace apps/web run dev
    ```
 
-7. 배치 작업 smoke 실행 또는 워크플로 검증이 필요하면 아래 환경 변수를 먼저 설정한다.
+7. 배치 작업 smoke 실행 또는 샘플 워크플로 검증이 필요하면 아래 환경 변수를 먼저 설정한다.
 
    ```bash
    export SUPABASE_URL=https://placeholder.supabase.local
    export SUPABASE_SERVICE_KEY=local-service-key
    export R2_BUCKET=workflow-artifacts
    ```
+
+8. GitHub Actions 샘플 워크플로는 실제 운영 비밀값 대신 아래 샘플 전용 설정을 사용한다.
+
+   - `SAMPLE_SUPABASE_URL`
+   - `SAMPLE_SUPABASE_SERVICE_KEY`
+   - `SAMPLE_R2_BUCKET`

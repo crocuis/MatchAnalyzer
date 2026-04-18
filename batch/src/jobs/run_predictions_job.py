@@ -50,7 +50,7 @@ def main() -> None:
         )
         payload.append(
             {
-                "id": f"prediction_{index + 1:03d}",
+                "id": f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}",
                 "snapshot_id": snapshot["id"],
                 "match_id": row["match_id"],
                 "model_version_id": SAMPLE_MODEL_VERSION_ID,

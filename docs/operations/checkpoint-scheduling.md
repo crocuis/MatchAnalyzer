@@ -7,7 +7,7 @@
 - `T-1H`: 시작까지 70분 이내인 경기를 대상으로 15분마다 실행한다.
 - `LINEUP_CONFIRMED`: 라인업 상태가 `unknown`에서 `confirmed`로 바뀐 경기를 10분마다 감지해 큐에 적재한다.
 
-# 현재 구현된 자동화 매핑
+# 현재 구현된 자동화 매핑 (샘플/스모크 전용)
 
 - fixtures ingestion: 매시 `00분`에 실행한다.
 - market ingestion: 매시 `15분`에 실행한다.
@@ -15,3 +15,5 @@
 - post-match review: 매시 `45분`에 실행한다.
 
 세부 checkpoint 분기와 `LINEUP_CONFIRMED` 전용 감지 로직은 현재 별도 워크플로로 분리하지 않았고, prediction batch 내부 분기 또는 후속 전용 작업으로 확장할 계획이다.
+
+현재 GitHub Actions 자동화는 샘플/스모크 파이프라인 기준이다. 실제 운영 데이터 소스나 운영용 Supabase 프로젝트에 그대로 연결하는 것을 전제로 하지 않는다.

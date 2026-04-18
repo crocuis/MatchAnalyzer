@@ -1,4 +1,4 @@
-name: ingest-fixtures
+name: sample-ingest-fixtures
 
 permissions:
   contents: read
@@ -11,12 +11,12 @@ on:
 jobs:
   ingest:
     concurrency:
-      group: ingest-fixtures
+      group: sample-ingest-fixtures
       cancel-in-progress: false
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      SUPABASE_URL: ${{ secrets.SAMPLE_SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SAMPLE_SUPABASE_SERVICE_KEY }}
+      R2_BUCKET: ${{ vars.SAMPLE_R2_BUCKET }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

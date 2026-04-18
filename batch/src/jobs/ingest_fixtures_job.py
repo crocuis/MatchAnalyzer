@@ -14,7 +14,12 @@ from batch.src.storage.supabase_client import SupabaseClient
 def main() -> None:
     settings = load_settings()
     normalized = build_fixture_row(SAMPLE_RAW_FIXTURE, {})
-    payload = {**SAMPLE_FIXTURE_ROW, "kickoff_at": normalized["kickoff_at"]}
+    payload = {
+        **SAMPLE_FIXTURE_ROW,
+        "id": normalized["id"],
+        "season": normalized["season"],
+        "kickoff_at": normalized["kickoff_at"],
+    }
 
     archive_uri = R2Client(settings.r2_bucket).archive_json(
         "fixtures/match_001.json", SAMPLE_RAW_FIXTURE

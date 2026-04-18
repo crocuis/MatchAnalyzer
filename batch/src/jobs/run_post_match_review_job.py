@@ -1,6 +1,6 @@
 import json
 
-from batch.src.jobs.sample_data import SAMPLE_RESULT_ROWS, SAMPLE_REVIEW_ID
+from batch.src.jobs.sample_data import SAMPLE_RESULT_ROWS
 from batch.src.review.post_match_review import build_review
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
@@ -30,7 +30,7 @@ def main() -> None:
         )
         payload.append(
             {
-                "id": f"{SAMPLE_REVIEW_ID[:-3]}{index + 1:03d}",
+                "id": f"{prediction['id']}_{review['actual_outcome'].lower()}",
                 "match_id": prediction["match_id"],
                 "prediction_id": prediction["id"],
                 "actual_outcome": review["actual_outcome"],

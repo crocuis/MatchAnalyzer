@@ -19,7 +19,7 @@ def main() -> None:
         for market_snapshot in market_snapshots:
             payload.append(
                 {
-                    "id": f"{snapshot_row['id']}_{market_snapshot['source_type']}_{index:03d}",
+                    "id": f"{snapshot_row['id']}_{market_snapshot['source_type']}",
                     "snapshot_id": snapshot_row["id"],
                     "source_type": market_snapshot["source_type"],
                     "source_name": market_snapshot["source_name"],
