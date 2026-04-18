@@ -4,3 +4,4 @@ requests==2.32.3
 pytest==8.3.5
 scikit-learn==1.6.1
 python-dateutil==2.9.0.post0
+sports-skills==0.20.1
