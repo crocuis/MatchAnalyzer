@@ -10,7 +10,10 @@ from batch.src.ingest.fetch_markets import (
     polymarket_sport_for_competition,
 )
 from batch.src.ingest.normalizers import normalize_team_name
-from batch.src.jobs.ingest_markets_job import select_real_market_snapshots
+from batch.src.jobs.ingest_markets_job import (
+    promote_market_snapshots,
+    select_real_market_snapshots,
+)
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -480,6 +483,86 @@ def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
             "checkpoint_type": "T_MINUS_24H",
             "competition_id": "epl",
             "kickoff_at": "2026-04-12T15:30:00+00:00",
+            "home_team_name": "Chelsea FC",
+            "away_team_name": "Manchester City FC",
+        }
+    ]
+
+
+def test_promote_market_snapshots_marks_market_backed_snapshots_complete():
+    rows = promote_market_snapshots(
+        snapshot_rows=[
+            {
+                "id": "match_001_t_minus_24h",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-12T14:00:00+00:00",
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+                "competition_id": "premier-league",
+            },
+            {
+                "id": "match_002_t_minus_24h",
+                "match_id": "match_002",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-12T14:00:00+00:00",
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+            },
+        ],
+        market_rows=[
+            {
+                "id": "match_001_t_minus_24h_bookmaker",
+                "snapshot_id": "match_001_t_minus_24h",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "match_001_t_minus_24h",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_24H",
+            "captured_at": "2026-04-12T14:00:00+00:00",
+            "lineup_status": "unknown",
+            "snapshot_quality": "complete",
+            "competition_id": "premier-league",
+        }
+    ]
+
+
+def test_promote_market_snapshots_preserves_existing_snapshot_fields():
+    rows = promote_market_snapshots(
+        snapshot_rows=[
+            {
+                "id": "match_001_t_minus_24h",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-12T14:00:00+00:00",
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+                "competition_id": "premier-league",
+                "home_team_name": "Chelsea FC",
+                "away_team_name": "Manchester City FC",
+            }
+        ],
+        market_rows=[
+            {
+                "id": "match_001_t_minus_24h_prediction_market",
+                "snapshot_id": "match_001_t_minus_24h",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "match_001_t_minus_24h",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_24H",
+            "captured_at": "2026-04-12T14:00:00+00:00",
+            "lineup_status": "unknown",
+            "snapshot_quality": "complete",
+            "competition_id": "premier-league",
             "home_team_name": "Chelsea FC",
             "away_team_name": "Manchester City FC",
         }

@@ -44,6 +44,24 @@ def select_real_market_snapshots(
     return selected
 
 
+def promote_market_snapshots(
+    snapshot_rows: list[dict],
+    market_rows: list[dict],
+) -> list[dict]:
+    snapshot_ids_with_markets = {row["snapshot_id"] for row in market_rows}
+    promoted = []
+    for snapshot in snapshot_rows:
+        if snapshot["id"] not in snapshot_ids_with_markets:
+            continue
+        promoted.append(
+            {
+                **snapshot,
+                "snapshot_quality": "complete",
+            }
+        )
+    return promoted
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
@@ -109,18 +127,23 @@ def main() -> None:
     if not payload:
         raise ValueError("no market payload was generated")
 
+    promoted_snapshots = promote_market_snapshots(snapshot_rows, payload)
+
     archive_uri = R2Client(
         settings.r2_bucket,
         access_key_id=settings.r2_access_key_id,
         secret_access_key=settings.r2_secret_access_key,
         s3_endpoint=settings.r2_s3_endpoint,
     ).archive_json(archive_key, archive_payload)
+    if promoted_snapshots:
+        client.upsert_rows("match_snapshots", promoted_snapshots)
     inserted = client.upsert_rows("market_probabilities", payload)
     print(
         json.dumps(
             {
                 "archive_uri": archive_uri,
                 "snapshot_rows": len(snapshot_rows),
+                "promoted_snapshots": len(promoted_snapshots),
                 "inserted_rows": inserted,
                 "payload": payload,
             },
