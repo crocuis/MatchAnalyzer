@@ -1,0 +1,61 @@
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Python / batch / ML
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+*.pyc
+*.pyo
+*.pyd
+.coverage
+htmlcov/
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+
+# Cloudflare / Supabase local state
+.wrangler/
+.dev.vars
+.vercel/
+.supabase/
+supabase/.temp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# OMX / local agent state
+.omx/
+.omc/
+.superpowers/
+
+# Runtime artifacts / reports / archives
+tmp/
+.tmp/
+*.log
+artifacts/
+reports/
+exports/
+data/raw/
+data/cache/
+data/tmp/
+models/
+checkpoints/
+
