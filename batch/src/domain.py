@@ -9,6 +9,12 @@ Checkpoint = Literal[
     "T_MINUS_1H",
     "LINEUP_CONFIRMED",
 ]
+CHECKPOINTS: tuple[Checkpoint, ...] = (
+    "T_MINUS_24H",
+    "T_MINUS_6H",
+    "T_MINUS_1H",
+    "LINEUP_CONFIRMED",
+)
 
 
 class SnapshotQuality(str, Enum):
@@ -22,3 +28,12 @@ class MatchSnapshot:
     checkpoint: Checkpoint
     lineup_status: str
     quality: SnapshotQuality
+
+    def __post_init__(self) -> None:
+        if self.checkpoint not in CHECKPOINTS:
+            raise ValueError(f"checkpoint must be one of {CHECKPOINTS}")
+
+        try:
+            self.quality = SnapshotQuality(self.quality)
+        except ValueError as exc:
+            raise ValueError("quality must be a valid SnapshotQuality") from exc
