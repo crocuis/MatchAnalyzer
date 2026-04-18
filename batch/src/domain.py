@@ -28,6 +28,7 @@ class MatchSnapshot:
     checkpoint: Checkpoint
     lineup_status: str
     quality: SnapshotQuality
+    captured_at: str | None = None
 
     def __post_init__(self) -> None:
         if self.checkpoint not in CHECKPOINTS:

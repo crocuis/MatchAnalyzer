@@ -5,6 +5,8 @@ from typing import get_args, get_type_hints
 import pytest
 
 from batch.src.domain import MatchSnapshot, SnapshotQuality
+from batch.src.features.build_snapshots import build_snapshot
+from batch.src.features.feature_builder import build_feature_vector
 
 
 def normalize_sql(sql: str) -> str:
@@ -97,3 +99,43 @@ def test_seed_links_competition_teams_and_match():
     assert "'arsenal', 'Arsenal', 'club', 'England'" in seed
     assert "'chelsea', 'Chelsea', 'club', 'England'" in seed
     assert "'match_001', 'epl', '2026-2027'" in seed
+
+
+def test_build_snapshot_marks_quality_from_market_data():
+    complete_snapshot = build_snapshot(
+        match_id="match_001",
+        checkpoint="T_MINUS_6H",
+        lineup_status="confirmed",
+        has_market_data=True,
+    )
+    partial_snapshot = build_snapshot(
+        match_id="match_001",
+        checkpoint="T_MINUS_1H",
+        lineup_status="estimated",
+        has_market_data=False,
+    )
+
+    assert complete_snapshot == MatchSnapshot(
+        match_id="match_001",
+        checkpoint="T_MINUS_6H",
+        lineup_status="confirmed",
+        quality=SnapshotQuality.COMPLETE,
+    )
+    assert partial_snapshot.quality is SnapshotQuality.PARTIAL
+
+
+def test_build_feature_vector_includes_rest_and_market_gap():
+    snapshot = {
+        "home_points_last_5": 11,
+        "away_points_last_5": 6,
+        "home_rest_days": 6,
+        "away_rest_days": 3,
+        "book_home_prob": 0.51,
+        "market_home_prob": 0.46,
+    }
+
+    features = build_feature_vector(snapshot)
+
+    assert features["form_delta"] == 5
+    assert features["rest_delta"] == 3
+    assert round(features["market_gap_home"], 2) == 0.05
