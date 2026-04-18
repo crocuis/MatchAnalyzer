@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import get_args, get_type_hints
 
@@ -51,6 +52,20 @@ def test_snapshot_rejects_invalid_runtime_values():
         )
 
 
+def test_snapshot_is_immutable_after_validation():
+    snapshot = MatchSnapshot(
+        match_id="match_001",
+        checkpoint="T_MINUS_24H",
+        lineup_status="unknown",
+        quality="complete",
+    )
+
+    assert snapshot.quality is SnapshotQuality.COMPLETE
+
+    with pytest.raises(FrozenInstanceError):
+        snapshot.lineup_status = "confirmed"
+
+
 def test_migration_constrains_core_snapshot_and_probability_fields():
     migration = normalize_sql(Path("supabase/migrations/202604180001_initial_schema.sql").read_text())
 
@@ -64,7 +79,7 @@ def test_migration_constrains_core_snapshot_and_probability_fields():
     assert "draw_prob numeric not null check (draw_prob >= 0 and draw_prob <= 1)" in migration
     assert "away_prob numeric not null check (away_prob >= 0 and away_prob <= 1)" in migration
     assert "confidence_score numeric not null check (confidence_score >= 0 and confidence_score <= 1)" in migration
-    assert migration.count("check (home_prob + draw_prob + away_prob = 1)") == 2
+    assert migration.count("check (abs((home_prob + draw_prob + away_prob) - 1) <= 0.000001)") == 2
     assert "unique (match_id, checkpoint_type)" in migration
     assert "match_id text not null references matches(id)" in migration
     assert "unique (id, match_id)" in migration

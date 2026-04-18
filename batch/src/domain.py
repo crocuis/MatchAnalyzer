@@ -22,7 +22,7 @@ class SnapshotQuality(str, Enum):
     PARTIAL = "partial"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class MatchSnapshot:
     match_id: str
     checkpoint: Checkpoint
@@ -34,6 +34,6 @@ class MatchSnapshot:
             raise ValueError(f"checkpoint must be one of {CHECKPOINTS}")
 
         try:
-            self.quality = SnapshotQuality(self.quality)
+            object.__setattr__(self, "quality", SnapshotQuality(self.quality))
         except ValueError as exc:
             raise ValueError("quality must be a valid SnapshotQuality") from exc

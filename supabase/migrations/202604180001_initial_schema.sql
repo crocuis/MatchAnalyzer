@@ -41,7 +41,7 @@ create table market_probabilities (
   home_prob numeric not null check (home_prob >= 0 and home_prob <= 1),
   draw_prob numeric not null check (draw_prob >= 0 and draw_prob <= 1),
   away_prob numeric not null check (away_prob >= 0 and away_prob <= 1),
-  check (home_prob + draw_prob + away_prob = 1),
+  check (abs((home_prob + draw_prob + away_prob) - 1) <= 0.000001),
   observed_at timestamptz not null
 );
 
@@ -62,7 +62,7 @@ create table predictions (
   home_prob numeric not null check (home_prob >= 0 and home_prob <= 1),
   draw_prob numeric not null check (draw_prob >= 0 and draw_prob <= 1),
   away_prob numeric not null check (away_prob >= 0 and away_prob <= 1),
-  check (home_prob + draw_prob + away_prob = 1),
+  check (abs((home_prob + draw_prob + away_prob) - 1) <= 0.000001),
   recommended_pick text not null check (recommended_pick in ('HOME', 'DRAW', 'AWAY')),
   confidence_score numeric not null check (confidence_score >= 0 and confidence_score <= 1),
   explanation_payload jsonb not null,
