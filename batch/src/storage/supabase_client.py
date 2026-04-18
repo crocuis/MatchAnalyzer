@@ -58,7 +58,7 @@ class SupabaseClient:
             response = requests.get(
                 f"{self.base_url}/rest/v1/{table_name}",
                 headers=self._headers(),
-                params={"select": "*"},
+                params={"select": "*", "order": "id.asc"},
                 timeout=30,
             )
             response.raise_for_status()
@@ -68,4 +68,5 @@ class SupabaseClient:
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
         if not target.exists():
             return []
-        return json.loads(target.read_text())
+        rows = json.loads(target.read_text())
+        return sorted(rows, key=lambda row: row.get("id", ""))

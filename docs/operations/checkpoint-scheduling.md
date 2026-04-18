@@ -9,9 +9,9 @@
 
 # 현재 구현된 자동화 매핑
 
-- fixtures ingestion: 매시 `15분`에 실행한다.
-- market ingestion: `30분`마다 실행한다.
-- prediction batch: 매시 `05분`에 실행한다.
+- fixtures ingestion: 매시 `00분`에 실행한다.
+- market ingestion: 매시 `15분`에 실행한다.
+- prediction batch: 매시 `30분`에 실행한다.
 - post-match review: 매시 `45분`에 실행한다.
 
 세부 checkpoint 분기와 `LINEUP_CONFIRMED` 전용 감지 로직은 현재 별도 워크플로로 분리하지 않았고, prediction batch 내부 분기 또는 후속 전용 작업으로 확장할 계획이다.

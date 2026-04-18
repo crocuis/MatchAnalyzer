@@ -19,7 +19,7 @@ SAMPLE_FIXTURE_ROW = {
     "kickoff_at": "2026-08-15T15:00:00+00:00",
     "home_team_id": "arsenal",
     "away_team_id": "chelsea",
-    "final_result": "AWAY",
+    "final_result": None,
 }
 
 SAMPLE_SNAPSHOT_ROWS = [
@@ -40,6 +40,18 @@ SAMPLE_MODEL_VERSION_ROW = {
     "feature_version": "features_v1",
     "calibration_version": "isotonic_v1",
 }
+
+SAMPLE_RESULT_ROWS = [
+    {
+        "id": SAMPLE_MATCH_ID,
+        "competition_id": "epl",
+        "season": "2026-2027",
+        "kickoff_at": "2026-08-15T15:00:00+00:00",
+        "home_team_id": "arsenal",
+        "away_team_id": "chelsea",
+        "final_result": "AWAY",
+    }
+]
 
 SAMPLE_PREDICTION_CONTEXT = {
     "form_delta": 2,
