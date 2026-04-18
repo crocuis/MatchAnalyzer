@@ -1,6 +1,9 @@
-from batch.src.model.predict_matches import build_prediction_row
+from types import SimpleNamespace
+
+import batch.src.jobs.run_predictions_job as run_predictions_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
 from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
+from batch.src.model.predict_matches import build_prediction_row
 from batch.src.review.post_match_review import build_review
 
 
@@ -163,7 +166,16 @@ def test_build_prediction_row_smoke():
         base_probs={"home": 0.40, "draw": 0.35, "away": 0.25},
         book_probs={"home": 0.45, "draw": 0.30, "away": 0.25},
         market_probs={"home": 0.50, "draw": 0.25, "away": 0.25},
-        context={"form_delta": 2, "rest_delta": 1, "market_gap_home": 0.05},
+        context={
+            "form_delta": 2,
+            "rest_delta": 1,
+            "market_gap_home": 0.05,
+            "market_gap_draw": 0.05,
+            "market_gap_away": -0.10,
+            "max_abs_divergence": 0.10,
+            "sources_agree": 1,
+            "prediction_market_available": True,
+        },
     )
 
     total = prediction["home_prob"] + prediction["draw_prob"] + prediction["away_prob"]
@@ -171,4 +183,106 @@ def test_build_prediction_row_smoke():
     assert round(total, 6) == 1.0
     assert prediction["recommended_pick"] == "HOME"
     assert 0.0 <= prediction["confidence_score"] <= 1.0
-    assert "explanation_bullets" in prediction
+    assert prediction["explanation_bullets"][-1] == (
+        "Bookmakers and the prediction market agree on the likely winner."
+    )
+
+
+def test_run_predictions_job_surfaces_divergence_features_and_market_availability(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 3,
+                        "rest_delta": 1,
+                    },
+                    {
+                        "id": "match_b_t_minus_24h",
+                        "match_id": "match_b",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 0,
+                        "rest_delta": 0,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.52,
+                        "draw_prob": 0.25,
+                        "away_prob": 0.23,
+                    },
+                    {
+                        "id": "match_a_t_minus_24h_prediction_market",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "prediction_market",
+                        "home_prob": 0.47,
+                        "draw_prob": 0.27,
+                        "away_prob": 0.26,
+                    },
+                    {
+                        "id": "match_b_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_b_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.41,
+                        "draw_prob": 0.31,
+                        "away_prob": 0.28,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
+                    {"id": "match_b", "kickoff_at": "2026-04-12T21:00:00+00:00"},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    assert len(state["predictions"]) == 2
+
+    prediction_by_snapshot = {
+        row["snapshot_id"]: row for row in state["predictions"]
+    }
+    market_backed = prediction_by_snapshot["match_a_t_minus_24h"]["explanation_payload"]
+    bookmaker_only = prediction_by_snapshot["match_b_t_minus_24h"]["explanation_payload"]
+
+    assert market_backed["prediction_market_available"] is True
+    assert market_backed["feature_context"]["form_delta"] == 3
+    assert market_backed["feature_context"]["rest_delta"] == 1
+    assert round(market_backed["feature_context"]["market_gap_home"], 2) == 0.05
+    assert round(market_backed["feature_context"]["market_gap_draw"], 2) == -0.02
+    assert round(market_backed["feature_context"]["max_abs_divergence"], 2) == 0.05
+    assert "Bookmakers rate the home side higher than the prediction market." in market_backed["bullets"]
+
+    assert bookmaker_only["prediction_market_available"] is False
+    assert bookmaker_only["feature_context"]["form_delta"] == 0
+    assert bookmaker_only["feature_context"]["rest_delta"] == 0
+    assert bookmaker_only["feature_context"]["market_gap_home"] == 0.0
+    assert bookmaker_only["feature_context"]["market_gap_draw"] == 0.0
+    assert bookmaker_only["feature_context"]["prediction_market_available"] is False
+    assert bookmaker_only["bullets"] == [
+        "Prediction market data was unavailable at this checkpoint."
+    ]

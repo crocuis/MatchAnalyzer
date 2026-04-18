@@ -25,12 +25,44 @@ def test_confidence_score_is_clamped_to_schema_range():
 
 def test_build_explanation_bullets_handles_positive_and_empty_context():
     assert build_explanation_bullets(
-        {"form_delta": 2, "rest_delta": 1, "market_gap_home": 0.05}
+        {
+            "form_delta": 2,
+            "rest_delta": 1,
+            "market_gap_home": 0.05,
+            "market_gap_away": -0.05,
+            "max_abs_divergence": 0.05,
+            "sources_agree": 1,
+            "prediction_market_available": True,
+        }
     ) == [
         "Recent form favors the home side.",
         "The home side has the rest advantage.",
         "Bookmakers rate the home side higher than the prediction market.",
+        "Bookmakers and the prediction market agree on the likely winner.",
     ]
     assert build_explanation_bullets(
-        {"form_delta": 0, "rest_delta": 0, "market_gap_home": 0.0}
-    ) == []
+        {
+            "form_delta": 0,
+            "rest_delta": 0,
+            "market_gap_home": 0.0,
+            "market_gap_away": 0.0,
+            "max_abs_divergence": 0.0,
+            "sources_agree": 1,
+            "prediction_market_available": False,
+        }
+    ) == ["Prediction market data was unavailable at this checkpoint."]
+
+
+def test_build_explanation_bullets_mentions_prediction_market_presence_without_divergence():
+    assert build_explanation_bullets(
+        {
+            "form_delta": 0,
+            "rest_delta": 0,
+            "market_gap_home": 0.0,
+            "market_gap_draw": 0.0,
+            "market_gap_away": 0.0,
+            "max_abs_divergence": 0.0,
+            "sources_agree": 0,
+            "prediction_market_available": True,
+        }
+    ) == ["Prediction market signal is available for this checkpoint."]

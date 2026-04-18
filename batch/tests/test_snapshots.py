@@ -129,12 +129,15 @@ def test_build_snapshot_marks_quality_from_market_data():
 
 def test_build_feature_vector_includes_rest_and_market_gap():
     snapshot = {
-        "home_points_last_5": 11,
-        "away_points_last_5": 6,
-        "home_rest_days": 6,
-        "away_rest_days": 3,
+        "form_delta": 5,
+        "rest_delta": 3,
         "book_home_prob": 0.51,
+        "book_draw_prob": 0.27,
+        "book_away_prob": 0.22,
         "market_home_prob": 0.46,
+        "market_draw_prob": 0.25,
+        "market_away_prob": 0.29,
+        "prediction_market_available": True,
     }
 
     features = build_feature_vector(snapshot)
@@ -142,6 +145,30 @@ def test_build_feature_vector_includes_rest_and_market_gap():
     assert features["form_delta"] == 5
     assert features["rest_delta"] == 3
     assert round(features["market_gap_home"], 2) == 0.05
+    assert round(features["market_gap_draw"], 2) == 0.02
+    assert round(features["market_gap_away"], 2) == -0.07
+    assert round(features["max_abs_divergence"], 2) == 0.07
+    assert features["sources_agree"] == 1
+    assert features["prediction_market_available"] is True
+
+
+def test_build_feature_vector_marks_prediction_market_unavailable_when_fallback_used():
+    snapshot = {
+        "form_delta": 0,
+        "rest_delta": 0,
+        "book_home_prob": 0.44,
+        "book_draw_prob": 0.28,
+        "book_away_prob": 0.28,
+        "market_home_prob": 0.44,
+        "market_draw_prob": 0.28,
+        "market_away_prob": 0.28,
+        "prediction_market_available": False,
+    }
+
+    features = build_feature_vector(snapshot)
+
+    assert features["prediction_market_available"] is False
+    assert features["max_abs_divergence"] == 0.0
 
 
 def test_build_feature_vector_rejects_missing_market_probabilities():

@@ -1,6 +1,7 @@
 import json
 import os
 
+from batch.src.features.feature_builder import build_feature_vector
 from batch.src.jobs.sample_data import (
     SAMPLE_MATCH_ID,
     SAMPLE_MODEL_VERSION_ID,
@@ -97,7 +98,7 @@ def main() -> None:
                 }
             else:
                 book_probs = {"home": 0.4, "draw": 0.35, "away": 0.25}
-        elif not bookmaker or not prediction_market:
+        elif not bookmaker:
             skipped_snapshots.append(snapshot["id"])
             continue
         else:
@@ -106,6 +107,31 @@ def main() -> None:
                 "draw": bookmaker["draw_prob"],
                 "away": bookmaker["away_prob"],
             }
+        feature_context = build_feature_vector(
+            {
+                "form_delta": snapshot.get(
+                    "form_delta",
+                    SAMPLE_PREDICTION_CONTEXT["form_delta"],
+                ),
+                "rest_delta": snapshot.get(
+                    "rest_delta",
+                    SAMPLE_PREDICTION_CONTEXT["rest_delta"],
+                ),
+                "book_home_prob": book_probs["home"],
+                "book_draw_prob": book_probs["draw"],
+                "book_away_prob": book_probs["away"],
+                "market_home_prob": prediction_market["home_prob"]
+                if prediction_market
+                else book_probs["home"],
+                "market_draw_prob": prediction_market["draw_prob"]
+                if prediction_market
+                else book_probs["draw"],
+                "market_away_prob": prediction_market["away_prob"]
+                if prediction_market
+                else book_probs["away"],
+                "prediction_market_available": prediction_market is not None,
+            }
+        )
         row = build_prediction_row(
             match_id=snapshot["match_id"],
             checkpoint=snapshot["checkpoint_type"],
@@ -122,7 +148,7 @@ def main() -> None:
                 if prediction_market
                 else book_probs["away"],
             },
-            context=SAMPLE_PREDICTION_CONTEXT,
+            context=feature_context,
         )
         payload.append(
             {
@@ -135,7 +161,15 @@ def main() -> None:
                 "away_prob": row["away_prob"],
                 "recommended_pick": row["recommended_pick"],
                 "confidence_score": row["confidence_score"],
-                "explanation_payload": {"bullets": row["explanation_bullets"]},
+                "explanation_payload": {
+                    "bullets": row["explanation_bullets"],
+                    "prediction_market_available": feature_context[
+                        "prediction_market_available"
+                    ],
+                    "sources_agree": feature_context["sources_agree"],
+                    "max_abs_divergence": feature_context["max_abs_divergence"],
+                    "feature_context": feature_context,
+                },
             }
         )
 
