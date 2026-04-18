@@ -15,7 +15,7 @@ jobs:
       cancel-in-progress: true
     env:
       SUPABASE_URL: https://placeholder.supabase.local
-      SUPABASE_SERVICE_KEY: placeholder-service-key
+      SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -22,6 +22,8 @@ def main() -> None:
     ]
     if not predictions:
         raise ValueError("sample predictions must exist before post-match review")
+    if len(predictions) != 4:
+        raise ValueError("sample review pipeline expects exactly 4 predictions")
     result_rows = SAMPLE_RESULT_ROWS
     result_count = client.upsert_rows("matches", result_rows)
     results_by_match = {row["id"]: row for row in client.read_rows("matches")}
@@ -68,6 +70,8 @@ def main() -> None:
         )
     if not payload:
         raise ValueError("no review payload was generated for the sample pipeline")
+    if len(payload) != len(predictions):
+        raise ValueError("sample review pipeline requires a review per prediction")
     inserted = client.upsert_rows("post_match_reviews", payload)
     print(
         json.dumps(

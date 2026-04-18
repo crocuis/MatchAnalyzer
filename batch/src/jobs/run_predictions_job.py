@@ -35,6 +35,8 @@ def main() -> None:
         raise ValueError(
             "sample market_probabilities must exist before running predictions"
         )
+    if len(snapshot_rows) != 4:
+        raise ValueError("sample pipeline expects exactly 4 snapshots")
     market_by_snapshot: dict[str, dict[str, dict]] = {}
     for row in market_rows:
         market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row
@@ -80,6 +82,8 @@ def main() -> None:
 
     if not payload:
         raise ValueError("no prediction payload was generated for the sample pipeline")
+    if len(payload) != len(snapshot_rows):
+        raise ValueError("sample prediction pipeline requires a payload per snapshot")
 
     model_rows = client.upsert_rows("model_versions", [SAMPLE_MODEL_VERSION_ROW])
     inserted = client.upsert_rows("predictions", payload)
