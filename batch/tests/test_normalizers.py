@@ -80,6 +80,14 @@ def test_r2_client_persists_archived_payload(tmp_path, monkeypatch):
     ) == {"match": "match_001"}
 
 
+def test_r2_client_rejects_path_traversal(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = R2Client("raw-payloads")
+
+    with pytest.raises(ValueError, match="bucket namespace"):
+        client.archive_json("../escape.json", {"match": "match_001"})
+
+
 def test_supabase_client_persists_rows_locally(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     client = SupabaseClient("https://example.supabase.co", "service-key")
@@ -90,3 +98,11 @@ def test_supabase_client_persists_rows_locally(tmp_path, monkeypatch):
     stored_files = list(Path(".tmp/supabase").rglob("matches.json"))
     assert len(stored_files) == 1
     assert json.loads(stored_files[0].read_text()) == [{"id": "match_001"}]
+
+
+def test_supabase_client_rejects_invalid_table_name(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = SupabaseClient("https://example.supabase.co", "service-key")
+
+    with pytest.raises(ValueError, match="single relative identifier"):
+        client.upsert_rows("../matches", [{"id": "match_001"}])
