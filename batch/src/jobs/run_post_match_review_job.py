@@ -10,23 +10,37 @@ def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
     predictions = client.read_rows("predictions")
+    market_rows = client.read_rows("market_probabilities")
     if not predictions:
         raise ValueError("predictions must exist before post-match review")
+    if not market_rows:
+        raise ValueError("market_probabilities must exist before post-match review")
     result_rows = SAMPLE_RESULT_ROWS
     result_count = client.upsert_rows("matches", result_rows)
     results_by_match = {row["id"]: row for row in client.read_rows("matches")}
+    market_by_snapshot: dict[str, dict[str, dict]] = {}
+    for row in market_rows:
+        market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row
 
     payload = []
     skipped_predictions = []
     for index, prediction in enumerate(predictions):
         match_result = results_by_match.get(prediction["match_id"])
-        if not match_result or not match_result.get("final_result"):
+        market_sources = market_by_snapshot.get(prediction["snapshot_id"], {})
+        review_market = market_sources.get("prediction_market") or market_sources.get(
+            "bookmaker"
+        )
+        if not match_result or not match_result.get("final_result") or not review_market:
             skipped_predictions.append(prediction["id"])
             continue
         review = build_review(
             prediction=prediction,
             actual_outcome=match_result["final_result"],
-            market_probs={"home": 0.55, "draw": 0.25, "away": 0.20},
+            market_probs={
+                "home": review_market["home_prob"],
+                "draw": review_market["draw_prob"],
+                "away": review_market["away_prob"],
+            },
         )
         payload.append(
             {

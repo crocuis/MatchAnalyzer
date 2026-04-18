@@ -36,6 +36,7 @@
 
 8. GitHub Actions 샘플 워크플로는 실제 운영 비밀값 대신 아래 샘플 전용 설정을 사용한다.
 
-   - `SAMPLE_SUPABASE_URL`
-   - `SAMPLE_SUPABASE_SERVICE_KEY`
-   - `SAMPLE_R2_BUCKET`
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+   GitHub Actions의 Task 10 샘플 워크플로는 위 값을 읽어 지속형 sample Supabase 프로젝트를 대상으로 실행한다.
