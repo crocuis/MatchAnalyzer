@@ -3,15 +3,14 @@ def build_review(prediction: dict, actual_outcome: str, market_probs: dict) -> d
     if prediction["recommended_pick"] != actual_outcome:
         cause_tags.append("major_directional_miss")
 
-    model_home_error = abs(
-        prediction["home_prob"] - (1.0 if actual_outcome == "HOME" else 0.0)
-    )
-    market_home_error = abs(
-        market_probs["home"] - (1.0 if actual_outcome == "HOME" else 0.0)
-    )
+    outcome_key = actual_outcome.lower()
+    prediction_key = f"{outcome_key}_prob"
+    actual_outcome_value = 1.0
+    model_outcome_error = abs(prediction[prediction_key] - actual_outcome_value)
+    market_outcome_error = abs(market_probs[outcome_key] - actual_outcome_value)
 
     return {
         "actual_outcome": actual_outcome,
         "cause_tags": cause_tags,
-        "market_outperformed_model": market_home_error < model_home_error,
+        "market_outperformed_model": market_outcome_error < model_outcome_error,
     }
