@@ -33,8 +33,12 @@ class SupabaseClient:
 
             response = requests.post(
                 f"{self.base_url}/rest/v1/{table_name}",
-                headers={**self._headers(), "Prefer": "return=minimal"},
+                headers={
+                    **self._headers(),
+                    "Prefer": "return=minimal,resolution=merge-duplicates",
+                },
                 json=rows,
+                params={"on_conflict": "id"},
                 timeout=30,
             )
             response.raise_for_status()

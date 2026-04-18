@@ -29,7 +29,7 @@
 7. 배치 작업 smoke 실행 또는 워크플로 검증이 필요하면 아래 환경 변수를 먼저 설정한다.
 
    ```bash
-   export SUPABASE_URL=https://example.supabase.local
+   export SUPABASE_URL=https://placeholder.supabase.local
    export SUPABASE_SERVICE_KEY=local-service-key
    export R2_BUCKET=workflow-artifacts
    ```
