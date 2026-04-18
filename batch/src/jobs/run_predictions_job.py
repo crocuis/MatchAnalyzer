@@ -29,6 +29,12 @@ def main() -> None:
         for row in market_rows
         if any(snapshot["id"] == row.get("snapshot_id") for snapshot in snapshot_rows)
     ]
+    if not snapshot_rows:
+        raise ValueError("sample match_snapshots must exist before running predictions")
+    if not market_rows:
+        raise ValueError(
+            "sample market_probabilities must exist before running predictions"
+        )
     market_by_snapshot: dict[str, dict[str, dict]] = {}
     for row in market_rows:
         market_by_snapshot.setdefault(row["snapshot_id"], {})[row["source_type"]] = row
@@ -71,6 +77,9 @@ def main() -> None:
                 "explanation_payload": {"bullets": row["explanation_bullets"]},
             }
         )
+
+    if not payload:
+        raise ValueError("no prediction payload was generated for the sample pipeline")
 
     model_rows = client.upsert_rows("model_versions", [SAMPLE_MODEL_VERSION_ROW])
     inserted = client.upsert_rows("predictions", payload)

@@ -20,6 +20,8 @@ def main() -> None:
         for prediction in predictions
         if prediction.get("match_id") == SAMPLE_MATCH_ID
     ]
+    if not predictions:
+        raise ValueError("sample predictions must exist before post-match review")
     result_rows = SAMPLE_RESULT_ROWS
     result_count = client.upsert_rows("matches", result_rows)
     results_by_match = {row["id"]: row for row in client.read_rows("matches")}
@@ -64,6 +66,8 @@ def main() -> None:
                 },
             }
         )
+    if not payload:
+        raise ValueError("no review payload was generated for the sample pipeline")
     inserted = client.upsert_rows("post_match_reviews", payload)
     print(
         json.dumps(
