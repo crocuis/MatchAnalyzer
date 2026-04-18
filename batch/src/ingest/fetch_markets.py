@@ -1,6 +1,3 @@
-import json
-
-
 def build_market_snapshot() -> dict:
     return {
         "source_type": "bookmaker",

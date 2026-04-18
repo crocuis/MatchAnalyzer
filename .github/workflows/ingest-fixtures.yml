@@ -13,6 +13,10 @@ jobs:
     concurrency:
       group: ingest-fixtures
       cancel-in-progress: false
+    env:
+      SUPABASE_URL: https://placeholder.supabase.local
+      SUPABASE_SERVICE_KEY: placeholder-service-key
+      R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -11,8 +11,8 @@ on:
 jobs:
   verify:
     concurrency:
-      group: test-workflow
-      cancel-in-progress: false
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
