@@ -19,7 +19,7 @@ SAMPLE_FIXTURE_ROW = {
     "kickoff_at": "2026-08-15T15:00:00+00:00",
     "home_team_id": "arsenal",
     "away_team_id": "chelsea",
-    "final_result": None,
+    "final_result": "AWAY",
 }
 
 SAMPLE_SNAPSHOT_ROWS = [
@@ -31,20 +31,6 @@ SAMPLE_SNAPSHOT_ROWS = [
         "snapshot_quality": "complete",
     }
     for index, checkpoint in enumerate(CHECKPOINTS)
-]
-
-SAMPLE_MARKET_ROWS = [
-    {
-        "id": f"market_{index + 1:03d}",
-        "snapshot_id": snapshot["id"],
-        "source_type": "bookmaker",
-        "source_name": "sample-book",
-        "home_prob": 0.5,
-        "draw_prob": 0.25,
-        "away_prob": 0.25,
-        "observed_at": "2026-08-14T15:00:00+00:00",
-    }
-    for index, snapshot in enumerate(SAMPLE_SNAPSHOT_ROWS)
 ]
 
 SAMPLE_MODEL_VERSION_ROW = {
@@ -60,3 +46,19 @@ SAMPLE_PREDICTION_CONTEXT = {
     "rest_delta": 1,
     "market_gap_home": 0.05,
 }
+
+
+def build_market_rows(snapshot_rows: list[dict]) -> list[dict]:
+    return [
+        {
+            "id": f"market_{index + 1:03d}",
+            "snapshot_id": snapshot["id"],
+            "source_type": "bookmaker",
+            "source_name": "sample-book",
+            "home_prob": 0.5,
+            "draw_prob": 0.25,
+            "away_prob": 0.25,
+            "observed_at": "2026-08-14T15:00:00+00:00",
+        }
+        for index, snapshot in enumerate(snapshot_rows)
+    ]

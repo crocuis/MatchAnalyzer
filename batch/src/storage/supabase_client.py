@@ -21,3 +21,11 @@ class SupabaseClient:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(rows, sort_keys=True))
         return len(rows)
+
+    def read_rows(self, table: str) -> list[dict]:
+        table_name = validate_table_name(table)
+        base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
+        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        if not target.exists():
+            return []
+        return json.loads(target.read_text())
