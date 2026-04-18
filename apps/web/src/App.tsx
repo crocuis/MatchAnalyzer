@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { ClientValidationPanel } from "./components/ClientValidationPanel";
 import CheckpointTimeline from "./components/CheckpointTimeline";
 import MatchTable from "./components/MatchTable";
 import PostMatchReviewCard from "./components/PostMatchReviewCard";
@@ -46,6 +47,7 @@ export default function App() {
     outcome: "Home",
     summary: "The initial dashboard shell is ready to compare predictions and reviews.",
   };
+  const isClientValidationEnabled = false;
 
   useEffect(() => {
     async function getMatches() {
@@ -83,6 +85,7 @@ export default function App() {
       <PredictionCard prediction={prediction} />
       <CheckpointTimeline checkpoints={checkpoints} />
       <PostMatchReviewCard review={review} />
+      <ClientValidationPanel enabled={isClientValidationEnabled} />
     </main>
   );
 }

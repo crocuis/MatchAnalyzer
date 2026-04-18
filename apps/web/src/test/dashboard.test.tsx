@@ -14,3 +14,10 @@ describe("dashboard", () => {
     expect(screen.getByText("Post-match review")).toBeInTheDocument();
   });
 });
+
+describe("client-assisted validation", () => {
+  it("does not show the operator panel unless enabled", () => {
+    render(<App />);
+    expect(screen.queryByText("Client Validation Jobs")).toBeNull();
+  });
+});
