@@ -1,5 +1,8 @@
 name: ingest-fixtures
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "15 * * * *"
@@ -14,4 +17,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 -m pip install -r batch/requirements.txt
-      - run: python3 batch/src/ingest/fetch_fixtures.py
+      - run: python3 -m batch.src.ingest.fetch_fixtures

@@ -1,5 +1,8 @@
 name: post-match-review
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "45 * * * *"
@@ -14,4 +17,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 -m pip install -r batch/requirements.txt
-      - run: python3 batch/src/review/post_match_review.py
+      - run: python3 -m batch.src.review.post_match_review

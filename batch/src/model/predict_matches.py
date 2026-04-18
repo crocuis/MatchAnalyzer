@@ -4,6 +4,7 @@ from batch.src.model.fusion import (
     confidence_score,
     fuse_probabilities,
 )
+import json
 
 
 def build_prediction_row(
@@ -25,3 +26,19 @@ def build_prediction_row(
         "confidence_score": confidence_score(fused),
         "explanation_bullets": build_explanation_bullets(context),
     }
+
+
+def main() -> None:
+    payload = build_prediction_row(
+        match_id="match-001",
+        checkpoint="T_MINUS_24H",
+        base_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        book_probs={"home": 0.45, "draw": 0.3, "away": 0.25},
+        market_probs={"home": 0.5, "draw": 0.25, "away": 0.25},
+        context={"form_delta": 2, "rest_delta": 1, "market_gap_home": 0.05},
+    )
+    print(json.dumps(payload, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
