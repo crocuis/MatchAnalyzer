@@ -1,7 +1,8 @@
 import json
 from hashlib import sha256
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 
 def validate_table_name(table: str) -> str:
@@ -29,20 +30,20 @@ class SupabaseClient:
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
-            import requests
-
-            response = requests.post(
-                f"{self.base_url}/rest/v1/{table_name}",
+            params = urlencode({"on_conflict": "id"})
+            request = Request(
+                url=f"{self.base_url}/rest/v1/{table_name}?{params}",
+                data=json.dumps(rows).encode("utf-8"),
                 headers={
                     **self._headers(),
                     "Prefer": "return=minimal,resolution=merge-duplicates",
                 },
-                json=rows,
-                params={"on_conflict": "id"},
-                timeout=30,
+                method="POST",
             )
-            response.raise_for_status()
-            return len(rows)
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise ValueError(f"Supabase upsert failed with status {response.status}")
+                return len(rows)
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
@@ -59,16 +60,16 @@ class SupabaseClient:
     def read_rows(self, table: str) -> list[dict]:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
-            import requests
-
-            response = requests.get(
-                f"{self.base_url}/rest/v1/{table_name}",
+            params = urlencode({"select": "*", "order": "id.asc"})
+            request = Request(
+                url=f"{self.base_url}/rest/v1/{table_name}?{params}",
                 headers=self._headers(),
-                params={"select": "*", "order": "id.asc"},
-                timeout=30,
+                method="GET",
             )
-            response.raise_for_status()
-            return response.json()
+            with urlopen(request, timeout=30) as response:
+                if response.status >= 400:
+                    raise ValueError(f"Supabase read failed with status {response.status}")
+                return json.loads(response.read().decode("utf-8"))
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"

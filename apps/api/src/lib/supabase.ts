@@ -1,11 +1,18 @@
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
 import type { AppBindings } from "../env";
 import { getEnv } from "../env";
 
-export type SupabaseClient = never;
+export type ApiSupabaseClient = SupabaseClient;
 
 export const getSupabaseClient = (
   bindings: AppBindings["Bindings"],
-): SupabaseClient => {
-  void getEnv(bindings);
-  throw new Error("Supabase client is not implemented yet");
+): ApiSupabaseClient | null => {
+  const env = getEnv(bindings);
+
+  if (!env.supabaseUrl || !env.supabaseServiceRoleKey) {
+    return null;
+  }
+
+  return createClient(env.supabaseUrl, env.supabaseServiceRoleKey);
 };
