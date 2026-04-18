@@ -17,3 +17,11 @@
 세부 checkpoint 분기와 `LINEUP_CONFIRMED` 전용 감지 로직은 현재 별도 워크플로로 분리하지 않았고, prediction batch 내부 분기 또는 후속 전용 작업으로 확장할 계획이다.
 
 현재 GitHub Actions 자동화는 샘플/스모크 파이프라인 기준이다. 실제 운영 데이터 소스나 운영용 Supabase 프로젝트에 그대로 연결하는 것을 전제로 하지 않는다.
+
+# Polymarket 운영 메모
+
+- 현재 `prediction_market` 적재는 `moneyline` 3-way sibling market을 하나의 정규화 row로 접는 방식만 다룬다.
+- 지원 범위는 보수적으로 `epl`, `ucl`, `uel`, `kor` 계열에 한정한다.
+- `prediction_market`가 없어도 bookmaker fallback으로 prediction/review는 계속 진행된다.
+- review 경로는 `prediction_market -> bookmaker -> no-market` 순서로 비교 대상을 고른다.
+- `ucl`은 broad search 노이즈가 있을 수 있으므로 팀명 query나 slug 확인이 필요하다.

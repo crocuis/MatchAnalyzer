@@ -159,6 +159,58 @@ def test_build_review_payload_keeps_completed_predictions_without_market_rows():
     ]
 
 
+def test_build_review_payload_prefers_prediction_market_over_bookmaker():
+    predictions = [
+        {
+            "id": "match_a_t_minus_24h_model_v1",
+            "snapshot_id": "match_a_t_minus_24h",
+            "match_id": "match_a",
+            "recommended_pick": "HOME",
+            "home_prob": 0.50,
+            "draw_prob": 0.25,
+            "away_prob": 0.25,
+        }
+    ]
+    match_rows = [
+        {
+            "id": "match_a",
+            "kickoff_at": "2026-04-12T18:00:00+00:00",
+            "final_result": "AWAY",
+        }
+    ]
+    market_rows = [
+        {
+            "id": "match_a_t_minus_24h_bookmaker",
+            "snapshot_id": "match_a_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.60,
+            "draw_prob": 0.20,
+            "away_prob": 0.20,
+        },
+        {
+            "id": "match_a_t_minus_24h_prediction_market",
+            "snapshot_id": "match_a_t_minus_24h",
+            "source_type": "prediction_market",
+            "home_prob": 0.40,
+            "draw_prob": 0.25,
+            "away_prob": 0.35,
+        },
+    ]
+
+    payload, skipped_predictions = build_review_payload(
+        predictions=predictions,
+        match_rows=match_rows,
+        market_rows=market_rows,
+        target_date="2026-04-12",
+    )
+
+    assert skipped_predictions == []
+    assert payload[0]["market_comparison_summary"] == {
+        "comparison_available": True,
+        "market_outperformed_model": True,
+    }
+
+
 def test_build_prediction_row_smoke():
     prediction = build_prediction_row(
         match_id="match-1",

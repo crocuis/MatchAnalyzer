@@ -53,3 +53,17 @@
    ```
 
    이 값들이 없으면 현재 배치 smoke 경로는 `.tmp/r2/` 파일 저장 fallback을 사용한다.
+
+10. Polymarket 실데이터를 함께 검증할 때는 아래 순서를 권장한다.
+
+   ```bash
+   REAL_FIXTURE_DATE=2026-04-27 python3 -m batch.src.jobs.ingest_fixtures_job
+   REAL_MARKET_DATE=2026-04-27 python3 -m batch.src.jobs.ingest_markets_job
+   REAL_PREDICTION_DATE=2026-04-27 python3 -m batch.src.jobs.run_predictions_job
+   REAL_REVIEW_DATE=2026-04-12 python3 -m batch.src.jobs.run_post_match_review_job
+   ```
+
+   참고:
+   - Polymarket 연동은 현재 `epl`, `ucl`, `uel`, `kor` 계열만 보수적으로 지원한다.
+   - `prediction_market` row가 없어도 prediction/review는 bookmaker fallback으로 계속 진행된다.
+   - `match_snapshots.snapshot_quality`는 시장 row가 붙으면 `complete`로 승격된다.
