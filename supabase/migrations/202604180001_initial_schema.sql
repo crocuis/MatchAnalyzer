@@ -19,26 +19,27 @@ create table matches (
   kickoff_at timestamptz not null,
   home_team_id text not null references teams(id),
   away_team_id text not null references teams(id),
-  final_result text
+  final_result text check (final_result in ('HOME', 'DRAW', 'AWAY'))
 );
 
 create table match_snapshots (
   id text primary key,
   match_id text not null references matches(id),
-  checkpoint_type text not null,
+  checkpoint_type text not null check (checkpoint_type in ('T_MINUS_24H', 'T_MINUS_6H', 'T_MINUS_1H', 'LINEUP_CONFIRMED')),
   captured_at timestamptz not null default now(),
   lineup_status text not null,
-  snapshot_quality text not null
+  snapshot_quality text not null check (snapshot_quality in ('complete', 'partial'))
 );
 
 create table market_probabilities (
   id text primary key,
   snapshot_id text not null references match_snapshots(id),
-  source_type text not null,
+  source_type text not null check (source_type in ('bookmaker', 'prediction_market')),
   source_name text not null,
-  home_prob numeric not null,
-  draw_prob numeric not null,
-  away_prob numeric not null,
+  home_prob numeric not null check (home_prob >= 0 and home_prob <= 1),
+  draw_prob numeric not null check (draw_prob >= 0 and draw_prob <= 1),
+  away_prob numeric not null check (away_prob >= 0 and away_prob <= 1),
+  check (home_prob + draw_prob + away_prob = 1),
   observed_at timestamptz not null
 );
 
@@ -55,11 +56,12 @@ create table predictions (
   id text primary key,
   snapshot_id text not null references match_snapshots(id),
   model_version_id text not null references model_versions(id),
-  home_prob numeric not null,
-  draw_prob numeric not null,
-  away_prob numeric not null,
-  recommended_pick text not null,
-  confidence_score numeric not null,
+  home_prob numeric not null check (home_prob >= 0 and home_prob <= 1),
+  draw_prob numeric not null check (draw_prob >= 0 and draw_prob <= 1),
+  away_prob numeric not null check (away_prob >= 0 and away_prob <= 1),
+  check (home_prob + draw_prob + away_prob = 1),
+  recommended_pick text not null check (recommended_pick in ('HOME', 'DRAW', 'AWAY')),
+  confidence_score numeric not null check (confidence_score >= 0 and confidence_score <= 1),
   explanation_payload jsonb not null,
   created_at timestamptz not null default now()
 );
@@ -68,7 +70,7 @@ create table post_match_reviews (
   id text primary key,
   match_id text not null references matches(id),
   prediction_id text not null references predictions(id),
-  actual_outcome text not null,
+  actual_outcome text not null check (actual_outcome in ('HOME', 'DRAW', 'AWAY')),
   error_summary text not null,
   cause_tags jsonb not null,
   market_comparison_summary jsonb not null,

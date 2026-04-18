@@ -1,5 +1,14 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
+
+
+Checkpoint = Literal[
+    "T_MINUS_24H",
+    "T_MINUS_6H",
+    "T_MINUS_1H",
+    "LINEUP_CONFIRMED",
+]
 
 
 class SnapshotQuality(str, Enum):
@@ -10,6 +19,6 @@ class SnapshotQuality(str, Enum):
 @dataclass(slots=True)
 class MatchSnapshot:
     match_id: str
-    checkpoint: str
+    checkpoint: Checkpoint
     lineup_status: str
     quality: SnapshotQuality
