@@ -1,0 +1,18 @@
+{
+  "name": "match-analyzer",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:web": "npm --workspace apps/web run test",
+    "test:api": "npm --workspace apps/api run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
