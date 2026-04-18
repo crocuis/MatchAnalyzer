@@ -1,9 +1,19 @@
+import { useEffect, useState } from "react";
+
 import CheckpointTimeline from "./components/CheckpointTimeline";
 import MatchTable from "./components/MatchTable";
 import PostMatchReviewCard from "./components/PostMatchReviewCard";
 import PredictionCard from "./components/PredictionCard";
+import { supabase } from "./utils/supabase";
 
 export default function App() {
+  const [supabaseStatus, setSupabaseStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [supabaseMatches, setSupabaseMatches] = useState<Array<{ id: string }>>(
+    [],
+  );
+
   const matches = [
     {
       id: "match-001",
@@ -37,10 +47,38 @@ export default function App() {
     summary: "The initial dashboard shell is ready to compare predictions and reviews.",
   };
 
+  useEffect(() => {
+    async function getMatches() {
+      if (!supabase) {
+        setSupabaseStatus("error");
+        return;
+      }
+
+      setSupabaseStatus("loading");
+
+      const { data, error } = await supabase.from("matches").select("id").limit(5);
+
+      if (error) {
+        setSupabaseStatus("error");
+        return;
+      }
+
+      setSupabaseMatches(data ?? []);
+      setSupabaseStatus("ready");
+    }
+
+    void getMatches();
+  }, []);
+
   return (
     <main>
       <h1>Football Prediction Dashboard</h1>
       <p>Checkpoint-based predictions, market comparison, and post-match reviews.</p>
+      <section aria-label="supabase status">
+        <h2>Supabase status</h2>
+        <p>Status: {supabaseStatus}</p>
+        <p>Loaded match ids: {supabaseMatches.length}</p>
+      </section>
       <MatchTable matches={matches} />
       <PredictionCard prediction={prediction} />
       <CheckpointTimeline checkpoints={checkpoints} />
