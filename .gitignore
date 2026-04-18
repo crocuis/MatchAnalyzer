@@ -1,4 +1,3 @@
-# Workspace bootstrap ignores retained for Task 1
 # Node / frontend
 node_modules/
 dist/
