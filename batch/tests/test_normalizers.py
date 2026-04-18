@@ -5,7 +5,12 @@ import pytest
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
+from batch.src.ingest.fetch_markets import (
+    build_prediction_market_rows,
+    polymarket_sport_for_competition,
+)
 from batch.src.ingest.normalizers import normalize_team_name
+from batch.src.jobs.ingest_markets_job import select_real_market_snapshots
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -135,3 +140,347 @@ def test_supabase_client_rejects_invalid_table_name(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="single relative identifier"):
         client.upsert_rows("../matches", [{"id": "match_001"}])
+
+
+def test_polymarket_sport_for_competition_uses_supported_competitions_only():
+    assert polymarket_sport_for_competition("premier-league", "Premier League") == "epl"
+    assert polymarket_sport_for_competition("epl", "Premier League") == "epl"
+    assert polymarket_sport_for_competition("champions-league", "UEFA Champions League") == "ucl"
+    assert polymarket_sport_for_competition("europa-league", "UEFA Europa League") == "uel"
+    assert polymarket_sport_for_competition("k-league", "K League 1") == "kor"
+    assert polymarket_sport_for_competition("mls", "MLS") is None
+
+
+def test_build_prediction_market_rows_creates_one_three_way_row_per_snapshot():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.41}, {"name": "No", "price": 0.59}],
+            },
+            {
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.26}, {"name": "No", "price": 0.74}],
+            },
+            {
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.33}, {"name": "No", "price": 0.67}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "740909_t_minus_24h_prediction_market",
+            "snapshot_id": "740909_t_minus_24h",
+            "source_type": "prediction_market",
+            "source_name": "polymarket_moneyline_3way",
+            "home_prob": 0.41,
+            "draw_prob": 0.26,
+            "away_prob": 0.33,
+            "observed_at": "2026-04-12T15:30:00Z",
+        }
+    ]
+
+
+def test_build_prediction_market_rows_skips_incomplete_or_ambiguous_markets():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.41}, {"name": "No", "price": 0.59}],
+            },
+            {
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.33}, {"name": "No", "price": 0.67}],
+            },
+            {
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:31:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.26}, {"name": "No", "price": 0.74}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows == []
+
+
+def test_build_prediction_market_rows_requires_competition_key_match():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "competition_key": "ucl",
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "ucl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.41}, {"name": "No", "price": 0.59}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "ucl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.26}, {"name": "No", "price": 0.74}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "ucl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.33}, {"name": "No", "price": 0.67}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows == []
+
+
+def test_build_prediction_market_rows_skips_duplicate_market_sets_for_same_external_key():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "competition_key": "epl",
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.41}, {"name": "No", "price": 0.59}],
+            },
+            {
+                "competition_key": "epl",
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.26}, {"name": "No", "price": 0.74}],
+            },
+            {
+                "competition_key": "epl",
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.33}, {"name": "No", "price": 0.67}],
+            },
+            {
+                "competition_key": "epl",
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che-alt",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.4}, {"name": "No", "price": 0.6}],
+            },
+            {
+                "competition_key": "epl",
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw-alt",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.25}, {"name": "No", "price": 0.75}],
+            },
+            {
+                "competition_key": "epl",
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci-alt",
+                "end_date": "2026-04-12T15:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.35}, {"name": "No", "price": 0.65}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows == []
+
+
+def test_build_prediction_market_rows_uses_single_fuzzy_candidate_when_exact_match_misses():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "competition_key": "ucl",
+                "question": "Will Paris SG win on 2026-04-28?",
+                "slug": "ucl-psg1-bay1-2026-04-28-psg1",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.44}, {"name": "No", "price": 0.56}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will Paris SG vs. FC Bayern München end in a draw?",
+                "slug": "ucl-psg1-bay1-2026-04-28-draw",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.24}, {"name": "No", "price": 0.76}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will FC Bayern München win on 2026-04-28?",
+                "slug": "ucl-psg1-bay1-2026-04-28-bay1",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.32}, {"name": "No", "price": 0.68}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "psg-bayern_t_minus_24h",
+                "competition_sport": "ucl",
+                "kickoff_at": "2026-04-28T19:00:00+00:00",
+                "home_team_name": "Paris Saint-Germain",
+                "away_team_name": "Bayern Munich",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "psg-bayern_t_minus_24h_prediction_market",
+            "snapshot_id": "psg-bayern_t_minus_24h",
+            "source_type": "prediction_market",
+            "source_name": "polymarket_moneyline_3way",
+            "home_prob": 0.44,
+            "draw_prob": 0.24,
+            "away_prob": 0.32,
+            "observed_at": "2026-04-28T19:00:00Z",
+        }
+    ]
+
+
+def test_build_prediction_market_rows_skips_when_multiple_fuzzy_candidates_exist():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "competition_key": "ucl",
+                "question": "Will Paris SG win on 2026-04-28?",
+                "slug": "ucl-psg1-bay1-2026-04-28-psg1",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.44}, {"name": "No", "price": 0.56}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will Paris SG vs. FC Bayern München end in a draw?",
+                "slug": "ucl-psg1-bay1-2026-04-28-draw",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.24}, {"name": "No", "price": 0.76}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will FC Bayern München win on 2026-04-28?",
+                "slug": "ucl-psg1-bay1-2026-04-28-bay1",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.32}, {"name": "No", "price": 0.68}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will PSG win on 2026-04-28?",
+                "slug": "ucl-psgx-bayx-2026-04-28-psgx",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.45}, {"name": "No", "price": 0.55}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will PSG vs. Bayern Munchen end in a draw?",
+                "slug": "ucl-psgx-bayx-2026-04-28-draw",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.25}, {"name": "No", "price": 0.75}],
+            },
+            {
+                "competition_key": "ucl",
+                "question": "Will Bayern Munchen win on 2026-04-28?",
+                "slug": "ucl-psgx-bayx-2026-04-28-bayx",
+                "end_date": "2026-04-28T19:00:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.30}, {"name": "No", "price": 0.70}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "psg-bayern_t_minus_24h",
+                "competition_sport": "ucl",
+                "kickoff_at": "2026-04-28T19:00:00+00:00",
+                "home_team_name": "Paris Saint-Germain",
+                "away_team_name": "Bayern Munich",
+            }
+        ],
+    )
+
+    assert rows == []
+
+
+def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
+    rows = select_real_market_snapshots(
+        snapshot_rows=[
+            {
+                "id": "match_001_t_minus_24h",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "match_001_t_minus_6h",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_6H",
+            },
+        ],
+        match_rows=[
+            {
+                "id": "match_001",
+                "competition_id": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "man-city",
+            }
+        ],
+        team_rows=[
+            {"id": "chelsea", "name": "Chelsea FC"},
+            {"id": "man-city", "name": "Manchester City FC"},
+        ],
+        target_date="2026-04-12",
+    )
+
+    assert rows == [
+        {
+            "id": "match_001_t_minus_24h",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_24H",
+            "competition_id": "epl",
+            "kickoff_at": "2026-04-12T15:30:00+00:00",
+            "home_team_name": "Chelsea FC",
+            "away_team_name": "Manchester City FC",
+        }
+    ]
