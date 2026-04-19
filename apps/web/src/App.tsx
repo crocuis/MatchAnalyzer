@@ -247,7 +247,10 @@ export default function App() {
 
         {matchesStatus === "error" ? (
           <section className="matchSection" aria-label="matches">
-            <p>Unable to load match data right now.</p>
+            <p>
+              Unable to load match data right now. Make sure the API dev server is
+              running on port 8787.
+            </p>
           </section>
         ) : null}
 
