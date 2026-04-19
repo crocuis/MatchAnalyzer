@@ -1044,6 +1044,8 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
 
 
 def test_load_settings_reads_required_environment_variables(monkeypatch):
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "service-key")
     monkeypatch.setenv("R2_BUCKET", "raw-payloads")
