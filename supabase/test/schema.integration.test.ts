@@ -43,12 +43,62 @@ describe("supabase schema integration", () => {
        from information_schema.columns
        where table_name = 'competitions' and column_name = 'emblem_url'`,
     );
+    const featureSnapshotTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'prediction_feature_snapshots'`,
+    );
+    const fusionPolicyTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'prediction_fusion_policies'`,
+    );
+    const evaluationHistoryTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'prediction_source_evaluation_report_versions'`,
+    );
+    const fusionPolicyHistoryTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'prediction_fusion_policy_versions'`,
+    );
+    const reviewAggregationHistoryTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'post_match_review_aggregation_versions'`,
+    );
+    const rolloutVersionColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name in (
+         'prediction_source_evaluation_reports',
+         'prediction_fusion_policies',
+         'post_match_review_aggregations'
+       ) and column_name = 'rollout_version'`,
+    );
+    const comparisonPayloadColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name in (
+         'prediction_source_evaluation_reports',
+         'prediction_fusion_policies',
+         'post_match_review_aggregations'
+       ) and column_name = 'comparison_payload'`,
+    );
 
     expect(competitions.rows[0]?.count).toBe(1);
     expect(teams.rows[0]?.count).toBe(2);
     expect(matches.rows[0]?.count).toBe(1);
     expect(crestColumns.rows[0]?.count).toBe(1);
     expect(emblemColumns.rows[0]?.count).toBe(1);
+    expect(featureSnapshotTables.rows[0]?.count).toBe(1);
+    expect(fusionPolicyTables.rows[0]?.count).toBe(1);
+    expect(evaluationHistoryTables.rows[0]?.count).toBe(1);
+    expect(fusionPolicyHistoryTables.rows[0]?.count).toBe(1);
+    expect(reviewAggregationHistoryTables.rows[0]?.count).toBe(1);
+    expect(rolloutVersionColumns.rows[0]?.count).toBe(3);
+    expect(comparisonPayloadColumns.rows[0]?.count).toBe(3);
   });
 
   it("rejects duplicate authoritative snapshots for the same match checkpoint", async () => {

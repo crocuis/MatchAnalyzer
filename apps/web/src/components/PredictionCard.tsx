@@ -1,8 +1,11 @@
 import { useTranslation } from "react-i18next";
 import type {
+  MainRecommendation,
   PredictionExplanationPayload,
   PredictionFeatureContext,
   PredictionSummary,
+  ValueRecommendation,
+  VariantMarket,
 } from "../lib/api";
 import ProbabilityBars from "./ProbabilityBars";
 
@@ -22,11 +25,7 @@ function normalizeFeatureContext(
   if (!explanationPayload) {
     return null;
   }
-  return (
-    explanationPayload.featureContext ??
-    explanationPayload.feature_context ??
-    null
-  );
+  return explanationPayload.featureContext ?? explanationPayload.feature_context ?? null;
 }
 
 function normalizeBreakdown(explanationPayload?: PredictionExplanationPayload) {
@@ -80,6 +79,34 @@ function normalizeBreakdown(explanationPayload?: PredictionExplanationPayload) {
       : typeof featureContext?.lineup_source_summary === "string"
         ? featureContext.lineup_source_summary
         : null;
+  const rawFeatureAttribution =
+    explanationPayload.featureAttribution ??
+    explanationPayload.feature_attribution ??
+    [];
+
+  const topFactors = Array.isArray(rawFeatureAttribution)
+    ? rawFeatureAttribution
+        .flatMap((entry) => {
+          if (!entry || typeof entry !== "object") {
+            return [];
+          }
+          const signalKey =
+            typeof entry.signalKey === "string"
+              ? entry.signalKey
+              : typeof entry.signal_key === "string"
+                ? entry.signal_key
+                : null;
+          const direction =
+            typeof entry.direction === "string" ? entry.direction : null;
+          const magnitude = readNumber(entry.magnitude);
+          if (!signalKey || !direction || magnitude === null) {
+            return [];
+          }
+          return [{ signalKey, direction, magnitude }];
+        })
+        .slice(0, 3)
+    : [];
+
   const signalDrivers = [
     eloDelta !== null && eloDelta > 0
       ? "strengthHome"
@@ -100,7 +127,9 @@ function normalizeBreakdown(explanationPayload?: PredictionExplanationPayload) {
       ? "lineupHome"
       : lineupStrengthDelta !== null && lineupStrengthDelta < 0
         ? "lineupAway"
-        : null,
+        : lineupSourceSummary
+          ? "lineupData"
+          : null,
   ].filter(
     (
       value,
@@ -112,7 +141,8 @@ function normalizeBreakdown(explanationPayload?: PredictionExplanationPayload) {
       | "scheduleHome"
       | "scheduleAway"
       | "lineupHome"
-      | "lineupAway" => value !== null,
+      | "lineupAway"
+      | "lineupData" => value !== null,
   );
 
   if (
@@ -125,7 +155,8 @@ function normalizeBreakdown(explanationPayload?: PredictionExplanationPayload) {
     awayLineupScore === null &&
     lineupSourceSummary === null &&
     (calibration === null || Object.keys(calibration).length === 0) &&
-    signalDrivers.length === 0
+    signalDrivers.length === 0 &&
+    topFactors.length === 0
   ) {
     return null;
   }
@@ -141,11 +172,61 @@ function normalizeBreakdown(explanationPayload?: PredictionExplanationPayload) {
     lineupSourceSummary,
     calibration,
     signalDrivers,
+    topFactors,
   };
 }
 
 function formatLineupSourceSummary(summary: string): string {
   return summary.replaceAll("+", " + ").replaceAll("_", " ");
+}
+
+function resolveMainRecommendation(
+  prediction: PredictionSummary,
+  recommendedPick: string | null,
+  confidence: number | null,
+): MainRecommendation | null {
+  if (prediction.mainRecommendation) {
+    return prediction.mainRecommendation;
+  }
+  if (recommendedPick === null && confidence === null) {
+    return null;
+  }
+  return {
+    pick: recommendedPick ?? "UNKNOWN",
+    confidence,
+    recommended: recommendedPick !== null,
+    noBetReason: recommendedPick === null ? "low_confidence" : null,
+  };
+}
+
+function formatNoBetReason(
+  t: ReturnType<typeof useTranslation>["t"],
+  noBetReason: string | null | undefined,
+) {
+  if (!noBetReason) {
+    return null;
+  }
+  return t(`modal.prediction.noBetReasons.${noBetReason}`);
+}
+
+function summarizeLineupEdge(
+  homeLineupScore: number | null,
+  awayLineupScore: number | null,
+  lineupStrengthDelta: number | null,
+) {
+  if (homeLineupScore === null || awayLineupScore === null) {
+    return null;
+  }
+  if (lineupStrengthDelta === null) {
+    return `Home ${homeLineupScore.toFixed(2)} vs Away ${awayLineupScore.toFixed(2)}`;
+  }
+  const direction =
+    lineupStrengthDelta > 0.05
+      ? "Home edge"
+      : lineupStrengthDelta < -0.05
+        ? "Away edge"
+        : "Balanced";
+  return `${direction} · ${homeLineupScore.toFixed(2)} vs ${awayLineupScore.toFixed(2)}`;
 }
 
 export default function PredictionCard({
@@ -155,12 +236,35 @@ export default function PredictionCard({
 }: PredictionCardProps) {
   const { t } = useTranslation();
   const breakdown = normalizeBreakdown(prediction.explanationPayload);
+  const mainRecommendation = resolveMainRecommendation(
+    prediction,
+    recommendedPick,
+    confidence,
+  );
+  const valueRecommendation: ValueRecommendation | null =
+    prediction.valueRecommendation ?? null;
+  const variantMarkets: VariantMarket[] = prediction.variantMarkets ?? [];
+  const isNoBet = Boolean(mainRecommendation && !mainRecommendation.recommended);
   const confidenceLabel =
-    confidence === null
+    isNoBet
+      ? t("matchCard.metrics.noBet")
+      : confidence === null
       ? t("matchCard.metrics.unavailable")
       : `${(confidence * 100).toFixed(0)}%`;
   const recommendedPickLabel =
-    recommendedPick ?? t("matchCard.metrics.unavailable");
+    isNoBet
+      ? t("matchCard.metrics.noBet")
+      : recommendedPick ?? t("matchCard.metrics.unavailable");
+  const featureContext = normalizeFeatureContext(prediction.explanationPayload);
+  const lineupEdgeSummary = breakdown
+    ? summarizeLineupEdge(
+        breakdown.homeLineupScore,
+        breakdown.awayLineupScore,
+        readNumber(
+          featureContext?.lineupStrengthDelta ?? featureContext?.lineup_strength_delta,
+        ),
+      )
+    : null;
 
   return (
     <article className="predictionSummary">
@@ -168,12 +272,18 @@ export default function PredictionCard({
         <div className="predictionPick">
           <span className="metricLabel">{t("modal.prediction.recommendedPick")}</span>
           <strong className="predictionPickValue-lg">{recommendedPickLabel}</strong>
+          {isNoBet ? (
+            <p className="metricLabel">
+              {formatNoBetReason(t, mainRecommendation?.noBetReason)}
+            </p>
+          ) : null}
         </div>
         <div className="predictionConfidence">
           <span className="metricLabel">{t("modal.prediction.confidence")}</span>
           <strong className="predictionPickValue-lg">{confidenceLabel}</strong>
         </div>
       </div>
+
       <div className="probabilityBars">
         <p className="metricLabel">{t("modal.prediction.probabilities")}</p>
         <ProbabilityBars
@@ -182,15 +292,78 @@ export default function PredictionCard({
           home={prediction.homeWinProbability}
         />
       </div>
+
+      {valueRecommendation?.recommended ? (
+        <div className="confidenceBreakdown">
+          <p className="metricLabel">{t("modal.prediction.valuePickTitle")}</p>
+          <div className="confidenceBreakdownGrid">
+            <div className="confidenceBreakdownItem">
+              <span className="metricLabel">{t("matchCard.valuePick")}</span>
+              <strong>{valueRecommendation.pick}</strong>
+            </div>
+            <div className="confidenceBreakdownItem">
+              <span className="metricLabel">{t("modal.prediction.expectedValue")}</span>
+              <strong>{`+${(valueRecommendation.expectedValue * 100).toFixed(0)}%`}</strong>
+            </div>
+            <div className="confidenceBreakdownItem">
+              <span className="metricLabel">{t("modal.prediction.marketPrice")}</span>
+              <strong>{`${(valueRecommendation.marketPrice * 100).toFixed(0)}%`}</strong>
+            </div>
+            <div className="confidenceBreakdownItem">
+              <span className="metricLabel">{t("modal.prediction.modelProbability")}</span>
+              <strong>{`${(valueRecommendation.modelProbability * 100).toFixed(0)}%`}</strong>
+            </div>
+            <div className="confidenceBreakdownItem">
+              <span className="metricLabel">{t("modal.prediction.marketProbability")}</span>
+              <strong>{`${(valueRecommendation.marketProbability * 100).toFixed(0)}%`}</strong>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {variantMarkets.length > 0 ? (
+        <div className="confidenceBreakdown">
+          <p className="metricLabel">{t("modal.prediction.variantMarketsTitle")}</p>
+          <div className="confidenceCalibrationList">
+            {variantMarkets.map((market, index) => (
+              <div className="confidenceCalibrationRow" key={`${market.marketFamily}-${index}`}>
+                <strong>{market.marketFamily}</strong>
+                {market.lineValue !== null ? (
+                  <span>{`Line ${market.lineValue}`}</span>
+                ) : null}
+                <span>{market.selectionALabel}</span>
+                {market.selectionAPrice !== null ? (
+                  <span>{`${(market.selectionAPrice * 100).toFixed(0)}%`}</span>
+                ) : null}
+                <span>{market.selectionBLabel}</span>
+                {market.selectionBPrice !== null ? (
+                  <span>{`${(market.selectionBPrice * 100).toFixed(0)}%`}</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {breakdown?.lineupSourceSummary ? (
+        <div className="lineupInsightCard">
+          <span className="metricLabel">{t("modal.prediction.breakdown.lineupSource")}</span>
+          <strong className="lineupInsightTitle">
+            {formatLineupSourceSummary(breakdown.lineupSourceSummary)}
+          </strong>
+          {lineupEdgeSummary ? (
+            <p className="lineupInsightBody">{lineupEdgeSummary}</p>
+          ) : null}
+        </div>
+      ) : null}
+
       {breakdown ? (
         <div className="confidenceBreakdown">
           <p className="metricLabel">{t("modal.prediction.breakdownTitle")}</p>
           <div className="confidenceBreakdownGrid">
             {breakdown.rawConfidence !== null ? (
               <div className="confidenceBreakdownItem">
-                <span className="metricLabel">
-                  {t("modal.prediction.breakdown.raw")}
-                </span>
+                <span className="metricLabel">{t("modal.prediction.breakdown.raw")}</span>
                 <strong>{(breakdown.rawConfidence * 100).toFixed(0)}%</strong>
               </div>
             ) : null}
@@ -204,9 +377,7 @@ export default function PredictionCard({
             ) : null}
             {breakdown.sourceAgreementRatio !== null ? (
               <div className="confidenceBreakdownItem">
-                <span className="metricLabel">
-                  {t("modal.prediction.breakdown.agreement")}
-                </span>
+                <span className="metricLabel">{t("modal.prediction.breakdown.agreement")}</span>
                 <strong>{(breakdown.sourceAgreementRatio * 100).toFixed(0)}%</strong>
               </div>
             ) : null}
@@ -234,32 +405,32 @@ export default function PredictionCard({
                 <strong>{breakdown.awayLineupScore.toFixed(2)}</strong>
               </div>
             ) : null}
-            {breakdown.lineupSourceSummary ? (
-              <div className="confidenceBreakdownItem">
-                <span className="metricLabel">
-                  {t("modal.prediction.breakdown.lineupSource")}
-                </span>
-                <strong>{formatLineupSourceSummary(breakdown.lineupSourceSummary)}</strong>
-              </div>
-            ) : null}
             {breakdown.baseModelSource ? (
               <div className="confidenceBreakdownItem">
-                <span className="metricLabel">
-                  {t("modal.prediction.breakdown.baseModel")}
-                </span>
+                <span className="metricLabel">{t("modal.prediction.breakdown.baseModel")}</span>
                 <strong>{breakdown.baseModelSource.replaceAll("_", " ")}</strong>
               </div>
             ) : null}
             {breakdown.signalDrivers.length > 0 ? (
               <div className="confidenceBreakdownItem confidenceBreakdownSignals">
-                <span className="metricLabel">
-                  {t("modal.prediction.breakdown.signals")}
-                </span>
+                <span className="metricLabel">{t("modal.prediction.breakdown.signals")}</span>
                 <div className="confidenceSignalList">
                   {breakdown.signalDrivers.map((signal) => (
                     <span className="confidenceSignalChip" key={signal}>
                       {t(`modal.prediction.breakdown.signalLabels.${signal}`)}
                     </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {breakdown.topFactors.length > 0 ? (
+              <div className="confidenceBreakdownItem confidenceBreakdownSignals">
+                <span className="metricLabel">{t("modal.prediction.breakdown.topFactors")}</span>
+                <div className="confidenceCalibrationList">
+                  {breakdown.topFactors.map((factor) => (
+                    <div className="confidenceCalibrationRow" key={`${factor.signalKey}-${factor.direction}`}>
+                      <span>{`${t(`modal.prediction.breakdown.signalLabels.${factor.signalKey}`)} · ${factor.direction} ${factor.magnitude.toFixed(2)}`}</span>
+                    </div>
                   ))}
                 </div>
               </div>

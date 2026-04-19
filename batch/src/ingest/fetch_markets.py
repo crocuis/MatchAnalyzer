@@ -5,6 +5,9 @@ import sys
 import unicodedata
 from typing import Any
 
+POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
+POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
+
 
 def load_sports_skills_football():
     vendor_path = Path(__file__).resolve().parents[3] / ".vendor"
@@ -31,14 +34,29 @@ def fetch_daily_schedule(date: str) -> dict[str, Any]:
     return football.get_daily_schedule(date=date)
 
 
-def fetch_polymarket_markets(sport: str, query: str) -> list[dict[str, Any]]:
+def fetch_polymarket_markets(
+    sport: str,
+    query: str,
+    market_type: str = POLYMARKET_PRIMARY_MARKET_TYPE,
+) -> list[dict[str, Any]]:
     polymarket = load_sports_skills_polymarket()
     response = polymarket.search_markets(
         sport=sport,
         query=query,
-        sports_market_types="moneyline",
+        sports_market_types=market_type,
     )
     return response["data"]["markets"]
+
+
+def fetch_polymarket_markets_for_types(
+    sport: str,
+    query: str,
+    market_types: tuple[str, ...] = POLYMARKET_SEARCH_MARKET_TYPES,
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        market_type: fetch_polymarket_markets(sport=sport, query=query, market_type=market_type)
+        for market_type in market_types
+    }
 
 
 def build_market_snapshots() -> list[dict]:
@@ -46,16 +64,26 @@ def build_market_snapshots() -> list[dict]:
         {
             "source_type": "bookmaker",
             "source_name": "sample-book",
+            "market_family": "moneyline_3way",
             "home_prob": 0.5,
             "draw_prob": 0.25,
             "away_prob": 0.25,
+            "home_price": 0.5,
+            "draw_price": 0.25,
+            "away_price": 0.25,
+            "raw_payload": {"provider": "sample-book"},
         },
         {
             "source_type": "prediction_market",
             "source_name": "sample-market",
+            "market_family": "moneyline_3way",
             "home_prob": 0.48,
             "draw_prob": 0.27,
             "away_prob": 0.25,
+            "home_price": 0.48,
+            "draw_price": 0.27,
+            "away_price": 0.25,
+            "raw_payload": {"provider": "sample-market"},
         },
     ]
 
@@ -95,6 +123,9 @@ def build_market_rows_from_schedule(
             american_odds_to_probability(moneyline["draw"]),
             american_odds_to_probability(moneyline["away"]),
         )
+        home_price = american_odds_to_probability(moneyline["home"])
+        draw_price = american_odds_to_probability(moneyline["draw"])
+        away_price = american_odds_to_probability(moneyline["away"])
 
         rows.append(
             {
@@ -102,9 +133,17 @@ def build_market_rows_from_schedule(
                 "snapshot_id": snapshot["id"],
                 "source_type": "bookmaker",
                 "source_name": odds.get("provider") or "unknown-bookmaker",
+                "market_family": "moneyline_3way",
                 "home_prob": normalized["home_prob"],
                 "draw_prob": normalized["draw_prob"],
                 "away_prob": normalized["away_prob"],
+                "home_price": home_price,
+                "draw_price": draw_price,
+                "away_price": away_price,
+                "raw_payload": {
+                    "moneyline": moneyline,
+                    "provider": odds.get("provider") or "unknown-bookmaker",
+                },
                 "observed_at": event["start_time"],
             }
         )
@@ -281,6 +320,35 @@ def classify_market_group(
     )
 
 
+def select_market_group_external_key(
+    grouped_markets: dict[str, list[dict[str, Any]]],
+    home_team_name: str,
+    away_team_name: str,
+) -> str | None:
+    exact_matches: list[str] = []
+    fuzzy_matches: list[tuple[float, str]] = []
+    for external_key, candidate_markets in grouped_markets.items():
+        classified, exact_match, fuzzy_score = classify_market_group(
+            candidate_markets,
+            home_team_name=home_team_name,
+            away_team_name=away_team_name,
+        )
+        if not classified:
+            continue
+        if exact_match:
+            exact_matches.append(external_key)
+        else:
+            fuzzy_matches.append((fuzzy_score, external_key))
+
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        return None
+    if len(fuzzy_matches) == 1:
+        return fuzzy_matches[0][1]
+    return None
+
+
 def build_prediction_market_rows(
     markets: list[dict[str, Any]],
     snapshot_contexts: list[dict[str, Any]],
@@ -311,28 +379,19 @@ def build_prediction_market_rows(
                 continue
             grouped_markets.setdefault(external_key, []).append(market)
 
-        exact_matches: list[dict[str, dict[str, Any]]] = []
-        fuzzy_matches: list[tuple[float, dict[str, dict[str, Any]]]] = []
-        for candidate_markets in grouped_markets.values():
-            classified, exact_match, fuzzy_score = classify_market_group(
-                candidate_markets,
-                home_team_name=context["home_team_name"],
-                away_team_name=context["away_team_name"],
-            )
-            if not classified:
-                continue
-            if exact_match:
-                exact_matches.append(classified)
-            else:
-                fuzzy_matches.append((fuzzy_score, classified))
-
-        if len(exact_matches) == 1:
-            classified = exact_matches[0]
-        elif len(exact_matches) > 1:
+        selected_external_key = select_market_group_external_key(
+            grouped_markets,
+            home_team_name=context["home_team_name"],
+            away_team_name=context["away_team_name"],
+        )
+        if not selected_external_key:
             continue
-        elif len(fuzzy_matches) == 1:
-            classified = fuzzy_matches[0][1]
-        else:
+        classified, _, _ = classify_market_group(
+            grouped_markets[selected_external_key],
+            home_team_name=context["home_team_name"],
+            away_team_name=context["away_team_name"],
+        )
+        if not classified:
             continue
 
         home_market = classified["home"]
@@ -365,12 +424,99 @@ def build_prediction_market_rows(
                 "snapshot_id": context["snapshot_id"],
                 "source_type": "prediction_market",
                 "source_name": "polymarket_moneyline_3way",
+                "market_family": "moneyline_3way",
                 "home_prob": normalized["home_prob"],
                 "draw_prob": normalized["draw_prob"],
                 "away_prob": normalized["away_prob"],
+                "home_price": home_price,
+                "draw_price": draw_price,
+                "away_price": away_price,
+                "raw_payload": {
+                    "home_market_slug": home_market.get("slug"),
+                    "draw_market_slug": draw_market.get("slug"),
+                    "away_market_slug": away_market.get("slug"),
+                },
                 "observed_at": observed_at,
             }
         )
+
+    return rows
+
+
+def build_prediction_market_variant_rows(
+    markets: list[dict[str, Any]],
+    snapshot_contexts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    context_key_counts: dict[tuple[str, datetime, str, str], int] = {}
+
+    for context in snapshot_contexts:
+        context_key = snapshot_external_key(context)
+        context_key_counts[context_key] = context_key_counts.get(context_key, 0) + 1
+
+    for context in snapshot_contexts:
+        context_key = snapshot_external_key(context)
+        if context_key_counts.get(context_key, 0) != 1:
+            continue
+
+        competition_sport, kickoff_minute, _, _ = context_key
+        relevant_markets = [
+            market
+            for market in markets
+            if parse_utc_minute(market["end_date"]) == kickoff_minute
+            and market_competition_key(market) == competition_sport
+        ]
+        grouped_markets: dict[str, list[dict[str, Any]]] = {}
+        for market in relevant_markets:
+            external_key = market_external_key(market)
+            if not external_key:
+                continue
+            grouped_markets.setdefault(external_key, []).append(market)
+
+        selected_external_key = select_market_group_external_key(
+            grouped_markets,
+            home_team_name=context["home_team_name"],
+            away_team_name=context["away_team_name"],
+        )
+        if not selected_external_key:
+            continue
+
+        for market in grouped_markets[selected_external_key]:
+            market_type = str(market.get("sports_market_type") or "")
+            if market_type not in {"spreads", "totals"}:
+                continue
+            outcomes = market.get("outcomes") or []
+            if len(outcomes) < 2:
+                continue
+            selection_a = outcomes[0]
+            selection_b = outcomes[1]
+            selection_a_price = selection_a.get("price")
+            selection_b_price = selection_b.get("price")
+            if selection_a_price is None or selection_b_price is None:
+                continue
+            observed_at = (
+                market.get("updated_at")
+                or market.get("start_date")
+                or market["end_date"]
+            )
+            rows.append(
+                {
+                    "id": f"{context['snapshot_id']}_prediction_market_{market_type}_{market.get('slug')}",
+                    "snapshot_id": context["snapshot_id"],
+                    "source_type": "prediction_market",
+                    "source_name": f"polymarket_{market_type}",
+                    "market_family": market_type,
+                    "selection_a_label": str(selection_a.get("name") or ""),
+                    "selection_a_price": float(selection_a_price),
+                    "selection_b_label": str(selection_b.get("name") or ""),
+                    "selection_b_price": float(selection_b_price),
+                    "line_value": market.get("spread"),
+                    "raw_payload": {
+                        "market_slug": market.get("slug"),
+                    },
+                    "observed_at": observed_at,
+                }
+            )
 
     return rows
 
@@ -427,26 +573,45 @@ def build_prediction_market_rows_for_snapshots(
     rows: list[dict[str, Any]] = []
     raw_markets: list[dict[str, Any]] = []
     cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    raw_seen_ids: set[str] = set()
 
     for context in contexts:
         queries = [context["home_team_name"]]
         if context["away_team_name"] != context["home_team_name"]:
             queries.append(context["away_team_name"])
 
-        markets: list[dict[str, Any]] = []
+        moneyline_markets: list[dict[str, Any]] = []
         for query in queries:
             cache_key = (context["competition_sport"], query)
             if cache_key not in cache:
-                cache[cache_key] = fetch_polymarket_markets(
+                typed_markets = fetch_polymarket_markets_for_types(
                     sport=context["competition_sport"],
                     query=query,
                 )
-            markets.extend(cache[cache_key])
+                flattened = []
+                for results in typed_markets.values():
+                    flattened.extend(results)
+                cache[cache_key] = flattened
+                moneyline_markets.extend(typed_markets.get(POLYMARKET_PRIMARY_MARKET_TYPE, []))
+            else:
+                moneyline_markets.extend(
+                    [
+                        market
+                        for market in cache[cache_key]
+                        if market.get("sports_market_type") == POLYMARKET_PRIMARY_MARKET_TYPE
+                    ]
+                )
 
-        deduped_markets = list(
-            {market["id"]: market for market in markets if "id" in market}.values()
+            for market in cache[cache_key]:
+                market_id = str(market.get("id") or "")
+                if not market_id or market_id in raw_seen_ids:
+                    continue
+                raw_seen_ids.add(market_id)
+                raw_markets.append(market)
+
+        deduped_moneyline_markets = list(
+            {market["id"]: market for market in moneyline_markets if "id" in market}.values()
         )
-        raw_markets.extend(deduped_markets)
-        rows.extend(build_prediction_market_rows(deduped_markets, [context]))
+        rows.extend(build_prediction_market_rows(deduped_moneyline_markets, [context]))
 
     return rows, raw_markets

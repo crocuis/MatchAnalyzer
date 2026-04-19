@@ -54,10 +54,30 @@ create table market_probabilities (
   snapshot_id text not null references match_snapshots(id),
   source_type text not null check (source_type in ('bookmaker', 'prediction_market')),
   source_name text not null,
+  market_family text not null default 'moneyline_3way',
   home_prob numeric not null check (home_prob >= 0 and home_prob <= 1),
   draw_prob numeric not null check (draw_prob >= 0 and draw_prob <= 1),
   away_prob numeric not null check (away_prob >= 0 and away_prob <= 1),
+  home_price numeric,
+  draw_price numeric,
+  away_price numeric,
+  raw_payload jsonb not null default '{}'::jsonb,
   check (abs((home_prob + draw_prob + away_prob) - 1) <= 0.000001),
+  observed_at timestamptz not null
+);
+
+create table market_variants (
+  id text primary key,
+  snapshot_id text not null references match_snapshots(id),
+  source_type text not null check (source_type in ('bookmaker', 'prediction_market')),
+  source_name text not null,
+  market_family text not null,
+  selection_a_label text not null,
+  selection_a_price numeric,
+  selection_b_label text not null,
+  selection_b_price numeric,
+  line_value numeric,
+  raw_payload jsonb not null default '{}'::jsonb,
   observed_at timestamptz not null
 );
 

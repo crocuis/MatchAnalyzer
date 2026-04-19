@@ -89,6 +89,15 @@ def test_migration_constrains_core_snapshot_and_probability_fields():
     assert "away_lineup_score numeric" in migration
     assert "lineup_source_summary text" in migration
     assert "source_type text not null check (source_type in ('bookmaker', 'prediction_market'))" in migration
+    assert "market_family text not null" in migration
+    assert "raw_payload jsonb not null" in migration
+    assert "home_price numeric" in migration
+    assert "draw_price numeric" in migration
+    assert "away_price numeric" in migration
+    assert "create table market_variants" in migration
+    assert "selection_a_label text not null" in migration
+    assert "selection_b_label text not null" in migration
+    assert "line_value numeric" in migration
     assert "recommended_pick text not null check (recommended_pick in ('HOME', 'DRAW', 'AWAY'))" in migration
     assert "actual_outcome text not null check (actual_outcome in ('HOME', 'DRAW', 'AWAY'))" in migration
     assert "home_prob numeric not null check (home_prob >= 0 and home_prob <= 1)" in migration
@@ -101,6 +110,87 @@ def test_migration_constrains_core_snapshot_and_probability_fields():
     assert "unique (id, match_id)" in migration
     assert "foreign key (snapshot_id, match_id) references match_snapshots(id, match_id)" in migration
     assert "foreign key (prediction_id, match_id) references predictions(id, match_id)" in migration
+
+
+def test_prediction_feature_snapshot_migration_captures_context_and_metadata():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604190006_prediction_feature_snapshots.sql"
+        ).read_text()
+    )
+
+    assert "create table if not exists prediction_feature_snapshots" in migration
+    assert "prediction_id text not null unique" in migration
+    assert "model_version_id text not null references model_versions(id)" in migration
+    assert "checkpoint_type text not null check (checkpoint_type in ('T_MINUS_24H', 'T_MINUS_6H', 'T_MINUS_1H', 'LINEUP_CONFIRMED'))" in migration
+    assert "feature_context jsonb not null" in migration
+    assert "feature_metadata jsonb not null" in migration
+    assert "source_metadata jsonb not null" in migration
+    assert "foreign key (prediction_id, match_id) references predictions(id, match_id)" in migration
+
+
+def test_model_version_selection_metadata_migration_adds_jsonb_columns():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604190007_model_version_selection_metadata.sql"
+        ).read_text()
+    )
+
+    assert "alter table model_versions add column if not exists selection_metadata jsonb not null default '{}'::jsonb" in migration
+    assert "alter table model_versions add column if not exists training_metadata jsonb not null default '{}'::jsonb" in migration
+
+
+def test_prediction_fusion_policy_migration_creates_latest_policy_table():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604190008_prediction_fusion_policies.sql"
+        ).read_text()
+    )
+
+    assert "create table if not exists prediction_fusion_policies" in migration
+    assert "source_report_id text not null references prediction_source_evaluation_reports(id)" in migration
+    assert "policy_payload jsonb not null" in migration
+    assert "created_at timestamptz not null default now()" in migration
+
+
+def test_post_match_review_aggregation_migration_creates_latest_report_table():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604190009_post_match_review_aggregations.sql"
+        ).read_text()
+    )
+
+    assert "create table if not exists post_match_review_aggregations" in migration
+    assert "report_payload jsonb not null" in migration
+    assert "created_at timestamptz not null default now()" in migration
+
+
+def test_rollout_promotion_decision_migration_creates_latest_and_history_tables():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604190011_rollout_promotion_decisions.sql"
+        ).read_text()
+    )
+
+    assert "create table if not exists rollout_promotion_decisions" in migration
+    assert "decision_payload jsonb not null" in migration
+    assert "create table if not exists rollout_promotion_decision_versions" in migration
+    assert "rollout_channel text not null default 'current'" in migration
+    assert "rollout_version integer not null" in migration
+
+
+def test_rollout_history_support_migration_adds_version_columns_and_history_tables():
+    migration = normalize_sql(
+        Path("supabase/migrations/202604190010_rollout_history_support.sql").read_text()
+    )
+
+    assert "alter table prediction_source_evaluation_reports add column if not exists rollout_channel text not null default 'current'" in migration
+    assert "alter table prediction_source_evaluation_reports add column if not exists rollout_version integer not null default 1" in migration
+    assert "alter table prediction_source_evaluation_reports add column if not exists comparison_payload jsonb not null default '{}'::jsonb" in migration
+    assert "create table if not exists prediction_source_evaluation_report_versions" in migration
+    assert "create table if not exists prediction_fusion_policy_versions" in migration
+    assert "create table if not exists post_match_review_aggregation_versions" in migration
+    assert "source_report_id text not null references prediction_source_evaluation_report_versions(id)" in migration
 
 
 def test_seed_links_competition_teams_and_match():

@@ -58,6 +58,55 @@ def test_train_baseline_model_rejects_classes_with_fewer_than_three_samples():
         train_baseline_model(features, labels)
 
 
+def test_train_baseline_model_records_candidate_comparison_metadata():
+    features = [
+        [0.0, 0.0],
+        [0.1, 0.1],
+        [0.2, 0.2],
+        [0.15, 0.05],
+        [1.0, 1.0],
+        [1.1, 1.1],
+        [1.2, 1.2],
+        [1.05, 0.95],
+        [2.0, 2.0],
+        [2.1, 2.1],
+        [2.2, 2.2],
+        [2.05, 1.95],
+    ]
+    labels = [
+        "HOME",
+        "HOME",
+        "HOME",
+        "HOME",
+        "DRAW",
+        "DRAW",
+        "DRAW",
+        "DRAW",
+        "AWAY",
+        "AWAY",
+        "AWAY",
+        "AWAY",
+    ]
+
+    model = train_baseline_model(features, labels)
+
+    assert model.selected_candidate_ in {
+        "logistic_regression",
+        "hist_gradient_boosting",
+    }
+    assert model.selection_metadata_["selected_candidate"] == model.selected_candidate_
+    assert model.selection_metadata_["selection_metric"] == "neg_log_loss"
+    assert model.selection_metadata_["selection_ran"] is True
+    assert set(model.selection_metadata_["candidate_scores"]) == {
+        "logistic_regression",
+        "hist_gradient_boosting",
+    }
+    assert all(
+        isinstance(score, float)
+        for score in model.selection_metadata_["candidate_scores"].values()
+    )
+
+
 def test_summarize_confidence_buckets_groups_hits_by_bucket():
     summary = summarize_confidence_buckets(
         [

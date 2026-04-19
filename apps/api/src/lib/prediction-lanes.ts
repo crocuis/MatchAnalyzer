@@ -1,0 +1,154 @@
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+export interface MainRecommendation {
+  pick: string;
+  confidence: number | null;
+  recommended: boolean;
+  noBetReason?: string | null;
+}
+
+export interface ValueRecommendation {
+  pick: string;
+  recommended: boolean;
+  edge: number;
+  expectedValue: number;
+  marketPrice: number;
+  modelProbability: number;
+  marketProbability: number;
+  marketSource: string;
+}
+
+export interface VariantMarket {
+  marketFamily: string;
+  sourceName: string;
+  lineValue: number | null;
+  selectionALabel: string;
+  selectionAPrice: number | null;
+  selectionBLabel: string;
+  selectionBPrice: number | null;
+  marketSlug: string | null;
+}
+
+export function normalizeMainRecommendation(
+  explanationPayload: unknown,
+  fallbackPick: string,
+  fallbackConfidence: number,
+): MainRecommendation {
+  const payload = isRecord(explanationPayload) ? explanationPayload : null;
+  const raw = payload?.main_recommendation;
+  if (!isRecord(raw)) {
+    return {
+      pick: fallbackPick,
+      confidence: fallbackConfidence,
+      recommended: true,
+      noBetReason: null,
+    };
+  }
+
+  return {
+    pick: readString(raw.pick) ?? fallbackPick,
+    confidence: readNumber(raw.confidence),
+    recommended: readBoolean(raw.recommended) ?? true,
+    noBetReason: readString(raw.no_bet_reason),
+  };
+}
+
+export function normalizeValueRecommendation(
+  explanationPayload: unknown,
+): ValueRecommendation | null {
+  const payload = isRecord(explanationPayload) ? explanationPayload : null;
+  const raw = payload?.value_recommendation;
+  if (!isRecord(raw)) {
+    return null;
+  }
+
+  const pick = readString(raw.pick);
+  const edge = readNumber(raw.edge);
+  const expectedValue = readNumber(raw.expected_value);
+  const marketPrice = readNumber(raw.market_price);
+  const modelProbability = readNumber(raw.model_probability);
+  const marketProbability = readNumber(raw.market_probability);
+  const marketSource = readString(raw.market_source);
+  const recommended = readBoolean(raw.recommended);
+
+  if (
+    pick === null ||
+    edge === null ||
+    expectedValue === null ||
+    marketPrice === null ||
+    modelProbability === null ||
+    marketProbability === null ||
+    marketSource === null ||
+    recommended === null
+  ) {
+    return null;
+  }
+
+  return {
+    pick,
+    recommended,
+    edge,
+    expectedValue,
+    marketPrice,
+    modelProbability,
+    marketProbability,
+    marketSource,
+  };
+}
+
+export function normalizeVariantMarkets(
+  explanationPayload: unknown,
+): VariantMarket[] {
+  const payload = isRecord(explanationPayload) ? explanationPayload : null;
+  const raw = payload?.variant_markets;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const marketFamily = readString(entry.market_family);
+    const sourceName = readString(entry.source_name);
+    const selectionALabel = readString(entry.selection_a_label);
+    const selectionBLabel = readString(entry.selection_b_label);
+    if (
+      marketFamily === null ||
+      sourceName === null ||
+      selectionALabel === null ||
+      selectionBLabel === null
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        marketFamily,
+        sourceName,
+        lineValue: readNumber(entry.line_value),
+        selectionALabel,
+        selectionAPrice: readNumber(entry.selection_a_price),
+        selectionBLabel,
+        selectionBPrice: readNumber(entry.selection_b_price),
+        marketSlug: readString(entry.market_slug),
+      },
+    ];
+  });
+}

@@ -45,6 +45,12 @@ function deriveReasonTags(explanationPayload?: PredictionExplanationPayload) {
   const lineupStrengthDelta =
     readNumber(featureContext?.lineupStrengthDelta) ??
     readNumber(featureContext?.lineup_strength_delta);
+  const lineupSourceSummary =
+    typeof featureContext?.lineupSourceSummary === "string"
+      ? featureContext.lineupSourceSummary
+      : typeof featureContext?.lineup_source_summary === "string"
+        ? featureContext.lineup_source_summary
+        : null;
 
   if (sourceAgreementRatio !== null && sourceAgreementRatio >= 0.67) {
     tags.push("consensus");
@@ -68,6 +74,8 @@ function deriveReasonTags(explanationPayload?: PredictionExplanationPayload) {
     tags.push("lineupHome");
   } else if (lineupStrengthDelta !== null && lineupStrengthDelta < -0.5) {
     tags.push("lineupAway");
+  } else if (lineupSourceSummary) {
+    tags.push("lineupData");
   }
 
   return tags;
@@ -81,9 +89,17 @@ export default function MatchCard({
   const { t, i18n } = useTranslation();
   const currentLanguage = i18n.language || "en";
   const reasonTags = deriveReasonTags(match.explanationPayload);
-  const pickLabel = match.recommendedPick ?? t("matchCard.metrics.unavailable");
+  const mainRecommendation = match.mainRecommendation ?? null;
+  const valueRecommendation = match.valueRecommendation ?? null;
+  const variantMarkets = match.variantMarkets ?? [];
+  const isNoBet = Boolean(mainRecommendation && !mainRecommendation.recommended);
+  const pickLabel = isNoBet
+    ? t("matchCard.metrics.noBet")
+    : match.recommendedPick ?? t("matchCard.metrics.unavailable");
   const confidenceLabel =
-    match.confidence === null
+    isNoBet
+      ? t("matchCard.metrics.noBet")
+      : match.confidence === null
       ? t("matchCard.metrics.unavailable")
       : `${(match.confidence * 100).toFixed(0)}%`;
 
@@ -95,6 +111,12 @@ export default function MatchCard({
     minute: "2-digit",
     hour12: false,
   });
+  const hasFinalScore =
+    match.finalResult != null &&
+    match.homeScore !== null &&
+    match.homeScore !== undefined &&
+    match.awayScore !== null &&
+    match.awayScore !== undefined;
 
   return (
     <button
@@ -131,7 +153,17 @@ export default function MatchCard({
               <span className="teamName">{match.homeTeam}</span>
             </div>
 
-            <div className="vsDivider">vs</div>
+            <div className="vsDivider">
+              {hasFinalScore ? (
+                <span className="matchScoreInline">
+                  <strong>{match.homeScore}</strong>
+                  <span>-</span>
+                  <strong>{match.awayScore}</strong>
+                </span>
+              ) : (
+                "vs"
+              )}
+            </div>
 
             <div className="teamRow">
               <div className="teamLogo-sm">
@@ -169,6 +201,21 @@ export default function MatchCard({
                 {t(`matchCard.reasonTags.${tag}`)}
               </span>
             ))}
+          </div>
+        ) : null}
+        {valueRecommendation?.recommended ? (
+          <div className="matchCardReasonTags">
+            <span className="matchCardReasonTag">
+              {t("matchCard.valuePick")}
+            </span>
+            <span className="matchCardReasonTag">
+              {`${valueRecommendation.pick} +${(valueRecommendation.expectedValue * 100).toFixed(0)}%`}
+            </span>
+          </div>
+        ) : null}
+        {variantMarkets.length > 0 ? (
+          <div className="matchCardReasonTags">
+            <span className="matchCardReasonTag">{t("matchCard.variantMarkets")}</span>
           </div>
         ) : null}
       </article>

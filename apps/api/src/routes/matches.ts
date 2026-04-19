@@ -2,6 +2,11 @@ import { Hono } from "hono";
 import { deriveMatchStatus } from "@match-analyzer/contracts";
 
 import type { AppBindings } from "../env";
+import {
+  normalizeMainRecommendation,
+  normalizeVariantMarkets,
+  normalizeValueRecommendation,
+} from "../lib/prediction-lanes";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const matches = new Hono<AppBindings>();
@@ -48,10 +53,24 @@ function pickRepresentativePrediction(
   return sorted[0] ?? null;
 }
 
+function pickMarketEnrichedPrediction(
+  predictions: Array<{ explanationPayload: unknown }>,
+) {
+  return (
+    predictions.find(
+      (prediction) =>
+        normalizeValueRecommendation(prediction.explanationPayload) !== null ||
+        normalizeVariantMarkets(prediction.explanationPayload).length > 0,
+    ) ?? null
+  );
+}
+
 export async function loadMatchItems(supabase: ApiSupabaseClient) {
   const { data: matchRows, error } = await supabase
     .from("matches")
-    .select("id, competition_id, kickoff_at, home_team_id, away_team_id, final_result")
+    .select(
+      "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result, home_score, away_score",
+    )
     .order("kickoff_at", { ascending: true })
     .limit(24);
 
@@ -180,10 +199,16 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
   }
   const predictionByMatchId = new Map<
     string,
-    { recommendedPick: string; confidence: number; explanationPayload: unknown } | null
+    {
+      recommendedPick: string;
+      confidence: number;
+      explanationPayload: unknown;
+      marketExplanationPayload: unknown;
+    } | null
   >();
   for (const [matchId, predictions] of predictionCandidatesByMatchId.entries()) {
     const representative = pickRepresentativePrediction(predictions, snapshotsById);
+    const marketEnriched = pickMarketEnrichedPrediction(predictions);
     predictionByMatchId.set(
       matchId,
       representative
@@ -191,6 +216,8 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
             recommendedPick: representative.recommendedPick,
             confidence: representative.confidence,
             explanationPayload: representative.explanationPayload,
+            marketExplanationPayload:
+              marketEnriched?.explanationPayload ?? representative.explanationPayload,
           }
         : null,
     );
@@ -206,6 +233,19 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
   return matchesData.map((match) => {
     const prediction = predictionByMatchId.get(match.id);
     const review = reviewByMatchId.get(match.id);
+    const mainRecommendation = prediction
+      ? normalizeMainRecommendation(
+          prediction.explanationPayload,
+          prediction.recommendedPick,
+          prediction.confidence,
+        )
+      : null;
+    const valueRecommendation = prediction
+      ? normalizeValueRecommendation(prediction.marketExplanationPayload)
+      : null;
+    const variantMarkets = prediction
+      ? normalizeVariantMarkets(prediction.marketExplanationPayload)
+      : [];
     return {
       id: match.id,
       leagueId: match.competition_id,
@@ -217,13 +257,26 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
       awayTeam: teamById.get(match.away_team_id)?.label ?? match.away_team_id,
       awayTeamLogoUrl: teamById.get(match.away_team_id)?.crestUrl ?? null,
       kickoffAt: match.kickoff_at,
+      finalResult: match.final_result,
+      homeScore: match.home_score ?? null,
+      awayScore: match.away_score ?? null,
       status: deriveMatchStatus({
         finalResult: match.final_result,
         hasPrediction: Boolean(prediction),
         needsReview: review?.needsReview ?? false,
       }),
-      recommendedPick: prediction?.recommendedPick ?? null,
-      confidence: prediction?.confidence ?? null,
+      recommendedPick: mainRecommendation?.recommended
+        ? mainRecommendation.pick
+        : null,
+      confidence: mainRecommendation?.recommended
+        ? mainRecommendation.confidence
+        : null,
+      mainRecommendation,
+      valueRecommendation,
+      variantMarkets,
+      noBetReason: mainRecommendation?.recommended
+        ? null
+        : (mainRecommendation?.noBetReason ?? null),
       ...(prediction && typeof prediction.explanationPayload === "object"
         ? { explanationPayload: prediction.explanationPayload }
         : {}),

@@ -7,14 +7,27 @@ import LeagueTabs from "./components/LeagueTabs";
 import MatchDetailModal from "./components/MatchDetailModal";
 import MatchTable from "./components/MatchTable";
 import {
+  fetchLatestRolloutPromotionDecision,
+  fetchLatestPredictionModelRegistry,
   fetchMatches,
   fetchPrediction,
+  fetchPredictionFusionPolicyHistory,
+  fetchPredictionSourceEvaluationHistory,
   fetchReview,
+  fetchReviewAggregationHistory,
   type LeagueSummary,
   type MatchCardRow,
   type MatchReport,
   type PostMatchReview,
+  type PostMatchReviewAggregationReport,
+  type PredictionFusionPolicyHistoryResponse,
+  type PredictionFusionPolicyReport,
+  type PredictionModelRegistryReport,
+  type PredictionSourceEvaluationHistoryResponse,
+  type PredictionSourceEvaluationReport,
+  type RolloutPromotionDecisionReport,
   type PredictionSummary,
+  type ReviewAggregationHistoryResponse,
   type TimelineCheckpoint,
 } from "./lib/api";
 
@@ -99,6 +112,31 @@ export default function App() {
     {},
   );
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [evaluationReport, setEvaluationReport] = useState<
+    PredictionSourceEvaluationReport | null | undefined
+  >(undefined);
+  const [modelRegistryReport, setModelRegistryReport] = useState<
+    PredictionModelRegistryReport | null | undefined
+  >(undefined);
+  const [fusionPolicyReport, setFusionPolicyReport] = useState<
+    PredictionFusionPolicyReport | null | undefined
+  >(undefined);
+  const [reviewAggregationReport, setReviewAggregationReport] = useState<
+    PostMatchReviewAggregationReport | null | undefined
+  >(undefined);
+  const [evaluationHistoryView, setEvaluationHistoryView] = useState<
+    PredictionSourceEvaluationHistoryResponse | null | undefined
+  >(undefined);
+  const [fusionPolicyHistoryView, setFusionPolicyHistoryView] = useState<
+    PredictionFusionPolicyHistoryResponse | null | undefined
+  >(undefined);
+  const [reviewAggregationHistoryView, setReviewAggregationHistoryView] = useState<
+    ReviewAggregationHistoryResponse | null | undefined
+  >(undefined);
+  const [promotionDecisionReport, setPromotionDecisionReport] = useState<
+    RolloutPromotionDecisionReport | null | undefined
+  >(undefined);
+  const [isEvaluationReportLoading, setIsEvaluationReportLoading] = useState(false);
   const isClientValidationEnabled = false;
 
   useEffect(() => {
@@ -182,12 +220,61 @@ export default function App() {
     }
   }
 
+  async function ensureEvaluationReport() {
+    if (
+      (
+        evaluationReport !== undefined &&
+        evaluationHistoryView !== undefined &&
+        modelRegistryReport !== undefined &&
+        fusionPolicyReport !== undefined &&
+        fusionPolicyHistoryView !== undefined &&
+        reviewAggregationReport !== undefined &&
+        reviewAggregationHistoryView !== undefined &&
+        promotionDecisionReport !== undefined
+      ) ||
+      isEvaluationReportLoading
+    ) {
+      return;
+    }
+
+    setIsEvaluationReportLoading(true);
+    try {
+      const [evaluationResponse, registryResponse, fusionPolicyResponse, reviewAggregationResponse, promotionDecisionResponse] = await Promise.all([
+        fetchPredictionSourceEvaluationHistory(),
+        fetchLatestPredictionModelRegistry(),
+        fetchPredictionFusionPolicyHistory(),
+        fetchReviewAggregationHistory(),
+        fetchLatestRolloutPromotionDecision(),
+      ]);
+      setEvaluationHistoryView(evaluationResponse);
+      setEvaluationReport(evaluationResponse.latest);
+      setModelRegistryReport(registryResponse.report);
+      setFusionPolicyHistoryView(fusionPolicyResponse);
+      setFusionPolicyReport(fusionPolicyResponse.latest);
+      setReviewAggregationHistoryView(reviewAggregationResponse);
+      setReviewAggregationReport(reviewAggregationResponse.latest);
+      setPromotionDecisionReport(promotionDecisionResponse.report);
+    } catch {
+      setEvaluationReport(null);
+      setEvaluationHistoryView(null);
+      setModelRegistryReport(null);
+      setFusionPolicyReport(null);
+      setFusionPolicyHistoryView(null);
+      setReviewAggregationReport(null);
+      setReviewAggregationHistoryView(null);
+      setPromotionDecisionReport(null);
+    } finally {
+      setIsEvaluationReportLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!activeMatchId || !isModalOpen) {
       return;
     }
 
     void ensureMatchDetail(activeMatchId);
+    void ensureEvaluationReport();
   }, [activeMatchId, isModalOpen]);
 
   useEffect(() => {
@@ -196,6 +283,7 @@ export default function App() {
     }
 
     void ensureMatchDetail(reportMatchId);
+    void ensureEvaluationReport();
   }, [reportMatchId]);
 
   function handleSelectLeague(leagueId: string) {
@@ -233,6 +321,14 @@ export default function App() {
             match={reportMatch}
             onBack={() => setReportMatchId(null)}
             prediction={reportView.prediction}
+            evaluationReport={evaluationReport ?? null}
+            evaluationHistoryView={evaluationHistoryView ?? null}
+            modelRegistryReport={modelRegistryReport ?? null}
+            fusionPolicyReport={fusionPolicyReport ?? null}
+            fusionPolicyHistoryView={fusionPolicyHistoryView ?? null}
+            reviewAggregationReport={reviewAggregationReport ?? null}
+            reviewAggregationHistoryView={reviewAggregationHistoryView ?? null}
+            promotionDecisionReport={promotionDecisionReport ?? null}
             checkpoints={reportView.checkpoints}
             review={reportView.review}
           />
@@ -300,6 +396,14 @@ export default function App() {
           onClose={handleCloseModal}
           onOpenReport={handleOpenReport}
           prediction={activeDetail?.prediction ?? null}
+          evaluationReport={evaluationReport ?? null}
+          evaluationHistoryView={evaluationHistoryView ?? null}
+          modelRegistryReport={modelRegistryReport ?? null}
+          fusionPolicyReport={fusionPolicyReport ?? null}
+          fusionPolicyHistoryView={fusionPolicyHistoryView ?? null}
+          reviewAggregationReport={reviewAggregationReport ?? null}
+          reviewAggregationHistoryView={reviewAggregationHistoryView ?? null}
+          promotionDecisionReport={promotionDecisionReport ?? null}
           checkpoints={activeDetail?.checkpoints ?? []}
           review={activeDetail?.review ?? null}
         />
