@@ -22,6 +22,7 @@ class Settings:
     supabase_url: str
     supabase_key: str
     r2_bucket: str
+    rollout_ramp_sequence: tuple[int, ...] = (25, 50, 100)
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None
     r2_s3_endpoint: str | None = None
@@ -69,11 +70,30 @@ def load_settings() -> Settings:
             "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY or SUPABASE_PUBLISHABLE_KEY"
         )
 
+    rollout_ramp_raw = env("ROLLOUT_RAMP_SEQUENCE")
+    rollout_ramp_sequence = (25, 50, 100)
+    if rollout_ramp_raw:
+        parsed_sequence = tuple(
+            int(part.strip())
+            for part in rollout_ramp_raw.split(",")
+            if part.strip()
+        )
+        if not parsed_sequence:
+            raise ValueError("ROLLOUT_RAMP_SEQUENCE must contain at least one integer")
+        if sorted(parsed_sequence) != list(parsed_sequence):
+            raise ValueError("ROLLOUT_RAMP_SEQUENCE must be sorted ascending")
+        if len(set(parsed_sequence)) != len(parsed_sequence):
+            raise ValueError("ROLLOUT_RAMP_SEQUENCE must not contain duplicates")
+        if parsed_sequence[0] <= 0 or parsed_sequence[-1] != 100:
+            raise ValueError("ROLLOUT_RAMP_SEQUENCE must end at 100 and stay above 0")
+        rollout_ramp_sequence = parsed_sequence
+
     return Settings(
         supabase_url=env("SUPABASE_URL")
         or (_ for _ in ()).throw(KeyError("SUPABASE_URL")),
         supabase_key=supabase_key,
         r2_bucket=env("R2_BUCKET") or (_ for _ in ()).throw(KeyError("R2_BUCKET")),
+        rollout_ramp_sequence=rollout_ramp_sequence,
         r2_access_key_id=env("R2_ACCESS_KEY_ID"),
         r2_secret_access_key=env("R2_SECRET_ACCESS_KEY"),
         r2_s3_endpoint=env("R2_S3_ENDPOINT"),

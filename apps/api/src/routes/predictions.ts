@@ -2,6 +2,10 @@ import { Hono } from "hono";
 
 import type { AppBindings } from "../env";
 import {
+  loadRolloutLaneSummaries,
+  type RolloutLaneSummary as HistoryLaneSummary,
+} from "../lib/rollout-lane-states";
+import {
   normalizeMainRecommendation,
   normalizeVariantMarkets,
   normalizeValueRecommendation,
@@ -72,14 +76,6 @@ type PredictionFusionPolicyReport = {
     byMarketSegment?: Record<string, Record<string, number>>;
     byCheckpointMarketSegment?: Record<string, Record<string, Record<string, number>>>;
   };
-};
-
-type HistoryLaneSummary = {
-  status: string | null;
-  baseline: string | null;
-  candidate: string | null;
-  summary: string | null;
-  trafficPercent: number | null;
 };
 
 type ReportHistoryEntry<T> = {
@@ -540,6 +536,7 @@ export async function loadLatestPredictionSourceEvaluationView(
 export async function loadPredictionSourceEvaluationHistoryView(
   supabase: ApiSupabaseClient,
 ): Promise<PredictionSourceEvaluationHistoryView> {
+  const laneSummaries = await loadRolloutLaneSummaries(supabase);
   for (const tableName of predictionSourceEvaluationTables) {
     const { data, error } = await fetchPredictionSourceEvaluationRows(
       supabase,
@@ -566,7 +563,7 @@ export async function loadPredictionSourceEvaluationHistoryView(
       latest: history[0]?.report ?? null,
       previous: history[1]?.report ?? null,
       history,
-      shadow: normalizeHistoryLaneSummary(
+      shadow: laneSummaries.shadow ?? normalizeHistoryLaneSummary(
         latestPayload?.shadow ??
           latestPayload?.shadowSummary ??
           latestPayload?.shadow_summary ??
@@ -574,7 +571,7 @@ export async function loadPredictionSourceEvaluationHistoryView(
           latestRow?.shadowSummary ??
           latestRow?.shadow_summary,
       ),
-      rollout: normalizeHistoryLaneSummary(
+      rollout: laneSummaries.rollout ?? normalizeHistoryLaneSummary(
         latestPayload?.rollout ??
           latestPayload?.rolloutSummary ??
           latestPayload?.rollout_summary ??
@@ -641,6 +638,7 @@ export async function loadLatestPredictionFusionPolicyView(
 export async function loadPredictionFusionPolicyHistoryView(
   supabase: ApiSupabaseClient,
 ): Promise<PredictionFusionPolicyHistoryView> {
+  const laneSummaries = await loadRolloutLaneSummaries(supabase);
   const { data, error } = await supabase
     .from("prediction_fusion_policies")
     .select("*")
@@ -671,7 +669,7 @@ export async function loadPredictionFusionPolicyHistoryView(
     latest: history[0]?.report ?? null,
     previous: history[1]?.report ?? null,
     history,
-    shadow: normalizeHistoryLaneSummary(
+    shadow: laneSummaries.shadow ?? normalizeHistoryLaneSummary(
       latestPayload?.shadow ??
         latestPayload?.shadowSummary ??
         latestPayload?.shadow_summary ??
@@ -679,7 +677,7 @@ export async function loadPredictionFusionPolicyHistoryView(
         latestRow?.shadowSummary ??
         latestRow?.shadow_summary,
     ),
-    rollout: normalizeHistoryLaneSummary(
+    rollout: laneSummaries.rollout ?? normalizeHistoryLaneSummary(
       latestPayload?.rollout ??
         latestPayload?.rolloutSummary ??
         latestPayload?.rollout_summary ??

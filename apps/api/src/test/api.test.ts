@@ -179,62 +179,87 @@ describe("prediction API", () => {
   });
 
   it("builds current/previous source evaluation history views with optional shadow and rollout metadata", async () => {
-    const historyQuery = {
-      select: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue({
-        data: [
-          {
-            id: "eval-2",
-            created_at: "2026-04-29T08:30:00Z",
-            report_payload: {
-              generated_at: "2026-04-29T08:30:00Z",
-              snapshots_evaluated: 12,
-              rows_evaluated: 40,
-              overall: {
-                current_fused: {
-                  count: 12,
-                  hit_rate: 0.75,
-                  avg_brier_score: 0.1812,
-                  avg_log_loss: 0.5511,
-                },
-              },
-              shadow: {
-                status: "running",
-                baseline: "current_fused",
-                candidate: "shadow_candidate_v2",
-                summary: "Shadow evaluation in progress",
-              },
-              rollout: {
-                status: "ramped",
-                traffic_percent: 25,
-                summary: "Rollout increased to 25%",
+    const historyLimit = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "eval-2",
+          created_at: "2026-04-29T08:30:00Z",
+          report_payload: {
+            generated_at: "2026-04-29T08:30:00Z",
+            snapshots_evaluated: 12,
+            rows_evaluated: 40,
+            overall: {
+              current_fused: {
+                count: 12,
+                hit_rate: 0.75,
+                avg_brier_score: 0.1812,
+                avg_log_loss: 0.5511,
               },
             },
           },
-          {
-            id: "eval-1",
-            created_at: "2026-04-22T08:30:00Z",
-            report_payload: {
-              generated_at: "2026-04-22T08:30:00Z",
-              snapshots_evaluated: 9,
-              rows_evaluated: 30,
-              overall: {
-                current_fused: {
-                  count: 9,
-                  hit_rate: 0.67,
-                  avg_brier_score: 0.2012,
-                  avg_log_loss: 0.5844,
-                },
+        },
+        {
+          id: "eval-1",
+          created_at: "2026-04-22T08:30:00Z",
+          report_payload: {
+            generated_at: "2026-04-22T08:30:00Z",
+            snapshots_evaluated: 9,
+            rows_evaluated: 30,
+            overall: {
+              current_fused: {
+                count: 9,
+                hit_rate: 0.67,
+                avg_brier_score: 0.2012,
+                avg_log_loss: 0.5844,
               },
             },
           },
-        ],
-        error: null,
-      }),
-    };
-
-    const from = vi.fn(() => historyQuery);
+        },
+      ],
+      error: null,
+    });
+    const laneLimit = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "shadow",
+          rollout_channel: "shadow",
+          lane_payload: {
+            status: "running",
+            baseline: "current_fused",
+            candidate: "shadow_candidate_v2",
+            summary: "Shadow evaluation in progress",
+          },
+        },
+        {
+          id: "rollout",
+          rollout_channel: "rollout",
+          lane_payload: {
+            status: "ramped",
+            traffic_percent: 25,
+            summary: "Rollout increased to 25%",
+          },
+        },
+      ],
+      error: null,
+    });
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "prediction_source_evaluation_reports") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          order: vi.fn().mockReturnThis(),
+          limit: historyLimit,
+          eq: vi.fn().mockReturnThis(),
+        };
+      }
+      if (tableName === "rollout_lane_states") {
+        return {
+          select: vi.fn().mockReturnThis(),
+          in: vi.fn().mockReturnThis(),
+          limit: laneLimit,
+        };
+      }
+      throw new Error(`unexpected table ${tableName}`);
+    });
     const view = await loadPredictionSourceEvaluationHistoryView({ from } as never);
 
     expect(view.latest?.generatedAt).toBe("2026-04-29T08:30:00Z");

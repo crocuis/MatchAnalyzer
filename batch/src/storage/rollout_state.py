@@ -26,20 +26,42 @@ def read_latest_rollout_row(
     *,
     rollout_channel: str = DEFAULT_ROLLOUT_CHANNEL,
 ) -> dict | None:
+    preferred_ids = [latest_record_id_for_channel(rollout_channel)]
+    if LATEST_RECORD_ID not in preferred_ids:
+        preferred_ids.append(LATEST_RECORD_ID)
     latest_rows = [
         row
         for row in rows
-        if row.get("id") == LATEST_RECORD_ID
+        if row.get("id") in preferred_ids
         and str(row.get("rollout_channel") or DEFAULT_ROLLOUT_CHANNEL)
         == rollout_channel
     ]
     if latest_rows:
         return max(latest_rows, key=lambda row: int(row.get("rollout_version") or 0))
 
+    if rollout_channel != DEFAULT_ROLLOUT_CHANNEL:
+        return None
+
     fallback_rows = [row for row in rows if row.get("id") == LATEST_RECORD_ID]
     if not fallback_rows:
         return None
     return max(fallback_rows, key=lambda row: int(row.get("rollout_version") or 0))
+
+
+def read_latest_rollout_version_row(
+    rows: list[dict],
+    *,
+    rollout_channel: str = DEFAULT_ROLLOUT_CHANNEL,
+) -> dict | None:
+    matching_rows = [
+        row
+        for row in rows
+        if str(row.get("rollout_channel") or DEFAULT_ROLLOUT_CHANNEL)
+        == rollout_channel
+    ]
+    if not matching_rows:
+        return None
+    return max(matching_rows, key=lambda row: int(row.get("rollout_version") or 0))
 
 
 def next_rollout_version(
@@ -66,6 +88,12 @@ def build_history_row_id(
     rollout_version: int,
 ) -> str:
     return f"{table_name}_{rollout_channel}_v{rollout_version}"
+
+
+def latest_record_id_for_channel(rollout_channel: str) -> str:
+    if rollout_channel == DEFAULT_ROLLOUT_CHANNEL:
+        return LATEST_RECORD_ID
+    return f"{LATEST_RECORD_ID}_{rollout_channel}"
 
 
 def stamp_rollout_row(
