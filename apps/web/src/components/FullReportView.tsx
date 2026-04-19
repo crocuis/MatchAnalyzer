@@ -10,9 +10,9 @@ import PredictionCard from "./PredictionCard";
 
 interface FullReportViewProps {
   match: MatchCardRow;
-  prediction: PredictionSummary;
+  prediction: PredictionSummary | null;
   checkpoints: TimelineCheckpoint[];
-  review: PostMatchReview;
+  review: PostMatchReview | null;
   onBack: () => void;
 }
 
@@ -41,11 +41,15 @@ export default function FullReportView({
       <div className="reportBody">
         <div className="contentPanel">
           <h2>Prediction summary</h2>
-          <PredictionCard
-            confidence={match.confidence}
-            prediction={prediction}
-            recommendedPick={match.recommendedPick}
-          />
+          {prediction ? (
+            <PredictionCard
+              confidence={prediction.confidence ?? match.confidence}
+              prediction={prediction}
+              recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
+            />
+          ) : (
+            <p>No prediction is available for this match yet.</p>
+          )}
         </div>
 
         <div className="contentPanel">

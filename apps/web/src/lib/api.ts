@@ -51,9 +51,9 @@ export interface MatchReport {
   matchId: string;
   title: string;
   status: string;
-  prediction: PredictionSummary;
+  prediction: PredictionSummary | null;
   checkpoints: TimelineCheckpoint[];
-  review: PostMatchReview;
+  review: PostMatchReview | null;
 }
 
 const API_BASE_PATH = "/api";

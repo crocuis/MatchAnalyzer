@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 
 import type { AppBindings } from "../env";
-import { getSupabaseClient } from "../lib/supabase";
+import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const predictions = new Hono<AppBindings>();
 
@@ -12,19 +12,14 @@ const checkpointOrder: Record<string, number> = {
   LINEUP_CONFIRMED: 3,
 };
 
-predictions.get("/:matchId", async (c) => {
-  const matchId = c.req.param("matchId");
-  const supabase = getSupabaseClient(c.env);
-
-  if (!supabase) {
-    return c.json({
-      matchId,
-      prediction: null,
-      checkpoints: [],
-    });
-  }
-
-  const [{ data: predictionRows }, { data: snapshotRows }] = await Promise.all([
+export async function loadPredictionView(
+  supabase: ApiSupabaseClient,
+  matchId: string,
+) {
+  const [
+    { data: predictionRows, error: predictionsError },
+    { data: snapshotRows, error: snapshotsError },
+  ] = await Promise.all([
     supabase
       .from("predictions")
       .select(
@@ -38,6 +33,10 @@ predictions.get("/:matchId", async (c) => {
       .eq("match_id", matchId),
   ]);
 
+  if (predictionsError || snapshotsError) {
+    throw new Error("prediction queries failed");
+  }
+
   const snapshotsById = new Map((snapshotRows ?? []).map((row) => [row.id, row]));
   const sortedPredictions = [...(predictionRows ?? [])].sort((left, right) => {
     const leftSnapshot = snapshotsById.get(left.snapshot_id);
@@ -48,7 +47,6 @@ predictions.get("/:matchId", async (c) => {
   });
 
   const latestPrediction = sortedPredictions[0] ?? null;
-
   const checkpoints = (snapshotRows ?? [])
     .sort(
       (left, right) =>
@@ -77,7 +75,7 @@ predictions.get("/:matchId", async (c) => {
       };
     });
 
-  return c.json({
+  return {
     matchId,
     prediction: latestPrediction
       ? {
@@ -94,7 +92,32 @@ predictions.get("/:matchId", async (c) => {
         }
       : null,
     checkpoints,
-  });
+  };
+}
+
+predictions.get("/:matchId", async (c) => {
+  const matchId = c.req.param("matchId");
+  const supabase = getSupabaseClient(c.env);
+
+  if (!supabase) {
+    return c.json({
+      matchId,
+      prediction: null,
+      checkpoints: [],
+    });
+  }
+  try {
+    return c.json(await loadPredictionView(supabase, matchId));
+  } catch {
+    return c.json(
+      {
+        matchId,
+        prediction: null,
+        checkpoints: [],
+      },
+      500,
+    );
+  }
 });
 
 export default predictions;

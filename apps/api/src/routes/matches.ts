@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 
 import type { AppBindings } from "../env";
-import { getSupabaseClient } from "../lib/supabase";
+import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const matches = new Hono<AppBindings>();
 
@@ -26,13 +26,7 @@ function deriveMatchStatus({
   return "Scheduled";
 }
 
-matches.get("/", async (c) => {
-  const supabase = getSupabaseClient(c.env);
-
-  if (!supabase) {
-    return c.json({ items: [] });
-  }
-
+export async function loadMatchItems(supabase: ApiSupabaseClient) {
   const { data: matchRows, error } = await supabase
     .from("matches")
     .select("id, competition_id, kickoff_at, home_team_id, away_team_id, final_result")
@@ -40,12 +34,12 @@ matches.get("/", async (c) => {
     .limit(24);
 
   if (error) {
-    return c.json({ items: [] }, 500);
+    throw new Error(`matches query failed: ${error.message}`);
   }
 
   const matchesData = matchRows ?? [];
   if (matchesData.length === 0) {
-    return c.json({ items: [] });
+    return [];
   }
 
   const competitionIds = [...new Set(matchesData.map((match) => match.competition_id))];
@@ -56,21 +50,29 @@ matches.get("/", async (c) => {
   ];
   const matchIds = matchesData.map((match) => match.id);
 
-  const [{ data: competitions }, { data: teams }, { data: predictionRows }, { data: reviewRows }] =
-    await Promise.all([
-      supabase.from("competitions").select("id, name").in("id", competitionIds),
-      supabase.from("teams").select("id, name").in("id", teamIds),
-      supabase
-        .from("predictions")
-        .select("match_id, recommended_pick, confidence_score, created_at")
-        .in("match_id", matchIds)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("post_match_reviews")
-        .select("match_id, cause_tags, created_at")
-        .in("match_id", matchIds)
-        .order("created_at", { ascending: false }),
-    ]);
+  const [
+    { data: competitions, error: competitionsError },
+    { data: teams, error: teamsError },
+    { data: predictionRows, error: predictionsError },
+    { data: reviewRows, error: reviewsError },
+  ] = await Promise.all([
+    supabase.from("competitions").select("id, name").in("id", competitionIds),
+    supabase.from("teams").select("id, name").in("id", teamIds),
+    supabase
+      .from("predictions")
+      .select("match_id, recommended_pick, confidence_score, created_at")
+      .in("match_id", matchIds)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("post_match_reviews")
+      .select("match_id, cause_tags, created_at")
+      .in("match_id", matchIds)
+      .order("created_at", { ascending: false }),
+  ]);
+
+  if (competitionsError || teamsError || predictionsError || reviewsError) {
+    throw new Error("related match queries failed");
+  }
 
   const competitionById = new Map((competitions ?? []).map((row) => [row.id, row.name]));
   const teamById = new Map((teams ?? []).map((row) => [row.id, row.name]));
@@ -91,7 +93,7 @@ matches.get("/", async (c) => {
     }
   }
 
-  const items = matchesData.map((match) => {
+  return matchesData.map((match) => {
     const prediction = predictionByMatchId.get(match.id);
     const review = reviewByMatchId.get(match.id);
     return {
@@ -111,8 +113,20 @@ matches.get("/", async (c) => {
       needsReview: review?.needsReview ?? false,
     };
   });
+}
 
-  return c.json({ items });
+matches.get("/", async (c) => {
+  const supabase = getSupabaseClient(c.env);
+
+  if (!supabase) {
+    return c.json({ items: [] });
+  }
+  try {
+    const items = await loadMatchItems(supabase);
+    return c.json({ items });
+  } catch {
+    return c.json({ items: [] }, 500);
+  }
 });
 
 export default matches;

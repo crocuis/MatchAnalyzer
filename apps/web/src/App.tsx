@@ -49,7 +49,7 @@ function buildReport(
   match: MatchCardRow,
   detail: MatchDetailState | undefined,
 ): MatchReport | null {
-  if (!detail?.prediction || !detail.review) {
+  if (!detail) {
     return null;
   }
 
@@ -151,13 +151,7 @@ export default function App() {
         [matchId]: {
           prediction: predictionResponse.prediction,
           checkpoints: predictionResponse.checkpoints,
-          review:
-            reviewResponse.review ??
-            ({
-              matchId,
-              outcome: "Awaiting review",
-              summary: "Post-match review is not available for this match yet.",
-            } satisfies PostMatchReview),
+          review: reviewResponse.review,
         },
       }));
     } finally {

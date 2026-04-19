@@ -75,7 +75,7 @@ export default function MatchDetailModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen || !match || !prediction || !review) {
+  if (!isOpen || !match) {
     return null;
   }
 
@@ -110,11 +110,18 @@ export default function MatchDetailModal({
         </header>
 
         <div className="modalBody">
-          <PredictionCard
-            confidence={match.confidence}
-            prediction={prediction}
-            recommendedPick={match.recommendedPick}
-          />
+          {prediction ? (
+            <PredictionCard
+              confidence={prediction.confidence ?? match.confidence}
+              prediction={prediction}
+              recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
+            />
+          ) : (
+            <section className="contentPanel">
+              <p className="panelTitle">Prediction summary</p>
+              <p>No prediction is available for this match yet.</p>
+            </section>
+          )}
           <PostMatchReviewCard review={review} />
           <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
           <button
