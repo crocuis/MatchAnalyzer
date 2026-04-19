@@ -1,6 +1,5 @@
 :root {
   color-scheme: light;
-  /* Premium Font Stack: English (Jakarta/Inter) + Korean (Pretendard) */
   --font-sans: 'Inter', 'Pretendard', system-ui, -apple-system, sans-serif;
   --font-display: 'Plus Jakarta Sans', 'Pretendard', var(--font-sans);
 
@@ -25,8 +24,8 @@
   font-family: var(--font-sans);
   color: var(--text-primary);
   background: var(--bg-app);
-  line-height: 1.6; /* Balanced line height for Korean */
-  letter-spacing: -0.015em; /* Tighter letter spacing for premium look */
+  line-height: 1.6;
+  letter-spacing: -0.015em;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -131,6 +130,9 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   font-size: 9px; font-weight: 800; text-transform: uppercase; color: var(--text-muted);
   letter-spacing: 0.1em; display: flex; align-items: center; gap: 8px;
 }
+.matchScoreInline {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 1rem; color: var(--text-primary);
+}
 .vsDivider::after { content: ""; height: 1px; flex-grow: 1; background: linear-gradient(90deg, #f1f5f9 0%, transparent 100%); }
 
 /* Badges */
@@ -142,6 +144,11 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   letter-spacing: 0.03em; box-shadow: 0 4px 10px rgba(244, 63, 94, 0.08);
 }
 .reviewBadge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background-color: var(--accent-danger); animation: pulse-red 2s infinite; }
+.reviewMetaChips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.reviewMetaChip {
+  padding: 6px 10px; border-radius: 999px; background: white; color: var(--accent-danger);
+  border: 1px solid #fecaca; font-size: 11px; font-weight: 700;
+}
 
 @keyframes pulse-red {
   0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.5); }
@@ -149,20 +156,60 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
 }
 
+/* Visual Components: Gauges & Charts */
+.infographicContainer {
+  display: flex; gap: 32px; align-items: center; flex-wrap: wrap;
+}
+
+.radialGauge {
+  position: relative; width: 120px; height: 120px; display: flex; align-items: center; justify-content: center;
+}
+.gaugeSvg { transform: rotate(-90deg); width: 100%; height: 100%; }
+.gaugeCircle-bg { fill: none; stroke: #f1f5f9; stroke-width: 8; }
+.gaugeCircle-val {
+  fill: none; stroke: var(--accent-primary); stroke-width: 8; stroke-linecap: round;
+  transition: stroke-dasharray 1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.gaugeText {
+  position: absolute; display: flex; flex-direction: column; align-items: center;
+}
+.gaugeValue { font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; color: var(--text-primary); line-height: 1; }
+.gaugeLabel { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+
+.probabilityMap {
+  flex-grow: 1; min-width: 300px; display: flex; flex-direction: column; gap: 12px;
+}
+.probabilitySpectrum {
+  height: 24px; border-radius: 12px; display: flex; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+}
+.spectrumSegment {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  color: white; font-size: 10px; font-weight: 800; transition: width 0.8s ease;
+}
+.segment-home { background: linear-gradient(to right, #4f46e5, #6366f1); }
+.segment-draw { background: #94a3b8; }
+.segment-away { background: linear-gradient(to right, #f43f5e, #fb7185); }
+
+.probabilityLegend { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+
+/* Radar Chart (Simplified SVG) */
+.radarContainer {
+  padding: 20px; background: white; border-radius: 20px; border: 1px solid #f1f5f9;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.radarTitle { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; }
+
 /* Metrics */
 .matchCardMetrics {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
   margin-top: auto; padding-top: 20px; border-top: 1px solid rgba(0,0,0,0.04);
 }
-.matchCardReasonTags {
-  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px;
-}
-.matchCardReasonTag {
-  padding: 6px 10px; border-radius: 999px; background: #eef2ff; color: var(--accent-primary);
-  font-size: 11px; font-weight: 800; letter-spacing: 0.01em;
-}
 .metricLabel { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: block; }
 .metricValue { font-family: var(--font-display); font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+
+/* Shared Content Panels */
+.contentPanel { padding: 24px; border-radius: 24px; background: #f8fafc; border: 1px solid #f1f5f9; }
+.panelTitle { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; display: block; }
 
 /* Modal */
 .detailOverlay {
@@ -190,70 +237,165 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 .modalBody { padding: 32px 40px 40px; overflow-y: auto; display: grid; gap: 24px; }
 
-/* Modal Content Panels */
-.contentPanel { padding: 24px; border-radius: 24px; background: #f8fafc; border: 1px solid #f1f5f9; }
-.panelTitle { font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; display: block; }
+/* Full Report Page Styles */
+.reportPage { min-height: 100vh; padding: 40px 24px 100px; max-width: 1200px; margin: 0 auto; animation: fadeIn 0.5s ease-out; }
 
-/* Prediction Pick Large */
-.predictionHero-lg { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px; }
-.predictionPickValue-lg {
-  font-family: var(--font-display); font-size: 2.2rem; font-weight: 800;
-  color: var(--accent-primary); line-height: 1; letter-spacing: -0.04em;
+.reportNav { margin-bottom: 32px; }
+.backBtn {
+  display: flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 12px;
+  background: white; border: 1px solid var(--border-subtle); color: var(--text-secondary);
+  font-weight: 700; font-size: 14px; box-shadow: var(--shadow-sm);
 }
-.confidenceBreakdown {
-  margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;
+.backBtn:hover { transform: translateX(-4px); color: var(--accent-primary); border-color: var(--accent-secondary); }
+
+.reportHero {
+  background: white; border: 1px solid var(--border-subtle); border-radius: 40px;
+  padding: 60px 40px; margin-bottom: 40px; text-align: center;
+  box-shadow: var(--shadow-card); position: relative; overflow: hidden;
 }
-.confidenceBreakdownGrid {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
-}
-.confidenceBreakdownItem {
-  padding: 14px; border-radius: 14px; background: #fff; border: 1px solid #e2e8f0;
-}
-.confidenceBreakdownItem strong {
-  display: block; font-family: var(--font-display); font-size: 1rem; color: var(--text-primary);
-}
-.confidenceBreakdownSignals {
-  grid-column: 1 / -1;
-}
-.confidenceSignalList {
-  display: flex; flex-wrap: wrap; gap: 8px;
-}
-.confidenceCalibrationList {
-  display: grid; gap: 10px;
-}
-.confidenceCalibrationRow {
-  display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px;
-  border-radius: 12px; background: #f8fafc; border: 1px solid #e2e8f0;
-}
-.confidenceCalibrationRow span {
-  color: var(--text-secondary); font-size: 12px; text-align: right;
-}
-.confidenceSignalChip {
-  padding: 6px 10px; border-radius: 999px; background: #eef2ff; color: var(--accent-primary);
-  font-size: 12px; font-weight: 700;
+.reportHero::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(circle at top right, rgba(79, 70, 229, 0.03), transparent 40%);
 }
 
-/* Probability Bars */
-.probabilityRow { padding: 12px; border-radius: 12px; background: #f8fafc; border: 1px solid transparent; transition: all 0.2s ease; margin-bottom: 4px; }
-.probabilityRow:hover { border-color: var(--accent-secondary); background: #fff; }
-.probabilityTrack { height: 8px; background: #e2e8f0; border-radius: 4px; margin-top: 8px; overflow: hidden; }
-.probabilityFill { height: 100%; transition: width 1s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.reportHeroMeta { display: flex; flex-direction: column; gap: 12px; margin-bottom: 40px; align-items: center; }
+.reportEyebrow { font-size: 14px; font-weight: 800; color: var(--accent-primary); text-transform: uppercase; letter-spacing: 0.15em; }
+.reportDate { color: var(--text-muted); font-weight: 600; font-size: 1.1rem; }
 
-.fillHome { background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary)); }
-.fillDraw { background: var(--text-muted); }
-.fillAway { background: linear-gradient(90deg, var(--accent-danger), #fb7185); }
-
-/* Buttons */
-.primaryButton {
-  background: var(--accent-primary); color: #fff; padding: 14px 28px; border-radius: 16px;
-  font-weight: 700; font-size: 15px; box-shadow: 0 10px 20px rgba(79, 70, 229, 0.15);
-  width: 100%; text-align: center;
+.reportScoreboard {
+  display: flex; align-items: center; justify-content: center; gap: 60px; margin-bottom: 40px;
 }
-.primaryButton:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(79, 70, 229, 0.25); }
+.reportTeam { display: flex; flex-direction: column; align-items: center; gap: 20px; flex: 1; }
+.reportTeamLogo {
+  width: 100px; height: 100px; border-radius: 32px; background: #f8fafc;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 40px; font-weight: 800; color: var(--accent-primary);
+  border: 1px solid rgba(0,0,0,0.05); box-shadow: var(--shadow-lg);
+}
+.reportTeamLogo img { width: 70%; height: 70%; object-fit: contain; }
+.reportTeamName { font-family: var(--font-display); font-size: 2.4rem; font-weight: 800; margin: 0; line-height: 1.1; letter-spacing: -0.04em; }
+
+.reportVs { font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; color: var(--text-muted); opacity: 0.3; font-style: italic; }
+.reportFinalScore {
+  display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display);
+  font-size: 2.4rem; font-weight: 800; color: var(--text-primary); opacity: 1; font-style: normal;
+}
+
+.reportStatusStrip { display: flex; justify-content: center; gap: 16px; align-items: center; }
+.leagueLabel { font-weight: 700; color: var(--text-secondary); font-size: 1rem; }
+
+.reportGrid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 40px; }
+.reportSection { display: flex; flex-direction: column; gap: 16px; margin-bottom: 40px; }
+.comparisonGrid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+}
+.comparisonItem {
+  padding: 16px; border-radius: 18px; background: white; border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+.comparisonItemWide { grid-column: 1 / -1; }
+.comparisonItem strong {
+  display: block; font-family: var(--font-display); font-size: 1.1rem; color: var(--text-primary);
+}
+.comparisonDelta {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+.sourcePerformancePanel {
+  padding: 24px;
+  border-radius: 24px;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.sourcePerformanceMeta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.sourceMetaCard {
+  padding: 16px;
+  border-radius: 18px;
+  background: white;
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+.sourceMetaCard strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+}
+.sourceMetricGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sourceMetricBadge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sourceMetricList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sourceMetricRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: white;
+  border: 1px solid var(--border-subtle);
+}
+.sourceMetricRow strong {
+  text-transform: capitalize;
+}
+.sourceMetricRow span {
+  color: var(--text-secondary);
+  text-align: right;
+}
+.sourceComparisonGrid {
+  margin-top: -2px;
+}
+
+.timelineContainer {
+  background: white; border: 1px solid var(--border-subtle); border-radius: 28px; padding: 8px;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 1000px) {
+  .reportGrid { grid-template-columns: 1fr; }
+  .reportScoreboard { gap: 30px; }
+  .reportTeamName { font-size: 1.8rem; }
+  .sourceMetricRow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .sourceMetricRow span {
+    text-align: left;
+  }
+}
 
 @media (min-width: 768px) { .matchGrid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px) {
   .dashboardApp { padding: 32px 16px; }
   .modalHeader, .modalBody { padding: 24px; }
-  .confidenceBreakdownGrid { grid-template-columns: 1fr; }
+  .reportHero { padding: 40px 20px; }
+  .reportScoreboard { flex-direction: column; gap: 20px; }
+  .reportVs { display: none; }
+  .infographicContainer { flex-direction: column; }
 }

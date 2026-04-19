@@ -11,6 +11,7 @@ from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_markets import (
     build_prediction_market_rows,
+    build_prediction_market_variant_rows,
     polymarket_sport_for_competition,
 )
 from batch.src.ingest.normalizers import normalize_team_name
@@ -1145,9 +1146,18 @@ def test_build_prediction_market_rows_creates_one_three_way_row_per_snapshot():
             "snapshot_id": "740909_t_minus_24h",
             "source_type": "prediction_market",
             "source_name": "polymarket_moneyline_3way",
+            "market_family": "moneyline_3way",
             "home_prob": 0.41,
             "draw_prob": 0.26,
             "away_prob": 0.33,
+            "home_price": 0.41,
+            "draw_price": 0.26,
+            "away_price": 0.33,
+            "raw_payload": {
+                "away_market_slug": "epl-che-mci-2026-04-12-mci",
+                "draw_market_slug": "epl-che-mci-2026-04-12-draw",
+                "home_market_slug": "epl-che-mci-2026-04-12-che",
+            },
             "observed_at": "2026-04-12T15:30:00Z",
         }
     ]
@@ -1330,11 +1340,110 @@ def test_build_prediction_market_rows_uses_single_fuzzy_candidate_when_exact_mat
             "snapshot_id": "psg-bayern_t_minus_24h",
             "source_type": "prediction_market",
             "source_name": "polymarket_moneyline_3way",
+            "market_family": "moneyline_3way",
             "home_prob": 0.44,
             "draw_prob": 0.24,
             "away_prob": 0.32,
+            "home_price": 0.44,
+            "draw_price": 0.24,
+            "away_price": 0.32,
+            "raw_payload": {
+                "away_market_slug": "ucl-psg1-bay1-2026-04-28-bay1",
+                "draw_market_slug": "ucl-psg1-bay1-2026-04-28-draw",
+                "home_market_slug": "ucl-psg1-bay1-2026-04-28-psg1",
+            },
             "observed_at": "2026-04-28T19:00:00Z",
         }
+    ]
+
+
+def test_build_prediction_market_variant_rows_extracts_spreads_and_totals():
+    rows = build_prediction_market_variant_rows(
+        markets=[
+            {
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.41}, {"name": "No", "price": 0.59}],
+            },
+            {
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.26}, {"name": "No", "price": 0.74}],
+            },
+            {
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.33}, {"name": "No", "price": 0.67}],
+            },
+            {
+                "question": "Chelsea -0.5 vs Manchester City +0.5",
+                "slug": "epl-che-mci-2026-04-12-spread",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "spreads",
+                "spread": -0.5,
+                "outcomes": [
+                    {"name": "Chelsea -0.5", "price": 0.52},
+                    {"name": "Manchester City +0.5", "price": 0.48},
+                ],
+            },
+            {
+                "question": "Chelsea vs Manchester City total goals over/under 2.5",
+                "slug": "epl-che-mci-2026-04-12-total",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "totals",
+                "spread": 2.5,
+                "outcomes": [
+                    {"name": "Over 2.5", "price": 0.57},
+                    {"name": "Under 2.5", "price": 0.43},
+                ],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "740909_t_minus_24h_prediction_market_spreads_epl-che-mci-2026-04-12-spread",
+            "snapshot_id": "740909_t_minus_24h",
+            "source_type": "prediction_market",
+            "source_name": "polymarket_spreads",
+            "market_family": "spreads",
+            "selection_a_label": "Chelsea -0.5",
+            "selection_a_price": 0.52,
+            "selection_b_label": "Manchester City +0.5",
+            "selection_b_price": 0.48,
+            "line_value": -0.5,
+            "raw_payload": {"market_slug": "epl-che-mci-2026-04-12-spread"},
+            "observed_at": "2026-04-12T15:30:00Z",
+        },
+        {
+            "id": "740909_t_minus_24h_prediction_market_totals_epl-che-mci-2026-04-12-total",
+            "snapshot_id": "740909_t_minus_24h",
+            "source_type": "prediction_market",
+            "source_name": "polymarket_totals",
+            "market_family": "totals",
+            "selection_a_label": "Over 2.5",
+            "selection_a_price": 0.57,
+            "selection_b_label": "Under 2.5",
+            "selection_b_price": 0.43,
+            "line_value": 2.5,
+            "raw_payload": {"market_slug": "epl-che-mci-2026-04-12-total"},
+            "observed_at": "2026-04-12T15:30:00Z",
+        },
     ]
 
 

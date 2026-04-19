@@ -4,6 +4,8 @@ import os
 from batch.src.ingest.fetch_markets import (
     build_market_rows_from_schedule,
     build_market_snapshots,
+    build_prediction_market_snapshot_contexts,
+    build_prediction_market_variant_rows,
     build_prediction_market_rows_for_snapshots,
     fetch_daily_schedule,
 )
@@ -119,6 +121,16 @@ def main() -> None:
             team_rows=team_rows,
             competition_rows=competition_rows,
         )
+        prediction_market_contexts = build_prediction_market_snapshot_contexts(
+            snapshot_rows=snapshot_rows,
+            match_rows=match_rows,
+            team_rows=team_rows,
+            competition_rows=competition_rows,
+        )
+        prediction_market_variant_rows = build_prediction_market_variant_rows(
+            prediction_market_raw,
+            prediction_market_contexts,
+        )
         payload.extend(prediction_market_rows)
         archive_payload = {
             "bookmaker_schedule": schedule,
@@ -134,6 +146,7 @@ def main() -> None:
 
         market_snapshots = build_market_snapshots()
         payload = []
+        variant_payload = []
         for snapshot_row in snapshot_rows:
             for market_snapshot in market_snapshots:
                 payload.append(
@@ -142,14 +155,52 @@ def main() -> None:
                         "snapshot_id": snapshot_row["id"],
                         "source_type": market_snapshot["source_type"],
                         "source_name": market_snapshot["source_name"],
+                        "market_family": market_snapshot["market_family"],
                         "home_prob": market_snapshot["home_prob"],
                         "draw_prob": market_snapshot["draw_prob"],
                         "away_prob": market_snapshot["away_prob"],
+                        "home_price": market_snapshot["home_price"],
+                        "draw_price": market_snapshot["draw_price"],
+                        "away_price": market_snapshot["away_price"],
+                        "raw_payload": market_snapshot["raw_payload"],
                         "observed_at": "2026-08-14T15:00:00+00:00",
                     }
                 )
+            variant_payload.extend(
+                [
+                    {
+                        "id": f"{snapshot_row['id']}_prediction_market_spreads_sample",
+                        "snapshot_id": snapshot_row["id"],
+                        "source_type": "prediction_market",
+                        "source_name": "sample-market-spreads",
+                        "market_family": "spreads",
+                        "selection_a_label": "Home -0.5",
+                        "selection_a_price": 0.54,
+                        "selection_b_label": "Away +0.5",
+                        "selection_b_price": 0.46,
+                        "line_value": -0.5,
+                        "raw_payload": {"provider": "sample-market"},
+                        "observed_at": "2026-08-14T15:00:00+00:00",
+                    },
+                    {
+                        "id": f"{snapshot_row['id']}_prediction_market_totals_sample",
+                        "snapshot_id": snapshot_row["id"],
+                        "source_type": "prediction_market",
+                        "source_name": "sample-market-totals",
+                        "market_family": "totals",
+                        "selection_a_label": "Over 2.5",
+                        "selection_a_price": 0.57,
+                        "selection_b_label": "Under 2.5",
+                        "selection_b_price": 0.43,
+                        "line_value": 2.5,
+                        "raw_payload": {"provider": "sample-market"},
+                        "observed_at": "2026-08-14T15:00:00+00:00",
+                    },
+                ]
+            )
         archive_payload = payload
         archive_key = "markets/match_001.json"
+        prediction_market_variant_rows = variant_payload
 
     if not payload:
         raise ValueError("no market payload was generated")
@@ -165,6 +216,7 @@ def main() -> None:
     if promoted_snapshots:
         client.upsert_rows("match_snapshots", promoted_snapshots)
     inserted = client.upsert_rows("market_probabilities", payload)
+    variant_inserted = client.upsert_rows("market_variants", prediction_market_variant_rows)
     print(
         json.dumps(
             {
@@ -172,7 +224,9 @@ def main() -> None:
                 "snapshot_rows": len(snapshot_rows),
                 "promoted_snapshots": len(promoted_snapshots),
                 "inserted_rows": inserted,
+                "variant_rows": variant_inserted,
                 "payload": payload,
+                "variant_payload": prediction_market_variant_rows,
             },
             sort_keys=True,
         )

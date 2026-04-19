@@ -4,17 +4,34 @@ import { useTranslation } from "react-i18next";
 import type {
   MatchCardRow,
   PostMatchReview,
+  PostMatchReviewAggregationReport,
+  PredictionFusionPolicyHistoryResponse,
+  PredictionFusionPolicyReport,
+  PredictionModelRegistryReport,
+  PredictionSourceEvaluationHistoryResponse,
+  PredictionSourceEvaluationReport,
+  RolloutPromotionDecisionReport,
   PredictionSummary,
+  ReviewAggregationHistoryResponse,
   TimelineCheckpoint,
 } from "../lib/api";
 import CheckpointTimeline from "./CheckpointTimeline";
 import PostMatchReviewCard from "./PostMatchReviewCard";
 import PredictionCard from "./PredictionCard";
+import PredictionSourceEvaluationSection from "./PredictionSourceEvaluationSection";
 
 interface MatchDetailModalProps {
   match: MatchCardRow | null;
   isOpen: boolean;
   prediction: PredictionSummary | null;
+  evaluationReport: PredictionSourceEvaluationReport | null;
+  evaluationHistoryView: PredictionSourceEvaluationHistoryResponse | null;
+  modelRegistryReport: PredictionModelRegistryReport | null;
+  fusionPolicyReport: PredictionFusionPolicyReport | null;
+  fusionPolicyHistoryView: PredictionFusionPolicyHistoryResponse | null;
+  reviewAggregationReport: PostMatchReviewAggregationReport | null;
+  reviewAggregationHistoryView: ReviewAggregationHistoryResponse | null;
+  promotionDecisionReport: RolloutPromotionDecisionReport | null;
   checkpoints: TimelineCheckpoint[];
   review: PostMatchReview | null;
   onClose: () => void;
@@ -25,6 +42,14 @@ export default function MatchDetailModal({
   match,
   isOpen,
   prediction,
+  evaluationReport,
+  evaluationHistoryView,
+  modelRegistryReport,
+  fusionPolicyReport,
+  fusionPolicyHistoryView,
+  reviewAggregationReport,
+  reviewAggregationHistoryView,
+  promotionDecisionReport,
   checkpoints,
   review,
   onClose,
@@ -45,6 +70,13 @@ export default function MatchDetailModal({
         hour12: false,
       })
     : "";
+  const hasFinalScore =
+    match != null &&
+    match.finalResult != null &&
+    match.homeScore !== null &&
+    match.homeScore !== undefined &&
+    match.awayScore !== null &&
+    match.awayScore !== undefined;
 
   useEffect(() => {
     if (!isOpen) {
@@ -137,7 +169,9 @@ export default function MatchDetailModal({
               <span className="teamName" style={{ fontSize: "1.5rem" }}>{match.homeTeam}</span>
             </div>
 
-            <div className="vsDivider" style={{ margin: "4px 0", fontSize: "9px" }}>vs</div>
+            <div className="vsDivider" style={{ margin: "4px 0", fontSize: "9px" }}>
+              {hasFinalScore ? `${match.homeScore}-${match.awayScore}` : "vs"}
+            </div>
 
             <div className="teamRow">
               <div className="teamLogo teamLogo-lg" style={{ width: "40px", height: "40px", borderRadius: "12px", fontSize: "16px" }}>
@@ -174,9 +208,23 @@ export default function MatchDetailModal({
           {review && (
             <section className="contentPanel">
               <span className="panelTitle">{t("modal.sections.review")}</span>
-              <PostMatchReviewCard review={review} />
+              <PostMatchReviewCard
+                review={review}
+                aggregationReport={reviewAggregationReport}
+                aggregationHistoryView={reviewAggregationHistoryView}
+                promotionDecisionReport={promotionDecisionReport}
+              />
             </section>
           )}
+
+          <PredictionSourceEvaluationSection
+            prediction={prediction}
+            report={evaluationReport}
+            historyView={evaluationHistoryView}
+            modelRegistryReport={modelRegistryReport}
+            fusionPolicyReport={fusionPolicyReport}
+            fusionHistoryView={fusionPolicyHistoryView}
+          />
 
           <section className="contentPanel">
             <span className="panelTitle">{t("modal.sections.timeline")}</span>

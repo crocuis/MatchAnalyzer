@@ -1,3 +1,6 @@
+import math
+
+
 FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
     "form_delta",
     "rest_delta",
@@ -16,6 +19,25 @@ FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
     "prediction_market_available",
     "snapshot_quality_complete",
     "lineup_confirmed",
+)
+
+RAW_SIGNAL_FIELDS: tuple[str, ...] = (
+    "form_delta",
+    "rest_delta",
+    "home_elo",
+    "away_elo",
+    "home_xg_for_last_5",
+    "home_xg_against_last_5",
+    "away_xg_for_last_5",
+    "away_xg_against_last_5",
+    "home_matches_last_7d",
+    "away_matches_last_7d",
+    "home_lineup_score",
+    "away_lineup_score",
+    "home_absence_count",
+    "away_absence_count",
+    "lineup_strength_delta",
+    "lineup_source_summary",
 )
 
 
@@ -130,6 +152,8 @@ def build_feature_vector(snapshot: dict) -> dict:
         "elo_delta": elo_delta,
         "xg_proxy_delta": xg_proxy_delta,
         "fixture_congestion_delta": fixture_congestion_delta,
+        "home_lineup_score": snapshot.get("home_lineup_score"),
+        "away_lineup_score": snapshot.get("away_lineup_score"),
         "lineup_strength_delta": lineup_strength_delta,
         "lineup_source_summary": snapshot.get("lineup_source_summary"),
         "market_gap_home": gaps["home"],
@@ -150,4 +174,61 @@ def build_feature_vector(snapshot: dict) -> dict:
 
 def feature_vector_to_model_input(feature_vector: dict) -> list[float]:
     return [float(feature_vector[field]) for field in FEATURE_VECTOR_FIELDS]
-import math
+
+
+def build_feature_metadata(snapshot: dict, feature_vector: dict) -> dict:
+    available_fields = sorted(
+        field
+        for field in RAW_SIGNAL_FIELDS
+        if snapshot.get(field) is not None
+    )
+    missing_fields = sorted(
+        field
+        for field in RAW_SIGNAL_FIELDS
+        if snapshot.get(field) is None
+    )
+    populated_feature_fields = sorted(
+        field
+        for field in FEATURE_VECTOR_FIELDS
+        if feature_vector.get(field) is not None
+    )
+    return {
+        "feature_fields": list(FEATURE_VECTOR_FIELDS),
+        "available_feature_fields": populated_feature_fields,
+        "available_signal_count": len(populated_feature_fields),
+        "available_fields": available_fields,
+        "missing_fields": missing_fields,
+        "snapshot_quality": snapshot.get("snapshot_quality", "complete"),
+        "lineup_status": snapshot.get("lineup_status", "unknown"),
+    }
+
+
+def build_raw_signal_payload(snapshot: dict) -> dict:
+    return {
+        field: snapshot.get(field)
+        for field in RAW_SIGNAL_FIELDS
+        if snapshot.get(field) is not None
+    }
+
+
+def build_prediction_feature_snapshot_row(
+    *,
+    prediction_id: str,
+    snapshot: dict,
+    match_id: str,
+    model_version_id: str,
+    feature_context: dict,
+    feature_metadata: dict,
+    source_metadata: dict,
+) -> dict:
+    return {
+        "id": prediction_id,
+        "prediction_id": prediction_id,
+        "snapshot_id": snapshot["id"],
+        "match_id": match_id,
+        "model_version_id": model_version_id,
+        "checkpoint_type": snapshot["checkpoint_type"],
+        "feature_context": feature_context,
+        "feature_metadata": feature_metadata,
+        "source_metadata": source_metadata,
+    }

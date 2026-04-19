@@ -1,4 +1,7 @@
-from batch.src.model.explanations import build_explanation_bullets
+from batch.src.model.explanations import (
+    build_explanation_bullets,
+    build_feature_attribution,
+)
 from batch.src.model.fusion import (
     choose_recommended_pick,
     confidence_score,
@@ -28,8 +31,14 @@ def build_prediction_row(
     book_probs: dict,
     market_probs: dict,
     context: dict,
+    source_weights: dict | None = None,
 ) -> dict:
-    fused = fuse_probabilities(base_probs, book_probs, market_probs)
+    fused = fuse_probabilities(
+        base_probs,
+        book_probs,
+        market_probs,
+        weights=source_weights,
+    )
     prediction_market_available = context.get("prediction_market_available", True)
     source_agreement_ratio = build_source_agreement_ratio(
         base_probs=base_probs,
@@ -54,4 +63,5 @@ def build_prediction_row(
             context=scored_context,
         ),
         "explanation_bullets": build_explanation_bullets(context),
+        "feature_attribution": build_feature_attribution(context),
     }
