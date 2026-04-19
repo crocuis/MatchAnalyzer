@@ -16,7 +16,11 @@ def build_baseline_candidate_estimators() -> dict[str, object]:
     return {
         "logistic_regression": make_pipeline(
             StandardScaler(),
-            LogisticRegression(max_iter=1000, random_state=7),
+            LogisticRegression(
+                solver="saga",
+                max_iter=5000,
+                random_state=7,
+            ),
         ),
         "hist_gradient_boosting": HistGradientBoostingClassifier(random_state=7),
     }

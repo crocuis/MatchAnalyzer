@@ -1,4 +1,5 @@
 import pytest
+import warnings
 
 from batch.src.model.evaluate_walk_forward import (
     calibrate_confidence_from_buckets,
@@ -105,6 +106,41 @@ def test_train_baseline_model_records_candidate_comparison_metadata():
         isinstance(score, float)
         for score in model.selection_metadata_["candidate_scores"].values()
     )
+
+
+def test_train_baseline_model_emits_no_deprecation_warning():
+    features = [
+        [0.0, 0.0],
+        [0.1, 0.1],
+        [0.2, 0.2],
+        [0.15, 0.05],
+        [1.0, 1.0],
+        [1.1, 1.1],
+        [1.2, 1.2],
+        [1.05, 0.95],
+        [2.0, 2.0],
+        [2.1, 2.1],
+        [2.2, 2.2],
+        [2.05, 1.95],
+    ]
+    labels = [
+        "HOME",
+        "HOME",
+        "HOME",
+        "HOME",
+        "DRAW",
+        "DRAW",
+        "DRAW",
+        "DRAW",
+        "AWAY",
+        "AWAY",
+        "AWAY",
+        "AWAY",
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        train_baseline_model(features, labels)
 
 
 def test_summarize_confidence_buckets_groups_hits_by_bucket():

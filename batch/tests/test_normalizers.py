@@ -1056,6 +1056,20 @@ def test_load_settings_reads_required_environment_variables(monkeypatch):
     assert settings.supabase_url == "https://example.supabase.co"
     assert settings.supabase_service_key == "service-key"
     assert settings.r2_bucket == "raw-payloads"
+    assert settings.rollout_ramp_sequence == (25, 50, 100)
+
+
+def test_load_settings_parses_rollout_ramp_sequence(monkeypatch):
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "service-key")
+    monkeypatch.setenv("R2_BUCKET", "raw-payloads")
+    monkeypatch.setenv("ROLLOUT_RAMP_SEQUENCE", "10,40,100")
+
+    settings = load_settings()
+
+    assert settings.rollout_ramp_sequence == (10, 40, 100)
 
 
 def test_r2_client_persists_archived_payload(tmp_path, monkeypatch):

@@ -179,6 +179,21 @@ def test_rollout_promotion_decision_migration_creates_latest_and_history_tables(
     assert "rollout_version integer not null" in migration
 
 
+def test_rollout_lane_state_migration_creates_latest_and_history_tables():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604200001_rollout_lane_states.sql"
+        ).read_text()
+    )
+
+    assert "create table if not exists rollout_lane_states" in migration
+    assert "rollout_channel text not null unique" in migration
+    assert "lane_payload jsonb not null" in migration
+    assert "create table if not exists rollout_lane_state_versions" in migration
+    assert "comparison_payload jsonb not null default '{}'::jsonb" in migration
+    assert "unique (rollout_channel, rollout_version)" in migration
+
+
 def test_rollout_history_support_migration_adds_version_columns_and_history_tables():
     migration = normalize_sql(
         Path("supabase/migrations/202604190010_rollout_history_support.sql").read_text()

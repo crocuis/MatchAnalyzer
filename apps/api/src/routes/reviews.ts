@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 
 import type { AppBindings } from "../env";
+import {
+  loadRolloutLaneSummaries,
+  type RolloutLaneSummary as HistoryLaneSummary,
+} from "../lib/rollout-lane-states";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const reviews = new Hono<AppBindings>();
@@ -13,14 +17,6 @@ type PostMatchReviewAggregationReport = {
   topMissFamily: string | null;
   topPrimarySignal: string | null;
   createdAt: string | null;
-};
-
-type HistoryLaneSummary = {
-  status: string | null;
-  baseline: string | null;
-  candidate: string | null;
-  summary: string | null;
-  trafficPercent: number | null;
 };
 
 type ReportHistoryEntry<T> = {
@@ -203,6 +199,7 @@ export async function loadLatestReviewAggregationView(
 export async function loadReviewAggregationHistoryView(
   supabase: ApiSupabaseClient,
 ): Promise<ReviewAggregationHistoryView> {
+  const laneSummaries = await loadRolloutLaneSummaries(supabase);
   const { data, error } = await supabase
     .from("post_match_review_aggregations")
     .select("*")
@@ -246,7 +243,7 @@ export async function loadReviewAggregationHistoryView(
     latest: history[0]?.report ?? null,
     previous: history[1]?.report ?? null,
     history,
-    shadow: normalizeHistoryLaneSummary(
+    shadow: laneSummaries.shadow ?? normalizeHistoryLaneSummary(
       payload.shadow ??
         payload.shadowSummary ??
         payload.shadow_summary ??
@@ -254,7 +251,7 @@ export async function loadReviewAggregationHistoryView(
         latestRow?.shadowSummary ??
         latestRow?.shadow_summary,
     ),
-    rollout: normalizeHistoryLaneSummary(
+    rollout: laneSummaries.rollout ?? normalizeHistoryLaneSummary(
       payload.rollout ??
         payload.rolloutSummary ??
         payload.rollout_summary ??
