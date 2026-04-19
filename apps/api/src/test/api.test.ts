@@ -53,4 +53,96 @@ describe("prediction API", () => {
     await expect(loadPredictionView(supabase, "match-123")).rejects.toThrow();
     await expect(loadReviewView(supabase, "match-123")).rejects.toThrow();
   });
+
+  it("falls back when crest/emblem columns are not present yet", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+            final_result: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+
+    const competitionsPrimary = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "column competitions.emblem_url does not exist" },
+      }),
+    };
+    const competitionsFallback = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League" }],
+        error: null,
+      }),
+    };
+    const teamsPrimary = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "column teams.crest_url does not exist" },
+      }),
+    };
+    const teamsFallback = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "chelsea", name: "Chelsea" },
+          { id: "man-city", name: "Manchester City" },
+        ],
+        error: null,
+      }),
+    };
+    const predictionsQuery = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviewsQuery = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(matchesQuery)
+      .mockReturnValueOnce(competitionsPrimary)
+      .mockReturnValueOnce(teamsPrimary)
+      .mockReturnValueOnce(predictionsQuery)
+      .mockReturnValueOnce(reviewsQuery)
+      .mockReturnValueOnce(competitionsFallback)
+      .mockReturnValueOnce(teamsFallback);
+
+    const items = await loadMatchItems({ from } as never);
+
+    expect(items).toEqual([
+      {
+        id: "match-1",
+        leagueId: "premier-league",
+        leagueLabel: "Premier League",
+        leagueEmblemUrl: null,
+        homeTeam: "Chelsea",
+        homeTeamLogoUrl: null,
+        awayTeam: "Manchester City",
+        awayTeamLogoUrl: null,
+        kickoffAt: "2026-04-27T19:00:00Z",
+        status: "Scheduled",
+        recommendedPick: "TBD",
+        confidence: 0,
+        needsReview: false,
+      },
+    ]);
+  });
 });

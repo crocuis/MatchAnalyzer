@@ -51,8 +51,8 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
   const matchIds = matchesData.map((match) => match.id);
 
   const [
-    { data: competitions, error: competitionsError },
-    { data: teams, error: teamsError },
+    competitionsResult,
+    teamsResult,
     { data: predictionRows, error: predictionsError },
     { data: reviewRows, error: reviewsError },
   ] = await Promise.all([
@@ -73,7 +73,37 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
       .order("created_at", { ascending: false }),
   ]);
 
-  if (competitionsError || teamsError || predictionsError || reviewsError) {
+  if (predictionsError || reviewsError) {
+    throw new Error("related match queries failed");
+  }
+
+  let competitions = competitionsResult.data;
+  let teams = teamsResult.data;
+  let competitionsError = competitionsResult.error;
+  let teamsError = teamsResult.error;
+
+  if (competitionsError?.message?.includes("emblem_url")) {
+    const fallback = await supabase
+      .from("competitions")
+      .select("id, name")
+      .in("id", competitionIds);
+    competitions = (fallback.data ?? []).map((row) => ({
+      ...row,
+      emblem_url: null,
+    }));
+    competitionsError = fallback.error;
+  }
+
+  if (teamsError?.message?.includes("crest_url")) {
+    const fallback = await supabase.from("teams").select("id, name").in("id", teamIds);
+    teams = (fallback.data ?? []).map((row) => ({
+      ...row,
+      crest_url: null,
+    }));
+    teamsError = fallback.error;
+  }
+
+  if (competitionsError || teamsError) {
     throw new Error("related match queries failed");
   }
 
