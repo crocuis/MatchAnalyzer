@@ -105,11 +105,35 @@ def main() -> None:
             target_date=use_real_reviews,
         )
         if not completed_predictions:
-            raise ValueError(
-                "completed predictions must exist before real post-match review"
+            print(
+                json.dumps(
+                    {
+                        "result_rows": 0,
+                        "inserted_rows": 0,
+                        "skipped_predictions": [],
+                        "payload": [],
+                        "skip_reason": "no_completed_predictions",
+                        "target_date": use_real_reviews,
+                    },
+                    sort_keys=True,
+                )
             )
+            return
         if not payload:
-            raise ValueError("no review payload was generated")
+            print(
+                json.dumps(
+                    {
+                        "result_rows": len(completed_match_ids),
+                        "inserted_rows": 0,
+                        "skipped_predictions": skipped_predictions,
+                        "payload": [],
+                        "skip_reason": "no_review_payload",
+                        "target_date": use_real_reviews,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
         result_count = len(
             [
                 row
