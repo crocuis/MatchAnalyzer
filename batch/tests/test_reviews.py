@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import batch.src.jobs.run_predictions_job as run_predictions_job
+import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
 from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
 from batch.src.model.predict_matches import build_prediction_row
@@ -218,6 +219,55 @@ def test_build_review_payload_prefers_prediction_market_over_bookmaker():
         "comparison_available": True,
         "market_outperformed_model": True,
     }
+
+
+def test_run_post_match_review_job_skips_when_no_completed_predictions_exist(
+    monkeypatch,
+    capsys,
+):
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "predictions": [
+                    {
+                        "id": "prediction_001",
+                        "snapshot_id": "snapshot_001",
+                        "match_id": "match_001",
+                        "recommended_pick": "HOME",
+                        "home_prob": 0.5,
+                        "draw_prob": 0.25,
+                        "away_prob": 0.25,
+                    }
+                ],
+                "market_probabilities": [],
+                "matches": [
+                    {
+                        "id": "match_001",
+                        "kickoff_at": "2026-04-18T19:00:00+00:00",
+                        "final_result": None,
+                    }
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, _table_name: str, _rows: list[dict]) -> int:
+            raise AssertionError("post-match review should not write rows when nothing is reviewable")
+
+    monkeypatch.setattr(
+        run_post_match_review_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_post_match_review_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_REVIEW_DATE", "2026-04-18")
+
+    run_post_match_review_job.main()
+
+    payload = capsys.readouterr().out.strip()
+    assert '"inserted_rows": 0' in payload
+    assert '"skip_reason": "no_completed_predictions"' in payload
 
 
 def test_build_prediction_row_smoke():
