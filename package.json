@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "sh -c 'npm --workspace apps/api run dev & npm --workspace apps/web run dev & wait'",
+    "dev": "sh -c 'npm --workspace apps/api run dev & sleep 2 && npm --workspace apps/web run dev & wait'",
     "dev:api": "npm --workspace apps/api run dev",
     "dev:web": "npm --workspace apps/web run dev",
     "test": "vitest run",
