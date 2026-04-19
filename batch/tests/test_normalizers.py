@@ -17,6 +17,7 @@ from batch.src.jobs.ingest_markets_job import (
     select_real_market_snapshots,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
+from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -385,6 +386,52 @@ def test_backfill_assets_honors_allowed_team_ids(monkeypatch):
             "crest_url": "https://fallback.example/Arsenal.png",
         }
     ]
+
+
+def test_build_cleanup_plan_counts_out_of_scope_graph():
+    class FakeClient:
+        def read_rows(self, table: str):
+            tables = {
+                "competitions": [
+                    {"id": "premier-league"},
+                    {"id": "liga-mx"},
+                ],
+                "matches": [
+                    {
+                        "id": "match_001",
+                        "competition_id": "premier-league",
+                        "home_team_id": "arsenal",
+                        "away_team_id": "chelsea",
+                    },
+                    {
+                        "id": "match_002",
+                        "competition_id": "liga-mx",
+                        "home_team_id": "club-a",
+                        "away_team_id": "club-b",
+                    },
+                ],
+                "match_snapshots": [
+                    {"id": "snapshot_001", "match_id": "match_001"},
+                    {"id": "snapshot_002", "match_id": "match_002"},
+                ],
+                "predictions": [
+                    {"id": "prediction_001", "match_id": "match_001"},
+                    {"id": "prediction_002", "match_id": "match_002"},
+                ],
+                "post_match_reviews": [
+                    {"match_id": "match_002"},
+                ],
+            }
+            return tables[table]
+
+    plan = build_cleanup_plan(FakeClient())  # type: ignore[arg-type]
+
+    assert plan.competition_ids == ["liga-mx"]
+    assert plan.match_ids == ["match_002"]
+    assert plan.snapshot_ids == ["snapshot_002"]
+    assert plan.prediction_ids == ["prediction_002"]
+    assert plan.review_match_ids == ["match_002"]
+    assert plan.orphan_team_ids == ["club-a", "club-b"]
 
 
 def test_build_snapshot_rows_from_matches_uses_real_match_ids():
