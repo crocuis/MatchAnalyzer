@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from batch.src.ingest.fetch_fixtures import (
     build_competition_row_from_event,
     build_team_rows_from_event,
+    competition_emblem_url,
     fetch_daily_schedule,
     load_sports_skills_football,
 )
@@ -99,6 +100,16 @@ def backfill_assets(
                         "id": team_row["id"],
                         "crest_url": team_row["crest_url"],
                     }
+
+    for competition in competitions:
+        if competition.get("emblem_url"):
+            continue
+        emblem_url = competition_emblem_url(competition["id"])
+        if emblem_url:
+            competition_updates[competition["id"]] = {
+                "id": competition["id"],
+                "emblem_url": emblem_url,
+            }
 
     football = load_sports_skills_football()
     metadata = load_sports_skills_metadata()

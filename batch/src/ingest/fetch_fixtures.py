@@ -19,6 +19,18 @@ ALLOWED_COMPETITION_IDS = {
     "international-friendly",
 }
 
+FOOTBALL_DATA_COMPETITION_CODES = {
+    "premier-league": "PL",
+    "la-liga": "PD",
+    "bundesliga": "BL1",
+    "serie-a": "SA",
+    "ligue-1": "FL1",
+    "champions-league": "CL",
+    "europa-league": "EL",
+    "world-cup": "WC",
+    "european-championship": "EC",
+}
+
 
 def normalize_kickoff_at(value: str) -> str:
     kickoff_at = datetime.fromisoformat(value)
@@ -52,6 +64,13 @@ def fetch_daily_schedule(date: str) -> dict[str, Any]:
     return football.get_daily_schedule(date=date)
 
 
+def competition_emblem_url(competition_id: str) -> str | None:
+    code = FOOTBALL_DATA_COMPETITION_CODES.get(competition_id)
+    if not code:
+        return None
+    return f"https://crests.football-data.org/{code}.png"
+
+
 def filter_supported_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         event
@@ -76,7 +95,9 @@ def build_competition_row_from_event(event: dict[str, Any]) -> dict[str, str]:
         "name": competition["name"],
         "competition_type": infer_competition_type(competition["id"]),
         "region": venue_country,
-        "emblem_url": competition.get("emblem") or competition.get("logo"),
+        "emblem_url": competition.get("emblem")
+        or competition.get("logo")
+        or competition_emblem_url(competition["id"]),
     }
 
 

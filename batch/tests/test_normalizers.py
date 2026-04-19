@@ -6,6 +6,7 @@ import pytest
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
+from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_markets import (
     build_prediction_market_rows,
@@ -121,6 +122,14 @@ def test_build_competition_and_team_rows_preserve_asset_urls():
             "crest_url": "https://media.api-sports.io/football/teams/49.png",
         },
     ]
+
+
+def test_competition_emblem_url_uses_official_football_data_codes():
+    assert competition_emblem_url("premier-league") == "https://crests.football-data.org/PL.png"
+    assert competition_emblem_url("champions-league") == "https://crests.football-data.org/CL.png"
+    assert competition_emblem_url("europa-league") == "https://crests.football-data.org/EL.png"
+    assert competition_emblem_url("world-cup") == "https://crests.football-data.org/WC.png"
+    assert competition_emblem_url("international-friendly") is None
 
 
 def test_filter_supported_events_keeps_only_supported_competitions():
