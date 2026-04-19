@@ -56,8 +56,11 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
     { data: predictionRows, error: predictionsError },
     { data: reviewRows, error: reviewsError },
   ] = await Promise.all([
-    supabase.from("competitions").select("id, name").in("id", competitionIds),
-    supabase.from("teams").select("id, name").in("id", teamIds),
+    supabase
+      .from("competitions")
+      .select("id, name, emblem_url")
+      .in("id", competitionIds),
+    supabase.from("teams").select("id, name, crest_url").in("id", teamIds),
     supabase
       .from("predictions")
       .select("match_id, recommended_pick, confidence_score, created_at")
@@ -74,8 +77,18 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
     throw new Error("related match queries failed");
   }
 
-  const competitionById = new Map((competitions ?? []).map((row) => [row.id, row.name]));
-  const teamById = new Map((teams ?? []).map((row) => [row.id, row.name]));
+  const competitionById = new Map(
+    (competitions ?? []).map((row) => [
+      row.id,
+      { label: row.name, emblemUrl: row.emblem_url },
+    ]),
+  );
+  const teamById = new Map(
+    (teams ?? []).map((row) => [
+      row.id,
+      { label: row.name, crestUrl: row.crest_url },
+    ]),
+  );
   const predictionByMatchId = new Map<string, { recommendedPick: string; confidence: number }>();
   for (const row of predictionRows ?? []) {
     if (!predictionByMatchId.has(row.match_id)) {
@@ -99,9 +112,13 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
     return {
       id: match.id,
       leagueId: match.competition_id,
-      leagueLabel: competitionById.get(match.competition_id) ?? match.competition_id,
-      homeTeam: teamById.get(match.home_team_id) ?? match.home_team_id,
-      awayTeam: teamById.get(match.away_team_id) ?? match.away_team_id,
+      leagueLabel:
+        competitionById.get(match.competition_id)?.label ?? match.competition_id,
+      leagueEmblemUrl: competitionById.get(match.competition_id)?.emblemUrl ?? null,
+      homeTeam: teamById.get(match.home_team_id)?.label ?? match.home_team_id,
+      homeTeamLogoUrl: teamById.get(match.home_team_id)?.crestUrl ?? null,
+      awayTeam: teamById.get(match.away_team_id)?.label ?? match.away_team_id,
+      awayTeamLogoUrl: teamById.get(match.away_team_id)?.crestUrl ?? null,
       kickoffAt: match.kickoff_at,
       status: deriveMatchStatus({
         finalResult: match.final_result,

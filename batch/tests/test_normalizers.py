@@ -65,6 +65,60 @@ def test_build_fixture_row_rejects_naive_timestamp():
         )
 
 
+def test_build_competition_and_team_rows_preserve_asset_urls():
+    event = {
+        "competition": {
+            "id": "premier-league",
+            "name": "Premier League",
+            "emblem": "https://crests.football-data.org/PL.png",
+        },
+        "venue": {"country": "England"},
+        "competitors": [
+            {
+                "team": {
+                    "id": "arsenal",
+                    "name": "Arsenal",
+                    "crest": "https://crests.football-data.org/57.png",
+                },
+                "qualifier": "home",
+            },
+            {
+                "team": {
+                    "id": "chelsea",
+                    "name": "Chelsea",
+                    "logo": "https://media.api-sports.io/football/teams/49.png",
+                },
+                "qualifier": "away",
+            },
+        ],
+    }
+
+    from batch.src.ingest.fetch_fixtures import (
+        build_competition_row_from_event,
+        build_team_rows_from_event,
+    )
+
+    assert build_competition_row_from_event(event)["emblem_url"] == (
+        "https://crests.football-data.org/PL.png"
+    )
+    assert build_team_rows_from_event(event) == [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": "https://crests.football-data.org/57.png",
+        },
+        {
+            "id": "chelsea",
+            "name": "Chelsea",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": "https://media.api-sports.io/football/teams/49.png",
+        },
+    ]
+
+
 def test_build_snapshot_rows_from_matches_uses_real_match_ids():
     rows = build_snapshot_rows_from_matches(
         [

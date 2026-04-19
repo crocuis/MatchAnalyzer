@@ -37,6 +37,7 @@ function deriveLeagueSummaries(matches: MatchCardRow[]): LeagueSummary[] {
     groups.set(match.leagueId, {
       id: match.leagueId,
       label: (match as MatchCardRow & { leagueLabel?: string }).leagueLabel ?? match.leagueId,
+      emblemUrl: (match as MatchCardRow & { leagueEmblemUrl?: string | null }).leagueEmblemUrl ?? null,
       matchCount: 1,
       reviewCount: match.needsReview ? 1 : 0,
     });

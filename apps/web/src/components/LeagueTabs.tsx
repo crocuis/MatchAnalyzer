@@ -52,6 +52,19 @@ export default function LeagueTabs({
               onClick={() => onSelect(league.id)}
               onKeyDown={(event) => handleKeyDown(index, event.key)}
             >
+              {league.emblemUrl ? (
+                <img
+                  alt=""
+                  src={league.emblemUrl}
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    objectFit: "contain",
+                    marginRight: "8px",
+                    verticalAlign: "text-bottom",
+                  }}
+                />
+              ) : null}
               {league.label}
             </button>
           );

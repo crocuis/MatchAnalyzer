@@ -1,7 +1,9 @@
 export interface MatchRow {
   id: string;
   homeTeam: string;
+  homeTeamLogoUrl?: string | null;
   awayTeam: string;
+  awayTeamLogoUrl?: string | null;
   kickoffAt: string;
   status: string;
 }
@@ -9,12 +11,15 @@ export interface MatchRow {
 export interface LeagueSummary {
   id: string;
   label: string;
+  emblemUrl?: string | null;
   matchCount: number;
   reviewCount: number;
 }
 
 export interface MatchCardRow extends MatchRow {
   leagueId: string;
+  leagueLabel?: string;
+  leagueEmblemUrl?: string | null;
   recommendedPick: string;
   confidence: number;
   needsReview: boolean;

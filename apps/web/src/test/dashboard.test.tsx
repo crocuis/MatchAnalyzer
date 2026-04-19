@@ -23,8 +23,11 @@ beforeEach(() => {
                 id: "match-001",
                 leagueId: "premier-league",
                 leagueLabel: "Premier League",
+                leagueEmblemUrl: "https://crests.football-data.org/PL.png",
                 homeTeam: "Chelsea",
+                homeTeamLogoUrl: "https://crests.football-data.org/61.png",
                 awayTeam: "Manchester City",
+                awayTeamLogoUrl: "https://crests.football-data.org/65.png",
                 kickoffAt: "2026-04-27 19:00 UTC",
                 status: "Needs Review",
                 recommendedPick: "HOME",
@@ -35,6 +38,7 @@ beforeEach(() => {
                 id: "match-002",
                 leagueId: "premier-league",
                 leagueLabel: "Premier League",
+                leagueEmblemUrl: "https://crests.football-data.org/PL.png",
                 homeTeam: "Liverpool",
                 awayTeam: "Brentford",
                 kickoffAt: "2026-04-27 21:00 UTC",
@@ -47,6 +51,7 @@ beforeEach(() => {
                 id: "match-003",
                 leagueId: "ucl",
                 leagueLabel: "UCL",
+                leagueEmblemUrl: "https://crests.football-data.org/CL.png",
                 homeTeam: "Inter",
                 awayTeam: "Bayern Munich",
                 kickoffAt: "2026-04-28 19:00 UTC",
@@ -210,6 +215,8 @@ describe("dashboard redesign", () => {
     expect(card.getByText("Pick")).toBeInTheDocument();
     expect(card.getAllByText("HOME").length).toBeGreaterThan(0);
     expect(card.getByText("70%")).toBeInTheDocument();
+    expect(card.getByAltText("Chelsea crest")).toBeInTheDocument();
+    expect(card.getByAltText("Manchester City crest")).toBeInTheDocument();
   });
 
   it("marks the card button as selected to prepare the modal flow", async () => {
@@ -308,6 +315,28 @@ describe("dashboard redesign", () => {
     });
 
     fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(
+      screen.queryByRole("dialog", { name: "Chelsea vs Manchester City" }),
+    ).toBeNull();
+  });
+
+  it("closes the detail modal when the backdrop is clicked", async () => {
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Chelsea vs Manchester City",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("dialog", { name: "Chelsea vs Manchester City" }),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("match-detail-backdrop"));
 
     expect(
       screen.queryByRole("dialog", { name: "Chelsea vs Manchester City" }),

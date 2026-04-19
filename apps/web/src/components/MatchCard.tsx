@@ -25,8 +25,28 @@ export default function MatchCard({
         <header className="matchCardHeader">
           <div>
             <div className="teamLogoRow">
-              <div className="teamLogo">{match.homeTeam[0]}</div>
-              <div className="teamLogo">{match.awayTeam[0]}</div>
+              <div className="teamLogo">
+                {match.homeTeamLogoUrl ? (
+                  <img
+                    alt={`${match.homeTeam} crest`}
+                    className="teamLogoImage"
+                    src={match.homeTeamLogoUrl}
+                  />
+                ) : (
+                  match.homeTeam[0]
+                )}
+              </div>
+              <div className="teamLogo">
+                {match.awayTeamLogoUrl ? (
+                  <img
+                    alt={`${match.awayTeam} crest`}
+                    className="teamLogoImage"
+                    src={match.awayTeamLogoUrl}
+                  />
+                ) : (
+                  match.awayTeam[0]
+                )}
+              </div>
             </div>
             <h3 className="matchCardTitle">
               {match.homeTeam} vs {match.awayTeam}

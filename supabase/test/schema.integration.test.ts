@@ -1,16 +1,20 @@
 import { readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 
 async function createDb() {
   const db = new PGlite();
-  const migration = await readFile(
-    new URL("../migrations/202604180001_initial_schema.sql", import.meta.url),
-    "utf8",
-  );
   const seed = await readFile(new URL("../seed.sql", import.meta.url), "utf8");
+  const migrationsDir = new URL("../migrations/", import.meta.url);
+  const migrationFiles = (await readdir(migrationsDir))
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
 
-  await db.exec(migration);
+  for (const file of migrationFiles) {
+    const migration = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
+    await db.exec(migration);
+  }
   await db.exec(seed);
 
   return db;
@@ -29,10 +33,22 @@ describe("supabase schema integration", () => {
     const matches = await db.query<{ count: number }>(
       "select count(*)::int as count from matches",
     );
+    const crestColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'teams' and column_name = 'crest_url'`,
+    );
+    const emblemColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'competitions' and column_name = 'emblem_url'`,
+    );
 
     expect(competitions.rows[0]?.count).toBe(1);
     expect(teams.rows[0]?.count).toBe(2);
     expect(matches.rows[0]?.count).toBe(1);
+    expect(crestColumns.rows[0]?.count).toBe(1);
+    expect(emblemColumns.rows[0]?.count).toBe(1);
   });
 
   it("rejects duplicate authoritative snapshots for the same match checkpoint", async () => {

@@ -55,6 +55,7 @@ def build_competition_row_from_event(event: dict[str, Any]) -> dict[str, str]:
         "name": competition["name"],
         "competition_type": infer_competition_type(competition["id"]),
         "region": venue_country,
+        "emblem_url": competition.get("emblem") or competition.get("logo"),
     }
 
 
@@ -71,6 +72,7 @@ def build_team_rows_from_event(event: dict[str, Any]) -> list[dict[str, str]]:
                 if event["competition"]["id"] in {"fifa-world-cup", "european-championship"}
                 else "club",
                 "country": venue_country,
+                "crest_url": team.get("crest") or team.get("logo"),
             }
         )
     return rows

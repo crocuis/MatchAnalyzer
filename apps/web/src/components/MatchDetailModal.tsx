@@ -80,13 +80,18 @@ export default function MatchDetailModal({
   }
 
   return (
-    <div className="detailOverlay">
+    <div
+      className="detailOverlay"
+      data-testid="match-detail-backdrop"
+      onClick={onClose}
+    >
       <section
         aria-modal="true"
         aria-label={`${match.homeTeam} vs ${match.awayTeam}`}
         className="detailModal"
         ref={dialogRef}
         role="dialog"
+        onClick={(event) => event.stopPropagation()}
       >
         <header className="modalHeader">
           <div>
