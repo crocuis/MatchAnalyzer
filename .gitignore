@@ -58,3 +58,16 @@ data/cache/
 data/tmp/
 models/
 checkpoints/
+
+.serena/
+.codex/
+!.codex/agents/
+!.codex/agents/**
+!.codex/skills/
+!.codex/skills/**
+.codex/skills/.system/**
+!.codex/prompts/
+!.codex/prompts/**
+.vendor/
+package-lock.json
+skills-lock.json

@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: npm ci
+      - run: npm install
       - run: python3 -m pip install -r batch/requirements.txt
       - run: npm test
       - run: npm --workspace apps/api run test

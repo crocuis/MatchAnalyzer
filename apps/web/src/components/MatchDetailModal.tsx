@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   MatchCardRow,
@@ -29,8 +30,21 @@ export default function MatchDetailModal({
   onClose,
   onOpenReport,
 }: MatchDetailModalProps) {
+  const { t, i18n } = useTranslation();
+  const currentLanguage = i18n.language || "en";
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const formattedDate = match
+    ? new Date(match.kickoffAt).toLocaleString(currentLanguage, {
+        month: "long",
+        day: "numeric",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+    : "";
 
   useEffect(() => {
     if (!isOpen) {
@@ -94,48 +108,90 @@ export default function MatchDetailModal({
         onClick={(event) => event.stopPropagation()}
       >
         <header className="modalHeader">
-          <div>
-            <p className="panelTitle">Selected Match</p>
-            <h2 className="modalTitle">
-              {match.homeTeam} vs {match.awayTeam}
-            </h2>
-            <div className="modalMeta">
-              <span>{match.kickoffAt}</span>
-              <span>{match.status}</span>
-            </div>
-          </div>
           <button
             className="closeButton"
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
           >
-            Close
+            ✕ {t("modal.close")}
           </button>
+
+          <div className="matchCardMeta" style={{ marginBottom: "24px" }}>
+            <span style={{ fontWeight: "800", color: "var(--accent-primary)", fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              {formattedDate} • {t(`status.${match.status}`)}
+            </span>
+          </div>
+
+          <div className="matchTeams">
+            <div className="teamRow">
+              <div className="teamLogo teamLogo-lg" style={{ width: "40px", height: "40px", borderRadius: "12px", fontSize: "16px" }}>
+                {match.homeTeamLogoUrl ? (
+                  <img
+                    src={match.homeTeamLogoUrl}
+                    alt={`${match.homeTeam} crest`}
+                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  />
+                ) : match.homeTeam[0]}
+              </div>
+              <span className="teamName" style={{ fontSize: "1.5rem" }}>{match.homeTeam}</span>
+            </div>
+
+            <div className="vsDivider" style={{ margin: "4px 0", fontSize: "9px" }}>vs</div>
+
+            <div className="teamRow">
+              <div className="teamLogo teamLogo-lg" style={{ width: "40px", height: "40px", borderRadius: "12px", fontSize: "16px" }}>
+                {match.awayTeamLogoUrl ? (
+                  <img
+                    src={match.awayTeamLogoUrl}
+                    alt={`${match.awayTeam} crest`}
+                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  />
+                ) : match.awayTeam[0]}
+              </div>
+              <span className="teamName" style={{ fontSize: "1.5rem" }}>{match.awayTeam}</span>
+            </div>
+          </div>
         </header>
 
         <div className="modalBody">
           {prediction ? (
-            <PredictionCard
-              confidence={prediction.confidence ?? match.confidence}
-              prediction={prediction}
-              recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
-            />
+            <section className="contentPanel">
+              <span className="panelTitle">{t("modal.sections.prediction")}</span>
+              <PredictionCard
+                confidence={prediction.confidence ?? match.confidence}
+                prediction={prediction}
+                recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
+              />
+            </section>
           ) : (
             <section className="contentPanel">
-              <p className="panelTitle">Prediction summary</p>
-              <p>No prediction is available for this match yet.</p>
+              <span className="panelTitle">{t("modal.sections.prediction")}</span>
+              <p style={{ color: "var(--text-muted)", margin: 0 }}>{t("modal.prediction.unavailableDesc")}</p>
             </section>
           )}
-          <PostMatchReviewCard review={review} />
-          <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
-          <button
-            className="primaryButton"
-            type="button"
-            onClick={() => onOpenReport(match.id)}
-          >
-            Open full report
-          </button>
+
+          {review && (
+            <section className="contentPanel">
+              <span className="panelTitle">{t("modal.sections.review")}</span>
+              <PostMatchReviewCard review={review} />
+            </section>
+          )}
+
+          <section className="contentPanel">
+            <span className="panelTitle">{t("modal.sections.timeline")}</span>
+            <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
+          </section>
+
+          <div style={{ marginTop: "12px" }}>
+            <button
+              className="primaryButton"
+              type="button"
+              onClick={() => onOpenReport(match.id)}
+            >
+              {t("modal.fullReport")}
+            </button>
+          </div>
         </div>
       </section>
     </div>

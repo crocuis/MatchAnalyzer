@@ -19,7 +19,9 @@ create table matches (
   kickoff_at timestamptz not null,
   home_team_id text not null references teams(id),
   away_team_id text not null references teams(id),
-  final_result text check (final_result in ('HOME', 'DRAW', 'AWAY'))
+  final_result text check (final_result in ('HOME', 'DRAW', 'AWAY')),
+  home_score integer,
+  away_score integer
 );
 
 create table match_snapshots (
@@ -29,6 +31,20 @@ create table match_snapshots (
   captured_at timestamptz not null default now(),
   lineup_status text not null,
   snapshot_quality text not null check (snapshot_quality in ('complete', 'partial')),
+  home_elo numeric,
+  away_elo numeric,
+  home_xg_for_last_5 numeric,
+  home_xg_against_last_5 numeric,
+  away_xg_for_last_5 numeric,
+  away_xg_against_last_5 numeric,
+  home_matches_last_7d integer,
+  away_matches_last_7d integer,
+  home_absence_count integer,
+  away_absence_count integer,
+  home_lineup_score numeric,
+  away_lineup_score numeric,
+  lineup_strength_delta numeric,
+  lineup_source_summary text,
   unique (id, match_id),
   unique (match_id, checkpoint_type)
 );

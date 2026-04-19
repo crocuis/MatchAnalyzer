@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { LeagueSummary } from "../lib/api";
 
 interface LeagueTabsProps {
@@ -13,6 +14,7 @@ export default function LeagueTabs({
   selectedLeagueId,
   onSelect,
 }: LeagueTabsProps) {
+  const { t } = useTranslation();
   const currentLeague = leagues.find((league) => league.id === selectedLeagueId);
 
   function handleKeyDown(index: number, key: string) {
@@ -72,8 +74,8 @@ export default function LeagueTabs({
       </div>
       {currentLeague ? (
         <p className="leagueSummary">
-          <span>{currentLeague.matchCount} matches</span>
-          <span>{currentLeague.reviewCount} need review</span>
+          <span>{t("leagues.summary.matches", { count: currentLeague.matchCount })}</span>
+          <span>{t("leagues.summary.reviewNeeded", { count: currentLeague.reviewCount })}</span>
         </p>
       ) : null}
     </section>

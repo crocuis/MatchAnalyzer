@@ -12,3 +12,43 @@ def split_walk_forward_windows(
         test = [seasons[index]]
         windows.append((train, test))
     return windows
+
+
+def confidence_bucket_label(confidence: float, bucket_size: float = 0.1) -> str:
+    bounded = min(max(confidence, 0.0), 1.0)
+    lower = min(int(bounded / bucket_size) * bucket_size, 1.0 - bucket_size)
+    upper = min(lower + bucket_size, 1.0)
+    return f"{lower:.1f}-{upper:.1f}"
+
+
+def summarize_confidence_buckets(
+    records: list[dict], bucket_size: float = 0.1
+) -> dict[str, dict[str, float | int]]:
+    grouped: dict[str, dict[str, float | int]] = {}
+    for record in records:
+        bucket = confidence_bucket_label(float(record["confidence"]), bucket_size=bucket_size)
+        current = grouped.setdefault(bucket, {"count": 0, "hits": 0})
+        current["count"] += 1
+        current["hits"] += 1 if record["is_correct"] else 0
+
+    return {
+        bucket: {
+            "count": int(values["count"]),
+            "hit_rate": round(int(values["hits"]) / int(values["count"]), 3),
+        }
+        for bucket, values in grouped.items()
+    }
+
+
+def calibrate_confidence_from_buckets(
+    raw_confidence: float,
+    bucket_summary: dict[str, dict[str, float | int]],
+    minimum_count: int = 3,
+) -> float:
+    bucket = confidence_bucket_label(raw_confidence)
+    summary = bucket_summary.get(bucket)
+    if not summary or int(summary["count"]) < minimum_count:
+        return round(raw_confidence, 4)
+
+    calibrated = (raw_confidence * 0.5) + (float(summary["hit_rate"]) * 0.5)
+    return round(min(max(calibrated, 0.0), 1.0), 4)

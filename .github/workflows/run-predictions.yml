@@ -1,4 +1,4 @@
-name: sample-run-predictions
+name: run-predictions
 
 permissions:
   contents: read
@@ -7,11 +7,16 @@ on:
   schedule:
     - cron: "30 * * * *"
   workflow_dispatch:
+    inputs:
+      target_date:
+        description: "UTC date to predict in YYYY-MM-DD format. Defaults to current UTC date."
+        required: false
+        type: string
 
 jobs:
   predict:
     concurrency:
-      group: sample-run-predictions
+      group: run-predictions
       cancel-in-progress: false
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -28,5 +33,13 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
           test -n "$R2_BUCKET"
+      - name: Resolve target date
+        shell: bash
+        run: |
+          TARGET_DATE="${{ github.event.inputs.target_date }}"
+          if [ -z "$TARGET_DATE" ]; then
+            TARGET_DATE="$(date -u +%F)"
+          fi
+          echo "REAL_PREDICTION_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_predictions_job

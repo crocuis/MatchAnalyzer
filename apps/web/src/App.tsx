@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ClientValidationPanel } from "./components/ClientValidationPanel";
 import FullReportView from "./components/FullReportView";
@@ -23,7 +24,17 @@ type MatchDetailState = {
   review: PostMatchReview | null;
 };
 
-function deriveLeagueSummaries(matches: MatchCardRow[]): LeagueSummary[] {
+const LEAGUE_ORDER = [
+  "premier-league",
+  "laliga",
+  "bundesliga",
+  "serie-a",
+  "ligue-1",
+  "ucl",
+  "uel",
+];
+
+function deriveLeagueSummaries(matches: MatchCardRow[], t: (key: string) => string): LeagueSummary[] {
   const groups = new Map<string, LeagueSummary>();
 
   for (const match of matches) {
@@ -36,14 +47,23 @@ function deriveLeagueSummaries(matches: MatchCardRow[]): LeagueSummary[] {
 
     groups.set(match.leagueId, {
       id: match.leagueId,
-      label: (match as MatchCardRow & { leagueLabel?: string }).leagueLabel ?? match.leagueId,
+      label: t(`leagues.${match.leagueId}`),
       emblemUrl: (match as MatchCardRow & { leagueEmblemUrl?: string | null }).leagueEmblemUrl ?? null,
       matchCount: 1,
       reviewCount: match.needsReview ? 1 : 0,
     });
   }
 
-  return [...groups.values()];
+  return [...groups.values()].sort((a, b) => {
+    const aIndex = LEAGUE_ORDER.indexOf(a.id);
+    const bIndex = LEAGUE_ORDER.indexOf(b.id);
+
+    if (aIndex === -1 && bIndex === -1) return a.label.localeCompare(b.label);
+    if (aIndex === -1) return 1;
+    if (bIndex === -1) return -1;
+
+    return aIndex - bIndex;
+  });
 }
 
 function buildReport(
@@ -65,6 +85,8 @@ function buildReport(
 }
 
 export default function App() {
+  const { t, i18n } = useTranslation();
+  const currentLanguage = i18n.language || "en";
   const [matches, setMatches] = useState<MatchCardRow[]>([]);
   const [matchesStatus, setMatchesStatus] = useState<
     "idle" | "loading" | "ready" | "error"
@@ -108,7 +130,7 @@ export default function App() {
     };
   }, []);
 
-  const leagues = useMemo(() => deriveLeagueSummaries(matches), [matches]);
+  const leagues = useMemo(() => deriveLeagueSummaries(matches, t), [matches, t]);
 
   useEffect(() => {
     if (leagues.length === 0) {
@@ -223,12 +245,23 @@ export default function App() {
     <main className="dashboardApp">
       <div className="dashboardShell">
         <header className="dashboardHeader">
-          <p className="dashboardEyebrow">Operator workspace</p>
-          <h1 className="dashboardTitle">Football Prediction Dashboard</h1>
-          <p className="dashboardSubtitle">
-            Scan the live slate, surface high-risk misses, and open a match only
-            when you need the deeper analysis.
-          </p>
+          <div className="langSwitcher">
+            <button
+              className={`langBtn ${currentLanguage.startsWith("en") ? "langBtn-active" : ""}`}
+              onClick={() => i18n.changeLanguage('en')}
+            >
+              EN
+            </button>
+            <button
+              className={`langBtn ${currentLanguage.startsWith("ko") ? "langBtn-active" : ""}`}
+              onClick={() => i18n.changeLanguage('ko')}
+            >
+              KO
+            </button>
+          </div>
+          <p className="dashboardEyebrow">{t("header.eyebrow")}</p>
+          <h1 className="dashboardTitle">{t("header.title")}</h1>
+          <p className="dashboardSubtitle">{t("header.subtitle")}</p>
         </header>
 
         {leagues.length > 0 ? (
@@ -242,16 +275,13 @@ export default function App() {
 
         {matchesStatus === "loading" ? (
           <section className="matchSection" aria-label="matches">
-            <p>Loading matches…</p>
+            <p>{t("status.loading")}</p>
           </section>
         ) : null}
 
         {matchesStatus === "error" ? (
           <section className="matchSection" aria-label="matches">
-            <p>
-              Unable to load match data right now. Make sure the API dev server is
-              running on port 8787.
-            </p>
+            <p>{t("status.error")}</p>
           </section>
         ) : null}
 
@@ -276,7 +306,7 @@ export default function App() {
 
         {detailLoadingId && isModalOpen ? (
           <aside className="operatorStrip" aria-live="polite">
-            <span>Loading analysis for the selected match…</span>
+            <span>{t("status.loading")}</span>
           </aside>
         ) : null}
 

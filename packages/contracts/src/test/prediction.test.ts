@@ -2,8 +2,10 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import * as contracts from "@match-analyzer/contracts";
 import {
   CHECKPOINTS,
+  deriveMatchStatus,
   isTerminalCheckpoint,
   type Checkpoint,
+  type MatchStatus,
   type MatchSnapshotRecord,
   type PredictionRecord,
   type SnapshotQuality,
@@ -13,6 +15,7 @@ describe("prediction contracts", () => {
   it("exposes the public barrel surface", () => {
     expect(Object.keys(contracts).sort()).toEqual([
       "CHECKPOINTS",
+      "deriveMatchStatus",
       "isTerminalCheckpoint",
     ]);
   });
@@ -21,6 +24,13 @@ describe("prediction contracts", () => {
     const imported = await import("@match-analyzer/contracts");
 
     expect(imported.CHECKPOINTS).toEqual(CHECKPOINTS);
+    expect(
+      imported.deriveMatchStatus({
+        finalResult: null,
+        hasPrediction: true,
+        needsReview: false,
+      }),
+    ).toBe("Prediction Ready");
     expect(imported.isTerminalCheckpoint("LINEUP_CONFIRMED")).toBe(true);
   });
 
@@ -73,5 +83,42 @@ describe("prediction contracts", () => {
     expect(snapshot.checkpoint).toBe("T_MINUS_24H");
     expectTypeOf<MatchSnapshotRecord["checkpoint"]>().toEqualTypeOf<Checkpoint>();
     expectTypeOf<MatchSnapshotRecord["quality"]>().toEqualTypeOf<SnapshotQuality>();
+  });
+
+  it("derives canonical match status from prediction and review state", () => {
+    expect(
+      deriveMatchStatus({
+        finalResult: null,
+        hasPrediction: false,
+        needsReview: false,
+      }),
+    ).toBe("Scheduled");
+    expect(
+      deriveMatchStatus({
+        finalResult: null,
+        hasPrediction: true,
+        needsReview: false,
+      }),
+    ).toBe("Prediction Ready");
+    expect(
+      deriveMatchStatus({
+        finalResult: "2-1",
+        hasPrediction: true,
+        needsReview: false,
+      }),
+    ).toBe("Review Ready");
+    expect(
+      deriveMatchStatus({
+        finalResult: "2-1",
+        hasPrediction: true,
+        needsReview: true,
+      }),
+    ).toBe("Needs Review");
+  });
+
+  it("exports match status as a constrained union", () => {
+    expectTypeOf<MatchStatus>().toEqualTypeOf<
+      "Scheduled" | "Prediction Ready" | "Review Ready" | "Needs Review"
+    >();
   });
 });

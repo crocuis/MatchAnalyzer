@@ -1,29 +1,51 @@
 import { Hono } from "hono";
+import { deriveMatchStatus } from "@match-analyzer/contracts";
 
 import type { AppBindings } from "../env";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const matches = new Hono<AppBindings>();
 
-function deriveMatchStatus({
-  finalResult,
-  hasPrediction,
-  needsReview,
-}: {
-  finalResult: string | null;
-  hasPrediction: boolean;
-  needsReview: boolean;
-}): string {
-  if (needsReview) {
-    return "Needs Review";
+const checkpointOrder: Record<string, number> = {
+  T_MINUS_24H: 0,
+  T_MINUS_6H: 1,
+  T_MINUS_1H: 2,
+  LINEUP_CONFIRMED: 3,
+};
+
+function comparePredictionRows(
+  left: { snapshotId: string; createdAt: string | null },
+  right: { snapshotId: string; createdAt: string | null },
+  snapshotsById: Map<string, { checkpointType: string }>,
+) {
+  const leftOrder =
+    checkpointOrder[snapshotsById.get(left.snapshotId)?.checkpointType ?? ""] ?? -1;
+  const rightOrder =
+    checkpointOrder[snapshotsById.get(right.snapshotId)?.checkpointType ?? ""] ?? -1;
+  if (rightOrder !== leftOrder) {
+    return rightOrder - leftOrder;
   }
-  if (finalResult) {
-    return "Review Ready";
-  }
-  if (hasPrediction) {
-    return "Prediction Ready";
-  }
-  return "Scheduled";
+
+  const leftCreatedAt = left.createdAt ? Date.parse(left.createdAt) : 0;
+  const rightCreatedAt = right.createdAt ? Date.parse(right.createdAt) : 0;
+  return rightCreatedAt - leftCreatedAt;
+}
+
+function pickRepresentativePrediction(
+  predictions: Array<{
+    snapshotId: string;
+    recommendedPick: string;
+    confidence: number;
+    createdAt: string | null;
+    explanationPayload: unknown;
+  }>,
+  snapshotsById: Map<string, { checkpointType: string }>,
+) {
+  const sorted = [...predictions].sort((left, right) =>
+    comparePredictionRows(left, right, snapshotsById),
+  );
+
+  return sorted[0] ?? null;
 }
 
 export async function loadMatchItems(supabase: ApiSupabaseClient) {
@@ -54,6 +76,7 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
     competitionsResult,
     teamsResult,
     { data: predictionRows, error: predictionsError },
+    { data: snapshotRows, error: snapshotsError },
     { data: reviewRows, error: reviewsError },
   ] = await Promise.all([
     supabase
@@ -63,9 +86,18 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
     supabase.from("teams").select("id, name, crest_url").in("id", teamIds),
     supabase
       .from("predictions")
-      .select("match_id, recommended_pick, confidence_score, created_at")
+      .select(
+        "match_id, snapshot_id, recommended_pick, confidence_score, explanation_payload, created_at",
+      )
       .in("match_id", matchIds)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("match_snapshots")
+      .select("id, checkpoint_type")
+      .in(
+        "match_id",
+        matchIds,
+      ),
     supabase
       .from("post_match_reviews")
       .select("match_id, cause_tags, created_at")
@@ -73,7 +105,7 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
       .order("created_at", { ascending: false }),
   ]);
 
-  if (predictionsError || reviewsError) {
+  if (predictionsError || snapshotsError || reviewsError) {
     throw new Error("related match queries failed");
   }
 
@@ -119,14 +151,49 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
       { label: row.name, crestUrl: row.crest_url },
     ]),
   );
-  const predictionByMatchId = new Map<string, { recommendedPick: string; confidence: number }>();
+  const snapshotsById = new Map(
+    (snapshotRows ?? []).map((row) => [
+      row.id,
+      { checkpointType: row.checkpoint_type },
+    ]),
+  );
+  const predictionCandidatesByMatchId = new Map<
+    string,
+    Array<{
+      snapshotId: string;
+      recommendedPick: string;
+      confidence: number;
+      createdAt: string | null;
+      explanationPayload: unknown;
+    }>
+  >();
   for (const row of predictionRows ?? []) {
-    if (!predictionByMatchId.has(row.match_id)) {
-      predictionByMatchId.set(row.match_id, {
-        recommendedPick: row.recommended_pick,
-        confidence: Number(row.confidence_score ?? 0),
-      });
-    }
+    const current = predictionCandidatesByMatchId.get(row.match_id) ?? [];
+    current.push({
+      snapshotId: row.snapshot_id,
+      recommendedPick: row.recommended_pick,
+      confidence: Number(row.confidence_score ?? 0),
+      createdAt: row.created_at ?? null,
+      explanationPayload: row.explanation_payload,
+    });
+    predictionCandidatesByMatchId.set(row.match_id, current);
+  }
+  const predictionByMatchId = new Map<
+    string,
+    { recommendedPick: string; confidence: number; explanationPayload: unknown } | null
+  >();
+  for (const [matchId, predictions] of predictionCandidatesByMatchId.entries()) {
+    const representative = pickRepresentativePrediction(predictions, snapshotsById);
+    predictionByMatchId.set(
+      matchId,
+      representative
+        ? {
+            recommendedPick: representative.recommendedPick,
+            confidence: representative.confidence,
+            explanationPayload: representative.explanationPayload,
+          }
+        : null,
+    );
   }
   const reviewByMatchId = new Map<string, { needsReview: boolean }>();
   for (const row of reviewRows ?? []) {
@@ -155,8 +222,11 @@ export async function loadMatchItems(supabase: ApiSupabaseClient) {
         hasPrediction: Boolean(prediction),
         needsReview: review?.needsReview ?? false,
       }),
-      recommendedPick: prediction?.recommendedPick ?? "TBD",
-      confidence: prediction?.confidence ?? 0,
+      recommendedPick: prediction?.recommendedPick ?? null,
+      confidence: prediction?.confidence ?? null,
+      ...(prediction && typeof prediction.explanationPayload === "object"
+        ? { explanationPayload: prediction.explanationPayload }
+        : {}),
       needsReview: review?.needsReview ?? false,
     };
   });
