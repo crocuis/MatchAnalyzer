@@ -14,22 +14,24 @@ export default function PredictionCard({
 }: PredictionCardProps) {
   return (
     <article className="predictionSummary">
-      <p className="panelTitle">Recommended Pick</p>
       <div className="predictionHero">
         <div className="predictionPick">
-          <span>{prediction.checkpointLabel}</span>
+          <span className="metricLabel">Recommended Pick ({prediction.checkpointLabel})</span>
           <strong className="predictionPickValue">{recommendedPick}</strong>
         </div>
         <div className="predictionConfidence">
-          <span className="panelTitle">Confidence</span>
-          <strong className="predictionPickValue">{confidence.toFixed(2)}</strong>
+          <span className="metricLabel">Confidence Score</span>
+          <strong className="predictionPickValue">{(confidence * 100).toFixed(0)}%</strong>
         </div>
       </div>
-      <ProbabilityBars
-        away={prediction.awayWinProbability}
-        draw={prediction.drawProbability}
-        home={prediction.homeWinProbability}
-      />
+      <div className="probabilityBars">
+        <p className="metricLabel">Outcome Probabilities</p>
+        <ProbabilityBars
+          away={prediction.awayWinProbability}
+          draw={prediction.drawProbability}
+          home={prediction.homeWinProbability}
+        />
+      </div>
     </article>
   );
 }

@@ -19,6 +19,7 @@ describe("prediction API", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       matchId: "match-123",
+      prediction: null,
       checkpoints: [],
     });
   });

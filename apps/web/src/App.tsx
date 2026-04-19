@@ -5,253 +5,181 @@ import FullReportView from "./components/FullReportView";
 import LeagueTabs from "./components/LeagueTabs";
 import MatchDetailModal from "./components/MatchDetailModal";
 import MatchTable from "./components/MatchTable";
-import type {
-  LeagueSummary,
-  MatchCardRow,
-  MatchReport,
+import {
+  fetchMatches,
+  fetchPrediction,
+  fetchReview,
+  type LeagueSummary,
+  type MatchCardRow,
+  type MatchReport,
+  type PostMatchReview,
+  type PredictionSummary,
+  type TimelineCheckpoint,
 } from "./lib/api";
-import { supabase } from "./utils/supabase";
 
-const leagues: LeagueSummary[] = [
-  { id: "premier-league", label: "Premier League", matchCount: 12, reviewCount: 3 },
-  { id: "ucl", label: "UCL", matchCount: 4, reviewCount: 1 },
-  { id: "uel", label: "UEL", matchCount: 6, reviewCount: 1 },
-  { id: "kleague", label: "K League", matchCount: 5, reviewCount: 0 },
-];
+type MatchDetailState = {
+  checkpoints: TimelineCheckpoint[];
+  prediction: PredictionSummary | null;
+  review: PostMatchReview | null;
+};
 
-const matchCards: MatchCardRow[] = [
-  {
-    id: "match-001",
-    leagueId: "premier-league",
-    homeTeam: "Chelsea",
-    awayTeam: "Manchester City",
-    kickoffAt: "2026-04-27 19:00 UTC",
-    status: "Needs Review",
-    recommendedPick: "HOME",
-    confidence: 0.7,
-    needsReview: true,
-  },
-  {
-    id: "match-002",
-    leagueId: "premier-league",
-    homeTeam: "Liverpool",
-    awayTeam: "Brentford",
-    kickoffAt: "2026-04-27 21:00 UTC",
-    status: "Prediction Ready",
-    recommendedPick: "HOME",
-    confidence: 0.58,
-    needsReview: false,
-  },
-  {
-    id: "match-003",
-    leagueId: "ucl",
-    homeTeam: "Inter",
-    awayTeam: "Bayern Munich",
-    kickoffAt: "2026-04-28 19:00 UTC",
-    status: "Review Ready",
-    recommendedPick: "DRAW",
-    confidence: 0.41,
-    needsReview: true,
-  },
-  {
-    id: "match-004",
-    leagueId: "uel",
-    homeTeam: "Nottingham Forest",
-    awayTeam: "Aston Villa",
-    kickoffAt: "2026-04-30 19:00 UTC",
-    status: "Scheduled",
-    recommendedPick: "HOME",
-    confidence: 0.39,
-    needsReview: false,
-  },
-];
+function deriveLeagueSummaries(matches: MatchCardRow[]): LeagueSummary[] {
+  const groups = new Map<string, LeagueSummary>();
 
-const matchReports: MatchReport[] = [
-  {
-    matchId: "match-001",
-    title: "Chelsea vs Manchester City",
-    status: "Needs Review",
-    prediction: {
-      matchId: "match-001",
-      checkpointLabel: "T-24H",
-      homeWinProbability: 48,
-      drawProbability: 27,
-      awayWinProbability: 25,
-    },
-    checkpoints: [
-      {
-        id: "checkpoint-001",
-        label: "T-24H",
-        recordedAt: "2026-04-26 19:00 UTC",
-        note: "Initial market snapshot locked the home side as a narrow favorite.",
-      },
-      {
-        id: "checkpoint-002",
-        label: "T-6H",
-        recordedAt: "2026-04-27 13:00 UTC",
-        note: "Late lineup uncertainty reduced the away recovery signal.",
-      },
-      {
-        id: "checkpoint-003",
-        label: "T-1H",
-        recordedAt: "2026-04-27 18:00 UTC",
-        note: "Bookmaker and prediction market aligned on the home side before kickoff.",
-      },
-      {
-        id: "checkpoint-004",
-        label: "LINEUP_CONFIRMED",
-        recordedAt: "2026-04-27 18:30 UTC",
-        note: "Confidence peaked just before teams were announced.",
-      },
-    ],
-    review: {
-      matchId: "match-001",
-      outcome: "Large directional miss",
-      summary:
-        "Model favored HOME with high confidence, but the actual result flipped to AWAY after late defensive breakdowns.",
-    },
-  },
-  {
-    matchId: "match-002",
-    title: "Liverpool vs Brentford",
-    status: "Prediction Ready",
-    prediction: {
-      matchId: "match-002",
-      checkpointLabel: "T-12H",
-      homeWinProbability: 58,
-      drawProbability: 24,
-      awayWinProbability: 18,
-    },
-    checkpoints: [
-      {
-        id: "checkpoint-005",
-        label: "T-12H",
-        recordedAt: "2026-04-27 09:00 UTC",
-        note: "Home form and short-rest gap continue to favor Liverpool.",
-      },
-      {
-        id: "checkpoint-006",
-        label: "T-2H",
-        recordedAt: "2026-04-27 19:00 UTC",
-        note: "Prediction market is unavailable, so the job falls back to bookmaker-only context.",
-      },
-    ],
-    review: {
-      matchId: "match-002",
-      outcome: "Awaiting kickoff",
-      summary:
-        "No post-match review is available yet. The current card is still in the pre-match monitoring phase.",
-    },
-  },
-  {
-    matchId: "match-003",
-    title: "Inter vs Bayern Munich",
-    status: "Review Ready",
-    prediction: {
-      matchId: "match-003",
-      checkpointLabel: "T-18H",
-      homeWinProbability: 34,
-      drawProbability: 33,
-      awayWinProbability: 33,
-    },
-    checkpoints: [
-      {
-        id: "checkpoint-007",
-        label: "T-18H",
-        recordedAt: "2026-04-27 01:00 UTC",
-        note: "Prediction flattened after injury uncertainty reduced the away edge.",
-      },
-      {
-        id: "checkpoint-008",
-        label: "T-1H",
-        recordedAt: "2026-04-28 18:00 UTC",
-        note: "Markets re-opened with a stronger draw probability than the model expected.",
-      },
-    ],
-    review: {
-      matchId: "match-003",
-      outcome: "Needs review",
-      summary:
-        "This match stays highlighted because market and model divergence widened close to kickoff and the result needs operator review.",
-    },
-  },
-  {
-    matchId: "match-004",
-    title: "Nottingham Forest vs Aston Villa",
-    status: "Scheduled",
-    prediction: {
-      matchId: "match-004",
-      checkpointLabel: "T-24H",
-      homeWinProbability: 39,
-      drawProbability: 29,
-      awayWinProbability: 32,
-    },
-    checkpoints: [
-      {
-        id: "checkpoint-009",
-        label: "T-24H",
-        recordedAt: "2026-04-29 19:00 UTC",
-        note: "The tie looks closer than the initial market implied.",
-      },
-    ],
-    review: {
-      matchId: "match-004",
-      outcome: "Awaiting kickoff",
-      summary:
-        "This fixture remains in the scheduled queue and is not yet part of the review workflow.",
-    },
-  },
-];
+  for (const match of matches) {
+    const current = groups.get(match.leagueId);
+    if (current) {
+      current.matchCount += 1;
+      current.reviewCount += match.needsReview ? 1 : 0;
+      continue;
+    }
+
+    groups.set(match.leagueId, {
+      id: match.leagueId,
+      label: (match as MatchCardRow & { leagueLabel?: string }).leagueLabel ?? match.leagueId,
+      matchCount: 1,
+      reviewCount: match.needsReview ? 1 : 0,
+    });
+  }
+
+  return [...groups.values()];
+}
+
+function buildReport(
+  match: MatchCardRow,
+  detail: MatchDetailState | undefined,
+): MatchReport | null {
+  if (!detail?.prediction || !detail.review) {
+    return null;
+  }
+
+  return {
+    matchId: match.id,
+    title: `${match.homeTeam} vs ${match.awayTeam}`,
+    status: match.status,
+    prediction: detail.prediction,
+    checkpoints: detail.checkpoints,
+    review: detail.review,
+  };
+}
 
 export default function App() {
-  const [supabaseStatus, setSupabaseStatus] = useState<
+  const [matches, setMatches] = useState<MatchCardRow[]>([]);
+  const [matchesStatus, setMatchesStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
-  const [selectedLeagueId, setSelectedLeagueId] = useState("premier-league");
+  const [selectedLeagueId, setSelectedLeagueId] = useState<string | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [reportMatchId, setReportMatchId] = useState<string | null>(null);
+  const [detailsByMatchId, setDetailsByMatchId] = useState<Record<string, MatchDetailState>>(
+    {},
+  );
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const isClientValidationEnabled = false;
 
   useEffect(() => {
-    async function getMatches() {
-      if (!supabase) {
-        setSupabaseStatus("error");
-        return;
+    let isMounted = true;
+
+    async function loadMatches() {
+      setMatchesStatus("loading");
+
+      try {
+        const response = await fetchMatches();
+        if (!isMounted) {
+          return;
+        }
+        setMatches(response.items);
+        setMatchesStatus("ready");
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        setMatches([]);
+        setMatchesStatus("error");
       }
-
-      setSupabaseStatus("loading");
-
-      const { error } = await supabase
-        .from("matches")
-        .select("id, kickoff_at, home_team_id, away_team_id, final_result")
-        .limit(5);
-
-      if (error) {
-        setSupabaseStatus("error");
-        return;
-      }
-
-      setSupabaseStatus("ready");
     }
 
-    void getMatches();
+    void loadMatches();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
+  const leagues = useMemo(() => deriveLeagueSummaries(matches), [matches]);
+
+  useEffect(() => {
+    if (leagues.length === 0) {
+      setSelectedLeagueId(null);
+      return;
+    }
+
+    if (!selectedLeagueId || !leagues.some((league) => league.id === selectedLeagueId)) {
+      setSelectedLeagueId(leagues[0].id);
+    }
+  }, [leagues, selectedLeagueId]);
+
   const visibleMatches = useMemo(
-    () => matchCards.filter((match) => match.leagueId === selectedLeagueId),
-    [selectedLeagueId],
+    () =>
+      selectedLeagueId
+        ? matches.filter((match) => match.leagueId === selectedLeagueId)
+        : [],
+    [matches, selectedLeagueId],
   );
 
   const fallbackSelectedMatchId = visibleMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
   const activeMatch =
     visibleMatches.find((match) => match.id === activeMatchId) ?? null;
-  const activeReport =
-    matchReports.find((report) => report.matchId === activeMatch?.id) ?? null;
-  const reportMatch = matchCards.find((match) => match.id === reportMatchId) ?? null;
-  const reportView =
-    matchReports.find((report) => report.matchId === reportMatchId) ?? null;
+  const reportMatch = matches.find((match) => match.id === reportMatchId) ?? null;
+
+  async function ensureMatchDetail(matchId: string) {
+    if (detailsByMatchId[matchId] || detailLoadingId === matchId) {
+      return;
+    }
+
+    setDetailLoadingId(matchId);
+    try {
+      const [predictionResponse, reviewResponse] = await Promise.all([
+        fetchPrediction(matchId),
+        fetchReview(matchId),
+      ]);
+
+      setDetailsByMatchId((current) => ({
+        ...current,
+        [matchId]: {
+          prediction: predictionResponse.prediction,
+          checkpoints: predictionResponse.checkpoints,
+          review:
+            reviewResponse.review ??
+            ({
+              matchId,
+              outcome: "Awaiting review",
+              summary: "Post-match review is not available for this match yet.",
+            } satisfies PostMatchReview),
+        },
+      }));
+    } finally {
+      setDetailLoadingId((current) => (current === matchId ? null : current));
+    }
+  }
+
+  useEffect(() => {
+    if (!activeMatchId || !isModalOpen) {
+      return;
+    }
+
+    void ensureMatchDetail(activeMatchId);
+  }, [activeMatchId, isModalOpen]);
+
+  useEffect(() => {
+    if (!reportMatchId) {
+      return;
+    }
+
+    void ensureMatchDetail(reportMatchId);
+  }, [reportMatchId]);
 
   function handleSelectLeague(leagueId: string) {
     setSelectedLeagueId(leagueId);
@@ -274,6 +202,11 @@ export default function App() {
     setReportMatchId(matchId);
     setIsModalOpen(false);
   }
+
+  const activeDetail = activeMatchId ? detailsByMatchId[activeMatchId] : undefined;
+  const reportDetail = reportMatchId ? detailsByMatchId[reportMatchId] : undefined;
+  const reportView =
+    reportMatch && reportDetail ? buildReport(reportMatch, reportDetail) : null;
 
   if (reportMatch && reportView) {
     return (
@@ -298,34 +231,56 @@ export default function App() {
           <p className="dashboardEyebrow">Operator workspace</p>
           <h1 className="dashboardTitle">Football Prediction Dashboard</h1>
           <p className="dashboardSubtitle">
-            Scan the current slate, surface high-risk misses, and open a match
-            only when you need the deeper analysis.
+            Scan the live slate, surface high-risk misses, and open a match only
+            when you need the deeper analysis.
           </p>
         </header>
 
-        <LeagueTabs
-          leagues={leagues}
-          onSelect={handleSelectLeague}
-          panelId="league-matches-panel"
-          selectedLeagueId={selectedLeagueId}
-        />
+        {leagues.length > 0 ? (
+          <LeagueTabs
+            leagues={leagues}
+            onSelect={handleSelectLeague}
+            panelId="league-matches-panel"
+            selectedLeagueId={selectedLeagueId ?? leagues[0].id}
+          />
+        ) : null}
 
-        <MatchTable
-          matches={visibleMatches}
-          onOpen={handleOpenMatch}
-          panelId="league-matches-panel"
-          selectedMatchId={isModalOpen ? activeMatchId : null}
-        />
+        {matchesStatus === "loading" ? (
+          <section className="matchSection" aria-label="matches">
+            <p>Loading matches…</p>
+          </section>
+        ) : null}
+
+        {matchesStatus === "error" ? (
+          <section className="matchSection" aria-label="matches">
+            <p>Unable to load match data right now.</p>
+          </section>
+        ) : null}
+
+        {matchesStatus !== "loading" && matchesStatus !== "error" ? (
+          <MatchTable
+            matches={visibleMatches}
+            onOpen={handleOpenMatch}
+            panelId="league-matches-panel"
+            selectedMatchId={isModalOpen ? activeMatchId : null}
+          />
+        ) : null}
 
         <MatchDetailModal
           match={activeMatch}
           isOpen={isModalOpen}
           onClose={handleCloseModal}
           onOpenReport={handleOpenReport}
-          prediction={activeReport?.prediction ?? null}
-          checkpoints={activeReport?.checkpoints ?? []}
-          review={activeReport?.review ?? null}
+          prediction={activeDetail?.prediction ?? null}
+          checkpoints={activeDetail?.checkpoints ?? []}
+          review={activeDetail?.review ?? null}
         />
+
+        {detailLoadingId && isModalOpen ? (
+          <aside className="operatorStrip" aria-live="polite">
+            <span>Loading analysis for the selected match…</span>
+          </aside>
+        ) : null}
 
         <ClientValidationPanel enabled={isClientValidationEnabled} />
       </div>
