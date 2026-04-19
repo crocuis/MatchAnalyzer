@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_lineup_context_by_match
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
@@ -18,6 +19,7 @@ from batch.src.jobs.ingest_markets_job import (
     select_real_market_snapshots,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
+from batch.src.jobs.ingest_fixtures_job import prepare_sync_asset_rows
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
@@ -120,6 +122,58 @@ def test_build_competition_and_team_rows_preserve_asset_urls():
             "team_type": "club",
             "country": "England",
             "crest_url": "https://media.api-sports.io/football/teams/49.png",
+        },
+    ]
+
+
+def test_build_competition_and_team_rows_omit_missing_asset_urls():
+    event = {
+        "competition": {
+            "id": "international-friendly",
+            "name": "International Friendly",
+        },
+        "venue": {"country": "England"},
+        "competitors": [
+            {
+                "team": {
+                    "id": "arsenal",
+                    "name": "Arsenal",
+                },
+                "qualifier": "home",
+            },
+            {
+                "team": {
+                    "id": "chelsea",
+                    "name": "Chelsea",
+                },
+                "qualifier": "away",
+            },
+        ],
+    }
+
+    from batch.src.ingest.fetch_fixtures import (
+        build_competition_row_from_event,
+        build_team_rows_from_event,
+    )
+
+    assert build_competition_row_from_event(event) == {
+        "id": "international-friendly",
+        "name": "International Friendly",
+        "competition_type": "league",
+        "region": "England",
+    }
+    assert build_team_rows_from_event(event) == [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "team_type": "club",
+            "country": "England",
+        },
+        {
+            "id": "chelsea",
+            "name": "Chelsea",
+            "team_type": "club",
+            "country": "England",
         },
     ]
 
@@ -397,6 +451,127 @@ def test_backfill_assets_honors_allowed_team_ids(monkeypatch):
     ]
 
 
+def test_prepare_sync_asset_rows_preserves_existing_assets_and_backfills_missing_crests(
+    monkeypatch,
+):
+    competition_rows = [
+        {"id": "premier-league", "name": "Premier League", "competition_type": "league"},
+    ]
+    team_rows = [
+        {"id": "arsenal", "name": "Arsenal", "team_type": "club", "country": "England"},
+        {"id": "chelsea", "name": "Chelsea", "team_type": "club", "country": "England"},
+    ]
+    matches = [
+        {
+            "id": "match_001",
+            "competition_id": "premier-league",
+            "home_team_id": "arsenal",
+            "away_team_id": "chelsea",
+        }
+    ]
+    schedules = [
+        {
+            "data": {
+                "events": [
+                    {
+                        "competition": {
+                            "id": "premier-league",
+                            "name": "Premier League",
+                        },
+                        "venue": {"country": "England"},
+                        "competitors": [
+                            {
+                                "team": {
+                                    "id": "arsenal",
+                                    "name": "Arsenal",
+                                },
+                                "qualifier": "home",
+                            },
+                            {
+                                "team": {
+                                    "id": "chelsea",
+                                    "name": "Chelsea",
+                                },
+                                "qualifier": "away",
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    ]
+    existing_competitions = [
+        {
+            "id": "premier-league",
+            "name": "Premier League",
+            "emblem_url": "https://crests.football-data.org/PL.png",
+        }
+    ]
+    existing_teams = [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "crest_url": "https://existing.example/arsenal.png",
+        }
+    ]
+
+    class FakeFootball:
+        @staticmethod
+        def get_team_profile(*, team_id: str, league_slug: str):
+            assert team_id == "chelsea"
+            assert league_slug == "premier-league"
+            return {"data": {"team": {"id": "chelsea", "crest": ""}}}
+
+    class FakeMetadata:
+        @staticmethod
+        def get_team_logo(*, team_name: str, sport: str = "Soccer"):
+            assert team_name == "Chelsea"
+            return {"data": {"logo_url": "https://fallback.example/Chelsea.png"}}
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_football",
+        lambda: FakeFootball(),
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_metadata",
+        lambda: FakeMetadata(),
+    )
+
+    prepared_competitions, prepared_teams = prepare_sync_asset_rows(
+        competition_rows=competition_rows,
+        team_rows=team_rows,
+        match_rows=matches,
+        schedules=schedules,
+        existing_competitions=existing_competitions,
+        existing_teams=existing_teams,
+    )
+
+    assert prepared_competitions == [
+        {
+            "id": "premier-league",
+            "name": "Premier League",
+            "competition_type": "league",
+            "emblem_url": "https://crests.football-data.org/PL.png",
+        }
+    ]
+    assert prepared_teams == [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": "https://existing.example/arsenal.png",
+        },
+        {
+            "id": "chelsea",
+            "name": "Chelsea",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": "https://fallback.example/Chelsea.png",
+        },
+    ]
+
+
 def test_build_cleanup_plan_counts_out_of_scope_graph():
     class FakeClient:
         def read_rows(self, table: str):
@@ -467,8 +642,405 @@ def test_build_snapshot_rows_from_matches_uses_real_match_ids():
             "captured_at": "2026-08-14T15:00:00+00:00",
             "lineup_status": "unknown",
             "snapshot_quality": "partial",
-        }
-    ]
+            "home_elo": None,
+            "away_elo": None,
+            "home_xg_for_last_5": None,
+            "home_xg_against_last_5": None,
+            "away_xg_for_last_5": None,
+            "away_xg_against_last_5": None,
+                "home_matches_last_7d": None,
+                "away_matches_last_7d": None,
+                "home_absence_count": None,
+                "away_absence_count": None,
+                "home_lineup_score": None,
+                "away_lineup_score": None,
+                "lineup_strength_delta": None,
+                "lineup_source_summary": None,
+            }
+        ]
+
+
+def test_build_snapshot_rows_from_matches_enriches_historical_strength_metrics():
+    rows = build_snapshot_rows_from_matches(
+        [
+            {
+                "id": "match_010",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-08-14T15:00:00+00:00",
+        historical_matches=[
+            {
+                "id": "hist_001",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-08T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "liverpool",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 0,
+            },
+            {
+                "id": "hist_002",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-10T15:00:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "everton",
+                "final_result": "DRAW",
+                "home_score": 1,
+                "away_score": 1,
+            },
+            {
+                "id": "hist_003",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-12T15:00:00+00:00",
+                "home_team_id": "tottenham",
+                "away_team_id": "arsenal",
+                "final_result": "AWAY",
+                "home_score": 0,
+                "away_score": 3,
+            },
+            {
+                "id": "hist_004",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-13T15:00:00+00:00",
+                "home_team_id": "man-city",
+                "away_team_id": "chelsea",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 1,
+            },
+        ],
+    )
+
+    [snapshot] = rows
+
+    assert snapshot["home_elo"] > snapshot["away_elo"]
+    assert snapshot["home_xg_for_last_5"] == 2.5
+    assert snapshot["home_xg_against_last_5"] == 0.0
+    assert snapshot["away_xg_for_last_5"] == 1.0
+    assert snapshot["away_xg_against_last_5"] == 1.5
+    assert snapshot["home_matches_last_7d"] == 2
+    assert snapshot["away_matches_last_7d"] == 2
+
+
+def test_build_snapshot_rows_from_matches_uses_lineup_context_when_available():
+    rows = build_snapshot_rows_from_matches(
+        [
+            {
+                "id": "match_020",
+                "competition_id": "premier-league",
+                "season": "premier-league-2026",
+                "kickoff_at": "2026-08-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-08-14T15:00:00+00:00",
+        lineup_context_by_match={
+            "match_020": {
+                "lineup_status": "confirmed",
+                "home_absence_count": 1,
+                "away_absence_count": 3,
+                "home_lineup_score": 1.7,
+                "away_lineup_score": 1.4,
+                "lineup_strength_delta": 2.0,
+                "lineup_source_summary": "espn_lineups+recent_starters+pl_missing_players",
+            }
+        },
+    )
+
+    assert rows[0]["lineup_status"] == "confirmed"
+    assert rows[0]["home_absence_count"] == 1
+    assert rows[0]["away_absence_count"] == 3
+    assert rows[0]["lineup_strength_delta"] == 2.0
+    assert rows[0]["home_lineup_score"] == 1.7
+    assert rows[0]["away_lineup_score"] == 1.4
+    assert rows[0]["lineup_source_summary"] == "espn_lineups+recent_starters+pl_missing_players"
+
+
+def test_build_lineup_context_by_match_uses_lineups_and_missing_players(monkeypatch):
+    class FakeFootball:
+        @staticmethod
+        def get_event_lineups(*, event_id: str):
+            if event_id != "match_020":
+                return {"lineups": []}
+            return {
+                "lineups": [
+                    {
+                        "team": {"id": "arsenal", "name": "Arsenal"},
+                        "qualifier": "home",
+                        "starting": [
+                            {"name": "Home GK", "position": "Goalkeeper"},
+                            {"name": "Home CB", "position": "Defender"},
+                            *([{"position": "Defender"}] * 3),
+                            {"name": "Home CM", "position": "Midfielder"},
+                            *([{"position": "Midfielder"}] * 2),
+                            {"name": "Home FW", "position": "Forward"},
+                            *([{"position": "Forward"}] * 2),
+                        ],
+                        "bench": [{"position": "Midfielder"}] * 9,
+                    },
+                    {
+                        "team": {"id": "chelsea", "name": "Chelsea"},
+                        "qualifier": "away",
+                        "starting": [
+                            {"name": "Away GK", "position": "Goalkeeper"},
+                            {"name": "Away CB", "position": "Defender"},
+                            *([{"position": "Defender"}] * 3),
+                            {"name": "Away CM", "position": "Midfielder"},
+                            *([{"position": "Midfielder"}] * 2),
+                            {"name": "Away FW", "position": "Forward"},
+                            *([{"position": "Forward"}] * 2),
+                        ],
+                        "bench": [{"position": "Midfielder"}] * 9,
+                    },
+                ]
+            }
+
+        @staticmethod
+        def get_missing_players(*, season_id: str):
+            assert season_id == "premier-league-2026"
+            return {
+                "teams": [
+                    {
+                        "team": {"name": "Arsenal"},
+                        "players": [
+                            {
+                                "status": "injured",
+                                "position": "Midfielder",
+                                "chance_of_playing_this_round": 0,
+                            }
+                        ],
+                    },
+                    {
+                        "team": {"name": "Chelsea"},
+                        "players": [
+                            {
+                                "status": "injured",
+                                "position": "Forward",
+                                "chance_of_playing_this_round": 0,
+                            },
+                            {
+                                "status": "doubtful",
+                                "position": "Defender",
+                                "chance_of_playing_this_round": 50,
+                            },
+                            {
+                                "status": "suspended",
+                                "position": "Goalkeeper",
+                                "chance_of_playing_this_round": 0,
+                            },
+                        ],
+                    },
+                ]
+            }
+
+        @staticmethod
+        def get_team_schedule(*, team_id: str, competition_id: str, season_year: str | None = None):
+            assert competition_id == "premier-league"
+            return {
+                "events": [
+                    {"id": f"{team_id}-recent-1", "status": "closed"},
+                    {"id": f"{team_id}-recent-2", "status": "closed"},
+                ]
+            }
+
+        @staticmethod
+        def get_event_players_statistics(*, event_id: str):
+            team_id = event_id.split("-recent-")[0]
+            if team_id == "arsenal":
+                return {
+                    "teams": [
+                        {
+                            "team": {"id": "arsenal"},
+                            "players": [
+                                {"name": "Home GK", "starter": True},
+                                {"name": "Home CB", "starter": True},
+                                {"name": "Home CM", "starter": True},
+                                {"name": "Home FW", "starter": True},
+                            ],
+                        }
+                    ]
+                }
+            return {
+                "teams": [
+                    {
+                        "team": {"id": "chelsea"},
+                        "players": [
+                            {"name": "Away GK", "starter": True},
+                            {"name": "Away CB", "starter": False},
+                            {"name": "Away CM", "starter": False},
+                            {"name": "Away FW", "starter": True},
+                        ],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.load_sports_skills_football",
+        lambda: FakeFootball,
+    )
+
+    contexts = build_lineup_context_by_match(
+        [
+            {
+                "id": "match_020",
+                "competition": {"id": "premier-league"},
+                "season": {"id": "premier-league-2026"},
+                "competitors": [
+                    {"team": {"id": "arsenal", "name": "Arsenal"}, "qualifier": "home"},
+                    {"team": {"id": "chelsea", "name": "Chelsea"}, "qualifier": "away"},
+                ],
+            }
+        ]
+    )
+
+    assert contexts["match_020"] == {
+        "lineup_status": "confirmed",
+        "home_absence_count": 1,
+        "away_absence_count": 3,
+        "home_lineup_score": 1.3127,
+        "away_lineup_score": 1.2906,
+        "lineup_strength_delta": 1.9221,
+        "lineup_source_summary": "espn_lineups+recent_starters+pl_missing_players",
+    }
+
+
+def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_missing_players(
+    monkeypatch,
+):
+    class FakeFootball:
+        @staticmethod
+        def get_event_lineups(*, event_id: str):
+            assert event_id == "match_021"
+            return {
+                "lineups": [
+                    {
+                        "team": {"id": "inter", "name": "Inter"},
+                        "qualifier": "home",
+                        "formation": "3-5-2",
+                        "starting": [
+                            {"name": "Inter GK", "position": "Goalkeeper"},
+                            {"name": "Inter D1", "position": "Defender"},
+                            *([{"position": "Defender"}] * 2),
+                            {"name": "Inter M1", "position": "Midfielder"},
+                            *([{"position": "Midfielder"}] * 4),
+                            {"name": "Inter F1", "position": "Forward"},
+                            {"position": "Forward"},
+                        ],
+                        "bench": [
+                            {"position": "Goalkeeper"},
+                            *([{"position": "Defender"}] * 4),
+                            *([{"position": "Midfielder"}] * 4),
+                            *([{"position": "Forward"}] * 3),
+                        ],
+                    },
+                    {
+                        "team": {"id": "bayern", "name": "Bayern Munich"},
+                        "qualifier": "away",
+                        "formation": "",
+                        "starting": [
+                            {"name": "Bayern GK", "position": "Goalkeeper"},
+                            {"name": "Bayern D1", "position": "Defender"},
+                            *([{"position": "Defender"}] * 3),
+                            {"name": "Bayern M1", "position": "Midfielder"},
+                            *([{"position": "Midfielder"}] * 2),
+                            {"name": "Bayern F1", "position": "Forward"},
+                            {"position": "Forward"},
+                        ],
+                        "bench": [
+                            {"position": "Goalkeeper"},
+                            *([{"position": "Defender"}] * 2),
+                            *([{"position": "Midfielder"}] * 4),
+                            {"position": "Forward"},
+                        ],
+                    },
+                ]
+            }
+
+        @staticmethod
+        def get_missing_players(*, season_id: str):
+            raise AssertionError("PL-only missing player feed should not be used here")
+
+        @staticmethod
+        def get_team_schedule(*, team_id: str, competition_id: str, season_year: str | None = None):
+            return {
+                "events": [
+                    {"id": f"{team_id}-recent-1", "status": "closed"},
+                    {"id": f"{team_id}-recent-2", "status": "closed"},
+                ]
+            }
+
+        @staticmethod
+        def get_event_players_statistics(*, event_id: str):
+            team_id = event_id.split("-recent-")[0]
+            if team_id == "inter":
+                return {
+                    "teams": [
+                        {
+                            "team": {"id": "inter"},
+                            "players": [
+                                {"name": "Inter GK", "starter": True},
+                                {"name": "Inter D1", "starter": True},
+                                {"name": "Inter M1", "starter": True},
+                                {"name": "Inter F1", "starter": True},
+                            ],
+                        }
+                    ]
+                }
+            return {
+                "teams": [
+                    {
+                        "team": {"id": "bayern"},
+                        "players": [
+                            {"name": "Bayern GK", "starter": True},
+                            {"name": "Bayern D1", "starter": False},
+                            {"name": "Bayern M1", "starter": False},
+                            {"name": "Bayern F1", "starter": False},
+                        ],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.load_sports_skills_football",
+        lambda: FakeFootball,
+    )
+
+    contexts = build_lineup_context_by_match(
+        [
+            {
+                "id": "match_021",
+                "competition": {"id": "champions-league"},
+                "season": {"id": "champions-league-2026"},
+                "competitors": [
+                    {"team": {"id": "inter", "name": "Inter"}, "qualifier": "home"},
+                    {"team": {"id": "bayern", "name": "Bayern Munich"}, "qualifier": "away"},
+                ],
+            }
+        ]
+    )
+
+    assert contexts["match_021"] == {
+        "lineup_status": "unknown",
+        "home_absence_count": None,
+        "away_absence_count": None,
+        "home_lineup_score": 1.4751,
+        "away_lineup_score": 1.1578,
+        "lineup_strength_delta": 0.3173,
+        "lineup_source_summary": "espn_lineups+recent_starters",
+    }
 
 
 def test_load_settings_reads_required_environment_variables(monkeypatch):

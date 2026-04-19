@@ -8,6 +8,11 @@ export const CHECKPOINTS = [
 export type Checkpoint = (typeof CHECKPOINTS)[number];
 export type PickSide = "HOME" | "DRAW" | "AWAY";
 export type SnapshotQuality = "complete" | "partial";
+export type MatchStatus =
+  | "Scheduled"
+  | "Prediction Ready"
+  | "Review Ready"
+  | "Needs Review";
 
 export type MatchSnapshotRecord = {
   matchId: string;
@@ -29,4 +34,25 @@ export type PredictionRecord = {
 
 export function isTerminalCheckpoint(checkpoint: Checkpoint): boolean {
   return checkpoint === "LINEUP_CONFIRMED";
+}
+
+export function deriveMatchStatus({
+  finalResult,
+  hasPrediction,
+  needsReview,
+}: {
+  finalResult: string | null;
+  hasPrediction: boolean;
+  needsReview: boolean;
+}): MatchStatus {
+  if (needsReview) {
+    return "Needs Review";
+  }
+  if (finalResult) {
+    return "Review Ready";
+  }
+  if (hasPrediction) {
+    return "Prediction Ready";
+  }
+  return "Scheduled";
 }

@@ -12,7 +12,33 @@ def choose_recommended_pick(fused_probs: dict) -> str:
     return max(fused_probs, key=fused_probs.get).upper()
 
 
-def confidence_score(fused_probs: dict) -> float:
+def confidence_score(
+    fused_probs: dict,
+    base_probs: dict | None = None,
+    context: dict | None = None,
+) -> float:
+    base_probs = base_probs or fused_probs
+    context = context or {}
     ordered = sorted(fused_probs.values(), reverse=True)
-    raw_score = ordered[0] - ordered[1] + 0.5
+    base_ordered = sorted(base_probs.values(), reverse=True)
+    fused_margin = ordered[0] - ordered[1]
+    base_margin = base_ordered[0] - base_ordered[1]
+    source_agreement_ratio = float(
+        context.get(
+            "source_agreement_ratio",
+            1.0 if context.get("sources_agree") else 0.5,
+        )
+    )
+    divergence_penalty = min(max(float(context.get("max_abs_divergence", 0.0)), 0.0), 1.0)
+    raw_score = (
+        0.35
+        + (fused_margin * 0.55)
+        + (base_margin * 0.35)
+        + (source_agreement_ratio * 0.15)
+        - (divergence_penalty * 0.6)
+        + (0.04 if context.get("snapshot_quality_complete", 1) else 0.0)
+        + (0.03 if context.get("lineup_confirmed") else 0.0)
+        - (0.08 if not context.get("prediction_market_available", True) else 0.0)
+        - (0.08 if not context.get("baseline_model_trained", True) else 0.0)
+    )
     return round(min(max(raw_score, 0.0), 1.0), 4)

@@ -1,3 +1,5 @@
+import type { MatchStatus } from "@match-analyzer/contracts";
+
 export interface MatchRow {
   id: string;
   homeTeam: string;
@@ -5,7 +7,7 @@ export interface MatchRow {
   awayTeam: string;
   awayTeamLogoUrl?: string | null;
   kickoffAt: string;
-  status: string;
+  status: MatchStatus;
 }
 
 export interface LeagueSummary {
@@ -20,8 +22,9 @@ export interface MatchCardRow extends MatchRow {
   leagueId: string;
   leagueLabel?: string;
   leagueEmblemUrl?: string | null;
-  recommendedPick: string;
-  confidence: number;
+  recommendedPick: string | null;
+  confidence: number | null;
+  explanationPayload?: PredictionExplanationPayload;
   needsReview: boolean;
 }
 
@@ -33,7 +36,48 @@ export interface PredictionSummary {
   awayWinProbability: number;
   recommendedPick?: string;
   confidence?: number;
-  explanationPayload?: Record<string, unknown>;
+  explanationPayload?: PredictionExplanationPayload;
+}
+
+export interface PredictionFeatureContext {
+  eloDelta?: number;
+  xgProxyDelta?: number;
+  fixtureCongestionDelta?: number;
+  lineupStrengthDelta?: number;
+  homeLineupScore?: number;
+  awayLineupScore?: number;
+  elo_delta?: number;
+  xg_proxy_delta?: number;
+  fixture_congestion_delta?: number;
+  lineup_strength_delta?: number;
+  home_lineup_score?: number;
+  away_lineup_score?: number;
+  lineupSourceSummary?: string;
+  lineup_source_summary?: string;
+}
+
+export interface PredictionExplanationPayload {
+  rawConfidence?: number;
+  raw_confidence_score?: number;
+  calibratedConfidence?: number;
+  calibrated_confidence_score?: number;
+  baseModelSource?: string;
+  base_model_source?: string;
+  sourceAgreementRatio?: number;
+  source_agreement_ratio?: number;
+  maxAbsDivergence?: number;
+  max_abs_divergence?: number;
+  confidenceCalibration?: Record<
+    string,
+    { count?: number; hitRate?: number; hit_rate?: number }
+  >;
+  confidence_calibration?: Record<
+    string,
+    { count?: number; hitRate?: number; hit_rate?: number }
+  >;
+  featureContext?: PredictionFeatureContext;
+  feature_context?: PredictionFeatureContext;
+  [key: string]: unknown;
 }
 
 export interface TimelineCheckpoint {
@@ -55,13 +99,20 @@ export interface PostMatchReview {
 export interface MatchReport {
   matchId: string;
   title: string;
-  status: string;
+  status: MatchStatus;
   prediction: PredictionSummary | null;
   checkpoints: TimelineCheckpoint[];
   review: PostMatchReview | null;
 }
 
-const API_BASE_PATH = "/api";
+const DEPLOY_API_ORIGIN =
+  (
+    import.meta.env.VITE_API_BASE_URL ??
+    (typeof process !== "undefined" ? process.env.VITE_API_BASE_URL : "")
+  )
+    ?.trim()
+    .replace(/\/+$/, "") ?? "";
+const API_BASE_PATH = DEPLOY_API_ORIGIN || "/api";
 
 export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;

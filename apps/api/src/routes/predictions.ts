@@ -12,6 +12,24 @@ const checkpointOrder: Record<string, number> = {
   LINEUP_CONFIRMED: 3,
 };
 
+function comparePredictionRows(
+  left: { snapshot_id: string; created_at: string | null },
+  right: { snapshot_id: string; created_at: string | null },
+  snapshotsById: Map<string, { checkpoint_type?: string }>,
+) {
+  const leftOrder =
+    checkpointOrder[snapshotsById.get(left.snapshot_id)?.checkpoint_type ?? ""] ?? -1;
+  const rightOrder =
+    checkpointOrder[snapshotsById.get(right.snapshot_id)?.checkpoint_type ?? ""] ?? -1;
+  if (rightOrder !== leftOrder) {
+    return rightOrder - leftOrder;
+  }
+
+  const leftCreatedAt = left.created_at ? Date.parse(left.created_at) : 0;
+  const rightCreatedAt = right.created_at ? Date.parse(right.created_at) : 0;
+  return rightCreatedAt - leftCreatedAt;
+}
+
 export async function loadPredictionView(
   supabase: ApiSupabaseClient,
   matchId: string,
@@ -38,13 +56,9 @@ export async function loadPredictionView(
   }
 
   const snapshotsById = new Map((snapshotRows ?? []).map((row) => [row.id, row]));
-  const sortedPredictions = [...(predictionRows ?? [])].sort((left, right) => {
-    const leftSnapshot = snapshotsById.get(left.snapshot_id);
-    const rightSnapshot = snapshotsById.get(right.snapshot_id);
-    const leftOrder = checkpointOrder[leftSnapshot?.checkpoint_type ?? ""] ?? -1;
-    const rightOrder = checkpointOrder[rightSnapshot?.checkpoint_type ?? ""] ?? -1;
-    return rightOrder - leftOrder;
-  });
+  const sortedPredictions = [...(predictionRows ?? [])].sort((left, right) =>
+    comparePredictionRows(left, right, snapshotsById),
+  );
 
   const latestPrediction = sortedPredictions[0] ?? null;
   const checkpoints = (snapshotRows ?? [])

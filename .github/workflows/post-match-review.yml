@@ -1,4 +1,4 @@
-name: sample-post-match-review
+name: post-match-review
 
 permissions:
   contents: read
@@ -7,11 +7,16 @@ on:
   schedule:
     - cron: "45 * * * *"
   workflow_dispatch:
+    inputs:
+      target_date:
+        description: "UTC date to review in YYYY-MM-DD format. Defaults to current UTC date."
+        required: false
+        type: string
 
 jobs:
   review:
     concurrency:
-      group: sample-post-match-review
+      group: post-match-review
       cancel-in-progress: false
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -28,5 +33,13 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
           test -n "$R2_BUCKET"
+      - name: Resolve target date
+        shell: bash
+        run: |
+          TARGET_DATE="${{ github.event.inputs.target_date }}"
+          if [ -z "$TARGET_DATE" ]; then
+            TARGET_DATE="$(date -u +%F)"
+          fi
+          echo "REAL_REVIEW_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_post_match_review_job

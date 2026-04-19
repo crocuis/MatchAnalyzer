@@ -1,6 +1,10 @@
 import pytest
 
-from batch.src.model.evaluate_walk_forward import split_walk_forward_windows
+from batch.src.model.evaluate_walk_forward import (
+    calibrate_confidence_from_buckets,
+    split_walk_forward_windows,
+    summarize_confidence_buckets,
+)
 from batch.src.model.train_baseline import train_baseline_model
 
 
@@ -52,3 +56,29 @@ def test_train_baseline_model_rejects_classes_with_fewer_than_three_samples():
         match="train_baseline_model requires at least 3 samples per class for isotonic calibration",
     ):
         train_baseline_model(features, labels)
+
+
+def test_summarize_confidence_buckets_groups_hits_by_bucket():
+    summary = summarize_confidence_buckets(
+        [
+            {"confidence": 0.81, "is_correct": True},
+            {"confidence": 0.86, "is_correct": False},
+            {"confidence": 0.64, "is_correct": True},
+            {"confidence": 0.67, "is_correct": True},
+        ]
+    )
+
+    assert summary["0.8-0.9"]["count"] == 2
+    assert summary["0.8-0.9"]["hit_rate"] == 0.5
+    assert summary["0.6-0.7"]["count"] == 2
+    assert summary["0.6-0.7"]["hit_rate"] == 1.0
+
+
+def test_calibrate_confidence_from_buckets_blends_raw_score_with_history():
+    summary = {
+        "0.8-0.9": {"count": 5, "hit_rate": 0.6},
+        "0.6-0.7": {"count": 4, "hit_rate": 0.75},
+    }
+
+    assert calibrate_confidence_from_buckets(0.83, summary, minimum_count=3) == 0.715
+    assert calibrate_confidence_from_buckets(0.52, summary, minimum_count=3) == 0.52

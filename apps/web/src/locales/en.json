@@ -1,0 +1,101 @@
+{
+  "header": {
+    "eyebrow": "Live Intelligence System",
+    "title": "Match Analysis Hub",
+    "subtitle": "Advanced football prediction monitoring. Identify market anomalies, track model confidence, and manage match reviews in real-time."
+  },
+  "leagues": {
+    "premier-league": "Premier League",
+    "laliga": "La Liga",
+    "la-liga": "La Liga",
+    "bundesliga": "Bundesliga",
+    "serie-a": "Serie A",
+    "ligue-1": "Ligue 1",
+    "ucl": "UEFA Champions League",
+    "champions-league": "UEFA Champions League",
+    "chapions-league": "UEFA Champions League",
+    "uel": "UEFA Europa League",
+    "europa-league": "UEFA Europa League",
+    "uecl": "UEFA Conference League",
+    "kleague": "K League",
+    "eredivisie": "Eredivisie",
+    "primeira-liga": "Primeira Liga",
+    "summary": {
+      "matches": "{{count}} matches",
+      "reviewNeeded": "{{count}} need review"
+    }
+  },
+  "matchCard": {
+    "reviewRequired": "Review Required",
+    "metrics": {
+      "pick": "Pick",
+      "confidence": "Confidence",
+      "status": "Status",
+      "unavailable": "Unavailable"
+    },
+    "reasonTags": {
+      "consensus": "Consensus",
+      "strengthHome": "Strength edge",
+      "strengthAway": "Away strength",
+      "lineupHome": "Lineup edge",
+      "lineupAway": "Away lineup",
+      "xgHome": "xG edge",
+      "xgAway": "Away xG",
+      "scheduleHome": "Schedule edge",
+      "scheduleAway": "Away schedule"
+    }
+  },
+  "modal": {
+    "close": "Close",
+    "sections": {
+      "prediction": "Advanced Prediction",
+      "review": "Post-Match Review",
+      "timeline": "Match Timeline"
+    },
+    "prediction": {
+      "recommendedPick": "Recommended Pick",
+      "confidence": "Confidence Score",
+      "probabilities": "Outcome Probabilities",
+      "breakdownTitle": "Confidence Breakdown",
+      "breakdown": {
+        "raw": "Raw score",
+        "calibrated": "Calibrated",
+        "agreement": "Source agreement",
+        "divergence": "Market divergence",
+        "homeLineupScore": "Home lineup score",
+        "awayLineupScore": "Away lineup score",
+        "lineupSource": "Lineup source",
+        "baseModel": "Baseline source",
+        "calibrationEvidence": "Calibration evidence",
+        "signals": "Signal drivers",
+        "signalLabels": {
+          "strengthHome": "strength edge",
+          "strengthAway": "away strength",
+          "lineupHome": "lineup edge",
+          "lineupAway": "away lineup edge",
+          "xgHome": "xG proxy",
+          "xgAway": "away xG proxy",
+          "scheduleHome": "schedule edge",
+          "scheduleAway": "away schedule edge"
+        }
+      },
+      "unavailableDesc": "Prediction data is not available for this match yet."
+    },
+    "review": {
+      "unavailable": "Review unavailable",
+      "unavailableDesc": "Post-match review is not available for this match yet."
+    },
+    "timeline": {
+      "empty": "No checkpoints recorded."
+    },
+    "fullReport": "View Full Intelligence Report"
+  },
+  "status": {
+    "Needs Review": "Needs Review",
+    "Prediction Ready": "Prediction Ready",
+    "Review Ready": "Review Ready",
+    "Scheduled": "Scheduled",
+    "loading": "Loading matches...",
+    "error": "Unable to load match data. Please check the API server."
+  }
+}

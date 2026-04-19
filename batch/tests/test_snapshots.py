@@ -72,8 +72,22 @@ def test_migration_constrains_core_snapshot_and_probability_fields():
     migration = normalize_sql(Path("supabase/migrations/202604180001_initial_schema.sql").read_text())
 
     assert "final_result text check (final_result in ('HOME', 'DRAW', 'AWAY'))" in migration
+    assert "home_score integer" in migration
+    assert "away_score integer" in migration
     assert "checkpoint_type text not null check (checkpoint_type in ('T_MINUS_24H', 'T_MINUS_6H', 'T_MINUS_1H', 'LINEUP_CONFIRMED'))" in migration
     assert "snapshot_quality text not null check (snapshot_quality in ('complete', 'partial'))" in migration
+    assert "home_elo numeric" in migration
+    assert "away_elo numeric" in migration
+    assert "home_xg_for_last_5 numeric" in migration
+    assert "away_xg_against_last_5 numeric" in migration
+    assert "home_matches_last_7d integer" in migration
+    assert "away_matches_last_7d integer" in migration
+    assert "home_absence_count integer" in migration
+    assert "away_absence_count integer" in migration
+    assert "lineup_strength_delta numeric" in migration
+    assert "home_lineup_score numeric" in migration
+    assert "away_lineup_score numeric" in migration
+    assert "lineup_source_summary text" in migration
     assert "source_type text not null check (source_type in ('bookmaker', 'prediction_market'))" in migration
     assert "recommended_pick text not null check (recommended_pick in ('HOME', 'DRAW', 'AWAY'))" in migration
     assert "actual_outcome text not null check (actual_outcome in ('HOME', 'DRAW', 'AWAY'))" in migration
@@ -148,8 +162,81 @@ def test_build_feature_vector_includes_rest_and_market_gap():
     assert round(features["market_gap_draw"], 2) == 0.02
     assert round(features["market_gap_away"], 2) == -0.07
     assert round(features["max_abs_divergence"], 2) == 0.07
+    assert round(features["book_favorite_gap"], 2) == 0.24
+    assert round(features["market_favorite_gap"], 2) == 0.17
+    assert round(features["book_market_entropy_gap"], 3) != 0.0
     assert features["sources_agree"] == 1
     assert features["prediction_market_available"] is True
+    assert round(features["elo_delta"], 2) == 0.65
+    assert round(features["xg_proxy_delta"], 2) == 0.72
+    assert round(features["fixture_congestion_delta"], 2) == 1.0
+
+
+def test_build_feature_vector_prefers_explicit_strength_and_schedule_fields():
+    features = build_feature_vector(
+        {
+            "form_delta": 2,
+            "rest_delta": 1,
+            "book_home_prob": 0.52,
+            "book_draw_prob": 0.24,
+            "book_away_prob": 0.24,
+            "market_home_prob": 0.49,
+            "market_draw_prob": 0.25,
+            "market_away_prob": 0.26,
+            "home_elo": 1680,
+            "away_elo": 1540,
+            "home_xg_for_last_5": 1.8,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.4,
+            "home_matches_last_7d": 1,
+            "away_matches_last_7d": 3,
+            "prediction_market_available": True,
+        }
+    )
+
+    assert round(features["elo_delta"], 2) == 1.4
+    assert round(features["xg_proxy_delta"], 2) == 1.2
+    assert features["fixture_congestion_delta"] == 2
+
+
+def test_build_feature_vector_prefers_explicit_lineup_strength_delta():
+    features = build_feature_vector(
+        {
+            "form_delta": 0,
+            "rest_delta": 0,
+            "book_home_prob": 0.48,
+            "book_draw_prob": 0.27,
+            "book_away_prob": 0.25,
+            "market_home_prob": 0.47,
+            "market_draw_prob": 0.28,
+            "market_away_prob": 0.25,
+            "lineup_strength_delta": 1.5,
+            "prediction_market_available": True,
+        }
+    )
+
+    assert features["lineup_strength_delta"] == 1.5
+
+
+def test_build_feature_vector_uses_persisted_lineup_scores_when_available():
+    features = build_feature_vector(
+        {
+            "form_delta": 0,
+            "rest_delta": 0,
+            "book_home_prob": 0.48,
+            "book_draw_prob": 0.27,
+            "book_away_prob": 0.25,
+            "market_home_prob": 0.47,
+            "market_draw_prob": 0.28,
+            "market_away_prob": 0.25,
+            "home_lineup_score": 1.82,
+            "away_lineup_score": 1.21,
+            "prediction_market_available": True,
+        }
+    )
+
+    assert round(features["lineup_strength_delta"], 2) == 0.61
 
 
 def test_build_feature_vector_marks_prediction_market_unavailable_when_fallback_used():

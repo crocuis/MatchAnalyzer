@@ -1,4 +1,4 @@
-name: sample-ingest-markets
+name: ingest-markets
 
 permissions:
   contents: read
@@ -7,11 +7,16 @@ on:
   schedule:
     - cron: "15 * * * *"
   workflow_dispatch:
+    inputs:
+      target_date:
+        description: "UTC date to sync in YYYY-MM-DD format. Defaults to current UTC date."
+        required: false
+        type: string
 
 jobs:
   ingest:
     concurrency:
-      group: sample-ingest-markets
+      group: ingest-markets
       cancel-in-progress: false
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -28,5 +33,13 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
           test -n "$R2_BUCKET"
+      - name: Resolve target date
+        shell: bash
+        run: |
+          TARGET_DATE="${{ github.event.inputs.target_date }}"
+          if [ -z "$TARGET_DATE" ]; then
+            TARGET_DATE="$(date -u +%F)"
+          fi
+          echo "REAL_MARKET_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.ingest_markets_job
