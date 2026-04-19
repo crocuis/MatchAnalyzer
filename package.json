@@ -11,9 +11,9 @@
     "dev": "sh -c 'npm --workspace apps/api run dev & sleep 2 && npm --workspace apps/web run dev & wait'",
     "dev:api": "npm --workspace apps/api run dev",
     "dev:web": "npm --workspace apps/web run dev",
-    "cf:whoami": "npm --workspace apps/api exec wrangler whoami",
-    "deploy:api": "npm --workspace apps/api exec wrangler deploy",
-    "deploy:web": "sh -c 'test -n \"$CLOUDFLARE_PAGES_PROJECT_NAME\" && npm --workspace apps/web run build && npm --workspace apps/api exec wrangler pages deploy ../web/dist --project-name \"$CLOUDFLARE_PAGES_PROJECT_NAME\"'",
+    "cf:whoami": "npm --workspace apps/api exec -- wrangler whoami",
+    "deploy:api": "npm --workspace apps/api exec -- wrangler deploy",
+    "deploy:web": "sh -c 'test -n \"$CLOUDFLARE_PAGES_PROJECT_NAME\" && npm --workspace apps/web run build && npm --workspace apps/api exec -- wrangler pages deploy ../web/dist --project-name \"$CLOUDFLARE_PAGES_PROJECT_NAME\"'",
     "test": "vitest run",
     "test:web": "node scripts/run-optional-workspace-test.mjs apps/web",
     "test:api": "node scripts/run-optional-workspace-test.mjs apps/api"
