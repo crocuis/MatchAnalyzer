@@ -6,6 +6,19 @@ from typing import Any
 from batch.src.features.build_snapshots import build_snapshot
 from batch.src.ingest.normalizers import normalize_team_name
 
+ALLOWED_COMPETITION_IDS = {
+    "premier-league",
+    "la-liga",
+    "bundesliga",
+    "serie-a",
+    "ligue-1",
+    "champions-league",
+    "europa-league",
+    "world-cup",
+    "european-championship",
+    "international-friendly",
+}
+
 
 def normalize_kickoff_at(value: str) -> str:
     kickoff_at = datetime.fromisoformat(value)
@@ -37,6 +50,14 @@ def load_sports_skills_football():
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return football.get_daily_schedule(date=date)
+
+
+def filter_supported_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in events
+        if event.get("competition", {}).get("id") in ALLOWED_COMPETITION_IDS
+    ]
 
 
 def infer_competition_type(competition_id: str) -> str:

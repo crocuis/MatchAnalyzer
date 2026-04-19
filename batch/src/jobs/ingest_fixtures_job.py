@@ -9,6 +9,7 @@ from batch.src.ingest.fetch_fixtures import (
     build_snapshot_rows_from_matches,
     build_team_rows_from_event,
     fetch_daily_schedule,
+    filter_supported_events,
 )
 from batch.src.jobs.sample_data import (
     SAMPLE_FIXTURE_ROW,
@@ -26,7 +27,7 @@ def main() -> None:
 
     if use_real_schedule:
         schedule = fetch_daily_schedule(use_real_schedule)
-        events = schedule["data"]["events"]
+        events = filter_supported_events(schedule["data"]["events"])
         competition_rows = []
         team_rows = []
         payload = []
@@ -34,7 +35,13 @@ def main() -> None:
             competition_rows.append(build_competition_row_from_event(event))
             team_rows.extend(build_team_rows_from_event(event))
             payload.append(build_match_row_from_event(event))
-        archive_payload = schedule
+        archive_payload = {
+            **schedule,
+            "data": {
+                **schedule["data"],
+                "events": events,
+            },
+        }
         archive_key = f"fixtures/{use_real_schedule}.json"
         snapshot_rows_payload = build_snapshot_rows_from_matches(
             payload,

@@ -77,6 +77,7 @@ def backfill_assets(
     competitions: list[dict],
     matches: list[dict],
     schedules: list[dict],
+    allowed_team_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     competition_updates: dict[str, dict] = {}
     team_updates: dict[str, dict] = {}
@@ -109,6 +110,8 @@ def backfill_assets(
         if team["id"] in team_updates:
             continue
         if team["id"] not in seen_team_ids:
+            continue
+        if allowed_team_ids is not None and team["id"] not in allowed_team_ids:
             continue
         competition_id = competition_by_team.get(team["id"])
         if not competition_id:
@@ -157,11 +160,24 @@ def main() -> None:
     )
 
     schedules = [fetch_daily_schedule(day) for day in iter_dates(start, end)]
+    allowed_team_ids: set[str] | None = None
+    team_limit = os.environ.get("ASSET_BACKFILL_TEAM_LIMIT")
+    if team_limit:
+        seen_team_ids: list[str] = []
+        for schedule in schedules:
+            for event in schedule.get("data", {}).get("events", []):
+                for team_row in build_team_rows_from_event(event):
+                    team_id = team_row["id"]
+                    if team_id not in seen_team_ids:
+                        seen_team_ids.append(team_id)
+        allowed_team_ids = set(seen_team_ids[: int(team_limit)])
+
     competition_rows, team_rows = backfill_assets(
         teams=teams,
         competitions=competitions,
         matches=matches,
         schedules=schedules,
+        allowed_team_ids=allowed_team_ids,
     )
 
     competition_count = (
@@ -177,6 +193,7 @@ def main() -> None:
                 "date_count": len(schedules),
                 "date_start": start.isoformat(),
                 "date_end": end.isoformat(),
+                "team_limit": int(team_limit) if team_limit else None,
             },
             sort_keys=True,
         )

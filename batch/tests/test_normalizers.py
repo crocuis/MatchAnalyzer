@@ -6,6 +6,7 @@ import pytest
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
+from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_markets import (
     build_prediction_market_rows,
     polymarket_sport_for_competition,
@@ -118,6 +119,22 @@ def test_build_competition_and_team_rows_preserve_asset_urls():
             "country": "England",
             "crest_url": "https://media.api-sports.io/football/teams/49.png",
         },
+    ]
+
+
+def test_filter_supported_events_keeps_only_supported_competitions():
+    events = [
+        {"competition": {"id": "premier-league"}},
+        {"competition": {"id": "champions-league"}},
+        {"competition": {"id": "liga-mx"}},
+        {"competition": {"id": "mls"}},
+        {"competition": {"id": "world-cup"}},
+    ]
+
+    assert filter_supported_events(events) == [
+        {"competition": {"id": "premier-league"}},
+        {"competition": {"id": "champions-league"}},
+        {"competition": {"id": "world-cup"}},
     ]
 
 
@@ -261,6 +278,112 @@ def test_backfill_assets_prefers_schedule_assets_and_search_fallback(monkeypatch
             "team_type": "club",
             "country": "England",
         },
+    ]
+
+
+def test_backfill_assets_honors_allowed_team_ids(monkeypatch):
+    teams = [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": None,
+        },
+        {
+            "id": "chelsea",
+            "name": "Chelsea",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": None,
+        },
+    ]
+    competitions = [
+        {"id": "premier-league", "name": "Premier League", "emblem_url": None},
+    ]
+    matches = [
+        {
+            "id": "match_001",
+            "competition_id": "premier-league",
+            "home_team_id": "arsenal",
+            "away_team_id": "chelsea",
+        }
+    ]
+    schedules = [
+        {
+            "data": {
+                "events": [
+                    {
+                        "competition": {
+                            "id": "premier-league",
+                            "name": "Premier League",
+                            "emblem": "https://crests.football-data.org/PL.png",
+                        },
+                        "venue": {"country": "England"},
+                        "competitors": [
+                            {
+                                "team": {
+                                    "id": "arsenal",
+                                    "name": "Arsenal",
+                                },
+                                "qualifier": "home",
+                            },
+                            {
+                                "team": {
+                                    "id": "chelsea",
+                                    "name": "Chelsea",
+                                },
+                                "qualifier": "away",
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    ]
+
+    class FakeFootball:
+        @staticmethod
+        def get_team_profile(*, team_id: str, league_slug: str):
+            return {
+                "data": {
+                    "team": {
+                        "id": team_id,
+                        "crest": f"https://crests.football-data.org/{team_id}.png",
+                    }
+                }
+            }
+
+    class FakeMetadata:
+        @staticmethod
+        def get_team_logo(*, team_name: str, sport: str = "Soccer"):
+            return {"data": {"logo_url": f"https://fallback.example/{team_name}.png"}}
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_football",
+        lambda: FakeFootball(),
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_metadata",
+        lambda: FakeMetadata(),
+    )
+
+    _, team_rows = backfill_assets(
+        teams=teams,
+        competitions=competitions,
+        matches=matches,
+        schedules=schedules,
+        allowed_team_ids={"arsenal"},
+    )
+
+    assert team_rows == [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": "https://fallback.example/Arsenal.png",
+        }
     ]
 
 
