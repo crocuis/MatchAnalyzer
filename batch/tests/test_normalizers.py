@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from batch.src.jobs.ingest_markets_job import (
     promote_market_snapshots,
     select_real_market_snapshots,
 )
+from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
@@ -115,6 +117,149 @@ def test_build_competition_and_team_rows_preserve_asset_urls():
             "team_type": "club",
             "country": "England",
             "crest_url": "https://media.api-sports.io/football/teams/49.png",
+        },
+    ]
+
+
+def test_iter_dates_includes_both_bounds():
+    assert iter_dates(
+        date.fromisoformat("2026-04-10"),
+        date.fromisoformat("2026-04-12"),
+    ) == ["2026-04-10", "2026-04-11", "2026-04-12"]
+
+
+def test_backfill_assets_prefers_schedule_assets_and_search_fallback(monkeypatch):
+    teams = [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": None,
+        },
+        {
+            "id": "chelsea",
+            "name": "Chelsea",
+            "team_type": "club",
+            "country": "England",
+            "crest_url": None,
+        },
+    ]
+    competitions = [
+        {"id": "premier-league", "name": "Premier League", "emblem_url": None},
+    ]
+    matches = [
+        {
+            "id": "match_001",
+            "competition_id": "premier-league",
+            "home_team_id": "arsenal",
+            "away_team_id": "chelsea",
+        }
+    ]
+    schedules = [
+        {
+            "data": {
+                "events": [
+                    {
+                        "competition": {
+                            "id": "premier-league",
+                            "name": "Premier League",
+                            "emblem": "https://crests.football-data.org/PL.png",
+                        },
+                        "venue": {"country": "England"},
+                        "competitors": [
+                            {
+                                "team": {
+                                    "id": "arsenal",
+                                    "name": "Arsenal",
+                                    "crest": "https://crests.football-data.org/57.png",
+                                },
+                                "qualifier": "home",
+                            },
+                            {
+                                "team": {
+                                    "id": "chelsea",
+                                    "name": "Chelsea",
+                                },
+                                "qualifier": "away",
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    ]
+
+    class FakeFootball:
+        @staticmethod
+        def get_team_profile(*, team_id: str, league_slug: str):
+            if team_id == "arsenal":
+                return {
+                    "data": {
+                        "team": {
+                            "id": "arsenal",
+                            "crest": "https://crests.football-data.org/57.png",
+                        }
+                    }
+                }
+            assert team_id == "chelsea"
+            assert league_slug == "premier-league"
+            return {
+                "data": {
+                    "team": {
+                        "id": "chelsea",
+                        "crest": "",
+                    }
+                }
+            }
+
+    class FakeMetadata:
+        @staticmethod
+        def get_team_logo(*, team_name: str, sport: str = "Soccer"):
+            assert team_name == "Chelsea"
+            return {
+                "data": {
+                    "logo_url": "https://r2.thesportsdb.com/images/media/team/badge/yvwvtu1448813215.png",
+                }
+            }
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_football",
+        lambda: FakeFootball(),
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_metadata",
+        lambda: FakeMetadata(),
+    )
+
+    competition_rows, team_rows = backfill_assets(
+        teams=teams,
+        competitions=competitions,
+        matches=matches,
+        schedules=schedules,
+    )
+
+    assert competition_rows == [
+        {
+            "id": "premier-league",
+            "name": "Premier League",
+            "emblem_url": "https://crests.football-data.org/PL.png",
+        }
+    ]
+    assert team_rows == [
+        {
+            "id": "arsenal",
+            "name": "Arsenal",
+            "crest_url": "https://crests.football-data.org/57.png",
+            "team_type": "club",
+            "country": "England",
+        },
+        {
+            "id": "chelsea",
+            "name": "Chelsea",
+            "crest_url": "https://r2.thesportsdb.com/images/media/team/badge/yvwvtu1448813215.png",
+            "team_type": "club",
+            "country": "England",
         },
     ]
 
