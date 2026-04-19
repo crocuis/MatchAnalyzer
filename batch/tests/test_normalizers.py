@@ -1451,7 +1451,6 @@ def test_promote_market_snapshots_marks_market_backed_snapshots_complete():
                 "captured_at": "2026-04-12T14:00:00+00:00",
                 "lineup_status": "unknown",
                 "snapshot_quality": "partial",
-                "competition_id": "premier-league",
             },
             {
                 "id": "match_002_t_minus_24h",
@@ -1478,12 +1477,11 @@ def test_promote_market_snapshots_marks_market_backed_snapshots_complete():
             "captured_at": "2026-04-12T14:00:00+00:00",
             "lineup_status": "unknown",
             "snapshot_quality": "complete",
-            "competition_id": "premier-league",
         }
     ]
 
 
-def test_promote_market_snapshots_preserves_existing_snapshot_fields():
+def test_promote_market_snapshots_drops_enrichment_fields_before_persistence():
     rows = promote_market_snapshots(
         snapshot_rows=[
             {
@@ -1496,6 +1494,7 @@ def test_promote_market_snapshots_preserves_existing_snapshot_fields():
                 "competition_id": "premier-league",
                 "home_team_name": "Chelsea FC",
                 "away_team_name": "Manchester City FC",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
             }
         ],
         market_rows=[
@@ -1514,8 +1513,5 @@ def test_promote_market_snapshots_preserves_existing_snapshot_fields():
             "captured_at": "2026-04-12T14:00:00+00:00",
             "lineup_status": "unknown",
             "snapshot_quality": "complete",
-            "competition_id": "premier-league",
-            "home_team_name": "Chelsea FC",
-            "away_team_name": "Manchester City FC",
         }
     ]

@@ -38,7 +38,7 @@ jobs:
         run: |
           TARGET_DATE="${{ github.event.inputs.target_date }}"
           if [ -z "$TARGET_DATE" ]; then
-            TARGET_DATE="$(date -u +%F)"
+            TARGET_DATE="$(date -u -d 'yesterday' +%F)"
           fi
           echo "REAL_REVIEW_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt

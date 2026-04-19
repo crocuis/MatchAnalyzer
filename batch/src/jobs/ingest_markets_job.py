@@ -12,6 +12,29 @@ from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
 
+MATCH_SNAPSHOT_PERSISTED_FIELDS = {
+    "id",
+    "match_id",
+    "checkpoint_type",
+    "captured_at",
+    "lineup_status",
+    "snapshot_quality",
+    "home_elo",
+    "away_elo",
+    "home_xg_for_last_5",
+    "home_xg_against_last_5",
+    "away_xg_for_last_5",
+    "away_xg_against_last_5",
+    "home_matches_last_7d",
+    "away_matches_last_7d",
+    "home_absence_count",
+    "away_absence_count",
+    "home_lineup_score",
+    "away_lineup_score",
+    "lineup_strength_delta",
+    "lineup_source_summary",
+}
+
 
 def select_real_market_snapshots(
     snapshot_rows: list[dict],
@@ -55,7 +78,11 @@ def promote_market_snapshots(
             continue
         promoted.append(
             {
-                **snapshot,
+                **{
+                    key: value
+                    for key, value in snapshot.items()
+                    if key in MATCH_SNAPSHOT_PERSISTED_FIELDS
+                },
                 "snapshot_quality": "complete",
             }
         )

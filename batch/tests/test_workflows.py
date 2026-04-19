@@ -38,6 +38,7 @@ def test_post_match_review_workflow_sets_real_review_date() -> None:
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "REAL_REVIEW_DATE=" in workflow
+    assert "date -u -d 'yesterday' +%F" in workflow
 
 
 def test_deploy_production_workflow_waits_for_main_ci_and_runs_ordered_deploy_steps() -> None:
