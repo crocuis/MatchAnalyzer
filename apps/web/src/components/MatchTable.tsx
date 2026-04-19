@@ -1,34 +1,43 @@
-import type { MatchRow } from "../lib/api";
+import type { MatchCardRow } from "../lib/api";
+import MatchCard from "./MatchCard";
 
 interface MatchTableProps {
-  matches: MatchRow[];
+  matches: MatchCardRow[];
+  panelId: string;
+  selectedMatchId: string | null;
+  onOpen: (matchId: string) => void;
 }
 
-export default function MatchTable({ matches }: MatchTableProps) {
+export default function MatchTable({
+  matches,
+  panelId,
+  selectedMatchId,
+  onOpen,
+}: MatchTableProps) {
   return (
-    <section aria-label="matches">
-      <h2>Matches</h2>
+    <section
+      aria-label="matches"
+      aria-labelledby="matches-heading"
+      className="matchSection"
+      id={panelId}
+      role="tabpanel"
+    >
+      <h2 id="matches-heading" className="panelTitle">
+        Matches
+      </h2>
       {matches.length === 0 ? (
         <p>No matches available.</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Match</th>
-              <th>Kickoff</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {matches.map((match) => (
-              <tr key={match.id}>
-                <td>{match.homeTeam} vs {match.awayTeam}</td>
-                <td>{match.kickoffAt}</td>
-                <td>{match.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="matchGrid">
+          {matches.map((match) => (
+            <MatchCard
+              key={match.id}
+              match={match}
+              isSelected={selectedMatchId === match.id}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
       )}
     </section>
   );

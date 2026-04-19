@@ -6,10 +6,12 @@ interface PostMatchReviewCardProps {
 
 export default function PostMatchReviewCard({ review }: PostMatchReviewCardProps) {
   return (
-    <article>
-      <h2>Post-match review</h2>
-      <p><strong>Outcome:</strong> {review.outcome}</p>
-      <p>{review.summary}</p>
+    <article className="reviewCard">
+      <p className="panelTitle">Review signal</p>
+      <div className="reviewCallout">
+        <strong>{review.outcome}</strong>
+        <p style={{ margin: "8px 0 0" }}>{review.summary}</p>
+      </div>
     </article>
   );
 }

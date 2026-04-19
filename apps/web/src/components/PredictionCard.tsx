@@ -1,27 +1,35 @@
 import type { PredictionSummary } from "../lib/api";
+import ProbabilityBars from "./ProbabilityBars";
 
 interface PredictionCardProps {
+  confidence: number;
   prediction: PredictionSummary;
+  recommendedPick: string;
 }
 
-export default function PredictionCard({ prediction }: PredictionCardProps) {
+export default function PredictionCard({
+  confidence,
+  prediction,
+  recommendedPick,
+}: PredictionCardProps) {
   return (
-    <article>
-      <h2>{prediction.checkpointLabel}</h2>
-      <dl>
-        <div>
-          <dt>Home</dt>
-          <dd>{prediction.homeWinProbability}%</dd>
+    <article className="predictionSummary">
+      <p className="panelTitle">Recommended Pick</p>
+      <div className="predictionHero">
+        <div className="predictionPick">
+          <span>{prediction.checkpointLabel}</span>
+          <strong className="predictionPickValue">{recommendedPick}</strong>
         </div>
-        <div>
-          <dt>Draw</dt>
-          <dd>{prediction.drawProbability}%</dd>
+        <div className="predictionConfidence">
+          <span className="panelTitle">Confidence</span>
+          <strong className="predictionPickValue">{confidence.toFixed(2)}</strong>
         </div>
-        <div>
-          <dt>Away</dt>
-          <dd>{prediction.awayWinProbability}%</dd>
-        </div>
-      </dl>
+      </div>
+      <ProbabilityBars
+        away={prediction.awayWinProbability}
+        draw={prediction.drawProbability}
+        home={prediction.homeWinProbability}
+      />
     </article>
   );
 }
