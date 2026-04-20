@@ -55,8 +55,8 @@ def _build_inferred_weights(
     }
     raw_weights = {
         variant: 1.0
-        + (_probability_sharpness(probability_sources[variant]) * 4.0)
-        + (_probability_margin(probability_sources[variant]) * 4.0)
+        + (_probability_sharpness(probability_sources[variant]) * 7.0)
+        + (_probability_margin(probability_sources[variant]) * 7.0)
         for variant in allowed_variants
     }
     return normalize_fusion_weights(raw_weights, allowed_variants) or _build_equal_weights(
