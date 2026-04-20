@@ -39,6 +39,14 @@ from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
 
+BOOKMAKER_FALLBACK_DRAW_MIN_PROBABILITY = 0.30
+BOOKMAKER_FALLBACK_DRAW_MAX_GAP = 0.22
+BOOKMAKER_FALLBACK_DRAW_BOOST = 0.06
+BOOKMAKER_FALLBACK_STRONG_DRAW_MIN_PROBABILITY = 0.27
+BOOKMAKER_FALLBACK_STRONG_DRAW_MAX_GAP = 0.10
+BOOKMAKER_FALLBACK_STRONG_DRAW_BOOST = 0.15
+
+
 def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
     try:
         return client.read_rows(table_name)
@@ -469,6 +477,36 @@ def build_model_version_row(
     }
 
 
+def rebalance_bookmaker_fallback_draw(
+    probabilities: dict[str, float],
+    *,
+    prediction_market_available: bool,
+) -> dict[str, float]:
+    if prediction_market_available:
+        return probabilities
+
+    ordered = sorted(probabilities.values(), reverse=True)
+    gap = ordered[0] - ordered[1]
+    if (
+        probabilities["draw"] >= BOOKMAKER_FALLBACK_STRONG_DRAW_MIN_PROBABILITY
+        and gap <= BOOKMAKER_FALLBACK_STRONG_DRAW_MAX_GAP
+    ):
+        adjusted = dict(probabilities)
+        adjusted["draw"] += BOOKMAKER_FALLBACK_STRONG_DRAW_BOOST
+        total = sum(adjusted.values())
+        return {outcome: value / total for outcome, value in adjusted.items()}
+    if (
+        probabilities["draw"] < BOOKMAKER_FALLBACK_DRAW_MIN_PROBABILITY
+        or gap > BOOKMAKER_FALLBACK_DRAW_MAX_GAP
+    ):
+        return probabilities
+
+    adjusted = dict(probabilities)
+    adjusted["draw"] += BOOKMAKER_FALLBACK_DRAW_BOOST
+    total = sum(adjusted.values())
+    return {outcome: value / total for outcome, value in adjusted.items()}
+
+
 def predict_base_probabilities(
     snapshot: dict,
     feature_context: dict,
@@ -477,10 +515,14 @@ def predict_base_probabilities(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     target_date: str | None,
-) -> tuple[dict, str, dict]:
+    ) -> tuple[dict, str, dict]:
     if not target_date:
-        return (
+        fallback_probs = rebalance_bookmaker_fallback_draw(
             book_probs,
+            prediction_market_available=feature_context["prediction_market_available"],
+        )
+        return (
+            fallback_probs,
             "bookmaker_fallback",
             build_model_selection_metadata(base_model_source="bookmaker_fallback"),
         )
@@ -494,8 +536,12 @@ def predict_base_probabilities(
         checkpoint_type=snapshot["checkpoint_type"],
     )
     if not {"HOME", "DRAW", "AWAY"}.issubset(set(labels)):
-        return (
+        fallback_probs = rebalance_bookmaker_fallback_draw(
             book_probs,
+            prediction_market_available=feature_context["prediction_market_available"],
+        )
+        return (
+            fallback_probs,
             "bookmaker_fallback",
             build_model_selection_metadata(base_model_source="bookmaker_fallback"),
         )
@@ -803,6 +849,11 @@ def main() -> None:
                 allowed_variants=available_variants,
             )
         )
+        if (
+            base_model_source == "bookmaker_fallback"
+            and not feature_context["prediction_market_available"]
+        ):
+            source_weights = {"base_model": 1.0}
         row = build_prediction_row(
             match_id=enriched_snapshot["match_id"],
             checkpoint=enriched_snapshot["checkpoint_type"],

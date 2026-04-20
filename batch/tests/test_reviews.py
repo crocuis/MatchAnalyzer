@@ -2360,6 +2360,115 @@ def test_run_predictions_job_uses_standard_confidence_gate_for_bookmaker_fallbac
     assert explanation_payload["raw_confidence_score"] < 0.6
 
 
+def test_run_predictions_job_boosts_draw_for_balanced_bookmaker_fallback(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_draw_t_minus_24h",
+                        "match_id": "match_draw",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_draw_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_draw_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.3298835705045278,
+                        "draw_prob": 0.3078913324708926,
+                        "away_prob": 0.36222509702457956,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_draw", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    prediction = state["predictions"][0]
+    explanation_payload = prediction["explanation_payload"]
+    assert explanation_payload["base_model_source"] == "bookmaker_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert prediction["recommended_pick"] == "DRAW"
+    assert prediction["draw_prob"] > prediction["away_prob"]
+
+
+def test_run_predictions_job_applies_stronger_draw_boost_for_tight_balanced_market(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_tight_draw_t_minus_24h",
+                        "match_id": "match_tight_draw",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_tight_draw_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_tight_draw_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.3910642075155341,
+                        "draw_prob": 0.29480224874247957,
+                        "away_prob": 0.3141335437419864,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_tight_draw", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    prediction = state["predictions"][0]
+    assert prediction["recommended_pick"] == "DRAW"
+    assert prediction["draw_prob"] > prediction["home_prob"]
+
+
 def test_run_predictions_job_blocks_unsupported_home_favorite_without_prediction_market(monkeypatch):
     state: dict[str, list[dict]] = {}
 
