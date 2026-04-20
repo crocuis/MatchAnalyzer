@@ -882,7 +882,7 @@ def main() -> None:
             )
         )
         if (
-            base_model_source == "bookmaker_fallback"
+            base_model_source in {"bookmaker_fallback", "centroid_fallback"}
             and not feature_context["prediction_market_available"]
         ):
             source_weights = {"base_model": 1.0}
