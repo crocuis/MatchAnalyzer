@@ -1,3 +1,5 @@
+import math
+
 from batch.src.model.evaluate_walk_forward import confidence_bucket_label
 
 
@@ -22,6 +24,35 @@ def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
     first_variant = next(iter(weights))
     weights[first_variant] = round(weights[first_variant] + remainder, 4)
     return weights
+
+
+def _probability_sharpness(probabilities: dict[str, float]) -> float:
+    entropy = 0.0
+    for value in probabilities.values():
+        bounded = min(max(float(value), 1e-9), 1.0)
+        entropy -= bounded * math.log(bounded)
+    return round(1.0 - (entropy / math.log(3.0)), 4)
+
+
+def _build_inferred_weights(
+    *,
+    base_probs: dict,
+    book_probs: dict,
+    market_probs: dict,
+    allowed_variants: tuple[str, ...],
+) -> dict[str, float]:
+    probability_sources = {
+        "base_model": base_probs,
+        "bookmaker": book_probs,
+        "prediction_market": market_probs,
+    }
+    raw_weights = {
+        variant: 1.0 + (_probability_sharpness(probability_sources[variant]) * 2.0)
+        for variant in allowed_variants
+    }
+    return normalize_fusion_weights(raw_weights, allowed_variants) or _build_equal_weights(
+        allowed_variants
+    )
 
 
 def normalize_fusion_weights(
@@ -221,7 +252,12 @@ def fuse_probabilities(
     )
     if not active_variants:
         active_variants = SOURCE_VARIANTS
-    weights = weights or _build_equal_weights(active_variants)
+    weights = weights or _build_inferred_weights(
+        base_probs=base_probs,
+        book_probs=book_probs,
+        market_probs=market_probs,
+        allowed_variants=active_variants,
+    )
     total_weight = sum(
         float(weights.get(source_name, 0.0)) for source_name in active_variants
     )
