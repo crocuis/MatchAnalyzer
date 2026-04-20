@@ -34,6 +34,13 @@ def _probability_sharpness(probabilities: dict[str, float]) -> float:
     return round(1.0 - (entropy / math.log(3.0)), 4)
 
 
+def _probability_margin(probabilities: dict[str, float]) -> float:
+    ordered = sorted((float(value) for value in probabilities.values()), reverse=True)
+    if len(ordered) < 2:
+        return 0.0
+    return round(ordered[0] - ordered[1], 4)
+
+
 def _build_inferred_weights(
     *,
     base_probs: dict,
@@ -47,7 +54,9 @@ def _build_inferred_weights(
         "prediction_market": market_probs,
     }
     raw_weights = {
-        variant: 1.0 + (_probability_sharpness(probability_sources[variant]) * 2.0)
+        variant: 1.0
+        + (_probability_sharpness(probability_sources[variant]) * 2.0)
+        + _probability_margin(probability_sources[variant])
         for variant in allowed_variants
     }
     return normalize_fusion_weights(raw_weights, allowed_variants) or _build_equal_weights(
