@@ -80,6 +80,17 @@ def test_fuse_probabilities_caps_inferred_single_source_dominance():
     assert fused["away"] == pytest.approx(0.141934)
 
 
+def test_fuse_probabilities_resists_extreme_prediction_market_outlier_against_dual_source_consensus():
+    fused = fuse_probabilities(
+        base_probs={"home": 0.2911392405063291, "draw": 0.2911392405063291, "away": 0.4177215189873417},
+        book_probs={"home": 0.2911392405063291, "draw": 0.2911392405063291, "away": 0.4177215189873417},
+        market_probs={"home": 0.08, "draw": 0.855, "away": 0.065},
+    )
+
+    assert choose_recommended_pick(fused) == "AWAY"
+    assert fused["away"] > fused["draw"]
+
+
 def test_choose_fusion_weights_prefers_checkpoint_market_segment_policy_and_filters_sources():
     policy_row = build_latest_fusion_policy(
         report_id="latest",
