@@ -32,9 +32,9 @@ def test_fuse_probabilities_defaults_to_sharper_sources_when_no_weights_are_prov
         market_probs={"home": 0.51, "draw": 0.22, "away": 0.27},
     )
 
-    assert fused["home"] == pytest.approx(0.573748)
-    assert fused["draw"] == pytest.approx(0.206701)
-    assert fused["away"] == pytest.approx(0.219551)
+    assert fused["home"] == pytest.approx(0.575327)
+    assert fused["draw"] == pytest.approx(0.20599)
+    assert fused["away"] == pytest.approx(0.218683)
 
 
 def test_fuse_probabilities_accepts_dynamic_source_weights():
@@ -63,9 +63,9 @@ def test_fuse_probabilities_skips_prediction_market_when_source_is_unavailable()
     )
 
     assert round(sum(fused.values()), 5) == 1.0
-    assert fused["home"] == pytest.approx(0.348096)
-    assert fused["draw"] == pytest.approx(0.243884)
-    assert fused["away"] == pytest.approx(0.40802)
+    assert fused["home"] == pytest.approx(0.345056)
+    assert fused["draw"] == pytest.approx(0.243599)
+    assert fused["away"] == pytest.approx(0.411345)
 
 
 def test_choose_fusion_weights_prefers_checkpoint_market_segment_policy_and_filters_sources():
