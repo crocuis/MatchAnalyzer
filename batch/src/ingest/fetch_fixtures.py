@@ -73,6 +73,17 @@ def load_sports_skills_football():
     return football
 
 
+def unwrap_sports_skills_data(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    if "data" in payload:
+        return {}
+    return payload
+
+
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return football.get_daily_schedule(date=date)
@@ -80,12 +91,12 @@ def fetch_daily_schedule(date: str) -> dict[str, Any]:
 
 def fetch_event_lineups(event_id: str) -> dict[str, Any]:
     football = load_sports_skills_football()
-    return football.get_event_lineups(event_id=event_id)
+    return unwrap_sports_skills_data(football.get_event_lineups(event_id=event_id))
 
 
 def fetch_missing_players(season_id: str) -> dict[str, Any]:
     football = load_sports_skills_football()
-    return football.get_missing_players(season_id=season_id)
+    return unwrap_sports_skills_data(football.get_missing_players(season_id=season_id))
 
 
 def fetch_team_schedule(
@@ -95,16 +106,20 @@ def fetch_team_schedule(
     season_year: str | None = None,
 ) -> dict[str, Any]:
     football = load_sports_skills_football()
-    return football.get_team_schedule(
-        team_id=team_id,
-        competition_id=competition_id,
-        season_year=season_year,
+    return unwrap_sports_skills_data(
+        football.get_team_schedule(
+            team_id=team_id,
+            competition_id=competition_id,
+            season_year=season_year,
+        )
     )
 
 
 def fetch_event_players_statistics(event_id: str) -> dict[str, Any]:
     football = load_sports_skills_football()
-    return football.get_event_players_statistics(event_id=event_id)
+    return unwrap_sports_skills_data(
+        football.get_event_players_statistics(event_id=event_id)
+    )
 
 
 def _absence_probability(player: dict[str, Any]) -> float:
@@ -202,6 +217,33 @@ def _lineup_score(
         + (FORMATION_BONUS if formation_known else 0.0)
     )
     return round(score, 4)
+
+
+def _derived_absence_count(
+    lineup: dict[str, Any],
+    player_recent_scores: dict[str, float] | None = None,
+) -> int | None:
+    if not lineup:
+        return None
+    recent_scores = player_recent_scores or {}
+    if not recent_scores:
+        return None
+    ranked_recent_players = [
+        player_name
+        for player_name, _score in sorted(
+            recent_scores.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        if player_name
+    ][:11]
+    if not ranked_recent_players:
+        return None
+    starting_names = {
+        _normalized_player_name(str(player.get("name", "")))
+        for player in lineup.get("starting", [])
+        if player.get("name")
+    }
+    return sum(1 for player_name in ranked_recent_players if player_name not in starting_names)
 
 
 def competition_emblem_url(competition_id: str) -> str | None:
@@ -388,8 +430,6 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
         season_missing = missing_by_season.get(season_id, {})
         home_absence = season_missing.get(home_competitor["team"]["name"], {})
         away_absence = season_missing.get(away_competitor["team"]["name"], {})
-        home_absence_count = home_absence.get("count")
-        away_absence_count = away_absence.get("count")
         home_lineup = lineups_by_qualifier.get("home", {})
         away_lineup = lineups_by_qualifier.get("away", {})
         home_recent_key = (str(home_competitor["team"]["id"]), competition_id, season_id)
@@ -405,6 +445,18 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
                 team_id=str(away_competitor["team"]["id"]),
                 competition_id=competition_id,
                 season_id=season_id,
+            )
+        home_absence_count = home_absence.get("count")
+        if home_absence_count is None:
+            home_absence_count = _derived_absence_count(
+                home_lineup,
+                recent_form_cache[home_recent_key],
+            )
+        away_absence_count = away_absence.get("count")
+        if away_absence_count is None:
+            away_absence_count = _derived_absence_count(
+                away_lineup,
+                recent_form_cache[away_recent_key],
             )
         lineups_confirmed = len(home_lineup.get("starting", [])) >= 11 and len(
             away_lineup.get("starting", [])

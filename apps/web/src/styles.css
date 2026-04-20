@@ -91,14 +91,43 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 
 /* Tabs */
-.leagueTabs { margin-bottom: 32px; }
+.leagueTabs {
+  margin-bottom: 32px;
+  position: relative;
+}
 .leagueTabList {
-  display: flex; gap: 4px; padding: 5px; background: #f1f5f9;
-  border-radius: 14px; width: fit-content; margin: 0 auto 16px;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: #f1f5f9;
+  border-radius: 14px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto 16px;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
+  -webkit-overflow-scrolling: touch;
+}
+.leagueTabList::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 .leagueTab {
-  padding: 8px 18px; border-radius: 10px; font-size: 14px; font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .leagueTabList {
+    margin: 0 -16px 16px; /* Negative margin to span full width */
+    padding: 5px 16px;
+    border-radius: 0;
+    justify-content: flex-start;
+  }
 }
 .leagueTab[aria-selected="true"] {
   background: var(--bg-surface); color: var(--accent-primary);

@@ -13,29 +13,33 @@ export default function ProbabilityBars({
 }: ProbabilityBarsProps) {
   const { t } = useTranslation();
 
+  const homeLabel = `${home.toFixed(1)}%`;
+  const drawLabel = `${draw.toFixed(1)}%`;
+  const awayLabel = `${away.toFixed(1)}%`;
+
   return (
     <div className="probabilityMap" aria-label="probability spectrum">
       <div className="probabilitySpectrum">
         <div
           className="spectrumSegment segment-home"
           style={{ width: `${home}%` }}
-          title={`Home: ${home}%`}
+          title={`Home: ${homeLabel}`}
         >
-          {home > 15 ? `${home}%` : ""}
+          {home > 15 ? homeLabel : ""}
         </div>
         <div
           className="spectrumSegment segment-draw"
           style={{ width: `${draw}%` }}
-          title={`Draw: ${draw}%`}
+          title={`Draw: ${drawLabel}`}
         >
-          {draw > 15 ? `${draw}%` : ""}
+          {draw > 15 ? drawLabel : ""}
         </div>
         <div
           className="spectrumSegment segment-away"
           style={{ width: `${away}%` }}
-          title={`Away: ${away}%`}
+          title={`Away: ${awayLabel}`}
         >
-          {away > 15 ? `${away}%` : ""}
+          {away > 15 ? awayLabel : ""}
         </div>
       </div>
 
