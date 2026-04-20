@@ -1234,6 +1234,77 @@ def test_build_lineup_context_by_match_uses_lineups_and_missing_players(monkeypa
     }
 
 
+def test_build_lineup_context_by_match_normalizes_missing_player_team_aliases(monkeypatch):
+    class FakeFootball:
+        @staticmethod
+        def get_event_lineups(*, event_id: str):
+            assert event_id == "match_021"
+            return {"status": True, "data": {"lineups": []}, "message": ""}
+
+        @staticmethod
+        def get_missing_players(*, season_id: str):
+            assert season_id == "premier-league-2026"
+            return {
+                "status": True,
+                "data": {
+                    "teams": [
+                        {
+                            "team": {"name": "West Ham"},
+                            "players": [
+                                {
+                                    "status": "injured",
+                                    "position": "Forward",
+                                    "chance_of_playing_this_round": 0,
+                                },
+                                {
+                                    "status": "doubtful",
+                                    "position": "Midfielder",
+                                    "chance_of_playing_this_round": 50,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                "message": "",
+            }
+
+        @staticmethod
+        def get_team_schedule(*, team_id: str, competition_id: str, season_year: str | None = None):
+            return {"status": True, "data": {"events": []}, "message": ""}
+
+        @staticmethod
+        def get_event_players_statistics(*, event_id: str):
+            return {"status": True, "data": {"teams": []}, "message": ""}
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.load_sports_skills_football",
+        lambda: FakeFootball,
+    )
+
+    contexts = build_lineup_context_by_match(
+        [
+            {
+                "id": "match_021",
+                "competition": {"id": "premier-league"},
+                "season": {"id": "premier-league-2026"},
+                "competitors": [
+                    {
+                        "team": {"id": "crystal-palace", "name": "Crystal Palace"},
+                        "qualifier": "home",
+                    },
+                    {
+                        "team": {"id": "west-ham", "name": "West Ham United"},
+                        "qualifier": "away",
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert contexts["match_021"]["away_absence_count"] == 2
+    assert contexts["match_021"]["lineup_source_summary"] == "pl_missing_players"
+
+
 def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_missing_players(
     monkeypatch,
 ):
@@ -1962,6 +2033,130 @@ def test_build_prediction_market_variant_rows_extracts_spreads_and_totals():
             "observed_at": "2026-04-12T15:30:00Z",
         },
     ]
+
+
+def test_build_prediction_market_variant_rows_recovers_line_value_from_labels_when_spread_is_zero():
+    rows = build_prediction_market_variant_rows(
+        markets=[
+            {
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.41}, {"name": "No", "price": 0.59}],
+            },
+            {
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.26}, {"name": "No", "price": 0.74}],
+            },
+            {
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.33}, {"name": "No", "price": 0.67}],
+            },
+            {
+                "question": "Chelsea -0.5 vs Manchester City +0.5",
+                "slug": "epl-che-mci-2026-04-12-spread",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "spreads",
+                "spread": 0,
+                "outcomes": [
+                    {"name": "Chelsea -0.5", "price": 0.14},
+                    {"name": "Manchester City +0.5", "price": 0.86},
+                ],
+            },
+            {
+                "question": "Chelsea vs Manchester City total goals over/under 2.5",
+                "slug": "epl-che-mci-2026-04-12-total",
+                "end_date": "2026-04-12T15:30:00Z",
+                "sports_market_type": "totals",
+                "spread": 0,
+                "outcomes": [
+                    {"name": "Over 2.5", "price": 0.77},
+                    {"name": "Under 2.5", "price": 0.23},
+                ],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows[0]["line_value"] == -0.5
+    assert rows[1]["line_value"] == 2.5
+
+
+def test_build_prediction_market_variant_rows_recovers_line_value_from_slug_for_polymarket_variants():
+    rows = build_prediction_market_variant_rows(
+        markets=[
+            {
+                "question": "Will Crystal Palace FC win on 2026-04-20?",
+                "slug": "epl-cry-wes-2026-04-20-cry",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.4}, {"name": "No", "price": 0.6}],
+            },
+            {
+                "question": "Will Crystal Palace FC vs. West Ham United FC end in a draw?",
+                "slug": "epl-cry-wes-2026-04-20-draw",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.2}, {"name": "No", "price": 0.8}],
+            },
+            {
+                "question": "Will West Ham United FC win on 2026-04-20?",
+                "slug": "epl-cry-wes-2026-04-20-wes",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.4}, {"name": "No", "price": 0.6}],
+            },
+            {
+                "question": "Crystal Palace FC vs West Ham United FC handicap",
+                "slug": "epl-cry-wes-2026-04-20-spread-away-1pt5",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "spreads",
+                "spread": 0.01,
+                "outcomes": [
+                    {"name": "West Ham United FC", "price": 0.145},
+                    {"name": "Crystal Palace FC", "price": 0.855},
+                ],
+            },
+            {
+                "question": "Crystal Palace FC vs West Ham United FC total goals",
+                "slug": "epl-cry-wes-2026-04-20-total-4pt5",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "totals",
+                "spread": 0.02,
+                "outcomes": [
+                    {"name": "Over", "price": 0.14},
+                    {"name": "Under", "price": 0.86},
+                ],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740923_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-20T19:00:00+00:00",
+                "home_team_name": "Crystal Palace",
+                "away_team_name": "West Ham United",
+            }
+        ],
+    )
+
+    assert rows[0]["line_value"] == 1.5
+    assert rows[1]["line_value"] == 4.5
 
 
 def test_build_prediction_market_rows_skips_when_multiple_fuzzy_candidates_exist():

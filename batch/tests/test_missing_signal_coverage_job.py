@@ -85,11 +85,12 @@ def test_build_missing_signal_coverage_report_summarizes_reason_taxonomy() -> No
         "rating_context_missing",
     ]
     assert payload["taxonomy"]["unseen_reason_keys"] == [
+        "absence_coverage_unavailable",
         "lineup_context_missing",
         "schedule_context_missing",
         "xg_context_missing",
     ]
-    assert payload["taxonomy"]["coverage_rate"] == 0.5
+    assert payload["taxonomy"]["coverage_rate"] == 0.4286
     assert payload["reason_summary"]["form_context_missing"] == {
         "snapshot_count": 2,
         "occurrence_count": 2,
@@ -137,6 +138,10 @@ def test_main_sample_mode_prints_final_json_payload(capsys) -> None:
         "schedule_context_missing",
         "xg_context_missing",
     ]
+    assert payload["taxonomy"]["unseen_reason_keys"] == [
+        "absence_coverage_unavailable",
+    ]
+    assert payload["taxonomy"]["coverage_rate"] == 0.8571
     assert payload["prioritized_sync_actions"][0]["reason_key"] == "form_context_missing"
 
 

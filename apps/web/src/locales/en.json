@@ -52,7 +52,8 @@
       "rating_context_missing": "Rating context missing",
       "xg_context_missing": "xG context missing",
       "lineup_context_missing": "Lineup sync missing",
-      "absence_feed_missing": "Absence feed missing"
+      "absence_feed_missing": "Absence feed missing",
+      "absence_coverage_unavailable": "Absence coverage unavailable"
     },
     "reasonTags": {
       "consensus": "Consensus",
@@ -145,7 +146,23 @@
       "marketPrice": "Market price",
       "modelProbability": "Model probability",
       "marketProbability": "Market probability",
-      "variantMarketsTitle": "Variant markets",
+      "variantMarketsTitle": "Additional markets",
+      "variantMarketFamilies": {
+        "spreads": "Handicap",
+        "totals": "Over/Under",
+        "fallback": "Additional market"
+      },
+      "variantMarketSelections": {
+        "over": "Over",
+        "under": "Under",
+        "selectionA": "Selection A",
+        "selectionB": "Selection B"
+      },
+      "variantMarketSummary": {
+        "leading": "{{label}} lead · {{favoredPercent}}% vs {{otherPercent}}%",
+        "singlePrice": "{{label}} · {{percent}}%",
+        "versus": "{{selectionA}} vs {{selectionB}}"
+      },
       "breakdownTitle": "Confidence Breakdown",
       "noBetReasons": {
         "low_confidence": "Low confidence"

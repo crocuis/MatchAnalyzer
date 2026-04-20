@@ -3,7 +3,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
-from batch.src.features.feature_builder import MISSING_SIGNAL_REASON_GROUPS
+from batch.src.features.feature_builder import MISSING_SIGNAL_REASON_TAXONOMY
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -120,7 +120,7 @@ def build_missing_signal_coverage_report(
             "explanation": explanation,
             "sync_action": sync_action,
         }
-        for reason_key, fields, explanation, sync_action in MISSING_SIGNAL_REASON_GROUPS
+        for reason_key, fields, explanation, sync_action in MISSING_SIGNAL_REASON_TAXONOMY
     }
     match_by_id = {row["id"]: row for row in match_rows}
     reason_summary: dict[str, dict] = {}

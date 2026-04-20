@@ -185,6 +185,149 @@ function formatLineupSourceSummary(summary: string): string {
   return summary.replaceAll("+", " + ").replaceAll("_", " ");
 }
 
+function startCaseLabel(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+const variantMarketFamilyTranslationKeys = {
+  spreads: "modal.prediction.variantMarketFamilies.spreads",
+  totals: "modal.prediction.variantMarketFamilies.totals",
+} as const;
+
+const variantSelectionLabelTranslationKeys = {
+  Away: "matchOutcome.outcomes.AWAY",
+  Home: "matchOutcome.outcomes.HOME",
+  Over: "modal.prediction.variantMarketSelections.over",
+  Under: "modal.prediction.variantMarketSelections.under",
+} as const;
+
+function humanizeVariantMarketFamily(
+  t: ReturnType<typeof useTranslation>["t"],
+  marketFamily: string,
+): string {
+  if (marketFamily in variantMarketFamilyTranslationKeys) {
+    return t(
+      variantMarketFamilyTranslationKeys[
+        marketFamily as keyof typeof variantMarketFamilyTranslationKeys
+      ],
+    );
+  }
+  return t("modal.prediction.variantMarketFamilies.fallback");
+}
+
+function formatVariantMarketLineValue(market: VariantMarket): string | null {
+  if (market.lineValue === null) {
+    return null;
+  }
+  const normalizedValue =
+    market.marketFamily === "spreads"
+      ? Math.abs(market.lineValue)
+      : market.lineValue;
+  return Number.isInteger(normalizedValue)
+    ? normalizedValue.toFixed(0)
+    : normalizedValue.toFixed(1).replace(/\.0$/, "");
+}
+
+function formatVariantMarketTitle(
+  t: ReturnType<typeof useTranslation>["t"],
+  market: VariantMarket,
+): string {
+  const familyLabel = humanizeVariantMarketFamily(t, market.marketFamily);
+  const lineValue = formatVariantMarketLineValue(market);
+
+  return lineValue === null ? familyLabel : `${familyLabel} ${lineValue}`;
+}
+
+function localizeVariantSelectionLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  locale: string,
+  label: string,
+  fallbackKey: "selectionA" | "selectionB",
+): string {
+  const match = /^(Home|Away|Over|Under)(\b.*)?$/.exec(label);
+
+  if (!match) {
+    return locale.toLowerCase().startsWith("ko")
+      ? t(`modal.prediction.variantMarketSelections.${fallbackKey}`)
+      : label;
+  }
+
+  const [, token, suffix = ""] = match;
+  return `${t(
+    variantSelectionLabelTranslationKeys[
+      token as keyof typeof variantSelectionLabelTranslationKeys
+    ],
+  )}${suffix}`;
+}
+
+function summarizeVariantMarket(
+  t: ReturnType<typeof useTranslation>["t"],
+  locale: string,
+  market: VariantMarket,
+): string {
+  const selectionALabel = localizeVariantSelectionLabel(
+    t,
+    locale,
+    market.selectionALabel,
+    "selectionA",
+  );
+  const selectionBLabel = localizeVariantSelectionLabel(
+    t,
+    locale,
+    market.selectionBLabel,
+    "selectionB",
+  );
+  const leftPrice = market.selectionAPrice;
+  const rightPrice = market.selectionBPrice;
+
+  if (leftPrice !== null && rightPrice !== null) {
+    if (leftPrice === rightPrice) {
+      return t("modal.prediction.variantMarketSummary.versus", {
+        selectionA: selectionALabel,
+        selectionB: selectionBLabel,
+      });
+    }
+    const selectionAIsFavored = leftPrice >= rightPrice;
+    const favoredLabel = selectionAIsFavored
+      ? selectionALabel
+      : selectionBLabel;
+    const favoredPercent = selectionAIsFavored ? leftPrice : rightPrice;
+    const otherPercent = selectionAIsFavored ? rightPrice : leftPrice;
+
+    return t("modal.prediction.variantMarketSummary.leading", {
+      label: favoredLabel,
+      favoredPercent: (favoredPercent * 100).toFixed(0),
+      otherPercent: (otherPercent * 100).toFixed(0),
+    });
+  }
+
+  if (leftPrice !== null || rightPrice !== null) {
+    const knownLabel = leftPrice !== null ? selectionALabel : selectionBLabel;
+    const knownPercent = leftPrice ?? rightPrice;
+
+    if (knownPercent === null) {
+      return t("modal.prediction.variantMarketSummary.versus", {
+        selectionA: selectionALabel,
+        selectionB: selectionBLabel,
+      });
+    }
+
+    return t("modal.prediction.variantMarketSummary.singlePrice", {
+      label: knownLabel,
+      percent: (knownPercent * 100).toFixed(0),
+    });
+  }
+
+  return t("modal.prediction.variantMarketSummary.versus", {
+    selectionA: selectionALabel,
+    selectionB: selectionBLabel,
+  });
+}
+
 function formatNoBetReason(
   t: ReturnType<typeof useTranslation>["t"],
   noBetReason: string | null | undefined,
@@ -220,7 +363,7 @@ export default function PredictionCard({
   prediction,
   recommendedPick,
 }: PredictionCardProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const breakdown = normalizeBreakdown(prediction.explanationPayload);
   const presentation = resolvePredictionPresentation({
     mainRecommendation: prediction.mainRecommendation ?? null,
@@ -345,14 +488,8 @@ export default function PredictionCard({
           <div className="confidenceCalibrationList">
             {variantMarkets.map((market, index) => (
               <div className="confidenceCalibrationRow" key={`${market.marketFamily}-${index}`}>
-                <strong>{market.marketFamily}</strong>
-                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                  {market.lineValue !== null ? (
-                    <span style={{ fontWeight: "700" }}>{`L: ${market.lineValue}`}</span>
-                  ) : null}
-                  <span>{market.selectionALabel} {market.selectionAPrice !== null ? `(${(market.selectionAPrice * 100).toFixed(0)}%)` : ""}</span>
-                  <span>{market.selectionBLabel} {market.selectionBPrice !== null ? `(${(market.selectionBPrice * 100).toFixed(0)}%)` : ""}</span>
-                </div>
+                <strong>{formatVariantMarketTitle(t, market)}</strong>
+                <span>{summarizeVariantMarket(t, i18n.language, market)}</span>
               </div>
             ))}
           </div>

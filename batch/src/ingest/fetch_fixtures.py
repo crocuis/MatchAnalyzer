@@ -32,6 +32,18 @@ FOOTBALL_DATA_COMPETITION_CODES = {
 
 BASE_ELO = 1500.0
 ELO_K_FACTOR = 20.0
+MISSING_PLAYERS_TEAM_ALIASES = {
+    "Brighton": "Brighton & Hove Albion",
+    "Ipswich": "Ipswich Town",
+    "Leeds": "Leeds United",
+    "Leicester": "Leicester City",
+    "Man City": "Manchester City",
+    "Man Utd": "Manchester United",
+    "Nott'm Forest": "Nottingham Forest",
+    "Spurs": "Tottenham Hotspur",
+    "West Ham": "West Ham United",
+    "Wolves": "Wolverhampton Wanderers",
+}
 POSITION_IMPORTANCE_WEIGHTS = {
     "Goalkeeper": 1.3,
     "Defender": 0.9,
@@ -147,6 +159,10 @@ def _player_lineup_weight(player: dict[str, Any]) -> float:
 
 def _normalized_player_name(name: str) -> str:
     return " ".join(name.lower().split())
+
+
+def _normalize_missing_players_team_name(name: str) -> str:
+    return normalize_team_name(name, MISSING_PLAYERS_TEAM_ALIASES)
 
 
 def _extract_season_year(season_id: str) -> str | None:
@@ -398,7 +414,7 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
                 if not team_name:
                     continue
                 players = team_entry.get("players", [])
-                team_absences[team_name] = {
+                team_absences[_normalize_missing_players_team_name(team_name)] = {
                     "count": len(players),
                     "impact": round(sum(_absence_impact(player) for player in players), 4),
                 }
@@ -428,8 +444,14 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
         competition_id = event.get("competition", {}).get("id", "")
         season_id = event.get("season", {}).get("id", "")
         season_missing = missing_by_season.get(season_id, {})
-        home_absence = season_missing.get(home_competitor["team"]["name"], {})
-        away_absence = season_missing.get(away_competitor["team"]["name"], {})
+        home_absence = season_missing.get(
+            _normalize_missing_players_team_name(home_competitor["team"]["name"]),
+            {},
+        )
+        away_absence = season_missing.get(
+            _normalize_missing_players_team_name(away_competitor["team"]["name"]),
+            {},
+        )
         home_lineup = lineups_by_qualifier.get("home", {})
         away_lineup = lineups_by_qualifier.get("away", {})
         home_recent_key = (str(home_competitor["team"]["id"]), competition_id, season_id)
@@ -606,6 +628,50 @@ def _build_team_history_metrics(
     }
 
 
+def build_match_history_snapshot_fields(
+    match: dict[str, Any],
+    historical_matches: list[dict[str, Any]],
+) -> dict[str, int | float | None]:
+    target_kickoff = _parse_kickoff(match["kickoff_at"])
+    elo_by_team = _build_elo_by_team(historical_matches, target_kickoff)
+    home_metrics = _build_team_history_metrics(
+        match["home_team_id"], historical_matches, target_kickoff, elo_by_team
+    )
+    away_metrics = _build_team_history_metrics(
+        match["away_team_id"], historical_matches, target_kickoff, elo_by_team
+    )
+    form_delta = None
+    if (
+        home_metrics["points_last_5"] is not None
+        and away_metrics["points_last_5"] is not None
+    ):
+        form_delta = int(home_metrics["points_last_5"]) - int(
+            away_metrics["points_last_5"]
+        )
+    rest_delta = None
+    if (
+        home_metrics["rest_days"] is not None
+        and away_metrics["rest_days"] is not None
+    ):
+        rest_delta = int(home_metrics["rest_days"]) - int(away_metrics["rest_days"])
+    return {
+        "home_elo": home_metrics["elo"],
+        "away_elo": away_metrics["elo"],
+        "home_xg_for_last_5": home_metrics["xg_for_last_5"],
+        "home_xg_against_last_5": home_metrics["xg_against_last_5"],
+        "away_xg_for_last_5": away_metrics["xg_for_last_5"],
+        "away_xg_against_last_5": away_metrics["xg_against_last_5"],
+        "home_matches_last_7d": home_metrics["matches_last_7d"],
+        "away_matches_last_7d": away_metrics["matches_last_7d"],
+        "home_points_last_5": home_metrics["points_last_5"],
+        "away_points_last_5": away_metrics["points_last_5"],
+        "home_rest_days": home_metrics["rest_days"],
+        "away_rest_days": away_metrics["rest_days"],
+        "form_delta": form_delta,
+        "rest_delta": rest_delta,
+    }
+
+
 def build_snapshot_rows_from_matches(
     matches: list[dict[str, Any]],
     checkpoint: str = "T_MINUS_24H",
@@ -617,14 +683,7 @@ def build_snapshot_rows_from_matches(
     historical_rows = historical_matches or []
     lineup_contexts = lineup_context_by_match or {}
     for match in matches:
-        target_kickoff = _parse_kickoff(match["kickoff_at"])
-        elo_by_team = _build_elo_by_team(historical_rows, target_kickoff)
-        home_metrics = _build_team_history_metrics(
-            match["home_team_id"], historical_rows, target_kickoff, elo_by_team
-        )
-        away_metrics = _build_team_history_metrics(
-            match["away_team_id"], historical_rows, target_kickoff, elo_by_team
-        )
+        history_fields = build_match_history_snapshot_fields(match, historical_rows)
         lineup_context = lineup_contexts.get(match["id"], {})
         snapshot = build_snapshot(
             match_id=match["id"],
@@ -641,18 +700,18 @@ def build_snapshot_rows_from_matches(
                 "captured_at": snapshot.captured_at,
                 "lineup_status": snapshot.lineup_status,
                 "snapshot_quality": snapshot.quality.value,
-                "home_elo": home_metrics["elo"],
-                "away_elo": away_metrics["elo"],
-                "home_xg_for_last_5": home_metrics["xg_for_last_5"],
-                "home_xg_against_last_5": home_metrics["xg_against_last_5"],
-                "away_xg_for_last_5": away_metrics["xg_for_last_5"],
-                "away_xg_against_last_5": away_metrics["xg_against_last_5"],
-                "home_matches_last_7d": home_metrics["matches_last_7d"],
-                "away_matches_last_7d": away_metrics["matches_last_7d"],
-                "home_points_last_5": home_metrics["points_last_5"],
-                "away_points_last_5": away_metrics["points_last_5"],
-                "home_rest_days": home_metrics["rest_days"],
-                "away_rest_days": away_metrics["rest_days"],
+                "home_elo": history_fields["home_elo"],
+                "away_elo": history_fields["away_elo"],
+                "home_xg_for_last_5": history_fields["home_xg_for_last_5"],
+                "home_xg_against_last_5": history_fields["home_xg_against_last_5"],
+                "away_xg_for_last_5": history_fields["away_xg_for_last_5"],
+                "away_xg_against_last_5": history_fields["away_xg_against_last_5"],
+                "home_matches_last_7d": history_fields["home_matches_last_7d"],
+                "away_matches_last_7d": history_fields["away_matches_last_7d"],
+                "home_points_last_5": history_fields["home_points_last_5"],
+                "away_points_last_5": history_fields["away_points_last_5"],
+                "home_rest_days": history_fields["home_rest_days"],
+                "away_rest_days": history_fields["away_rest_days"],
                 "home_absence_count": lineup_context.get("home_absence_count"),
                 "away_absence_count": lineup_context.get("away_absence_count"),
                 "home_lineup_score": lineup_context.get("home_lineup_score"),

@@ -101,6 +101,30 @@ describe("supabase schema integration", () => {
     expect(comparisonPayloadColumns.rows[0]?.count).toBe(3);
   });
 
+  it("exposes historical form and rest columns on match snapshots", async () => {
+    const db = await createDb();
+
+    const snapshotHistoryColumns = await db.query<{ column_name: string }>(
+      `select column_name
+       from information_schema.columns
+       where table_name = 'match_snapshots'
+         and column_name in (
+           'home_points_last_5',
+           'away_points_last_5',
+           'home_rest_days',
+           'away_rest_days'
+         )
+       order by column_name asc`,
+    );
+
+    expect(snapshotHistoryColumns.rows.map((row) => row.column_name)).toEqual([
+      "away_points_last_5",
+      "away_rest_days",
+      "home_points_last_5",
+      "home_rest_days",
+    ]);
+  });
+
   it("rejects duplicate authoritative snapshots for the same match checkpoint", async () => {
     const db = await createDb();
 
