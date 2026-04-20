@@ -24,6 +24,10 @@ FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
 RAW_SIGNAL_FIELDS: tuple[str, ...] = (
     "form_delta",
     "rest_delta",
+    "home_points_last_5",
+    "away_points_last_5",
+    "home_rest_days",
+    "away_rest_days",
     "home_elo",
     "away_elo",
     "home_xg_for_last_5",
@@ -38,6 +42,55 @@ RAW_SIGNAL_FIELDS: tuple[str, ...] = (
     "away_absence_count",
     "lineup_strength_delta",
     "lineup_source_summary",
+)
+
+MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    (
+        "form_context_missing",
+        ("form_delta", "home_points_last_5", "away_points_last_5"),
+        "Recent form points were not synced into the snapshot.",
+        "Persist recent five-match points during fixture snapshot sync.",
+    ),
+    (
+        "schedule_context_missing",
+        ("rest_delta", "home_rest_days", "away_rest_days", "home_matches_last_7d", "away_matches_last_7d"),
+        "Schedule and rest context was not fully computed at snapshot time.",
+        "Store latest rest days and recent seven-day match counts during snapshot generation.",
+    ),
+    (
+        "rating_context_missing",
+        ("home_elo", "away_elo"),
+        "Team rating seed was missing for this snapshot.",
+        "Backfill historical result windows before building snapshots so Elo can be materialized.",
+    ),
+    (
+        "xg_context_missing",
+        (
+            "home_xg_for_last_5",
+            "home_xg_against_last_5",
+            "away_xg_for_last_5",
+            "away_xg_against_last_5",
+        ),
+        "Recent xG trend signals were not available in the snapshot.",
+        "Persist rolling goals/xG proxies for both teams during snapshot sync.",
+    ),
+    (
+        "lineup_context_missing",
+        (
+            "home_lineup_score",
+            "away_lineup_score",
+            "lineup_strength_delta",
+            "lineup_source_summary",
+        ),
+        "Lineup context was not collected or did not resolve before prediction time.",
+        "Expand lineup sync coverage and persist lineup source summaries per match.",
+    ),
+    (
+        "absence_feed_missing",
+        ("home_absence_count", "away_absence_count"),
+        "Absence counts were not available for this competition or sync window.",
+        "Add competition-aware absence ingestion beyond the current limited feed coverage.",
+    ),
 )
 
 
@@ -192,12 +245,27 @@ def build_feature_metadata(snapshot: dict, feature_vector: dict) -> dict:
         for field in FEATURE_VECTOR_FIELDS
         if feature_vector.get(field) is not None
     )
+    missing_reason_entries = []
+    missing_field_set = set(missing_fields)
+    for reason_key, related_fields, explanation, sync_action in MISSING_SIGNAL_REASON_GROUPS:
+        unresolved_fields = sorted(field for field in related_fields if field in missing_field_set)
+        if not unresolved_fields:
+            continue
+        missing_reason_entries.append(
+            {
+                "reason_key": reason_key,
+                "fields": unresolved_fields,
+                "explanation": explanation,
+                "sync_action": sync_action,
+            }
+        )
     return {
         "feature_fields": list(FEATURE_VECTOR_FIELDS),
         "available_feature_fields": populated_feature_fields,
         "available_signal_count": len(populated_feature_fields),
         "available_fields": available_fields,
         "missing_fields": missing_fields,
+        "missing_signal_reasons": missing_reason_entries,
         "snapshot_quality": snapshot.get("snapshot_quality", "complete"),
         "lineup_status": snapshot.get("lineup_status", "unknown"),
     }

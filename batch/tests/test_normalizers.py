@@ -1,6 +1,8 @@
 import json
 from datetime import date
+from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -16,6 +18,7 @@ from batch.src.ingest.fetch_markets import (
 )
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.jobs.ingest_markets_job import (
+    main as run_ingest_markets_job,
     promote_market_snapshots,
     select_real_market_snapshots,
 )
@@ -127,6 +130,49 @@ def test_build_competition_and_team_rows_preserve_asset_urls():
     ]
 
 
+def test_build_team_rows_marks_international_competitions_as_national_sides():
+    event = {
+        "competition": {
+            "id": "world-cup-qualification-uefa",
+            "name": "World Cup Qualification UEFA",
+        },
+        "venue": {"country": "England"},
+        "competitors": [
+            {
+                "team": {
+                    "id": "england",
+                    "name": "England",
+                },
+                "qualifier": "home",
+            },
+            {
+                "team": {
+                    "id": "scotland",
+                    "name": "Scotland",
+                },
+                "qualifier": "away",
+            },
+        ],
+    }
+
+    from batch.src.ingest.fetch_fixtures import build_team_rows_from_event
+
+    assert build_team_rows_from_event(event) == [
+        {
+            "id": "england",
+            "name": "England",
+            "team_type": "national",
+            "country": "England",
+        },
+        {
+            "id": "scotland",
+            "name": "Scotland",
+            "team_type": "national",
+            "country": "England",
+        },
+    ]
+
+
 def test_build_competition_and_team_rows_omit_missing_asset_urls():
     event = {
         "competition": {
@@ -160,20 +206,20 @@ def test_build_competition_and_team_rows_omit_missing_asset_urls():
     assert build_competition_row_from_event(event) == {
         "id": "international-friendly",
         "name": "International Friendly",
-        "competition_type": "league",
+        "competition_type": "international",
         "region": "England",
     }
     assert build_team_rows_from_event(event) == [
         {
             "id": "arsenal",
             "name": "Arsenal",
-            "team_type": "club",
+            "team_type": "national",
             "country": "England",
         },
         {
             "id": "chelsea",
             "name": "Chelsea",
-            "team_type": "club",
+            "team_type": "national",
             "country": "England",
         },
     ]
@@ -581,6 +627,12 @@ def test_build_cleanup_plan_counts_out_of_scope_graph():
                     {"id": "premier-league"},
                     {"id": "liga-mx"},
                 ],
+                "teams": [
+                    {"id": "arsenal", "team_type": "club"},
+                    {"id": "chelsea", "team_type": "club"},
+                    {"id": "club-a", "team_type": "club"},
+                    {"id": "club-b", "team_type": "club"},
+                ],
                 "matches": [
                     {
                         "id": "match_001",
@@ -617,6 +669,70 @@ def test_build_cleanup_plan_counts_out_of_scope_graph():
     assert plan.prediction_ids == ["prediction_002"]
     assert plan.review_match_ids == ["match_002"]
     assert plan.orphan_team_ids == ["club-a", "club-b"]
+    assert plan.competition_updates == []
+    assert plan.team_updates == []
+
+
+def test_build_cleanup_plan_removes_international_friendlies_but_keeps_qualifiers():
+    class FakeClient:
+        def read_rows(self, table: str):
+            tables = {
+                "competitions": [
+                    {"id": "international-friendly", "competition_type": "league"},
+                    {"id": "world-cup-qualification-uefa", "competition_type": "league"},
+                ],
+                "teams": [
+                    {"id": "england", "team_type": "club"},
+                    {"id": "scotland", "team_type": "club"},
+                    {"id": "wales", "team_type": "national"},
+                ],
+                "matches": [
+                    {
+                        "id": "match_friendly",
+                        "competition_id": "international-friendly",
+                        "home_team_id": "england",
+                        "away_team_id": "scotland",
+                    },
+                    {
+                        "id": "match_qualifier",
+                        "competition_id": "world-cup-qualification-uefa",
+                        "home_team_id": "england",
+                        "away_team_id": "wales",
+                    },
+                ],
+                "match_snapshots": [
+                    {"id": "snapshot_friendly", "match_id": "match_friendly"},
+                    {"id": "snapshot_qualifier", "match_id": "match_qualifier"},
+                ],
+                "predictions": [
+                    {"id": "prediction_friendly", "match_id": "match_friendly"},
+                ],
+                "post_match_reviews": [
+                    {"match_id": "match_friendly"},
+                ],
+            }
+            return tables[table]
+
+    plan = build_cleanup_plan(FakeClient())  # type: ignore[arg-type]
+
+    assert plan.competition_ids == ["international-friendly"]
+    assert plan.match_ids == ["match_friendly"]
+    assert plan.snapshot_ids == ["snapshot_friendly"]
+    assert plan.prediction_ids == ["prediction_friendly"]
+    assert plan.review_match_ids == ["match_friendly"]
+    assert plan.orphan_team_ids == ["scotland"]
+    assert plan.competition_updates == [
+        {
+            "id": "world-cup-qualification-uefa",
+            "competition_type": "international",
+        }
+    ]
+    assert plan.team_updates == [
+        {
+            "id": "england",
+            "team_type": "national",
+        }
+    ]
 
 
 def test_build_snapshot_rows_from_matches_uses_real_match_ids():
@@ -649,15 +765,19 @@ def test_build_snapshot_rows_from_matches_uses_real_match_ids():
             "home_xg_against_last_5": None,
             "away_xg_for_last_5": None,
             "away_xg_against_last_5": None,
-                "home_matches_last_7d": None,
-                "away_matches_last_7d": None,
-                "home_absence_count": None,
-                "away_absence_count": None,
-                "home_lineup_score": None,
-                "away_lineup_score": None,
-                "lineup_strength_delta": None,
-                "lineup_source_summary": None,
-            }
+            "home_matches_last_7d": None,
+            "away_matches_last_7d": None,
+            "home_points_last_5": None,
+            "away_points_last_5": None,
+            "home_rest_days": None,
+            "away_rest_days": None,
+            "home_absence_count": None,
+            "away_absence_count": None,
+            "home_lineup_score": None,
+            "away_lineup_score": None,
+            "lineup_strength_delta": None,
+            "lineup_source_summary": None,
+        }
         ]
 
 
@@ -732,6 +852,10 @@ def test_build_snapshot_rows_from_matches_enriches_historical_strength_metrics()
     assert snapshot["away_xg_against_last_5"] == 1.5
     assert snapshot["home_matches_last_7d"] == 2
     assert snapshot["away_matches_last_7d"] == 2
+    assert snapshot["home_points_last_5"] == 6
+    assert snapshot["away_points_last_5"] == 1
+    assert snapshot["home_rest_days"] == 3
+    assert snapshot["away_rest_days"] == 2
 
 
 def test_build_snapshot_rows_from_matches_uses_lineup_context_when_available():
@@ -1110,6 +1234,109 @@ def test_supabase_client_rejects_invalid_table_name(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="single relative identifier"):
         client.upsert_rows("../matches", [{"id": "match_001"}])
+
+
+def test_supabase_client_retries_without_unknown_schema_cache_column(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    captured_payloads: list[list[dict]] = []
+
+    class FakeResponse:
+        def __init__(self, status: int = 201) -> None:
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b""
+
+    def fake_urlopen(request, timeout=30):
+        payload = json.loads(request.data.decode("utf-8"))
+        captured_payloads.append(payload)
+        if len(captured_payloads) == 1:
+            raise HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                hdrs=None,
+                fp=BytesIO(
+                    b"{\"code\":\"PGRST204\",\"message\":\"Could not find the 'away_price' column of 'market_probabilities' in the schema cache\"}"
+                ),
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    inserted = client.upsert_rows(
+        "market_probabilities",
+        [
+            {
+                "id": "market-1",
+                "home_price": 0.4,
+                "draw_price": 0.3,
+                "away_price": 0.3,
+            }
+        ],
+    )
+
+    assert inserted == 1
+    assert captured_payloads[0][0]["away_price"] == 0.3
+    assert "away_price" not in captured_payloads[1][0]
+
+
+def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, capsys):
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            self.state = {
+                "match_snapshots": [
+                    {
+                        "id": "snapshot_001",
+                        "match_id": "match_001",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    }
+                ],
+                "market_probabilities": [],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.state.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            if table_name == "market_variants":
+                raise ValueError(
+                    "Supabase upsert failed for table=market_variants: status=404, body={\"code\":\"PGRST205\",\"message\":\"Could not find the table 'public.market_variants' in the schema cache\"}"
+                )
+            self.state[table_name] = list(rows)
+            return len(rows)
+
+    monkeypatch.delenv("REAL_MARKET_DATE", raising=False)
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+                "r2_bucket": "ma-bucket",
+                "r2_access_key_id": None,
+                "r2_secret_access_key": None,
+                "r2_s3_endpoint": None,
+            },
+        )(),
+    )
+
+    run_ingest_markets_job()
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["inserted_rows"] == 2
+    assert payload["variant_rows"] == 0
 
 
 def test_polymarket_sport_for_competition_uses_supported_competitions_only():

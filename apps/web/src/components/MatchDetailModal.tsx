@@ -4,34 +4,23 @@ import { useTranslation } from "react-i18next";
 import type {
   MatchCardRow,
   PostMatchReview,
-  PostMatchReviewAggregationReport,
-  PredictionFusionPolicyHistoryResponse,
-  PredictionFusionPolicyReport,
-  PredictionModelRegistryReport,
-  PredictionSourceEvaluationHistoryResponse,
-  PredictionSourceEvaluationReport,
-  RolloutPromotionDecisionReport,
   PredictionSummary,
-  ReviewAggregationHistoryResponse,
   TimelineCheckpoint,
 } from "../lib/api";
 import CheckpointTimeline from "./CheckpointTimeline";
-import PostMatchReviewCard from "./PostMatchReviewCard";
+import MatchOutcomeBoard from "./MatchOutcomeBoard";
 import PredictionCard from "./PredictionCard";
-import PredictionSourceEvaluationSection from "./PredictionSourceEvaluationSection";
+import {
+  resolveActualOutcome,
+  resolvePredictionPresentation,
+  resolveVerdictState,
+  summarizeSignalBadges,
+} from "../lib/predictionSummary";
 
 interface MatchDetailModalProps {
   match: MatchCardRow | null;
   isOpen: boolean;
   prediction: PredictionSummary | null;
-  evaluationReport: PredictionSourceEvaluationReport | null;
-  evaluationHistoryView: PredictionSourceEvaluationHistoryResponse | null;
-  modelRegistryReport: PredictionModelRegistryReport | null;
-  fusionPolicyReport: PredictionFusionPolicyReport | null;
-  fusionPolicyHistoryView: PredictionFusionPolicyHistoryResponse | null;
-  reviewAggregationReport: PostMatchReviewAggregationReport | null;
-  reviewAggregationHistoryView: ReviewAggregationHistoryResponse | null;
-  promotionDecisionReport: RolloutPromotionDecisionReport | null;
   checkpoints: TimelineCheckpoint[];
   review: PostMatchReview | null;
   onClose: () => void;
@@ -42,41 +31,24 @@ export default function MatchDetailModal({
   match,
   isOpen,
   prediction,
-  evaluationReport,
-  evaluationHistoryView,
-  modelRegistryReport,
-  fusionPolicyReport,
-  fusionPolicyHistoryView,
-  reviewAggregationReport,
-  reviewAggregationHistoryView,
-  promotionDecisionReport,
   checkpoints,
   review,
   onClose,
   onOpenReport,
 }: MatchDetailModalProps) {
   const { t, i18n } = useTranslation();
-  const currentLanguage = i18n.language || "en";
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const formattedDate = match
-    ? new Date(match.kickoffAt).toLocaleString(currentLanguage, {
-        month: "long",
+    ? new Date(match.kickoffAt).toLocaleString(i18n.language, {
+        month: "short",
         day: "numeric",
-        weekday: "short",
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
       })
     : "";
-  const hasFinalScore =
-    match != null &&
-    match.finalResult != null &&
-    match.homeScore !== null &&
-    match.homeScore !== undefined &&
-    match.awayScore !== null &&
-    match.awayScore !== undefined;
 
   useEffect(() => {
     if (!isOpen) {
@@ -125,6 +97,37 @@ export default function MatchDetailModal({
     return null;
   }
 
+  const presentation = resolvePredictionPresentation({
+    mainRecommendation: prediction?.mainRecommendation ?? match.mainRecommendation ?? null,
+    recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
+    confidence: prediction?.confidence ?? match.confidence,
+  });
+  const missingSignals = match.explanationPayload?.missingSignals || [];
+  const hasMissingSignals = missingSignals.length > 0;
+  const actualOutcome = resolveActualOutcome(match.finalResult);
+  const verdict = resolveVerdictState({
+    finalResult: match.finalResult,
+    mainRecommendation: presentation.mainRecommendation,
+    recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
+  });
+  const statusFlags = summarizeSignalBadges(
+    presentation.mainRecommendation,
+    prediction?.explanationPayload ?? match.explanationPayload,
+    match.needsReview,
+  );
+  const hasPredictionSummary =
+    presentation.predictedOutcome !== null ||
+    presentation.displayConfidence !== null ||
+    presentation.noBetReason !== null;
+  const isFinished =
+    match.status === "Needs Review" || match.status === "Review Ready" || !!match.finalResult;
+  const toneClass =
+    presentation.betState === "recommended"
+      ? "state-recommended"
+      : isFinished
+        ? "state-complete"
+        : "state-no-bet";
+
   return (
     <div
       className="detailOverlay"
@@ -134,7 +137,7 @@ export default function MatchDetailModal({
       <section
         aria-modal="true"
         aria-label={`${match.homeTeam} vs ${match.awayTeam}`}
-        className="detailModal"
+        className={`detailModal ${toneClass}`}
         ref={dialogRef}
         role="dialog"
         onClick={(event) => event.stopPropagation()}
@@ -146,100 +149,125 @@ export default function MatchDetailModal({
             type="button"
             onClick={onClose}
           >
-            ✕ {t("modal.close")}
+            ✕
           </button>
 
-          <div className="matchCardMeta" style={{ marginBottom: "24px" }}>
-            <span style={{ fontWeight: "800", color: "var(--accent-primary)", fontSize: "0.9rem", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+          <div className="modalMeta">
+            <span className="modalEyebrow">
               {formattedDate} • {t(`status.${match.status}`)}
             </span>
           </div>
 
           <div className="matchTeams">
             <div className="teamRow">
-              <div className="teamLogo teamLogo-lg" style={{ width: "40px", height: "40px", borderRadius: "12px", fontSize: "16px" }}>
+              <div className="teamLogo-sm">
                 {match.homeTeamLogoUrl ? (
-                  <img
-                    src={match.homeTeamLogoUrl}
-                    alt={`${match.homeTeam} crest`}
-                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                  />
+                  <img src={match.homeTeamLogoUrl} alt={`${match.homeTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                 ) : match.homeTeam[0]}
               </div>
-              <span className="teamName" style={{ fontSize: "1.5rem" }}>{match.homeTeam}</span>
+              <span className="teamName" style={{ fontSize: "1.25rem" }}>{match.homeTeam}</span>
+              {(isFinished || match.finalResult) && (
+                <span className="teamScore" style={{ marginLeft: "auto", fontWeight: "800", fontSize: "1.25rem" }}>{match.homeScore ?? 0}</span>
+              )}
             </div>
-
-            <div className="vsDivider" style={{ margin: "4px 0", fontSize: "9px" }}>
-              {hasFinalScore ? `${match.homeScore}-${match.awayScore}` : "vs"}
-            </div>
-
             <div className="teamRow">
-              <div className="teamLogo teamLogo-lg" style={{ width: "40px", height: "40px", borderRadius: "12px", fontSize: "16px" }}>
+              <div className="teamLogo-sm">
                 {match.awayTeamLogoUrl ? (
-                  <img
-                    src={match.awayTeamLogoUrl}
-                    alt={`${match.awayTeam} crest`}
-                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                  />
+                  <img src={match.awayTeamLogoUrl} alt={`${match.awayTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                 ) : match.awayTeam[0]}
               </div>
-              <span className="teamName" style={{ fontSize: "1.5rem" }}>{match.awayTeam}</span>
+              <span className="teamName" style={{ fontSize: "1.25rem" }}>{match.awayTeam}</span>
+              {(isFinished || match.finalResult) && (
+                <span className="teamScore" style={{ marginLeft: "auto", fontWeight: "800", fontSize: "1.25rem" }}>{match.awayScore ?? 0}</span>
+              )}
             </div>
           </div>
+
+          <MatchOutcomeBoard
+            predictedOutcome={presentation.predictedOutcome}
+            actualOutcome={actualOutcome}
+            betState={presentation.betState}
+            verdict={verdict}
+            statusFlags={statusFlags}
+            compact
+          />
         </header>
 
         <div className="modalBody">
+          {/* Missing Signals Details */}
+          {hasMissingSignals && (
+            <div className="missingSignalsPanel">
+              <div className="panelHeader">
+                <span className="warningIcon">⚠</span>
+                <span className="panelTitle">
+                  {t("modal.prediction.missingSignalsTitle")}
+                </span>
+              </div>
+              <div className="confidenceSignalList">
+                {missingSignals.map((sig, idx) => (
+                  <span key={idx} className="confidenceSignalChip">
+                    {t(`modal.prediction.breakdown.signalLabels.${sig}`, { defaultValue: sig })}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {prediction ? (
-            <section className="contentPanel">
-              <span className="panelTitle">{t("modal.sections.prediction")}</span>
-              <PredictionCard
-                confidence={prediction.confidence ?? match.confidence}
-                prediction={prediction}
-                recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
-              />
-            </section>
+            <PredictionCard
+              confidence={prediction.confidence ?? match.confidence}
+              prediction={prediction}
+              recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
+            />
+          ) : hasPredictionSummary ? (
+            <div className="contentPanel">
+              <div className="comparisonGrid">
+                <div
+                  className="comparisonItem"
+                  aria-label={`${t("matchOutcome.predicted")}: ${
+                    presentation.predictedOutcome
+                      ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
+                      : t("matchOutcome.outcomes.unavailable")
+                  }`}
+                >
+                  <span className="metricLabel">{t("modal.prediction.recommendedPick")}</span>
+                  <strong>
+                    {presentation.predictedOutcome
+                      ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
+                      : t("matchOutcome.outcomes.unavailable")}
+                  </strong>
+                </div>
+                <div className="comparisonItem">
+                  <span className="metricLabel">{t("matchCard.metrics.confidence")}</span>
+                  <strong>
+                    {presentation.displayConfidence === null
+                      ? t("matchCard.metrics.unavailable")
+                      : `${(presentation.displayConfidence * 100).toFixed(0)}%`}
+                  </strong>
+                </div>
+              </div>
+            </div>
           ) : (
-            <section className="contentPanel">
-              <span className="panelTitle">{t("modal.sections.prediction")}</span>
-              <p style={{ color: "var(--text-muted)", margin: 0 }}>{t("modal.prediction.unavailableDesc")}</p>
-            </section>
+            <div className="contentPanel">
+              <p className="timelineNote">{t("modal.prediction.unavailableDesc")}</p>
+            </div>
           )}
 
-          {review && (
-            <section className="contentPanel">
-              <span className="panelTitle">{t("modal.sections.review")}</span>
-              <PostMatchReviewCard
-                review={review}
-                aggregationReport={reviewAggregationReport}
-                aggregationHistoryView={reviewAggregationHistoryView}
-                promotionDecisionReport={promotionDecisionReport}
-              />
-            </section>
+          {/* Timeline Summary (Last 2) */}
+          {checkpoints.length > 0 && (
+            <div className="modalSection">
+              <span className="panelTitle">{t("modal.sections.timeline")}</span>
+              <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
+            </div>
           )}
 
-          <PredictionSourceEvaluationSection
-            prediction={prediction}
-            report={evaluationReport}
-            historyView={evaluationHistoryView}
-            modelRegistryReport={modelRegistryReport}
-            fusionPolicyReport={fusionPolicyReport}
-            fusionHistoryView={fusionPolicyHistoryView}
-          />
-
-          <section className="contentPanel">
-            <span className="panelTitle">{t("modal.sections.timeline")}</span>
-            <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
-          </section>
-
-          <div style={{ marginTop: "12px" }}>
-            <button
-              className="primaryButton"
-              type="button"
-              onClick={() => onOpenReport(match.id)}
-            >
-              {t("modal.fullReport")}
-            </button>
-          </div>
+          <button
+            className="primaryButton reportActionBtn"
+            type="button"
+            onClick={() => onOpenReport(match.id)}
+          >
+            {t("modal.fullReport")} <span>→</span>
+          </button>
         </div>
       </section>
     </div>

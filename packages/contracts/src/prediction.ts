@@ -48,7 +48,7 @@ export function deriveMatchStatus({
   if (needsReview) {
     return "Needs Review";
   }
-  if (finalResult) {
+  if (finalResult && hasPrediction) {
     return "Review Ready";
   }
   if (hasPrediction) {

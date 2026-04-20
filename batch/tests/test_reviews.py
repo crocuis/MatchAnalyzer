@@ -1,7 +1,9 @@
+import json
 from types import SimpleNamespace
 
 import pytest
 
+import batch.src.jobs.backfill_post_match_reviews_job as backfill_post_match_reviews_job
 import batch.src.jobs.run_predictions_job as run_predictions_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
@@ -592,6 +594,48 @@ def test_run_post_match_review_job_skips_when_no_completed_predictions_exist(
     payload = capsys.readouterr().out.strip()
     assert '"inserted_rows": 0' in payload
     assert '"skip_reason": "no_completed_predictions"' in payload
+
+
+def test_backfill_post_match_reviews_job_accumulates_date_range_results(monkeypatch, capsys):
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            pass
+
+    monkeypatch.setattr(
+        backfill_post_match_reviews_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(backfill_post_match_reviews_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        backfill_post_match_reviews_job,
+        "run_review_job",
+        lambda _client, target_date: (
+            {
+                "target_date": target_date,
+                "result_rows": 3,
+                "inserted_rows": 2,
+                "skip_reason": None,
+            }
+            if target_date == "2026-04-12"
+            else {
+                "target_date": target_date,
+                "result_rows": 0,
+                "inserted_rows": 0,
+                "skip_reason": "no_completed_predictions",
+            }
+        ),
+    )
+    monkeypatch.setenv("REVIEW_BACKFILL_START", "2026-04-12")
+    monkeypatch.setenv("REVIEW_BACKFILL_END", "2026-04-13")
+
+    backfill_post_match_reviews_job.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["date_count"] == 2
+    assert payload["inserted_total"] == 2
+    assert payload["reviewed_match_total"] == 3
+    assert payload["skip_reason_counts"] == {"no_completed_predictions": 1}
 
 
 def test_run_post_match_review_job_persists_latest_review_aggregation(monkeypatch):
@@ -1616,6 +1660,18 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     assert explanation_payload["source_agreement_ratio"] >= 0.5
     assert explanation_payload["feature_metadata"]["available_signal_count"] >= 9
     assert "home_elo" in explanation_payload["feature_metadata"]["missing_fields"]
+    missing_reason_keys = {
+        reason["reason_key"]
+        for reason in explanation_payload["feature_metadata"]["missing_signal_reasons"]
+    }
+    assert missing_reason_keys == {
+        "form_context_missing",
+        "schedule_context_missing",
+        "rating_context_missing",
+        "xg_context_missing",
+        "lineup_context_missing",
+        "absence_feed_missing",
+    }
     assert explanation_payload["source_metadata"]["market_sources"]["bookmaker"]["available"] is True
     assert explanation_payload["source_metadata"]["historical_performance"]["base_model"]["count"] >= 9
     assert (
@@ -1754,11 +1810,24 @@ def test_read_optional_rows_only_suppresses_missing_relation_errors():
         def read_rows(self, _table_name: str) -> list[dict]:
             raise ValueError('relation "market_variants" does not exist')
 
+    class SchemaCacheMissingClient:
+        def read_rows(self, _table_name: str) -> list[dict]:
+            raise ValueError(
+                "Supabase read failed for table=market_variants: status=404, body={\"code\":\"PGRST205\",\"message\":\"Could not find the table 'public.market_variants' in the schema cache\"}"
+            )
+
     class BrokenClient:
         def read_rows(self, _table_name: str) -> list[dict]:
             raise ValueError("network timeout")
 
     assert run_predictions_job.read_optional_rows(MissingClient(), "market_variants") == []
+    assert (
+        run_predictions_job.read_optional_rows(
+            SchemaCacheMissingClient(),
+            "market_variants",
+        )
+        == []
+    )
 
     with pytest.raises(ValueError, match="network timeout"):
         run_predictions_job.read_optional_rows(BrokenClient(), "market_variants")
@@ -1982,5 +2051,209 @@ def test_run_predictions_job_marks_centroid_fallback_and_applies_penalty(monkeyp
     explanation_payload = prediction["explanation_payload"]
 
     assert explanation_payload["base_model_source"] == "centroid_fallback"
-    assert explanation_payload["raw_confidence_score"] == prediction["confidence_score"]
+
+
+def test_run_predictions_job_uses_standard_confidence_gate_for_bookmaker_fallback_without_prediction_market(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.4,
+                        "draw_prob": 0.35,
+                        "away_prob": 0.25,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    explanation_payload = state["predictions"][0]["explanation_payload"]
+    assert explanation_payload["base_model_source"] == "bookmaker_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert explanation_payload["main_recommendation"]["recommended"] is False
+    assert explanation_payload["main_recommendation"]["no_bet_reason"] == "low_confidence"
+    assert explanation_payload["raw_confidence_score"] == state["predictions"][0]["confidence_score"]
     assert explanation_payload["raw_confidence_score"] < 0.6
+
+
+def test_run_predictions_job_blocks_unsupported_home_favorite_without_prediction_market(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "home_points_last_5": 7,
+                        "away_points_last_5": 5,
+                        "home_rest_days": 6,
+                        "away_rest_days": 5,
+                        "home_elo": 1500.0,
+                        "away_elo": 1499.0,
+                        "home_xg_for_last_5": 4.0,
+                        "home_xg_against_last_5": 5.4,
+                        "away_xg_for_last_5": 6.2,
+                        "away_xg_against_last_5": 5.1,
+                        "home_matches_last_7d": 1,
+                        "away_matches_last_7d": 1,
+                        "home_lineup_score": 0.0,
+                        "away_lineup_score": 0.0,
+                        "lineup_source_summary": "none",
+                        "lineup_status": "unknown",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.5841,
+                        "draw_prob": 0.2260,
+                        "away_prob": 0.1899,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-19T18:45:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-19")
+
+    run_predictions_job.main()
+
+    explanation_payload = state["predictions"][0]["explanation_payload"]
+    assert explanation_payload["base_model_source"] == "bookmaker_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert explanation_payload["main_recommendation"]["recommended"] is False
+    assert (
+        explanation_payload["main_recommendation"]["no_bet_reason"]
+        == "unsupported_home_favorite"
+    )
+    assert explanation_payload["raw_confidence_score"] > 0.62
+
+
+def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_without_prediction_market(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "home_points_last_5": 7,
+                        "away_points_last_5": 5,
+                        "home_rest_days": 6,
+                        "away_rest_days": 5,
+                        "home_elo": 1540.0,
+                        "away_elo": 1502.0,
+                        "home_xg_for_last_5": 7.0,
+                        "home_xg_against_last_5": 4.2,
+                        "away_xg_for_last_5": 4.8,
+                        "away_xg_against_last_5": 4.1,
+                        "home_matches_last_7d": 1,
+                        "away_matches_last_7d": 1,
+                        "home_lineup_score": 0.0,
+                        "away_lineup_score": 0.0,
+                        "lineup_source_summary": "none",
+                        "lineup_status": "unknown",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.7282,
+                        "draw_prob": 0.1593,
+                        "away_prob": 0.1125,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-19T18:45:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-19")
+
+    run_predictions_job.main()
+
+    explanation_payload = state["predictions"][0]["explanation_payload"]
+    assert explanation_payload["base_model_source"] == "bookmaker_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert explanation_payload["main_recommendation"]["recommended"] is False
+    assert (
+        explanation_payload["main_recommendation"]["no_bet_reason"]
+        == "unsupported_high_confidence_fallback"
+    )
+    assert explanation_payload["raw_confidence_score"] > 0.8

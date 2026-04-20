@@ -307,8 +307,27 @@ def build_main_recommendation(
         round(float(bucket["hit_rate"]), 4) if bucket and "hit_rate" in bucket else None
     )
     no_bet_reason = None
+
+    unsupported_home_favorite = (
+        pick == "HOME"
+        and not context.get("prediction_market_available", True)
+        and context.get("base_model_source") == "bookmaker_fallback"
+        and float(context.get("xg_proxy_delta", 0.0)) <= 0.0
+        and abs(float(context.get("elo_delta", 0.0))) < 0.05
+        and not context.get("lineup_confirmed")
+    )
+    unsupported_high_confidence_fallback = (
+        not context.get("prediction_market_available", True)
+        and context.get("base_model_source") == "bookmaker_fallback"
+        and not context.get("lineup_confirmed")
+        and confidence >= 0.8
+    )
     if confidence < threshold:
         no_bet_reason = "low_confidence"
+    elif unsupported_home_favorite:
+        no_bet_reason = "unsupported_home_favorite"
+    elif unsupported_high_confidence_fallback:
+        no_bet_reason = "unsupported_high_confidence_fallback"
     elif bucket and int(bucket.get("count", 0)) < minimum_bucket_count:
         no_bet_reason = "insufficient_calibration_sample"
     elif (
@@ -339,8 +358,19 @@ def build_value_recommendation(
         return None
     market_prices = market_prices or market_probs
 
+    valid_outcomes = [
+        outcome
+        for outcome in ("home", "draw", "away")
+        if isinstance(market_prices.get(outcome), (int, float))
+        and float(market_prices[outcome]) > 0
+        and isinstance(base_probs.get(outcome), (int, float))
+        and isinstance(market_probs.get(outcome), (int, float))
+    ]
+    if not valid_outcomes:
+        return None
+
     best_outcome = max(
-        ("home", "draw", "away"),
+        valid_outcomes,
         key=lambda outcome: (
             (base_probs[outcome] / market_prices[outcome]) - 1.0
             if market_prices[outcome] > 0

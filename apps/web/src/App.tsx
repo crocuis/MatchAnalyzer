@@ -7,27 +7,31 @@ import LeagueTabs from "./components/LeagueTabs";
 import MatchDetailModal from "./components/MatchDetailModal";
 import MatchTable from "./components/MatchTable";
 import {
-  fetchLatestRolloutPromotionDecision,
-  fetchLatestPredictionModelRegistry,
   fetchMatches,
-  fetchPrediction,
+  fetchLatestPredictionFusionPolicy,
+  fetchLatestPredictionModelRegistry,
+  fetchLatestPredictionSourceEvaluation,
+  fetchLatestReviewAggregation,
+  fetchLatestRolloutPromotionDecision,
   fetchPredictionFusionPolicyHistory,
+  fetchPrediction,
   fetchPredictionSourceEvaluationHistory,
   fetchReview,
   fetchReviewAggregationHistory,
-  type LeagueSummary,
-  type MatchCardRow,
-  type MatchReport,
-  type PostMatchReview,
   type PostMatchReviewAggregationReport,
   type PredictionFusionPolicyHistoryResponse,
   type PredictionFusionPolicyReport,
   type PredictionModelRegistryReport,
   type PredictionSourceEvaluationHistoryResponse,
   type PredictionSourceEvaluationReport,
-  type RolloutPromotionDecisionReport,
+  type LeaguePredictionSummary,
+  type LeagueSummary,
+  type MatchCardRow,
+  type MatchReport,
+  type PostMatchReview,
   type PredictionSummary,
   type ReviewAggregationHistoryResponse,
+  type RolloutPromotionDecisionReport,
   type TimelineCheckpoint,
 } from "./lib/api";
 
@@ -37,15 +41,54 @@ type MatchDetailState = {
   review: PostMatchReview | null;
 };
 
+type LeaguePageState = {
+  items: MatchCardRow[];
+  nextCursor: string | null;
+  predictionSummary: LeaguePredictionSummary | null;
+  totalMatches: number;
+};
+
 const LEAGUE_ORDER = [
   "premier-league",
-  "laliga",
+  "la-liga",
   "bundesliga",
   "serie-a",
   "ligue-1",
-  "ucl",
-  "uel",
+  "champions-league",
+  "europa-league",
 ];
+
+const PAGE_SIZE = 4;
+
+function resolveLeaguePayload(
+  response: {
+    items: MatchCardRow[];
+    leagues?: LeagueSummary[];
+    predictionSummary?: LeaguePredictionSummary | null;
+    selectedLeagueId?: string | null;
+    nextCursor?: string | null;
+    totalMatches?: number;
+  },
+  t: (key: string) => string,
+) {
+  const resolvedLeagues =
+    response.leagues && response.leagues.length > 0
+      ? response.leagues
+      : deriveLeagueSummaries(response.items, t);
+  const resolvedLeagueId =
+    response.selectedLeagueId
+    ?? resolvedLeagues[0]?.id
+    ?? response.items[0]?.leagueId
+    ?? null;
+
+  return {
+    leagues: resolvedLeagues,
+    predictionSummary: response.predictionSummary ?? null,
+    selectedLeagueId: resolvedLeagueId,
+    nextCursor: response.nextCursor ?? null,
+    totalMatches: response.totalMatches ?? response.items.length,
+  };
+}
 
 function deriveLeagueSummaries(matches: MatchCardRow[], t: (key: string) => string): LeagueSummary[] {
   const groups = new Map<string, LeagueSummary>();
@@ -99,8 +142,8 @@ function buildReport(
 
 export default function App() {
   const { t, i18n } = useTranslation();
-  const currentLanguage = i18n.language || "en";
-  const [matches, setMatches] = useState<MatchCardRow[]>([]);
+  const [leagues, setLeagues] = useState<LeagueSummary[]>([]);
+  const [leaguePages, setLeaguePages] = useState<Record<string, LeaguePageState>>({});
   const [matchesStatus, setMatchesStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -112,31 +155,16 @@ export default function App() {
     {},
   );
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
-  const [evaluationReport, setEvaluationReport] = useState<
-    PredictionSourceEvaluationReport | null | undefined
-  >(undefined);
-  const [modelRegistryReport, setModelRegistryReport] = useState<
-    PredictionModelRegistryReport | null | undefined
-  >(undefined);
-  const [fusionPolicyReport, setFusionPolicyReport] = useState<
-    PredictionFusionPolicyReport | null | undefined
-  >(undefined);
-  const [reviewAggregationReport, setReviewAggregationReport] = useState<
-    PostMatchReviewAggregationReport | null | undefined
-  >(undefined);
-  const [evaluationHistoryView, setEvaluationHistoryView] = useState<
-    PredictionSourceEvaluationHistoryResponse | null | undefined
-  >(undefined);
-  const [fusionPolicyHistoryView, setFusionPolicyHistoryView] = useState<
-    PredictionFusionPolicyHistoryResponse | null | undefined
-  >(undefined);
-  const [reviewAggregationHistoryView, setReviewAggregationHistoryView] = useState<
-    ReviewAggregationHistoryResponse | null | undefined
-  >(undefined);
-  const [promotionDecisionReport, setPromotionDecisionReport] = useState<
-    RolloutPromotionDecisionReport | null | undefined
-  >(undefined);
-  const [isEvaluationReportLoading, setIsEvaluationReportLoading] = useState(false);
+  const [loadingMoreLeagueId, setLoadingMoreLeagueId] = useState<string | null>(null);
+  const [evaluationReport, setEvaluationReport] = useState<PredictionSourceEvaluationReport | null>(null);
+  const [evaluationHistoryView, setEvaluationHistoryView] = useState<PredictionSourceEvaluationHistoryResponse | null>(null);
+  const [modelRegistryReport, setModelRegistryReport] = useState<PredictionModelRegistryReport | null>(null);
+  const [fusionPolicyReport, setFusionPolicyReport] = useState<PredictionFusionPolicyReport | null>(null);
+  const [fusionPolicyHistoryView, setFusionPolicyHistoryView] = useState<PredictionFusionPolicyHistoryResponse | null>(null);
+  const [reviewAggregationReport, setReviewAggregationReport] = useState<PostMatchReviewAggregationReport | null>(null);
+  const [reviewAggregationHistoryView, setReviewAggregationHistoryView] = useState<ReviewAggregationHistoryResponse | null>(null);
+  const [promotionDecisionReport, setPromotionDecisionReport] = useState<RolloutPromotionDecisionReport | null>(null);
+  const [evaluationLoaded, setEvaluationLoaded] = useState(false);
   const isClientValidationEnabled = false;
 
   useEffect(() => {
@@ -146,17 +174,33 @@ export default function App() {
       setMatchesStatus("loading");
 
       try {
-        const response = await fetchMatches();
+        const response = await fetchMatches({ limit: PAGE_SIZE });
         if (!isMounted) {
           return;
         }
-        setMatches(response.items);
+        const resolved = resolveLeaguePayload(response, t);
+        setLeagues(resolved.leagues);
+        if (resolved.selectedLeagueId) {
+          setSelectedLeagueId(resolved.selectedLeagueId);
+          setLeaguePages({
+            [resolved.selectedLeagueId]: {
+              items: response.items,
+              nextCursor: resolved.nextCursor,
+              predictionSummary: resolved.predictionSummary,
+              totalMatches: resolved.totalMatches,
+            },
+          });
+        } else {
+          setSelectedLeagueId(null);
+          setLeaguePages({});
+        }
         setMatchesStatus("ready");
       } catch {
         if (!isMounted) {
           return;
         }
-        setMatches([]);
+        setLeagues([]);
+        setLeaguePages({});
         setMatchesStatus("error");
       }
     }
@@ -168,32 +212,87 @@ export default function App() {
     };
   }, []);
 
-  const leagues = useMemo(() => deriveLeagueSummaries(matches, t), [matches, t]);
+  const derivedLeagues = useMemo(
+    () => leagues.length > 0 ? leagues : deriveLeagueSummaries([], t),
+    [leagues, t],
+  );
 
   useEffect(() => {
-    if (leagues.length === 0) {
+    if (derivedLeagues.length === 0) {
       setSelectedLeagueId(null);
       return;
     }
 
-    if (!selectedLeagueId || !leagues.some((league) => league.id === selectedLeagueId)) {
-      setSelectedLeagueId(leagues[0].id);
+    if (!selectedLeagueId || !derivedLeagues.some((league) => league.id === selectedLeagueId)) {
+      setSelectedLeagueId(derivedLeagues[0].id);
     }
-  }, [leagues, selectedLeagueId]);
+  }, [derivedLeagues, selectedLeagueId]);
 
-  const visibleMatches = useMemo(
-    () =>
-      selectedLeagueId
-        ? matches.filter((match) => match.leagueId === selectedLeagueId)
-        : [],
-    [matches, selectedLeagueId],
+  const leagueMatches = useMemo(
+    () => (selectedLeagueId ? (leaguePages[selectedLeagueId]?.items ?? []) : []),
+    [leaguePages, selectedLeagueId],
   );
 
-  const fallbackSelectedMatchId = visibleMatches[0]?.id ?? null;
+  const currentLeaguePage = selectedLeagueId ? leaguePages[selectedLeagueId] : undefined;
+  const totalMatches = currentLeaguePage?.totalMatches
+    ?? derivedLeagues.find((league) => league.id === selectedLeagueId)?.matchCount
+    ?? 0;
+  const predictionSummary = currentLeaguePage?.predictionSummary ?? null;
+  const hasMoreMatches = Boolean(currentLeaguePage?.nextCursor);
+  const loadedMatches = useMemo(
+    () => Object.values(leaguePages).flatMap((page) => page.items),
+    [leaguePages],
+  );
+
+  useEffect(() => {
+    if (!selectedLeagueId || leaguePages[selectedLeagueId]) {
+      return;
+    }
+    const leagueId = selectedLeagueId;
+
+    let isMounted = true;
+    setMatchesStatus((current) => (current === "ready" ? "ready" : "loading"));
+
+    async function loadLeaguePage() {
+      try {
+        const response = await fetchMatches({
+          leagueId,
+          limit: PAGE_SIZE,
+        });
+        if (!isMounted) {
+          return;
+        }
+        const resolved = resolveLeaguePayload(response, t);
+        setLeagues(resolved.leagues);
+        setLeaguePages((current) => ({
+          ...current,
+          [leagueId]: {
+            items: response.items,
+            nextCursor: resolved.nextCursor,
+            predictionSummary: resolved.predictionSummary,
+            totalMatches: resolved.totalMatches,
+          },
+        }));
+        setMatchesStatus("ready");
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        setMatchesStatus("error");
+      }
+    }
+
+    void loadLeaguePage();
+    return () => {
+      isMounted = false;
+    };
+  }, [leaguePages, selectedLeagueId]);
+
+  const fallbackSelectedMatchId = leagueMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
   const activeMatch =
-    visibleMatches.find((match) => match.id === activeMatchId) ?? null;
-  const reportMatch = matches.find((match) => match.id === reportMatchId) ?? null;
+    leagueMatches.find((match) => match.id === activeMatchId) ?? null;
+  const reportMatch = loadedMatches.find((match) => match.id === reportMatchId) ?? null;
 
   async function ensureMatchDetail(matchId: string) {
     if (detailsByMatchId[matchId] || detailLoadingId === matchId) {
@@ -220,52 +319,40 @@ export default function App() {
     }
   }
 
-  async function ensureEvaluationReport() {
-    if (
-      (
-        evaluationReport !== undefined &&
-        evaluationHistoryView !== undefined &&
-        modelRegistryReport !== undefined &&
-        fusionPolicyReport !== undefined &&
-        fusionPolicyHistoryView !== undefined &&
-        reviewAggregationReport !== undefined &&
-        reviewAggregationHistoryView !== undefined &&
-        promotionDecisionReport !== undefined
-      ) ||
-      isEvaluationReportLoading
-    ) {
+  async function ensureEvaluationData() {
+    if (evaluationLoaded) {
       return;
     }
 
-    setIsEvaluationReportLoading(true);
-    try {
-      const [evaluationResponse, registryResponse, fusionPolicyResponse, reviewAggregationResponse, promotionDecisionResponse] = await Promise.all([
-        fetchPredictionSourceEvaluationHistory(),
-        fetchLatestPredictionModelRegistry(),
-        fetchPredictionFusionPolicyHistory(),
-        fetchReviewAggregationHistory(),
-        fetchLatestRolloutPromotionDecision(),
-      ]);
-      setEvaluationHistoryView(evaluationResponse);
-      setEvaluationReport(evaluationResponse.latest);
-      setModelRegistryReport(registryResponse.report);
-      setFusionPolicyHistoryView(fusionPolicyResponse);
-      setFusionPolicyReport(fusionPolicyResponse.latest);
-      setReviewAggregationHistoryView(reviewAggregationResponse);
-      setReviewAggregationReport(reviewAggregationResponse.latest);
-      setPromotionDecisionReport(promotionDecisionResponse.report);
-    } catch {
-      setEvaluationReport(null);
-      setEvaluationHistoryView(null);
-      setModelRegistryReport(null);
-      setFusionPolicyReport(null);
-      setFusionPolicyHistoryView(null);
-      setReviewAggregationReport(null);
-      setReviewAggregationHistoryView(null);
-      setPromotionDecisionReport(null);
-    } finally {
-      setIsEvaluationReportLoading(false);
-    }
+    const [
+      evaluationResponse,
+      evaluationHistoryResponse,
+      registryResponse,
+      fusionPolicyResponse,
+      fusionPolicyHistoryResponse,
+      reviewAggregationResponse,
+      reviewAggregationHistoryResponse,
+      promotionDecisionResponse,
+    ] = await Promise.all([
+      fetchLatestPredictionSourceEvaluation(),
+      fetchPredictionSourceEvaluationHistory(),
+      fetchLatestPredictionModelRegistry(),
+      fetchLatestPredictionFusionPolicy(),
+      fetchPredictionFusionPolicyHistory(),
+      fetchLatestReviewAggregation(),
+      fetchReviewAggregationHistory(),
+      fetchLatestRolloutPromotionDecision(),
+    ]);
+
+    setEvaluationReport(evaluationResponse.report);
+    setEvaluationHistoryView(evaluationHistoryResponse);
+    setModelRegistryReport(registryResponse.report);
+    setFusionPolicyReport(fusionPolicyResponse.report);
+    setFusionPolicyHistoryView(fusionPolicyHistoryResponse);
+    setReviewAggregationReport(reviewAggregationResponse.report);
+    setReviewAggregationHistoryView(reviewAggregationHistoryResponse);
+    setPromotionDecisionReport(promotionDecisionResponse.report);
+    setEvaluationLoaded(true);
   }
 
   useEffect(() => {
@@ -274,7 +361,7 @@ export default function App() {
     }
 
     void ensureMatchDetail(activeMatchId);
-    void ensureEvaluationReport();
+    void ensureEvaluationData();
   }, [activeMatchId, isModalOpen]);
 
   useEffect(() => {
@@ -283,7 +370,7 @@ export default function App() {
     }
 
     void ensureMatchDetail(reportMatchId);
-    void ensureEvaluationReport();
+    void ensureEvaluationData();
   }, [reportMatchId]);
 
   function handleSelectLeague(leagueId: string) {
@@ -308,6 +395,49 @@ export default function App() {
     setIsModalOpen(false);
   }
 
+  function handleLoadMore() {
+    if (!selectedLeagueId || !currentLeaguePage?.nextCursor || loadingMoreLeagueId === selectedLeagueId) {
+      return;
+    }
+    const leagueId = selectedLeagueId;
+    const nextCursor = currentLeaguePage.nextCursor;
+
+    void (async () => {
+      setLoadingMoreLeagueId(leagueId);
+      try {
+        const response = await fetchMatches({
+          leagueId,
+          cursor: nextCursor,
+          limit: PAGE_SIZE,
+        });
+        const resolved = resolveLeaguePayload(response, t);
+        setLeagues(resolved.leagues);
+        setLeaguePages((current) => {
+          const existing = current[leagueId]?.items ?? [];
+          const mergedItems = [
+            ...existing,
+            ...response.items.filter(
+              (item) => !existing.some((existingItem) => existingItem.id === item.id),
+            ),
+          ];
+          return {
+            ...current,
+            [leagueId]: {
+              items: mergedItems,
+              nextCursor: resolved.nextCursor,
+              predictionSummary: resolved.predictionSummary,
+              totalMatches: resolved.totalMatches,
+            },
+          };
+        });
+      } catch {
+        setMatchesStatus("error");
+      } finally {
+        setLoadingMoreLeagueId((current) => (current === leagueId ? null : current));
+      }
+    })();
+  }
+
   const activeDetail = activeMatchId ? detailsByMatchId[activeMatchId] : undefined;
   const reportDetail = reportMatchId ? detailsByMatchId[reportMatchId] : undefined;
   const reportView =
@@ -321,14 +451,14 @@ export default function App() {
             match={reportMatch}
             onBack={() => setReportMatchId(null)}
             prediction={reportView.prediction}
-            evaluationReport={evaluationReport ?? null}
-            evaluationHistoryView={evaluationHistoryView ?? null}
-            modelRegistryReport={modelRegistryReport ?? null}
-            fusionPolicyReport={fusionPolicyReport ?? null}
-            fusionPolicyHistoryView={fusionPolicyHistoryView ?? null}
-            reviewAggregationReport={reviewAggregationReport ?? null}
-            reviewAggregationHistoryView={reviewAggregationHistoryView ?? null}
-            promotionDecisionReport={promotionDecisionReport ?? null}
+            evaluationReport={evaluationReport}
+            evaluationHistoryView={evaluationHistoryView}
+            modelRegistryReport={modelRegistryReport}
+            fusionPolicyReport={fusionPolicyReport}
+            fusionPolicyHistoryView={fusionPolicyHistoryView}
+            reviewAggregationReport={reviewAggregationReport}
+            reviewAggregationHistoryView={reviewAggregationHistoryView}
+            promotionDecisionReport={promotionDecisionReport}
             checkpoints={reportView.checkpoints}
             review={reportView.review}
           />
@@ -343,13 +473,13 @@ export default function App() {
         <header className="dashboardHeader">
           <div className="langSwitcher">
             <button
-              className={`langBtn ${currentLanguage.startsWith("en") ? "langBtn-active" : ""}`}
+              className={`langBtn ${i18n.language.startsWith('en') ? 'langBtn-active' : ''}`}
               onClick={() => i18n.changeLanguage('en')}
             >
               EN
             </button>
             <button
-              className={`langBtn ${currentLanguage.startsWith("ko") ? "langBtn-active" : ""}`}
+              className={`langBtn ${i18n.language.startsWith('ko') ? 'langBtn-active' : ''}`}
               onClick={() => i18n.changeLanguage('ko')}
             >
               KO
@@ -360,12 +490,12 @@ export default function App() {
           <p className="dashboardSubtitle">{t("header.subtitle")}</p>
         </header>
 
-        {leagues.length > 0 ? (
+        {derivedLeagues.length > 0 ? (
           <LeagueTabs
-            leagues={leagues}
+            leagues={derivedLeagues}
             onSelect={handleSelectLeague}
             panelId="league-matches-panel"
-            selectedLeagueId={selectedLeagueId ?? leagues[0].id}
+            selectedLeagueId={selectedLeagueId ?? derivedLeagues[0].id}
           />
         ) : null}
 
@@ -383,10 +513,14 @@ export default function App() {
 
         {matchesStatus !== "loading" && matchesStatus !== "error" ? (
           <MatchTable
-            matches={visibleMatches}
+            matches={leagueMatches}
+            predictionSummary={predictionSummary}
+            totalMatches={totalMatches}
             onOpen={handleOpenMatch}
+            onLoadMore={handleLoadMore}
             panelId="league-matches-panel"
             selectedMatchId={isModalOpen ? activeMatchId : null}
+            isLoadingMore={loadingMoreLeagueId === selectedLeagueId && hasMoreMatches}
           />
         ) : null}
 
@@ -396,14 +530,14 @@ export default function App() {
           onClose={handleCloseModal}
           onOpenReport={handleOpenReport}
           prediction={activeDetail?.prediction ?? null}
-          evaluationReport={evaluationReport ?? null}
-          evaluationHistoryView={evaluationHistoryView ?? null}
-          modelRegistryReport={modelRegistryReport ?? null}
-          fusionPolicyReport={fusionPolicyReport ?? null}
-          fusionPolicyHistoryView={fusionPolicyHistoryView ?? null}
-          reviewAggregationReport={reviewAggregationReport ?? null}
-          reviewAggregationHistoryView={reviewAggregationHistoryView ?? null}
-          promotionDecisionReport={promotionDecisionReport ?? null}
+          evaluationReport={evaluationReport}
+          evaluationHistoryView={evaluationHistoryView}
+          modelRegistryReport={modelRegistryReport}
+          fusionPolicyReport={fusionPolicyReport}
+          fusionPolicyHistoryView={fusionPolicyHistoryView}
+          reviewAggregationReport={reviewAggregationReport}
+          reviewAggregationHistoryView={reviewAggregationHistoryView}
+          promotionDecisionReport={promotionDecisionReport}
           checkpoints={activeDetail?.checkpoints ?? []}
           review={activeDetail?.review ?? null}
         />

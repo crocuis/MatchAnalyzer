@@ -96,6 +96,30 @@ export interface PredictionFeatureContext {
   lineup_source_summary?: string;
 }
 
+export interface PredictionMissingSignalReason {
+  reasonKey?: string;
+  reason_key?: string;
+  fields?: string[];
+  explanation?: string;
+  syncAction?: string;
+  sync_action?: string;
+}
+
+export interface PredictionFeatureMetadata {
+  availableSignalCount?: number;
+  available_signal_count?: number;
+  snapshotQuality?: string;
+  snapshot_quality?: string;
+  lineupStatus?: string;
+  lineup_status?: string;
+  missingFields?: string[];
+  missing_fields?: string[];
+  availableFields?: string[];
+  available_fields?: string[];
+  missingSignalReasons?: PredictionMissingSignalReason[];
+  missing_signal_reasons?: PredictionMissingSignalReason[];
+}
+
 export interface PredictionExplanationPayload {
   rawConfidence?: number;
   raw_confidence_score?: number;
@@ -123,6 +147,8 @@ export interface PredictionExplanationPayload {
   >;
   featureContext?: PredictionFeatureContext;
   feature_context?: PredictionFeatureContext;
+  featureMetadata?: PredictionFeatureMetadata;
+  feature_metadata?: PredictionFeatureMetadata;
   featureAttribution?: Array<{
     featureKey?: string;
     feature_key?: string;
@@ -288,6 +314,18 @@ export function buildApiUrl(path: string): string {
 
 export interface MatchListResponse {
   items: MatchCardRow[];
+  leagues: LeagueSummary[];
+  predictionSummary: LeaguePredictionSummary | null;
+  selectedLeagueId: string | null;
+  nextCursor: string | null;
+  totalMatches: number;
+}
+
+export interface LeaguePredictionSummary {
+  evaluatedCount: number;
+  correctCount: number;
+  incorrectCount: number;
+  successRate: number | null;
 }
 
 export interface PredictionResponse {
@@ -379,8 +417,23 @@ async function fetchJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function fetchMatches(): Promise<MatchListResponse> {
-  return fetchJson<MatchListResponse>("/matches");
+export function fetchMatches(params?: {
+  leagueId?: string | null;
+  cursor?: string | null;
+  limit?: number;
+}): Promise<MatchListResponse> {
+  const search = new URLSearchParams();
+  if (params?.leagueId) {
+    search.set("leagueId", params.leagueId);
+  }
+  if (params?.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  if (params?.limit) {
+    search.set("limit", String(params.limit));
+  }
+  const query = search.toString();
+  return fetchJson<MatchListResponse>(query ? `/matches?${query}` : "/matches");
 }
 
 export function fetchPrediction(matchId: string): Promise<PredictionResponse> {

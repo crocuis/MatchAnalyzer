@@ -1,84 +1,14 @@
 import { useTranslation } from "react-i18next";
-import type {
-  MatchCardRow,
-  PredictionExplanationPayload,
-  PredictionFeatureContext,
-} from "../lib/api";
+import type { MatchCardRow } from "../lib/api";
+import {
+  resolvePredictionPresentation,
+  resolveVerdictState,
+} from "../lib/predictionSummary";
 
 interface MatchCardProps {
   match: MatchCardRow;
   isSelected: boolean;
   onOpen: (matchId: string) => void;
-}
-
-function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function normalizeFeatureContext(
-  explanationPayload?: PredictionExplanationPayload,
-): PredictionFeatureContext | null {
-  if (!explanationPayload) {
-    return null;
-  }
-  return explanationPayload.featureContext ?? explanationPayload.feature_context ?? null;
-}
-
-function deriveReasonTags(explanationPayload?: PredictionExplanationPayload) {
-  if (!explanationPayload) {
-    return [];
-  }
-
-  const featureContext = normalizeFeatureContext(explanationPayload);
-  const tags: string[] = [];
-  const sourceAgreementRatio =
-    readNumber(explanationPayload.sourceAgreementRatio) ??
-    readNumber(explanationPayload.source_agreement_ratio);
-  const eloDelta =
-    readNumber(featureContext?.eloDelta) ?? readNumber(featureContext?.elo_delta);
-  const xgProxyDelta =
-    readNumber(featureContext?.xgProxyDelta) ??
-    readNumber(featureContext?.xg_proxy_delta);
-  const fixtureCongestionDelta =
-    readNumber(featureContext?.fixtureCongestionDelta) ??
-    readNumber(featureContext?.fixture_congestion_delta);
-  const lineupStrengthDelta =
-    readNumber(featureContext?.lineupStrengthDelta) ??
-    readNumber(featureContext?.lineup_strength_delta);
-  const lineupSourceSummary =
-    typeof featureContext?.lineupSourceSummary === "string"
-      ? featureContext.lineupSourceSummary
-      : typeof featureContext?.lineup_source_summary === "string"
-        ? featureContext.lineup_source_summary
-        : null;
-
-  if (sourceAgreementRatio !== null && sourceAgreementRatio >= 0.67) {
-    tags.push("consensus");
-  }
-  if (eloDelta !== null && eloDelta > 0.2) {
-    tags.push("strengthHome");
-  } else if (eloDelta !== null && eloDelta < -0.2) {
-    tags.push("strengthAway");
-  }
-  if (xgProxyDelta !== null && xgProxyDelta > 0.15) {
-    tags.push("xgHome");
-  } else if (xgProxyDelta !== null && xgProxyDelta < -0.15) {
-    tags.push("xgAway");
-  }
-  if (fixtureCongestionDelta !== null && fixtureCongestionDelta > 0.75) {
-    tags.push("scheduleHome");
-  } else if (fixtureCongestionDelta !== null && fixtureCongestionDelta < -0.75) {
-    tags.push("scheduleAway");
-  }
-  if (lineupStrengthDelta !== null && lineupStrengthDelta > 0.5) {
-    tags.push("lineupHome");
-  } else if (lineupStrengthDelta !== null && lineupStrengthDelta < -0.5) {
-    tags.push("lineupAway");
-  } else if (lineupSourceSummary) {
-    tags.push("lineupData");
-  }
-
-  return tags;
 }
 
 export default function MatchCard({
@@ -87,23 +17,8 @@ export default function MatchCard({
   onOpen,
 }: MatchCardProps) {
   const { t, i18n } = useTranslation();
-  const currentLanguage = i18n.language || "en";
-  const reasonTags = deriveReasonTags(match.explanationPayload);
-  const mainRecommendation = match.mainRecommendation ?? null;
-  const valueRecommendation = match.valueRecommendation ?? null;
-  const variantMarkets = match.variantMarkets ?? [];
-  const isNoBet = Boolean(mainRecommendation && !mainRecommendation.recommended);
-  const pickLabel = isNoBet
-    ? t("matchCard.metrics.noBet")
-    : match.recommendedPick ?? t("matchCard.metrics.unavailable");
-  const confidenceLabel =
-    isNoBet
-      ? t("matchCard.metrics.noBet")
-      : match.confidence === null
-      ? t("matchCard.metrics.unavailable")
-      : `${(match.confidence * 100).toFixed(0)}%`;
 
-  const formattedDate = new Date(match.kickoffAt).toLocaleString(currentLanguage, {
+  const formattedDate = new Date(match.kickoffAt).toLocaleString(i18n.language, {
     month: "long",
     day: "numeric",
     weekday: "short",
@@ -111,12 +26,44 @@ export default function MatchCard({
     minute: "2-digit",
     hour12: false,
   });
-  const hasFinalScore =
-    match.finalResult != null &&
-    match.homeScore !== null &&
-    match.homeScore !== undefined &&
-    match.awayScore !== null &&
-    match.awayScore !== undefined;
+
+  const predictionPresentation = resolvePredictionPresentation({
+    mainRecommendation: match.mainRecommendation ?? null,
+    recommendedPick: match.recommendedPick,
+    confidence: match.confidence,
+  });
+  const predictedLabel = predictionPresentation.predictedOutcome
+    ? t(`matchOutcome.outcomes.${predictionPresentation.predictedOutcome}`)
+    : t("matchOutcome.outcomes.unavailable");
+  const actualLabel = match.finalResult
+    ? t(`matchOutcome.outcomes.${match.finalResult}`)
+    : t("matchOutcome.outcomes.pending");
+  const betLabel = t(`matchOutcome.bet.${predictionPresentation.betState}`);
+  const verdictState = resolveVerdictState({
+    finalResult: match.finalResult,
+    mainRecommendation: predictionPresentation.mainRecommendation,
+    recommendedPick: match.recommendedPick,
+  });
+  const verdictLabel = t(`matchOutcome.verdict.${verdictState}`);
+  const isFinished = match.status === "Needs Review" || match.status === "Review Ready" || !!match.finalResult;
+  const toneClass =
+    predictionPresentation.betState === "recommended"
+      ? "state-recommended"
+      : isFinished
+        ? "state-complete"
+        : "state-no-bet";
+  const isHit =
+    match.finalResult &&
+    predictionPresentation.predictedOutcome &&
+    match.finalResult === predictionPresentation.predictedOutcome;
+  const hasValuePick = Boolean(match.valueRecommendation?.recommended);
+  const hasVariantMarkets = Boolean(match.variantMarkets && match.variantMarkets.length > 0);
+  const dateColor =
+    predictionPresentation.betState === "recommended"
+      ? "var(--accent-primary)"
+      : isFinished
+        ? "var(--text-muted)"
+        : "var(--text-secondary)";
 
   return (
     <button
@@ -127,97 +74,126 @@ export default function MatchCard({
       onClick={() => onOpen(match.id)}
     >
       <article
-        className={`matchCard ${match.needsReview ? "matchCardNeedsReview" : ""}`}
+        className={`matchCard ${match.needsReview ? "matchCardNeedsReview" : ""} ${toneClass}`}
       >
         <header className="matchCardHeader">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", marginBottom: "16px" }}>
-            <span style={{ fontWeight: "800", color: "var(--accent-primary)", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <span
+            className="srOnly"
+            aria-label={`${t("matchOutcome.betLabel")}: ${betLabel}`}
+          />
+          <div className="matchCardHeaderTop">
+            <span className="matchCardDate" style={{ color: dateColor }}>
               {formattedDate}
             </span>
-            {match.needsReview && (
-              <span className="reviewBadge">{t("matchCard.reviewRequired")}</span>
-            )}
-          </div>
-
-          <div className="matchTeams">
-            <div className="teamRow">
-              <div className="teamLogo-sm">
-                {match.homeTeamLogoUrl ? (
-                  <img
-                    src={match.homeTeamLogoUrl}
-                    alt={`${match.homeTeam} crest`}
-                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                  />
-                ) : match.homeTeam[0]}
-              </div>
-              <span className="teamName">{match.homeTeam}</span>
-            </div>
-
-            <div className="vsDivider">
-              {hasFinalScore ? (
-                <span className="matchScoreInline">
-                  <strong>{match.homeScore}</strong>
-                  <span>-</span>
-                  <strong>{match.awayScore}</strong>
+            <div style={{ display: "flex", gap: "8px" }}>
+              {hasValuePick && (
+                <span className="valueBadge">
+                  {t("matchCard.valuePick")}
                 </span>
-              ) : (
-                "vs"
               )}
-            </div>
-
-            <div className="teamRow">
-              <div className="teamLogo-sm">
-                {match.awayTeamLogoUrl ? (
-                  <img
-                    src={match.awayTeamLogoUrl}
-                    alt={`${match.awayTeam} crest`}
-                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                  />
-                ) : match.awayTeam[0]}
-              </div>
-              <span className="teamName">{match.awayTeam}</span>
+              {match.needsReview && (
+                <span
+                  className="reviewBadge"
+                  aria-label={t("matchCard.summaryBadges.reviewRequired")}
+                >
+                  {t("matchCard.reviewRequired")}
+                </span>
+              )}
             </div>
           </div>
         </header>
 
-        <div className="matchCardMetrics">
-          <div className="matchMetric">
-            <span className="metricLabel">{t("matchCard.metrics.pick")}</span>
-            <span className="metricValue">{pickLabel}</span>
+        <div className="matchCardBody">
+          {/* Team Info Section (2 Ratio) */}
+          <div className="matchCardTeamsSection">
+            <div className="matchTeams">
+              <div className="teamRow" style={{ justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div className="teamLogo-sm">
+                    {match.homeTeamLogoUrl ? (
+                      <img src={match.homeTeamLogoUrl} alt={`${match.homeTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                    ) : match.homeTeam[0]}
+                  </div>
+                  <span className="teamName">{match.homeTeam}</span>
+                </div>
+                {isFinished && (
+                  <span style={{ fontWeight: "800", fontSize: "1.2rem", color: "var(--text-primary)" }}>
+                    {match.homeScore ?? 0}
+                  </span>
+                )}
+              </div>
+
+              <div className="vsDivider" style={{ margin: "4px 0" }}>vs</div>
+
+              <div className="teamRow" style={{ justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div className="teamLogo-sm">
+                    {match.awayTeamLogoUrl ? (
+                      <img src={match.awayTeamLogoUrl} alt={`${match.awayTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                    ) : match.awayTeam[0]}
+                  </div>
+                  <span className="teamName">{match.awayTeam}</span>
+                </div>
+                {isFinished && (
+                  <span style={{ fontWeight: "800", fontSize: "1.2rem", color: "var(--text-primary)" }}>
+                    {match.awayScore ?? 0}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="matchMetric">
-            <span className="metricLabel">{t("matchCard.metrics.confidence")}</span>
-            <span className="metricValue">{confidenceLabel}</span>
-          </div>
-          <div className="matchMetric">
-            <span className="metricLabel">{t("matchCard.metrics.status")}</span>
-            <span className="metricValue">{t(`status.${match.status}`)}</span>
+
+          {/* Analysis Metrics Section (1 Ratio) - Always show data */}
+          <div className="matchCardMetricsSection">
+            <div
+              className="matchMetric"
+              aria-label={`${t("matchOutcome.predicted")}: ${predictedLabel}`}
+            >
+              <span className="metricLabel">{t("matchOutcome.predicted")}</span>
+              <span className={`metricValue ${predictionPresentation.betState === "recommended" ? "metricValue-highlight" : "metricValue-standard"}`}>
+                {predictedLabel}
+              </span>
+            </div>
+
+            <div
+              className="matchMetric"
+              aria-label={`${t("matchOutcome.actual")}: ${actualLabel}`}
+            >
+              <span className="metricLabel">{t("matchOutcome.actual")}</span>
+              <span className="metricValue metricValue-standard">
+                {actualLabel}
+              </span>
+            </div>
+
+            <div
+              className="matchMetric"
+              aria-label={`${t("matchOutcome.verdictLabel")}: ${verdictLabel}`}
+            >
+              <span className="metricLabel">{t("matchOutcome.verdictLabel")}</span>
+              <div className="verdictStatus">
+                {match.finalResult ? (
+                  <span className={`verdictGlyph ${isHit ? "verdictGlyph-hit" : "verdictGlyph-miss"}`}>
+                    {isHit ? "✓" : "×"}
+                  </span>
+                ) : (
+                  <span className="verdictGlyph-pending">…</span>
+                )}
+                <span className={`verdictText ${match.finalResult ? (isHit ? "verdictText-hit" : "verdictText-miss") : "verdictText-pending"}`}>
+                  {verdictLabel}
+                </span>
+              </div>
+            </div>
+
+            {hasVariantMarkets ? (
+              <div className="matchMetric">
+                <span className="metricLabel">{t("matchCard.variantMarkets")}</span>
+                <span className="metricValue metricValue-small">
+                  {match.variantMarkets?.map((market) => market.marketFamily).join(" · ")}
+                </span>
+              </div>
+            ) : null}
           </div>
         </div>
-        {reasonTags.length > 0 ? (
-          <div className="matchCardReasonTags">
-            {reasonTags.map((tag) => (
-              <span className="matchCardReasonTag" key={tag}>
-                {t(`matchCard.reasonTags.${tag}`)}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {valueRecommendation?.recommended ? (
-          <div className="matchCardReasonTags">
-            <span className="matchCardReasonTag">
-              {t("matchCard.valuePick")}
-            </span>
-            <span className="matchCardReasonTag">
-              {`${valueRecommendation.pick} +${(valueRecommendation.expectedValue * 100).toFixed(0)}%`}
-            </span>
-          </div>
-        ) : null}
-        {variantMarkets.length > 0 ? (
-          <div className="matchCardReasonTags">
-            <span className="matchCardReasonTag">{t("matchCard.variantMarkets")}</span>
-          </div>
-        ) : null}
       </article>
     </button>
   );

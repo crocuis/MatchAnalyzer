@@ -103,6 +103,13 @@ describe("prediction contracts", () => {
     expect(
       deriveMatchStatus({
         finalResult: "2-1",
+        hasPrediction: false,
+        needsReview: false,
+      }),
+    ).toBe("Scheduled");
+    expect(
+      deriveMatchStatus({
+        finalResult: "2-1",
         hasPrediction: true,
         needsReview: false,
       }),

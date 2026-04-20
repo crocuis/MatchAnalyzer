@@ -211,23 +211,24 @@ def build_review_aggregation_comparison(
     }
 
 
-def main() -> None:
-    settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+def run_review_job(
+    client: SupabaseClient,
+    *,
+    target_date: str | None,
+) -> dict:
     predictions = client.read_rows("predictions")
     market_rows = client.read_rows("market_probabilities")
-    use_real_reviews = os.environ.get("REAL_REVIEW_DATE")
     if not predictions:
         raise ValueError("predictions must exist before post-match review")
-    if not market_rows and not use_real_reviews:
+    if not market_rows and not target_date:
         raise ValueError("market_probabilities must exist before post-match review")
 
-    if use_real_reviews:
+    if target_date:
         match_rows = client.read_rows("matches")
         completed_match_ids = {
             row["id"]
             for row in match_rows
-            if row.get("kickoff_at", "").startswith(use_real_reviews)
+            if row.get("kickoff_at", "").startswith(target_date)
             and row.get("final_result")
         }
         completed_predictions = [
@@ -239,43 +240,31 @@ def main() -> None:
             predictions=predictions,
             match_rows=match_rows,
             market_rows=market_rows,
-            target_date=use_real_reviews,
+            target_date=target_date,
         )
         if not completed_predictions:
-            print(
-                json.dumps(
-                    {
-                        "result_rows": 0,
-                        "inserted_rows": 0,
-                        "skipped_predictions": [],
-                        "payload": [],
-                        "skip_reason": "no_completed_predictions",
-                        "target_date": use_real_reviews,
-                    },
-                    sort_keys=True,
-                )
-            )
-            return
+            return {
+                "result_rows": 0,
+                "inserted_rows": 0,
+                "skipped_predictions": [],
+                "payload": [],
+                "skip_reason": "no_completed_predictions",
+                "target_date": target_date,
+            }
         if not payload:
-            print(
-                json.dumps(
-                    {
-                        "result_rows": len(completed_match_ids),
-                        "inserted_rows": 0,
-                        "skipped_predictions": skipped_predictions,
-                        "payload": [],
-                        "skip_reason": "no_review_payload",
-                        "target_date": use_real_reviews,
-                    },
-                    sort_keys=True,
-                )
-            )
-            return
+            return {
+                "result_rows": len(completed_match_ids),
+                "inserted_rows": 0,
+                "skipped_predictions": skipped_predictions,
+                "payload": [],
+                "skip_reason": "no_review_payload",
+                "target_date": target_date,
+            }
         result_count = len(
             [
                 row
                 for row in match_rows
-                if row.get("kickoff_at", "").startswith(use_real_reviews)
+                if row.get("kickoff_at", "").startswith(target_date)
                 and row.get("final_result")
             ]
         )
@@ -425,21 +414,27 @@ def main() -> None:
             )
         ],
     )
-    print(
-        json.dumps(
-            {
-                "result_rows": result_count,
-                "inserted_rows": inserted,
-                "aggregation_rows": aggregation_rows,
-                "aggregation_history_rows": aggregation_history_rows,
-                "promotion_rows": promotion_rows,
-                "promotion_history_rows": promotion_history_rows,
-                "skipped_predictions": skipped_predictions,
-                "payload": payload,
-            },
-            sort_keys=True,
-        )
+    return {
+        "result_rows": result_count,
+        "inserted_rows": inserted,
+        "aggregation_rows": aggregation_rows,
+        "aggregation_history_rows": aggregation_history_rows,
+        "promotion_rows": promotion_rows,
+        "promotion_history_rows": promotion_history_rows,
+        "skipped_predictions": skipped_predictions,
+        "payload": payload,
+        "target_date": target_date,
+    }
+
+
+def main() -> None:
+    settings = load_settings()
+    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    result = run_review_job(
+        client,
+        target_date=os.environ.get("REAL_REVIEW_DATE"),
     )
+    print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":

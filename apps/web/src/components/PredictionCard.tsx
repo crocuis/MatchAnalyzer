@@ -1,12 +1,17 @@
 import { useTranslation } from "react-i18next";
 import type {
-  MainRecommendation,
   PredictionExplanationPayload,
   PredictionFeatureContext,
   PredictionSummary,
   ValueRecommendation,
   VariantMarket,
 } from "../lib/api";
+import {
+  resolvePredictionPresentation,
+  summarizeMissingSignals,
+  summarizeSignalBadges,
+  summarizeSignalHeadline,
+} from "../lib/predictionSummary";
 import ProbabilityBars from "./ProbabilityBars";
 
 interface PredictionCardProps {
@@ -180,25 +185,6 @@ function formatLineupSourceSummary(summary: string): string {
   return summary.replaceAll("+", " + ").replaceAll("_", " ");
 }
 
-function resolveMainRecommendation(
-  prediction: PredictionSummary,
-  recommendedPick: string | null,
-  confidence: number | null,
-): MainRecommendation | null {
-  if (prediction.mainRecommendation) {
-    return prediction.mainRecommendation;
-  }
-  if (recommendedPick === null && confidence === null) {
-    return null;
-  }
-  return {
-    pick: recommendedPick ?? "UNKNOWN",
-    confidence,
-    recommended: recommendedPick !== null,
-    noBetReason: recommendedPick === null ? "low_confidence" : null,
-  };
-}
-
 function formatNoBetReason(
   t: ReturnType<typeof useTranslation>["t"],
   noBetReason: string | null | undefined,
@@ -236,26 +222,33 @@ export default function PredictionCard({
 }: PredictionCardProps) {
   const { t } = useTranslation();
   const breakdown = normalizeBreakdown(prediction.explanationPayload);
-  const mainRecommendation = resolveMainRecommendation(
-    prediction,
+  const presentation = resolvePredictionPresentation({
+    mainRecommendation: prediction.mainRecommendation ?? null,
     recommendedPick,
     confidence,
-  );
+  });
+  const mainRecommendation = presentation.mainRecommendation;
   const valueRecommendation: ValueRecommendation | null =
     prediction.valueRecommendation ?? null;
   const variantMarkets: VariantMarket[] = prediction.variantMarkets ?? [];
-  const isNoBet = Boolean(mainRecommendation && !mainRecommendation.recommended);
+  const isNoBet = presentation.betState === "no_bet";
+  const toneClass = presentation.betState === "recommended" ? "state-recommended" : "state-no-bet";
+
   const confidenceLabel =
-    isNoBet
-      ? t("matchCard.metrics.noBet")
-      : confidence === null
+    presentation.displayConfidence === null
       ? t("matchCard.metrics.unavailable")
-      : `${(confidence * 100).toFixed(0)}%`;
+      : `${(presentation.displayConfidence * 100).toFixed(0)}%`;
   const recommendedPickLabel =
-    isNoBet
-      ? t("matchCard.metrics.noBet")
-      : recommendedPick ?? t("matchCard.metrics.unavailable");
+    presentation.predictedOutcome
+      ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
+      : t("matchCard.metrics.unavailable");
   const featureContext = normalizeFeatureContext(prediction.explanationPayload);
+  const headline = summarizeSignalHeadline(mainRecommendation, prediction.explanationPayload);
+  const summaryBadges = summarizeSignalBadges(
+    mainRecommendation,
+    prediction.explanationPayload,
+  );
+  const missingSignals = summarizeMissingSignals(prediction.explanationPayload);
   const lineupEdgeSummary = breakdown
     ? summarizeLineupEdge(
         breakdown.homeLineupScore,
@@ -267,13 +260,13 @@ export default function PredictionCard({
     : null;
 
   return (
-    <article className="predictionSummary">
+    <article className={`predictionSummary ${toneClass}`}>
       <div className="predictionHero predictionHero-lg">
         <div className="predictionPick">
           <span className="metricLabel">{t("modal.prediction.recommendedPick")}</span>
           <strong className="predictionPickValue-lg">{recommendedPickLabel}</strong>
           {isNoBet ? (
-            <p className="metricLabel">
+            <p className="metricLabel" style={{ marginTop: "4px" }}>
               {formatNoBetReason(t, mainRecommendation?.noBetReason)}
             </p>
           ) : null}
@@ -284,8 +277,24 @@ export default function PredictionCard({
         </div>
       </div>
 
+      {headline ? (
+        <div className="lineupInsightCard">
+          <span className="metricLabel">{t("modal.prediction.summaryTitle")}</span>
+          <strong className="lineupInsightTitle">{headline}</strong>
+          {summaryBadges.length > 0 ? (
+            <div className="confidenceSignalList" style={{ marginTop: "12px" }}>
+              {summaryBadges.map((badge) => (
+                <span className="confidenceSignalChip" key={badge}>
+                  {t(`matchCard.summaryBadges.${badge}`)}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="probabilityBars">
-        <p className="metricLabel">{t("modal.prediction.probabilities")}</p>
+        <span className="panelTitle">{t("modal.prediction.probabilities")}</span>
         <ProbabilityBars
           away={prediction.awayWinProbability}
           draw={prediction.drawProbability}
@@ -294,17 +303,26 @@ export default function PredictionCard({
       </div>
 
       {valueRecommendation?.recommended ? (
-        <div className="confidenceBreakdown">
-          <p className="metricLabel">{t("modal.prediction.valuePickTitle")}</p>
-          <div className="confidenceBreakdownGrid">
-            <div className="confidenceBreakdownItem">
+        <div className="valueInsightCard">
+          <div className="valueInsightHeader">
+            <span className="panelTitle" style={{ marginBottom: 0 }}>{t("modal.prediction.valuePickTitle")}</span>
+            <span className="valueBadge">{t("matchCard.valuePick")}</span>
+          </div>
+          <div className="predictionHero" style={{ borderBottom: "none", paddingBottom: 0 }}>
+            <div className="predictionPick">
               <span className="metricLabel">{t("matchCard.valuePick")}</span>
-              <strong>{valueRecommendation.pick}</strong>
+              <strong className="predictionPickValue-lg" style={{ color: "var(--accent-success)" }}>
+                {valueRecommendation.pick}
+              </strong>
             </div>
-            <div className="confidenceBreakdownItem">
+            <div className="predictionConfidence">
               <span className="metricLabel">{t("modal.prediction.expectedValue")}</span>
-              <strong>{`+${(valueRecommendation.expectedValue * 100).toFixed(0)}%`}</strong>
+              <strong className="predictionPickValue-lg" style={{ color: "var(--accent-success)" }}>
+                {`+${(valueRecommendation.expectedValue * 100).toFixed(0)}%`}
+              </strong>
             </div>
+          </div>
+          <div className="confidenceBreakdownGrid" style={{ marginTop: "8px" }}>
             <div className="confidenceBreakdownItem">
               <span className="metricLabel">{t("modal.prediction.marketPrice")}</span>
               <strong>{`${(valueRecommendation.marketPrice * 100).toFixed(0)}%`}</strong>
@@ -323,22 +341,18 @@ export default function PredictionCard({
 
       {variantMarkets.length > 0 ? (
         <div className="confidenceBreakdown">
-          <p className="metricLabel">{t("modal.prediction.variantMarketsTitle")}</p>
+          <span className="panelTitle">{t("modal.prediction.variantMarketsTitle")}</span>
           <div className="confidenceCalibrationList">
             {variantMarkets.map((market, index) => (
               <div className="confidenceCalibrationRow" key={`${market.marketFamily}-${index}`}>
                 <strong>{market.marketFamily}</strong>
-                {market.lineValue !== null ? (
-                  <span>{`Line ${market.lineValue}`}</span>
-                ) : null}
-                <span>{market.selectionALabel}</span>
-                {market.selectionAPrice !== null ? (
-                  <span>{`${(market.selectionAPrice * 100).toFixed(0)}%`}</span>
-                ) : null}
-                <span>{market.selectionBLabel}</span>
-                {market.selectionBPrice !== null ? (
-                  <span>{`${(market.selectionBPrice * 100).toFixed(0)}%`}</span>
-                ) : null}
+                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                  {market.lineValue !== null ? (
+                    <span style={{ fontWeight: "700" }}>{`L: ${market.lineValue}`}</span>
+                  ) : null}
+                  <span>{market.selectionALabel} {market.selectionAPrice !== null ? `(${(market.selectionAPrice * 100).toFixed(0)}%)` : ""}</span>
+                  <span>{market.selectionBLabel} {market.selectionBPrice !== null ? `(${(market.selectionBPrice * 100).toFixed(0)}%)` : ""}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -357,9 +371,45 @@ export default function PredictionCard({
         </div>
       ) : null}
 
+      {missingSignals ? (
+        <div className="confidenceBreakdown">
+          <span className="panelTitle">{t("modal.prediction.missingSignalsTitle")}</span>
+          <div className="confidenceBreakdownGrid">
+            <div className="confidenceBreakdownItem">
+              <span className="metricLabel">{t("report.missingSignals")}</span>
+              <strong>{t("matchCard.missingSignals", { count: missingSignals.count })}</strong>
+            </div>
+            {missingSignals.reasonLabels.length > 0 ? (
+              <div className="confidenceBreakdownItem confidenceBreakdownSignals">
+                <span className="metricLabel">{t("modal.prediction.missingSignalsReasons")}</span>
+                <div className="confidenceSignalList" style={{ marginTop: "8px" }}>
+                  {missingSignals.reasonLabels.map((reason) => (
+                    <span className="confidenceSignalChip" key={reason}>
+                      {t(`matchCard.missingReasonLabels.${reason}`)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {missingSignals.syncActions.length > 0 ? (
+              <div className="confidenceBreakdownItem confidenceBreakdownSignals">
+                <span className="metricLabel">{t("modal.prediction.syncActionsTitle")}</span>
+                <div className="confidenceCalibrationList" style={{ marginTop: "8px" }}>
+                  {missingSignals.syncActions.map((action) => (
+                    <div className="confidenceCalibrationRow" key={action}>
+                      <span>{action}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {breakdown ? (
         <div className="confidenceBreakdown">
-          <p className="metricLabel">{t("modal.prediction.breakdownTitle")}</p>
+          <span className="panelTitle">{t("modal.prediction.breakdownTitle")}</span>
           <div className="confidenceBreakdownGrid">
             {breakdown.rawConfidence !== null ? (
               <div className="confidenceBreakdownItem">
@@ -414,7 +464,7 @@ export default function PredictionCard({
             {breakdown.signalDrivers.length > 0 ? (
               <div className="confidenceBreakdownItem confidenceBreakdownSignals">
                 <span className="metricLabel">{t("modal.prediction.breakdown.signals")}</span>
-                <div className="confidenceSignalList">
+                <div className="confidenceSignalList" style={{ marginTop: "8px" }}>
                   {breakdown.signalDrivers.map((signal) => (
                     <span className="confidenceSignalChip" key={signal}>
                       {t(`modal.prediction.breakdown.signalLabels.${signal}`)}
@@ -426,7 +476,7 @@ export default function PredictionCard({
             {breakdown.topFactors.length > 0 ? (
               <div className="confidenceBreakdownItem confidenceBreakdownSignals">
                 <span className="metricLabel">{t("modal.prediction.breakdown.topFactors")}</span>
-                <div className="confidenceCalibrationList">
+                <div className="confidenceCalibrationList" style={{ marginTop: "8px" }}>
                   {breakdown.topFactors.map((factor) => (
                     <div className="confidenceCalibrationRow" key={`${factor.signalKey}-${factor.direction}`}>
                       <span>{`${t(`modal.prediction.breakdown.signalLabels.${factor.signalKey}`)} · ${factor.direction} ${factor.magnitude.toFixed(2)}`}</span>
@@ -441,7 +491,7 @@ export default function PredictionCard({
                 <span className="metricLabel">
                   {t("modal.prediction.breakdown.calibrationEvidence")}
                 </span>
-                <div className="confidenceCalibrationList">
+                <div className="confidenceCalibrationList" style={{ marginTop: "8px" }}>
                   {Object.entries(breakdown.calibration).map(([bucket, value]) => {
                     const count = readNumber(value.count) ?? 0;
                     const hitRate =

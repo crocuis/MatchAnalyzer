@@ -198,6 +198,18 @@ function normalizeFeatureMetadata(explanationPayload?: PredictionExplanationPayl
   const missingFields = Array.isArray(featureMetadata.missing_fields)
     ? featureMetadata.missing_fields.filter((value): value is string => typeof value === "string")
     : [];
+  const missingReasons = Array.isArray(featureMetadata.missing_signal_reasons)
+    ? featureMetadata.missing_signal_reasons
+        .filter((value): value is Record<string, unknown> => typeof value === "object" && value !== null)
+        .map((entry) => ({
+          reasonKey: readString(entry.reason_key) ?? readString(entry.reasonKey),
+          explanation: readString(entry.explanation),
+          syncAction: readString(entry.sync_action) ?? readString(entry.syncAction),
+          fields: Array.isArray(entry.fields)
+            ? entry.fields.filter((value): value is string => typeof value === "string")
+            : [],
+        }))
+    : [];
 
   return {
     availableSignalCount:
@@ -210,6 +222,7 @@ function normalizeFeatureMetadata(explanationPayload?: PredictionExplanationPayl
       readString(featureMetadata.lineup_status) ??
       readString(featureMetadata.lineupStatus),
     missingFields,
+    missingReasons,
   };
 }
 
@@ -700,6 +713,35 @@ export default function PredictionSourceEvaluationSection({
               <div className="comparisonItem comparisonItemWide">
                 <span className="metricLabel">{t("report.missingSignals")}</span>
                 <strong>{featureMetadata.missingFields.map(humanizeLabel).join(" · ")}</strong>
+              </div>
+            ) : null}
+
+            {featureMetadata?.missingReasons.length ? (
+              <div className="comparisonItem comparisonItemWide">
+                <span className="metricLabel">{t("report.missingSignalReasons")}</span>
+                <strong>
+                  {featureMetadata.missingReasons
+                    .slice(0, 2)
+                    .map((reason) =>
+                      reason.reasonKey
+                        ? t(`matchCard.missingReasonLabels.${reason.reasonKey}`)
+                        : reason.explanation ?? t("matchCard.metrics.unavailable"),
+                    )
+                    .join(" · ")}
+                </strong>
+              </div>
+            ) : null}
+
+            {featureMetadata?.missingReasons.length ? (
+              <div className="comparisonItem comparisonItemWide">
+                <span className="metricLabel">{t("report.syncRecommendations")}</span>
+                <strong>
+                  {featureMetadata.missingReasons
+                    .slice(0, 2)
+                    .map((reason) => reason.syncAction ?? reason.explanation ?? "")
+                    .filter((value) => value.length > 0)
+                    .join(" · ")}
+                </strong>
               </div>
             ) : null}
 

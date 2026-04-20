@@ -303,6 +303,81 @@ def test_build_main_recommendation_returns_no_bet_when_bucket_hit_rate_lags_conf
     }
 
 
+def test_build_main_recommendation_allows_bookmaker_fallback_without_prediction_market_when_confident():
+    recommendation = build_main_recommendation(
+        pick="HOME",
+        confidence=0.74,
+        context={
+            "source_agreement_ratio": 1.0,
+            "prediction_market_available": False,
+            "base_model_source": "bookmaker_fallback",
+            "xg_proxy_delta": 0.8,
+            "elo_delta": 0.12,
+            "lineup_confirmed": 0,
+        },
+    )
+
+    assert recommendation == {
+        "confidence": 0.74,
+        "empirical_hit_rate": None,
+        "no_bet_reason": None,
+        "pick": "HOME",
+        "recommended": True,
+        "source_agreement_ratio": 1.0,
+        "threshold": 0.62,
+    }
+
+
+def test_build_main_recommendation_blocks_unsupported_home_favorite_without_market():
+    recommendation = build_main_recommendation(
+        pick="HOME",
+        confidence=0.74,
+        context={
+            "source_agreement_ratio": 1.0,
+            "prediction_market_available": False,
+            "base_model_source": "bookmaker_fallback",
+            "xg_proxy_delta": -1.2,
+            "elo_delta": 0.01,
+            "lineup_confirmed": 0,
+        },
+    )
+
+    assert recommendation == {
+        "confidence": 0.74,
+        "empirical_hit_rate": None,
+        "no_bet_reason": "unsupported_home_favorite",
+        "pick": "HOME",
+        "recommended": False,
+        "source_agreement_ratio": 1.0,
+        "threshold": 0.62,
+    }
+
+
+def test_build_main_recommendation_blocks_extreme_confidence_bookmaker_fallback_without_market():
+    recommendation = build_main_recommendation(
+        pick="HOME",
+        confidence=0.852,
+        context={
+            "source_agreement_ratio": 1.0,
+            "prediction_market_available": False,
+            "base_model_source": "bookmaker_fallback",
+            "xg_proxy_delta": 2.1,
+            "elo_delta": 0.38,
+            "lineup_confirmed": 0,
+        },
+    )
+
+    assert recommendation == {
+        "confidence": 0.852,
+        "empirical_hit_rate": None,
+        "no_bet_reason": "unsupported_high_confidence_fallback",
+        "pick": "HOME",
+        "recommended": False,
+        "source_agreement_ratio": 1.0,
+        "threshold": 0.62,
+    }
+
+
 def test_build_value_recommendation_uses_positive_market_edge():
     recommendation = build_value_recommendation(
         base_probs={"home": 0.34, "draw": 0.24, "away": 0.42},
@@ -339,6 +414,26 @@ def test_build_value_recommendation_allows_low_probability_pick_with_strong_ev()
         "market_source": "prediction_market",
         "model_probability": 0.13,
         "pick": "HOME",
+        "recommended": True,
+    }
+
+
+def test_build_value_recommendation_ignores_outcomes_with_missing_market_price():
+    recommendation = build_value_recommendation(
+        base_probs={"home": 0.34, "draw": 0.24, "away": 0.42},
+        market_probs={"home": 0.39, "draw": 0.27, "away": 0.32},
+        market_prices={"home": None, "draw": 0.26, "away": 0.24},
+        prediction_market_available=True,
+    )
+
+    assert recommendation == {
+        "edge": 0.1,
+        "expected_value": 0.75,
+        "market_probability": 0.32,
+        "market_price": 0.24,
+        "market_source": "prediction_market",
+        "model_probability": 0.42,
+        "pick": "AWAY",
         "recommended": True,
     }
 
