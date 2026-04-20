@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime, timezone
 
+from batch.src.ingest import fetch_fixtures as fixture_ingest
 from batch.src.ingest.fetch_fixtures import (
     build_competition_row_from_event,
     build_fixture_row,
@@ -85,6 +86,88 @@ def prepare_sync_asset_rows(
     )
 
 
+def extract_season_year(season_id: str) -> str | None:
+    if not season_id or "-" not in season_id:
+        return None
+    return season_id.rsplit("-", 1)[-1]
+
+
+def hydrate_recent_historical_matches(
+    match_rows: list[dict],
+    historical_matches: list[dict],
+) -> list[dict]:
+    hydrated_by_id = {
+        row["id"]: row for row in historical_matches if row.get("id")
+    }
+    target_match_ids = {row["id"] for row in match_rows if row.get("id")}
+    schedule_cache: dict[tuple[str, str, str | None], list[dict]] = {}
+
+    for match_row in match_rows:
+        competition_id = str(match_row.get("competition_id") or "")
+        season_year = extract_season_year(str(match_row.get("season") or ""))
+        for team_id in (
+            str(match_row.get("home_team_id") or ""),
+            str(match_row.get("away_team_id") or ""),
+        ):
+            if not team_id or not competition_id:
+                continue
+            cache_key = (team_id, competition_id, season_year)
+            if cache_key not in schedule_cache:
+                schedule_cache[cache_key] = fixture_ingest.fetch_team_schedule(
+                    team_id,
+                    competition_id=competition_id,
+                    season_year=season_year,
+                ).get("events", [])
+            for event in schedule_cache[cache_key]:
+                if event.get("status") != "closed" or not event.get("id"):
+                    continue
+                if event["id"] in target_match_ids or event["id"] in hydrated_by_id:
+                    continue
+                historical_row = fixture_ingest.build_match_row_from_event(event)
+                if historical_row.get("final_result") is None:
+                    continue
+                hydrated_by_id[historical_row["id"]] = historical_row
+
+    return list(hydrated_by_id.values())
+
+
+def build_sync_snapshot_rows(
+    *,
+    match_rows: list[dict],
+    captured_at: str,
+    historical_matches: list[dict],
+    lineup_context_by_match: dict[str, dict],
+    hydrate_historical_matches: bool = False,
+) -> list[dict]:
+    source_historical_matches = (
+        hydrate_recent_historical_matches(match_rows, historical_matches)
+        if hydrate_historical_matches
+        else historical_matches
+    )
+    snapshot_rows = build_snapshot_rows_from_matches(
+        match_rows,
+        captured_at=captured_at,
+        historical_matches=source_historical_matches,
+        lineup_context_by_match=lineup_context_by_match,
+    )
+    confirmed_match_rows = [
+        row
+        for row in match_rows
+        if lineup_context_by_match.get(row["id"], {}).get("lineup_status") == "confirmed"
+    ]
+    if confirmed_match_rows:
+        snapshot_rows.extend(
+            build_snapshot_rows_from_matches(
+                confirmed_match_rows,
+                checkpoint="LINEUP_CONFIRMED",
+                captured_at=captured_at,
+                historical_matches=source_historical_matches,
+                lineup_context_by_match=lineup_context_by_match,
+            )
+        )
+    return snapshot_rows
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
@@ -109,11 +192,14 @@ def main() -> None:
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
         lineup_context_by_match = build_lineup_context_by_match(events)
-        snapshot_rows_payload = build_snapshot_rows_from_matches(
-            payload,
-            captured_at=datetime.now(timezone.utc).isoformat(),
-            historical_matches=client.read_rows("matches"),
+        captured_at = datetime.now(timezone.utc).isoformat()
+        historical_matches = client.read_rows("matches")
+        snapshot_rows_payload = build_sync_snapshot_rows(
+            match_rows=payload,
+            captured_at=captured_at,
+            historical_matches=historical_matches,
             lineup_context_by_match=lineup_context_by_match,
+            hydrate_historical_matches=True,
         )
         competition_rows, team_rows = prepare_sync_asset_rows(
             competition_rows=competition_rows,

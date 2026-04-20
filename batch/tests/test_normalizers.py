@@ -23,7 +23,10 @@ from batch.src.jobs.ingest_markets_job import (
     select_real_market_snapshots,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
-from batch.src.jobs.ingest_fixtures_job import prepare_sync_asset_rows
+from batch.src.jobs.ingest_fixtures_job import (
+    build_sync_snapshot_rows,
+    prepare_sync_asset_rows,
+)
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
@@ -894,91 +897,272 @@ def test_build_snapshot_rows_from_matches_uses_lineup_context_when_available():
     assert rows[0]["lineup_source_summary"] == "espn_lineups+recent_starters+pl_missing_players"
 
 
+def test_build_sync_snapshot_rows_adds_lineup_confirmed_checkpoint_when_available():
+    rows = build_sync_snapshot_rows(
+        match_rows=[
+            {
+                "id": "match_020",
+                "competition_id": "premier-league",
+                "season": "premier-league-2026",
+                "kickoff_at": "2026-08-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-08-14T15:00:00+00:00",
+        historical_matches=[],
+        lineup_context_by_match={
+            "match_020": {
+                "lineup_status": "confirmed",
+                "home_absence_count": 1,
+                "away_absence_count": 3,
+                "home_lineup_score": 1.7,
+                "away_lineup_score": 1.4,
+                "lineup_strength_delta": 2.0,
+                "lineup_source_summary": "espn_lineups+recent_starters+pl_missing_players",
+            }
+        },
+    )
+
+    assert [row["checkpoint_type"] for row in rows] == [
+        "T_MINUS_24H",
+        "LINEUP_CONFIRMED",
+    ]
+    assert rows[1]["id"] == "match_020_lineup_confirmed"
+    assert rows[1]["lineup_status"] == "confirmed"
+    assert rows[1]["lineup_strength_delta"] == 2.0
+
+
+def test_build_sync_snapshot_rows_backfills_recent_historical_metrics_from_team_schedules(
+    monkeypatch,
+):
+    def make_closed_event(
+        *,
+        event_id: str,
+        kickoff_at: str,
+        home_team_id: str,
+        away_team_id: str,
+        home_team_name: str,
+        away_team_name: str,
+        home_score: int,
+        away_score: int,
+    ) -> dict:
+        return {
+            "id": event_id,
+            "status": "closed",
+            "start_time": kickoff_at,
+            "competition": {"id": "premier-league", "name": "Premier League"},
+            "season": {"id": "premier-league-2026"},
+            "competitors": [
+                {
+                    "team": {"id": home_team_id, "name": home_team_name},
+                    "qualifier": "home",
+                    "score": home_score,
+                },
+                {
+                    "team": {"id": away_team_id, "name": away_team_name},
+                    "qualifier": "away",
+                    "score": away_score,
+                },
+            ],
+            "scores": {"home": home_score, "away": away_score},
+        }
+
+    def fake_fetch_team_schedule(
+        team_id: str,
+        *,
+        competition_id: str,
+        season_year: str | None = None,
+    ):
+        assert competition_id == "premier-league"
+        assert season_year == "2026"
+        if team_id == "arsenal":
+            return {
+                "events": [
+                    make_closed_event(
+                        event_id="hist_arsenal_1",
+                        kickoff_at="2026-08-10T15:00:00Z",
+                        home_team_id="arsenal",
+                        away_team_id="everton",
+                        home_team_name="Arsenal",
+                        away_team_name="Everton",
+                        home_score=2,
+                        away_score=0,
+                    ),
+                    make_closed_event(
+                        event_id="hist_arsenal_2",
+                        kickoff_at="2026-08-05T15:00:00Z",
+                        home_team_id="tottenham",
+                        away_team_id="arsenal",
+                        home_team_name="Tottenham",
+                        away_team_name="Arsenal",
+                        home_score=1,
+                        away_score=3,
+                    ),
+                ]
+            }
+        if team_id == "chelsea":
+            return {
+                "events": [
+                    make_closed_event(
+                        event_id="hist_chelsea_1",
+                        kickoff_at="2026-08-11T15:00:00Z",
+                        home_team_id="chelsea",
+                        away_team_id="liverpool",
+                        home_team_name="Chelsea",
+                        away_team_name="Liverpool",
+                        home_score=1,
+                        away_score=1,
+                    ),
+                    make_closed_event(
+                        event_id="hist_chelsea_2",
+                        kickoff_at="2026-08-07T15:00:00Z",
+                        home_team_id="aston-villa",
+                        away_team_id="chelsea",
+                        home_team_name="Aston Villa",
+                        away_team_name="Chelsea",
+                        home_score=2,
+                        away_score=1,
+                    ),
+                ]
+            }
+        raise AssertionError(f"unexpected team_id: {team_id}")
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.fetch_team_schedule",
+        fake_fetch_team_schedule,
+    )
+
+    rows = build_sync_snapshot_rows(
+        match_rows=[
+            {
+                "id": "match_030",
+                "competition_id": "premier-league",
+                "season": "premier-league-2026",
+                "kickoff_at": "2026-08-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-08-14T15:00:00+00:00",
+        historical_matches=[],
+        lineup_context_by_match={},
+        hydrate_historical_matches=True,
+    )
+
+    [snapshot] = rows
+
+    assert snapshot["home_elo"] is not None
+    assert snapshot["away_elo"] is not None
+    assert snapshot["home_xg_for_last_5"] == 2.5
+    assert snapshot["away_xg_for_last_5"] == 1.0
+    assert snapshot["home_points_last_5"] == 6
+    assert snapshot["away_points_last_5"] == 1
+    assert snapshot["home_rest_days"] == 5
+    assert snapshot["away_rest_days"] == 4
+    assert snapshot["home_matches_last_7d"] == 1
+    assert snapshot["away_matches_last_7d"] == 1
+
+
 def test_build_lineup_context_by_match_uses_lineups_and_missing_players(monkeypatch):
     class FakeFootball:
         @staticmethod
         def get_event_lineups(*, event_id: str):
             if event_id != "match_020":
-                return {"lineups": []}
+                return {"status": True, "data": {"lineups": []}, "message": ""}
             return {
-                "lineups": [
-                    {
-                        "team": {"id": "arsenal", "name": "Arsenal"},
-                        "qualifier": "home",
-                        "starting": [
-                            {"name": "Home GK", "position": "Goalkeeper"},
-                            {"name": "Home CB", "position": "Defender"},
-                            *([{"position": "Defender"}] * 3),
-                            {"name": "Home CM", "position": "Midfielder"},
-                            *([{"position": "Midfielder"}] * 2),
-                            {"name": "Home FW", "position": "Forward"},
-                            *([{"position": "Forward"}] * 2),
-                        ],
-                        "bench": [{"position": "Midfielder"}] * 9,
-                    },
-                    {
-                        "team": {"id": "chelsea", "name": "Chelsea"},
-                        "qualifier": "away",
-                        "starting": [
-                            {"name": "Away GK", "position": "Goalkeeper"},
-                            {"name": "Away CB", "position": "Defender"},
-                            *([{"position": "Defender"}] * 3),
-                            {"name": "Away CM", "position": "Midfielder"},
-                            *([{"position": "Midfielder"}] * 2),
-                            {"name": "Away FW", "position": "Forward"},
-                            *([{"position": "Forward"}] * 2),
-                        ],
-                        "bench": [{"position": "Midfielder"}] * 9,
-                    },
-                ]
+                "status": True,
+                "data": {
+                    "lineups": [
+                        {
+                            "team": {"id": "arsenal", "name": "Arsenal"},
+                            "qualifier": "home",
+                            "starting": [
+                                {"name": "Home GK", "position": "Goalkeeper"},
+                                {"name": "Home CB", "position": "Defender"},
+                                *([{"position": "Defender"}] * 3),
+                                {"name": "Home CM", "position": "Midfielder"},
+                                *([{"position": "Midfielder"}] * 2),
+                                {"name": "Home FW", "position": "Forward"},
+                                *([{"position": "Forward"}] * 2),
+                            ],
+                            "bench": [{"position": "Midfielder"}] * 9,
+                        },
+                        {
+                            "team": {"id": "chelsea", "name": "Chelsea"},
+                            "qualifier": "away",
+                            "starting": [
+                                {"name": "Away GK", "position": "Goalkeeper"},
+                                {"name": "Away CB", "position": "Defender"},
+                                *([{"position": "Defender"}] * 3),
+                                {"name": "Away CM", "position": "Midfielder"},
+                                *([{"position": "Midfielder"}] * 2),
+                                {"name": "Away FW", "position": "Forward"},
+                                *([{"position": "Forward"}] * 2),
+                            ],
+                            "bench": [{"position": "Midfielder"}] * 9,
+                        },
+                    ]
+                },
+                "message": "",
             }
 
         @staticmethod
         def get_missing_players(*, season_id: str):
             assert season_id == "premier-league-2026"
             return {
-                "teams": [
-                    {
-                        "team": {"name": "Arsenal"},
-                        "players": [
-                            {
-                                "status": "injured",
-                                "position": "Midfielder",
-                                "chance_of_playing_this_round": 0,
-                            }
-                        ],
-                    },
-                    {
-                        "team": {"name": "Chelsea"},
-                        "players": [
-                            {
-                                "status": "injured",
-                                "position": "Forward",
-                                "chance_of_playing_this_round": 0,
-                            },
-                            {
-                                "status": "doubtful",
-                                "position": "Defender",
-                                "chance_of_playing_this_round": 50,
-                            },
-                            {
-                                "status": "suspended",
-                                "position": "Goalkeeper",
-                                "chance_of_playing_this_round": 0,
-                            },
-                        ],
-                    },
-                ]
+                "status": True,
+                "data": {
+                    "teams": [
+                        {
+                            "team": {"name": "Arsenal"},
+                            "players": [
+                                {
+                                    "status": "injured",
+                                    "position": "Midfielder",
+                                    "chance_of_playing_this_round": 0,
+                                }
+                            ],
+                        },
+                        {
+                            "team": {"name": "Chelsea"},
+                            "players": [
+                                {
+                                    "status": "injured",
+                                    "position": "Forward",
+                                    "chance_of_playing_this_round": 0,
+                                },
+                                {
+                                    "status": "doubtful",
+                                    "position": "Defender",
+                                    "chance_of_playing_this_round": 50,
+                                },
+                                {
+                                    "status": "suspended",
+                                    "position": "Goalkeeper",
+                                    "chance_of_playing_this_round": 0,
+                                },
+                            ],
+                        },
+                    ]
+                },
+                "message": "",
             }
 
         @staticmethod
         def get_team_schedule(*, team_id: str, competition_id: str, season_year: str | None = None):
             assert competition_id == "premier-league"
             return {
-                "events": [
-                    {"id": f"{team_id}-recent-1", "status": "closed"},
-                    {"id": f"{team_id}-recent-2", "status": "closed"},
-                ]
+                "status": True,
+                "data": {
+                    "events": [
+                        {"id": f"{team_id}-recent-1", "status": "closed"},
+                        {"id": f"{team_id}-recent-2", "status": "closed"},
+                    ]
+                },
+                "message": "",
             }
 
         @staticmethod
@@ -986,30 +1170,38 @@ def test_build_lineup_context_by_match_uses_lineups_and_missing_players(monkeypa
             team_id = event_id.split("-recent-")[0]
             if team_id == "arsenal":
                 return {
+                    "status": True,
+                    "data": {
+                        "teams": [
+                            {
+                                "team": {"id": "arsenal"},
+                                "players": [
+                                    {"name": "Home GK", "starter": True},
+                                    {"name": "Home CB", "starter": True},
+                                    {"name": "Home CM", "starter": True},
+                                    {"name": "Home FW", "starter": True},
+                                ],
+                            }
+                        ]
+                    },
+                    "message": "",
+                }
+            return {
+                "status": True,
+                "data": {
                     "teams": [
                         {
-                            "team": {"id": "arsenal"},
+                            "team": {"id": "chelsea"},
                             "players": [
-                                {"name": "Home GK", "starter": True},
-                                {"name": "Home CB", "starter": True},
-                                {"name": "Home CM", "starter": True},
-                                {"name": "Home FW", "starter": True},
+                                {"name": "Away GK", "starter": True},
+                                {"name": "Away CB", "starter": False},
+                                {"name": "Away CM", "starter": False},
+                                {"name": "Away FW", "starter": True},
                             ],
                         }
                     ]
-                }
-            return {
-                "teams": [
-                    {
-                        "team": {"id": "chelsea"},
-                        "players": [
-                            {"name": "Away GK", "starter": True},
-                            {"name": "Away CB", "starter": False},
-                            {"name": "Away CM", "starter": False},
-                            {"name": "Away FW", "starter": True},
-                        ],
-                    }
-                ]
+                },
+                "message": "",
             }
 
     monkeypatch.setattr(
@@ -1050,48 +1242,52 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
         def get_event_lineups(*, event_id: str):
             assert event_id == "match_021"
             return {
-                "lineups": [
-                    {
-                        "team": {"id": "inter", "name": "Inter"},
-                        "qualifier": "home",
-                        "formation": "3-5-2",
-                        "starting": [
-                            {"name": "Inter GK", "position": "Goalkeeper"},
-                            {"name": "Inter D1", "position": "Defender"},
-                            *([{"position": "Defender"}] * 2),
-                            {"name": "Inter M1", "position": "Midfielder"},
-                            *([{"position": "Midfielder"}] * 4),
-                            {"name": "Inter F1", "position": "Forward"},
-                            {"position": "Forward"},
-                        ],
-                        "bench": [
-                            {"position": "Goalkeeper"},
-                            *([{"position": "Defender"}] * 4),
-                            *([{"position": "Midfielder"}] * 4),
-                            *([{"position": "Forward"}] * 3),
-                        ],
-                    },
-                    {
-                        "team": {"id": "bayern", "name": "Bayern Munich"},
-                        "qualifier": "away",
-                        "formation": "",
-                        "starting": [
-                            {"name": "Bayern GK", "position": "Goalkeeper"},
-                            {"name": "Bayern D1", "position": "Defender"},
-                            *([{"position": "Defender"}] * 3),
-                            {"name": "Bayern M1", "position": "Midfielder"},
-                            *([{"position": "Midfielder"}] * 2),
-                            {"name": "Bayern F1", "position": "Forward"},
-                            {"position": "Forward"},
-                        ],
-                        "bench": [
-                            {"position": "Goalkeeper"},
-                            *([{"position": "Defender"}] * 2),
-                            *([{"position": "Midfielder"}] * 4),
-                            {"position": "Forward"},
-                        ],
-                    },
-                ]
+                "status": True,
+                "data": {
+                    "lineups": [
+                        {
+                            "team": {"id": "inter", "name": "Inter"},
+                            "qualifier": "home",
+                            "formation": "3-5-2",
+                            "starting": [
+                                {"name": "Inter GK", "position": "Goalkeeper"},
+                                {"name": "Inter D1", "position": "Defender"},
+                                *([{"position": "Defender"}] * 2),
+                                {"name": "Inter M1", "position": "Midfielder"},
+                                *([{"position": "Midfielder"}] * 4),
+                                {"name": "Inter F1", "position": "Forward"},
+                                {"position": "Forward"},
+                            ],
+                            "bench": [
+                                {"position": "Goalkeeper"},
+                                *([{"position": "Defender"}] * 4),
+                                *([{"position": "Midfielder"}] * 4),
+                                *([{"position": "Forward"}] * 3),
+                            ],
+                        },
+                        {
+                            "team": {"id": "bayern", "name": "Bayern Munich"},
+                            "qualifier": "away",
+                            "formation": "",
+                            "starting": [
+                                {"name": "Bayern GK", "position": "Goalkeeper"},
+                                {"name": "Bayern D1", "position": "Defender"},
+                                *([{"position": "Defender"}] * 3),
+                                {"name": "Bayern M1", "position": "Midfielder"},
+                                *([{"position": "Midfielder"}] * 2),
+                                {"name": "Bayern F1", "position": "Forward"},
+                                {"position": "Forward"},
+                            ],
+                            "bench": [
+                                {"position": "Goalkeeper"},
+                                *([{"position": "Defender"}] * 2),
+                                *([{"position": "Midfielder"}] * 4),
+                                {"position": "Forward"},
+                            ],
+                        },
+                    ]
+                },
+                "message": "",
             }
 
         @staticmethod
@@ -1101,10 +1297,14 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
         @staticmethod
         def get_team_schedule(*, team_id: str, competition_id: str, season_year: str | None = None):
             return {
-                "events": [
-                    {"id": f"{team_id}-recent-1", "status": "closed"},
-                    {"id": f"{team_id}-recent-2", "status": "closed"},
-                ]
+                "status": True,
+                "data": {
+                    "events": [
+                        {"id": f"{team_id}-recent-1", "status": "closed"},
+                        {"id": f"{team_id}-recent-2", "status": "closed"},
+                    ]
+                },
+                "message": "",
             }
 
         @staticmethod
@@ -1112,30 +1312,38 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
             team_id = event_id.split("-recent-")[0]
             if team_id == "inter":
                 return {
+                    "status": True,
+                    "data": {
+                        "teams": [
+                            {
+                                "team": {"id": "inter"},
+                                "players": [
+                                    {"name": "Inter GK", "starter": True},
+                                    {"name": "Inter D1", "starter": True},
+                                    {"name": "Inter M1", "starter": True},
+                                    {"name": "Inter F1", "starter": True},
+                                ],
+                            }
+                        ]
+                    },
+                    "message": "",
+                }
+            return {
+                "status": True,
+                "data": {
                     "teams": [
                         {
-                            "team": {"id": "inter"},
+                            "team": {"id": "bayern"},
                             "players": [
-                                {"name": "Inter GK", "starter": True},
-                                {"name": "Inter D1", "starter": True},
-                                {"name": "Inter M1", "starter": True},
-                                {"name": "Inter F1", "starter": True},
+                                {"name": "Bayern GK", "starter": True},
+                                {"name": "Bayern D1", "starter": False},
+                                {"name": "Bayern M1", "starter": False},
+                                {"name": "Bayern F1", "starter": False},
                             ],
                         }
                     ]
-                }
-            return {
-                "teams": [
-                    {
-                        "team": {"id": "bayern"},
-                        "players": [
-                            {"name": "Bayern GK", "starter": True},
-                            {"name": "Bayern D1", "starter": False},
-                            {"name": "Bayern M1", "starter": False},
-                            {"name": "Bayern F1", "starter": False},
-                        ],
-                    }
-                ]
+                },
+                "message": "",
             }
 
     monkeypatch.setattr(
@@ -1159,8 +1367,8 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
 
     assert contexts["match_021"] == {
         "lineup_status": "unknown",
-        "home_absence_count": None,
-        "away_absence_count": None,
+        "home_absence_count": 0,
+        "away_absence_count": 0,
         "home_lineup_score": 1.4751,
         "away_lineup_score": 1.1578,
         "lineup_strength_delta": 0.3173,

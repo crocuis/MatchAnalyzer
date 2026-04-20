@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { LeagueSummary } from "../lib/api";
 
@@ -16,6 +17,21 @@ export default function LeagueTabs({
 }: LeagueTabsProps) {
   const { t } = useTranslation();
   const currentLeague = leagues.find((league) => league.id === selectedLeagueId);
+
+  // Scroll active tab into view
+  useEffect(() => {
+    const activeTab = document.getElementById(`league-tab-${selectedLeagueId}`);
+    if (
+      activeTab instanceof HTMLElement &&
+      typeof activeTab.scrollIntoView === "function"
+    ) {
+      activeTab.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+    }
+  }, [selectedLeagueId]);
 
   function handleKeyDown(index: number, key: string) {
     if (key !== "ArrowRight" && key !== "ArrowLeft") {

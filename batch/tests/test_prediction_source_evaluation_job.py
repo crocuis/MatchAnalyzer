@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import batch.src.jobs.evaluate_prediction_sources_job as evaluation_job
 
@@ -159,6 +160,14 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
         return {"home": 0.20, "draw": 0.23, "away": 0.57}, "trained_baseline"
 
     monkeypatch.setattr(evaluation_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        evaluation_job,
+        "load_settings",
+        lambda: SimpleNamespace(
+            supabase_url="https://example.test",
+            supabase_key="key",
+        ),
+    )
     monkeypatch.setattr(evaluation_job, "build_snapshot_context", fake_build_snapshot_context)
     monkeypatch.setattr(
         evaluation_job,

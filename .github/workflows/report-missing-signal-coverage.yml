@@ -1,0 +1,68 @@
+name: report-missing-signal-coverage
+
+permissions:
+  contents: read
+
+on:
+  workflow_run:
+    workflows: [run-predictions]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "UTC date to report in YYYY-MM-DD format. Defaults to current UTC date."
+        required: false
+        type: string
+
+jobs:
+  report:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    concurrency:
+      group: report-missing-signal-coverage
+      cancel-in-progress: false
+    env:
+      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      R2_BUCKET: workflow-artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$R2_BUCKET"
+      - name: Resolve target date
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            printf 'REPORT_ARGS=\n' >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          TARGET_DATE_INPUT="${{ github.event.inputs.target_date }}"
+          if [ -z "$TARGET_DATE_INPUT" ]; then
+            printf 'REPORT_ARGS=\n' >> "$GITHUB_ENV"
+          else
+            case "$TARGET_DATE_INPUT" in
+              *$'\n'*|*$'\r'*)
+                echo "target_date must be a single-line YYYY-MM-DD value" >&2
+                exit 1
+                ;;
+            esac
+            if ! [[ "$TARGET_DATE_INPUT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "target_date must match YYYY-MM-DD" >&2
+              exit 1
+            fi
+            TARGET_DATE_CANONICAL="$(date -u -d "$TARGET_DATE_INPUT" +%F 2>/dev/null || true)"
+            if [ -z "$TARGET_DATE_CANONICAL" ] || [ "$TARGET_DATE_CANONICAL" != "$TARGET_DATE_INPUT" ]; then
+              echo "target_date must be a valid calendar date in YYYY-MM-DD format" >&2
+              exit 1
+            fi
+            printf 'REPORT_ARGS=--target-date %s\n' "$TARGET_DATE_CANONICAL" >> "$GITHUB_ENV"
+          fi
+      - run: python3 -m pip install -r batch/requirements.txt
+      - run: python3 -m batch.src.jobs.report_missing_signal_coverage_job $REPORT_ARGS
