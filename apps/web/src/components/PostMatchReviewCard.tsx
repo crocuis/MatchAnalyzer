@@ -36,9 +36,9 @@ export default function PostMatchReviewCard({
   if (!review) {
     return (
       <article className="reviewCard">
-        <div className="reviewCallout" style={{ backgroundColor: "#f1f5f9", borderRadius: "16px", padding: "20px" }}>
-          <strong style={{ color: "var(--text-primary)" }}>{t("modal.review.unavailable")}</strong>
-          <p style={{ margin: "8px 0 0", color: "var(--text-secondary)" }}>
+        <div className="reviewCallout">
+          <strong className="reviewTitle">{t("modal.review.unavailable")}</strong>
+          <p className="reviewBody">
             {t("modal.review.unavailableDesc")}
           </p>
         </div>
@@ -46,11 +46,13 @@ export default function PostMatchReviewCard({
     );
   }
 
+  const isMiss = review.outcome?.toLowerCase().includes("miss") || review.outcome?.toLowerCase().includes("loss");
+
   return (
     <article className="reviewCard">
-      <div className="reviewCallout" style={{ backgroundColor: "#fef2f2", borderRadius: "16px", padding: "20px", border: "1px solid #fee2e2" }}>
-        <strong style={{ color: "var(--accent-danger)", fontSize: "1.1rem" }}>{review.outcome}</strong>
-        <p style={{ margin: "8px 0 0", color: "var(--text-secondary)", lineHeight: "1.5" }}>{review.summary}</p>
+      <div className={`reviewCallout ${isMiss ? "reviewCallout-miss" : ""}`}>
+        <strong className={`reviewTitle ${isMiss ? "reviewTitle-miss" : ""}`}>{review.outcome}</strong>
+        <p className="reviewBody">{review.summary}</p>
         {review.causeTags && review.causeTags.length > 0 ? (
           <div className="reviewMetaChips">
             {review.causeTags.map((tag) => (
@@ -61,8 +63,8 @@ export default function PostMatchReviewCard({
           </div>
         ) : null}
         {review.taxonomy ? (
-          <div className="confidenceBreakdown" style={{ marginTop: "16px" }}>
-            <p className="metricLabel">{t("modal.review.taxonomyTitle")}</p>
+          <div className="confidenceBreakdown" style={{ marginTop: "24px" }}>
+            <p className="panelTitle">{t("modal.review.taxonomyTitle")}</p>
             <div className="confidenceBreakdownGrid">
               <div className="confidenceBreakdownItem">
                 <span className="metricLabel">{t("modal.review.severity")}</span>
@@ -84,8 +86,8 @@ export default function PostMatchReviewCard({
           </div>
         ) : null}
         {aggregationReport ? (
-          <div className="confidenceBreakdown" style={{ marginTop: "16px" }}>
-            <p className="metricLabel">{t("modal.review.aggregationTitle")}</p>
+          <div className="confidenceBreakdown" style={{ marginTop: "24px" }}>
+            <p className="panelTitle">{t("modal.review.aggregationTitle")}</p>
             <div className="confidenceBreakdownGrid">
               <div className="confidenceBreakdownItem">
                 <span className="metricLabel">{t("modal.review.totalReviews")}</span>
@@ -103,8 +105,8 @@ export default function PostMatchReviewCard({
           </div>
         ) : null}
         {previousAggregation ? (
-          <div className="confidenceBreakdown" style={{ marginTop: "16px" }}>
-            <p className="metricLabel">{t("modal.review.historyTitle")}</p>
+          <div className="confidenceBreakdown" style={{ marginTop: "24px" }}>
+            <p className="panelTitle">{t("modal.review.historyTitle")}</p>
             <div className="confidenceBreakdownGrid">
               <div className="confidenceBreakdownItem">
                 <span className="metricLabel">{t("modal.review.totalReviewsTrend")}</span>
@@ -126,8 +128,8 @@ export default function PostMatchReviewCard({
           </div>
         ) : null}
         {aggregationHistoryView?.shadow ? (
-          <div className="confidenceBreakdown" style={{ marginTop: "16px" }}>
-            <p className="metricLabel">{t("modal.review.shadowTitle")}</p>
+          <div className="confidenceBreakdown" style={{ marginTop: "24px" }}>
+            <p className="panelTitle">{t("modal.review.shadowTitle")}</p>
             <div className="confidenceBreakdownGrid">
               <div className="confidenceBreakdownItem">
                 <span className="metricLabel">{t("modal.review.statusLabel")}</span>
@@ -137,8 +139,8 @@ export default function PostMatchReviewCard({
           </div>
         ) : null}
         {aggregationHistoryView?.rollout ? (
-          <div className="confidenceBreakdown" style={{ marginTop: "16px" }}>
-            <p className="metricLabel">{t("modal.review.rolloutTitle")}</p>
+          <div className="confidenceBreakdown" style={{ marginTop: "24px" }}>
+            <p className="panelTitle">{t("modal.review.rolloutTitle")}</p>
             <div className="confidenceBreakdownGrid">
               <div className="confidenceBreakdownItem">
                 <span className="metricLabel">{t("modal.review.statusLabel")}</span>
@@ -148,8 +150,8 @@ export default function PostMatchReviewCard({
           </div>
         ) : null}
         {promotionDecisionReport ? (
-          <div className="confidenceBreakdown" style={{ marginTop: "16px" }}>
-            <p className="metricLabel">{t("modal.review.promotionTitle")}</p>
+          <div className="confidenceBreakdown" style={{ marginTop: "24px" }}>
+            <p className="panelTitle">{t("modal.review.promotionTitle")}</p>
             <div className="confidenceBreakdownGrid">
               <div className="confidenceBreakdownItem">
                 <span className="metricLabel">{t("modal.review.statusLabel")}</span>

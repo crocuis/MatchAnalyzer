@@ -30,9 +30,9 @@ export default function CheckpointTimeline({
   return (
     <section aria-label="prediction checkpoints">
       {visibleCheckpoints.length === 0 ? (
-        <p style={{ color: "var(--text-muted)", margin: 0 }}>{t("modal.timeline.empty")}</p>
+        <p className="timelineNote">{t("modal.timeline.empty")}</p>
       ) : (
-        <ol className="timelineList" style={{ borderLeft: "2px solid #f1f5f9", marginLeft: "10px", paddingLeft: "24px", listStyle: "none" }}>
+        <ol className="timelineList">
           {visibleCheckpoints.map((checkpoint) => {
             const formattedCheckpointTime = new Date(checkpoint.recordedAt).toLocaleString(i18n.language, {
               month: "numeric",
@@ -43,32 +43,18 @@ export default function CheckpointTimeline({
             });
 
             return (
-              <li className="timelineItem" key={checkpoint.id} style={{
-                position: "relative",
-                marginBottom: "24px",
-                padding: "16px 20px",
-                backgroundColor: "white",
-                border: "1px solid #f1f5f9",
-                borderRadius: "16px",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.02)"
-              }}>
+              <li className="timelineItem" key={checkpoint.id}>
                 {/* Timeline Dot with Icon */}
-                <div style={{
-                  position: "absolute", left: "-35px", top: "20px",
-                  width: "22px", height: "22px", borderRadius: "50%",
-                  backgroundColor: "white", border: "2px solid var(--accent-primary)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "var(--accent-primary)", zIndex: 1
-                }}>
+                <div className="timelineDot">
                   {getEventIcon(checkpoint.label)}
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                  <strong style={{ color: "var(--text-primary)", fontWeight: "700", fontSize: "0.95rem" }}>{checkpoint.label}</strong>
-                  <span style={{ color: "var(--text-muted)", fontSize: "0.8rem", fontWeight: "600" }}>{formattedCheckpointTime}</span>
+                <div className="timelineHeader">
+                  <strong className="timelineTitle">{checkpoint.label}</strong>
+                  <span className="timelineTime">{formattedCheckpointTime}</span>
                 </div>
                 {checkpoint.note ? (
-                  <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: "1.5" }}>
+                  <p className="timelineNote">
                     {checkpoint.note}
                   </p>
                 ) : null}

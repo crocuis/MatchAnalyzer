@@ -3,7 +3,10 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import MatchCard from "../components/MatchCard";
+import MatchDetailModal from "../components/MatchDetailModal";
 import i18n from "../i18n/config";
+import type { MatchCardRow } from "../lib/api";
 
 afterEach(() => {
   cleanup();
@@ -17,133 +20,176 @@ beforeEach(async () => {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
 
-      if (url.endsWith("/api/matches")) {
+      if (url.startsWith("/api/matches")) {
+        const parsedUrl = new URL(url, "http://localhost");
+        const leagueId = parsedUrl.searchParams.get("leagueId") ?? "premier-league";
+        const cursor = Number.parseInt(parsedUrl.searchParams.get("cursor") ?? "0", 10) || 0;
+        const limit = Number.parseInt(parsedUrl.searchParams.get("limit") ?? "4", 10) || 4;
+        const allItems = [
+          {
+            id: "match-001",
+            leagueId: "premier-league",
+            leagueLabel: "Premier League",
+            leagueEmblemUrl: "https://crests.football-data.org/PL.png",
+            homeTeam: "Chelsea",
+            homeTeamLogoUrl: "https://crests.football-data.org/61.png",
+            awayTeam: "Manchester City",
+            awayTeamLogoUrl: "https://crests.football-data.org/65.png",
+            kickoffAt: "2026-04-27 19:00 UTC",
+            status: "Needs Review",
+            finalResult: "AWAY",
+            homeScore: 1,
+            awayScore: 2,
+            recommendedPick: "HOME",
+            confidence: 0.7,
+            explanationPayload: {
+              sourceAgreementRatio: 1,
+              maxAbsDivergence: 0.05,
+              calibratedConfidence: 0.7,
+              featureContext: {
+                eloDelta: 0.42,
+                xgProxyDelta: 0.31,
+                fixtureCongestionDelta: 1,
+                lineupStrengthDelta: 0.61,
+                homeLineupScore: 1.82,
+                awayLineupScore: 1.21,
+                lineupSourceSummary: "espn_lineups+recent_starters+pl_missing_players",
+              },
+            },
+            needsReview: true,
+          },
+          {
+            id: "match-002",
+            leagueId: "premier-league",
+            leagueLabel: "Premier League",
+            leagueEmblemUrl: "https://crests.football-data.org/PL.png",
+            homeTeam: "Liverpool",
+            awayTeam: "Brentford",
+            kickoffAt: "2026-04-27 21:00 UTC",
+            status: "Prediction Ready",
+            recommendedPick: null,
+            confidence: null,
+            mainRecommendation: {
+              pick: "HOME",
+              confidence: 0.58,
+              recommended: false,
+              noBetReason: "low_confidence",
+            },
+            valueRecommendation: {
+              pick: "AWAY",
+              recommended: true,
+              edge: 0.1,
+              expectedValue: 0.3125,
+              marketPrice: 0.24,
+              modelProbability: 0.42,
+              marketProbability: 0.32,
+              marketSource: "prediction_market",
+            },
+            variantMarkets: [
+              {
+                marketFamily: "spreads",
+                sourceName: "polymarket_spreads",
+                lineValue: -0.5,
+                selectionALabel: "Home -0.5",
+                selectionAPrice: 0.54,
+                selectionBLabel: "Away +0.5",
+                selectionBPrice: 0.46,
+                marketSlug: "spread-slug",
+              },
+              {
+                marketFamily: "totals",
+                sourceName: "polymarket_totals",
+                lineValue: 2.5,
+                selectionALabel: "Over 2.5",
+                selectionAPrice: 0.57,
+                selectionBLabel: "Under 2.5",
+                selectionBPrice: 0.43,
+                marketSlug: "total-slug",
+              },
+            ],
+            needsReview: false,
+          },
+          {
+            id: "match-004",
+            leagueId: "premier-league",
+            leagueLabel: "Premier League",
+            leagueEmblemUrl: "https://crests.football-data.org/PL.png",
+            homeTeam: "Arsenal",
+            awayTeam: "Fulham",
+            kickoffAt: "2026-04-29 19:00 UTC",
+            status: "Scheduled",
+            recommendedPick: null,
+            confidence: null,
+            needsReview: false,
+          },
+          {
+            id: "match-003",
+            leagueId: "champions-league",
+            leagueLabel: "UEFA Champions League",
+            leagueEmblemUrl: "https://crests.football-data.org/CL.png",
+            homeTeam: "Inter",
+            awayTeam: "Bayern Munich",
+            kickoffAt: "2026-04-28 19:00 UTC",
+            status: "Review Ready",
+            finalResult: "DRAW",
+            homeScore: 1,
+            awayScore: 1,
+            recommendedPick: "DRAW",
+            confidence: 0.41,
+            explanationPayload: {
+              sourceAgreementRatio: 0.67,
+              featureContext: {
+                eloDelta: -0.33,
+                xgProxyDelta: -0.26,
+                fixtureCongestionDelta: -1,
+                lineupStrengthDelta: -0.58,
+                homeLineupScore: 1.14,
+                awayLineupScore: 1.72,
+                lineupSourceSummary: "espn_lineups+recent_starters",
+              },
+            },
+            needsReview: true,
+          },
+        ];
+        const leagues = [
+          {
+            id: "premier-league",
+            label: "Premier League",
+            emblemUrl: "https://crests.football-data.org/PL.png",
+            matchCount: 3,
+            reviewCount: 1,
+          },
+          {
+            id: "champions-league",
+            label: "UEFA Champions League",
+            emblemUrl: "https://crests.football-data.org/CL.png",
+            matchCount: 1,
+            reviewCount: 1,
+          },
+        ];
+        const filtered = allItems.filter((item) => item.leagueId === leagueId);
         return {
           ok: true,
           json: async () => ({
-            items: [
-              {
-                id: "match-001",
-                leagueId: "premier-league",
-                leagueLabel: "Premier League",
-                leagueEmblemUrl: "https://crests.football-data.org/PL.png",
-                homeTeam: "Chelsea",
-                homeTeamLogoUrl: "https://crests.football-data.org/61.png",
-                awayTeam: "Manchester City",
-                awayTeamLogoUrl: "https://crests.football-data.org/65.png",
-                kickoffAt: "2026-04-27 19:00 UTC",
-                status: "Needs Review",
-                finalResult: "AWAY",
-                homeScore: 1,
-                awayScore: 2,
-                recommendedPick: "HOME",
-                confidence: 0.7,
-                explanationPayload: {
-                  sourceAgreementRatio: 1,
-                  maxAbsDivergence: 0.05,
-                  calibratedConfidence: 0.7,
-                  featureContext: {
-                    eloDelta: 0.42,
-                    xgProxyDelta: 0.31,
-                    fixtureCongestionDelta: 1,
-                    lineupStrengthDelta: 0.61,
-                    homeLineupScore: 1.82,
-                    awayLineupScore: 1.21,
-                    lineupSourceSummary: "espn_lineups+recent_starters+pl_missing_players",
+            items: filtered.slice(cursor, cursor + limit),
+            leagues,
+            predictionSummary:
+              leagueId === "champions-league"
+                ? {
+                    evaluatedCount: 1,
+                    correctCount: 1,
+                    incorrectCount: 0,
+                    successRate: 1,
+                  }
+                : {
+                    evaluatedCount: 1,
+                    correctCount: 0,
+                    incorrectCount: 1,
+                    successRate: 0,
                   },
-                },
-                needsReview: true,
-              },
-              {
-                id: "match-002",
-                leagueId: "premier-league",
-                leagueLabel: "Premier League",
-                leagueEmblemUrl: "https://crests.football-data.org/PL.png",
-                homeTeam: "Liverpool",
-                awayTeam: "Brentford",
-                kickoffAt: "2026-04-27 21:00 UTC",
-                status: "Prediction Ready",
-                recommendedPick: null,
-                confidence: null,
-                mainRecommendation: {
-                  pick: "HOME",
-                  confidence: 0.58,
-                  recommended: false,
-                  noBetReason: "low_confidence",
-                },
-                valueRecommendation: {
-                  pick: "AWAY",
-                  recommended: true,
-                  edge: 0.1,
-                  expectedValue: 0.3125,
-                  marketPrice: 0.24,
-                  modelProbability: 0.42,
-                  marketProbability: 0.32,
-                  marketSource: "prediction_market",
-                },
-                variantMarkets: [
-                  {
-                    marketFamily: "spreads",
-                    sourceName: "polymarket_spreads",
-                    lineValue: -0.5,
-                    selectionALabel: "Home -0.5",
-                    selectionAPrice: 0.54,
-                    selectionBLabel: "Away +0.5",
-                    selectionBPrice: 0.46,
-                    marketSlug: "spread-slug",
-                  },
-                  {
-                    marketFamily: "totals",
-                    sourceName: "polymarket_totals",
-                    lineValue: 2.5,
-                    selectionALabel: "Over 2.5",
-                    selectionAPrice: 0.57,
-                    selectionBLabel: "Under 2.5",
-                    selectionBPrice: 0.43,
-                    marketSlug: "total-slug",
-                  },
-                ],
-                needsReview: false,
-              },
-              {
-                id: "match-003",
-                leagueId: "ucl",
-                leagueLabel: "UCL",
-                leagueEmblemUrl: "https://crests.football-data.org/CL.png",
-                homeTeam: "Inter",
-                awayTeam: "Bayern Munich",
-                kickoffAt: "2026-04-28 19:00 UTC",
-                status: "Review Ready",
-                recommendedPick: "DRAW",
-                confidence: 0.41,
-                explanationPayload: {
-                  sourceAgreementRatio: 0.67,
-                  featureContext: {
-                    eloDelta: -0.33,
-                    xgProxyDelta: -0.26,
-                    fixtureCongestionDelta: -1,
-                    lineupStrengthDelta: -0.58,
-                    homeLineupScore: 1.14,
-                    awayLineupScore: 1.72,
-                    lineupSourceSummary: "espn_lineups+recent_starters",
-                  },
-                },
-                needsReview: true,
-              },
-              {
-                id: "match-004",
-                leagueId: "premier-league",
-                leagueLabel: "Premier League",
-                leagueEmblemUrl: "https://crests.football-data.org/PL.png",
-                homeTeam: "Arsenal",
-                awayTeam: "Fulham",
-                kickoffAt: "2026-04-29 19:00 UTC",
-                status: "Scheduled",
-                recommendedPick: null,
-                confidence: null,
-                needsReview: false,
-              },
-            ],
+            selectedLeagueId: leagueId,
+            nextCursor: cursor + limit < filtered.length ? String(cursor + limit) : null,
+            totalMatches: filtered.length,
           }),
         };
       }
@@ -975,9 +1021,9 @@ describe("dashboard redesign", () => {
     expect(
       within(tablist).getByRole("tab", { name: "UEFA Champions League" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/3 matches/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/3 matches/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/1 need review/i)).toBeInTheDocument();
-    expect(screen.getByRole("tabpanel", { name: "Matches" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Match Timeline" })).toBeInTheDocument();
   });
 
   it("renders a card-grid style match list with operator metadata", async () => {
@@ -990,17 +1036,16 @@ describe("dashboard redesign", () => {
 
     expect(matchButton).toBeInTheDocument();
     expect(card.getAllByText("Review Required").length).toBeGreaterThan(0);
-    expect(card.getByText("Pick")).toBeInTheDocument();
-    expect(card.getAllByText("HOME").length).toBeGreaterThan(0);
-    expect(card.getByText("70%")).toBeInTheDocument();
+    expect(card.getByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(card.getByLabelText("Actual: Away")).toBeInTheDocument();
+    expect(card.getByLabelText("Bet: Recommended")).toBeInTheDocument();
+    expect(card.getByLabelText("Verdict: Miss")).toBeInTheDocument();
+    expect(card.getByLabelText("Review required")).toBeInTheDocument();
     expect(card.getByText("1")).toBeInTheDocument();
     expect(card.getByText("2")).toBeInTheDocument();
     expect(card.getByAltText("Chelsea crest")).toBeInTheDocument();
     expect(card.getByAltText("Manchester City crest")).toBeInTheDocument();
-    expect(card.getByText("Consensus")).toBeInTheDocument();
-    expect(card.getByText("Strength edge")).toBeInTheDocument();
-    expect(card.getByText("xG edge")).toBeInTheDocument();
-    expect(card.getByText("Lineup edge")).toBeInTheDocument();
+    expect(card.queryByText("HOME lean with the strongest available support.")).toBeNull();
   });
 
   it("renders unavailable pick and confidence when no prediction exists yet", async () => {
@@ -1011,7 +1056,10 @@ describe("dashboard redesign", () => {
     });
     const card = within(matchButton);
 
-    expect(card.getAllByText("Unavailable").length).toBeGreaterThanOrEqual(2);
+    expect(card.getByLabelText("Predicted: Unavailable")).toBeInTheDocument();
+    expect(card.getByLabelText("Actual: Pending")).toBeInTheDocument();
+    expect(card.getByLabelText("Bet: Unavailable")).toBeInTheDocument();
+    expect(card.getByLabelText("Verdict: Scheduled")).toBeInTheDocument();
   });
 
   it("renders a no-bet card with a separate value pick signal", async () => {
@@ -1022,10 +1070,11 @@ describe("dashboard redesign", () => {
     });
     const card = within(matchButton);
 
-    expect(card.getAllByText("No bet").length).toBeGreaterThan(0);
-    expect(card.getByText("Value pick")).toBeInTheDocument();
-    expect(card.getByText("AWAY +31%")).toBeInTheDocument();
-    expect(card.getByText("Variant markets")).toBeInTheDocument();
+    expect(card.getByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(card.getByLabelText("Bet: No bet")).toBeInTheDocument();
+    expect(card.getByLabelText("Verdict: Pending")).toBeInTheDocument();
+    expect(card.getByText("Value Pick")).toBeInTheDocument();
+    expect(card.getByText("Derived Markets")).toBeInTheDocument();
   });
 
   it("marks the card button as selected to prepare the modal flow", async () => {
@@ -1056,6 +1105,12 @@ describe("dashboard redesign", () => {
       }),
     );
 
+    const dialog = await screen.findByRole("dialog", { name: "Chelsea vs Manchester City" });
+    const modal = within(dialog);
+    expect(modal.getByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(modal.getByLabelText("Actual: Away")).toBeInTheDocument();
+    expect(modal.getByLabelText("Bet: Recommended")).toBeInTheDocument();
+    expect(modal.getByLabelText("Verdict: Miss")).toBeInTheDocument();
     expect(await screen.findByText("Confidence Breakdown")).toBeInTheDocument();
     expect(screen.getByText("Raw score")).toBeInTheDocument();
     expect(screen.getByText("76%")).toBeInTheDocument();
@@ -1086,18 +1141,16 @@ describe("dashboard redesign", () => {
     expect(screen.getAllByText("30%").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Variant markets").length).toBeGreaterThan(0);
     expect(screen.getByText("spreads")).toBeInTheDocument();
-    expect(screen.getByText("Line -0.5")).toBeInTheDocument();
-    expect(screen.getByText("Home -0.5")).toBeInTheDocument();
-    expect(screen.getByText("54%")).toBeInTheDocument();
-    expect(screen.getByText("Away +0.5")).toBeInTheDocument();
+    expect(screen.getByText("L: -0.5")).toBeInTheDocument();
+    expect(screen.getByText("Home -0.5 (54%)")).toBeInTheDocument();
+    expect(screen.getByText("Away +0.5 (46%)")).toBeInTheDocument();
     expect(screen.getByText("totals")).toBeInTheDocument();
-    expect(screen.getByText("Line 2.5")).toBeInTheDocument();
-    expect(screen.getByText("Over 2.5")).toBeInTheDocument();
-    expect(screen.getByText("57%")).toBeInTheDocument();
-    expect(screen.getByText("Under 2.5")).toBeInTheDocument();
+    expect(screen.getByText("L: 2.5")).toBeInTheDocument();
+    expect(screen.getByText("Over 2.5 (57%)")).toBeInTheDocument();
+    expect(screen.getByText("Under 2.5 (43%)")).toBeInTheDocument();
   });
 
-  it("renders source performance and model comparison metadata inside the match detail modal", async () => {
+  it("renders the modal summary surfaces for the selected match", async () => {
     render(<App />);
 
     fireEvent.click(
@@ -1106,40 +1159,16 @@ describe("dashboard redesign", () => {
       }),
     );
 
-    expect(await screen.findByText("Source Performance")).toBeInTheDocument();
-    expect(screen.getByText("Snapshots evaluated")).toBeInTheDocument();
-    expect(screen.getByText("8")).toBeInTheDocument();
-    expect(screen.getAllByText("current fused").length).toBeGreaterThan(0);
-    expect(screen.getByText("75% hit · Brier 0.181 · Log loss 0.551")).toBeInTheDocument();
-    expect(screen.getByText("Model Comparison")).toBeInTheDocument();
-    expect(screen.getByText("Prediction market")).toBeInTheDocument();
-    expect(screen.getByText("available")).toBeInTheDocument();
-    expect(screen.getByText("Sources agree")).toBeInTheDocument();
-    expect(screen.getByText("yes")).toBeInTheDocument();
-    expect(screen.getByText("Base model probabilities")).toBeInTheDocument();
-    expect(screen.getByText("Home 52% · Draw 24% · Away 24%")).toBeInTheDocument();
-    expect(screen.getByText("Fusion weights")).toBeInTheDocument();
-    expect(screen.getByText("Book 20% · Market 55% · Model 25%")).toBeInTheDocument();
-    expect(screen.getByText("Model Registry")).toBeInTheDocument();
-    expect(screen.getByText("Model family")).toBeInTheDocument();
-    expect(screen.getAllByText("baseline").length).toBeGreaterThan(0);
-    expect(screen.getByText("Registry checkpoint selection")).toBeInTheDocument();
-    expect(screen.getByText("logistic regression · neg_log_loss")).toBeInTheDocument();
-    expect(screen.getByText("Fusion Policy")).toBeInTheDocument();
-    expect(screen.getByText("Selection order")).toBeInTheDocument();
-    expect(screen.getByText("by checkpoint market segment -> by checkpoint -> by market segment -> overall")).toBeInTheDocument();
-    expect(await screen.findByText("Applied fusion policy")).toBeInTheDocument();
-    expect(screen.getByText("latest · by checkpoint market segment · prediction fusion policies")).toBeInTheDocument();
-    expect(screen.getByText("Severity")).toBeInTheDocument();
-    expect(screen.getByText("high")).toBeInTheDocument();
-    expect(screen.getByText("Primary driver")).toBeInTheDocument();
-    expect(screen.getAllByText("strength home").length).toBeGreaterThan(0);
-    expect(screen.getByText("Recent review patterns")).toBeInTheDocument();
-    expect(screen.getByText("Total reviews")).toBeInTheDocument();
-    expect(screen.getByText("12")).toBeInTheDocument();
-    expect(screen.getByText("Top miss family")).toBeInTheDocument();
-    expect(screen.getByText("directional miss")).toBeInTheDocument();
-    expect(screen.getByText("promote rollout")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Chelsea vs Manchester City" });
+    const modal = within(dialog);
+
+    expect(modal.getByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(modal.getByLabelText("Bet: Recommended")).toBeInTheDocument();
+    expect(modal.getByText("Signal summary")).toBeInTheDocument();
+    expect(modal.getByText("HOME lean with the strongest available support.")).toBeInTheDocument();
+    expect(modal.getAllByText("Value Pick").length).toBeGreaterThan(0);
+    expect(modal.getAllByText("Variant markets").length).toBeGreaterThan(0);
+    expect(modal.getByRole("button", { name: /View Full Intelligence Report/ })).toBeInTheDocument();
   });
 
   it("renders phase 6 history, shadow, and rollout comparison surfaces when history payloads are present", async () => {
@@ -1151,8 +1180,12 @@ describe("dashboard redesign", () => {
       }),
     );
 
+    fireEvent.click(
+      await screen.findByRole("button", { name: /View Full Intelligence Report/ }),
+    );
+
     expect(await screen.findByText("Current vs Previous")).toBeInTheDocument();
-    expect(screen.getByText("Source history")).toBeInTheDocument();
+    expect(screen.getAllByText("Source history").length).toBeGreaterThan(0);
     expect(screen.getByText("Current fused hit rate")).toBeInTheDocument();
     expect(screen.getByText("75% vs 50%")).toBeInTheDocument();
     expect(screen.getByText("Shadow lane")).toBeInTheDocument();
@@ -1187,10 +1220,26 @@ describe("dashboard redesign", () => {
       "true",
     );
     const card = within(matchButton);
-    expect(card.getByText("Away strength")).toBeInTheDocument();
-    expect(card.getByText("Away xG")).toBeInTheDocument();
-    expect(card.getByText("Away schedule")).toBeInTheDocument();
-    expect(card.getByText("Away lineup")).toBeInTheDocument();
+    expect(card.getByLabelText("Predicted: Draw")).toBeInTheDocument();
+    expect(card.getByLabelText("Actual: Draw")).toBeInTheDocument();
+    expect(card.getByLabelText("Bet: Recommended")).toBeInTheDocument();
+    expect(card.getByLabelText("Verdict: Correct")).toBeInTheDocument();
+    expect(card.queryByText("DRAW lean with the strongest available support.")).toBeNull();
+  });
+
+  it("shows league match and review counts above the match list", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("3 matches")).toBeInTheDocument();
+    expect(screen.getByText("1 need review")).toBeInTheDocument();
+
+    fireEvent.keyDown(
+      screen.getByRole("tab", { name: "Premier League" }),
+      { key: "ArrowRight" },
+    );
+
+    expect(await screen.findByText("1 matches")).toBeInTheDocument();
+    expect(screen.getByText("1 need review")).toBeInTheDocument();
   });
 
   it("opens a match detail modal from the match card", async () => {
@@ -1211,6 +1260,135 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("View Full Intelligence Report")).toBeInTheDocument();
   });
 
+  it("keeps predicted outcome visible for no-bet matches across dashboard, modal, and report", async () => {
+    render(<App />);
+
+    const matchButton = await screen.findByRole("button", {
+      name: "Liverpool vs Brentford",
+    });
+    const card = within(matchButton);
+
+    expect(card.getByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(matchButton.querySelector(".matchCard.state-no-bet")).not.toBeNull();
+
+    fireEvent.click(matchButton);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Liverpool vs Brentford",
+    });
+    const modal = within(dialog);
+
+    expect(modal.getByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(modal.getAllByText("58%").length).toBeGreaterThan(0);
+    expect(dialog.classList.contains("state-no-bet")).toBe(true);
+
+    fireEvent.click(
+      modal.getByRole("button", { name: /View Full Intelligence Report/ }),
+    );
+
+    expect(await screen.findByLabelText("Predicted: Home")).toBeInTheDocument();
+    expect(screen.getByLabelText("Bet: No bet")).toBeInTheDocument();
+    expect(document.querySelector(".reportHero-noBet")).not.toBeNull();
+  });
+
+  it("uses different card tones for pending and settled no-bet states", () => {
+    const pendingNoBetMatch: MatchCardRow = {
+      id: "pending-no-bet",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      needsReview: false,
+    };
+    const settledNoBetMatch: MatchCardRow = {
+      ...pendingNoBetMatch,
+      id: "settled-no-bet",
+      status: "Review Ready",
+      finalResult: "HOME",
+      homeScore: 2,
+      awayScore: 1,
+    };
+
+    const { rerender } = render(
+      <MatchCard match={pendingNoBetMatch} isSelected={false} onOpen={() => {}} />,
+    );
+
+    expect(document.querySelector(".matchCard.state-no-bet")).not.toBeNull();
+    expect(document.querySelector(".matchCard.state-complete")).toBeNull();
+
+    rerender(
+      <MatchCard match={settledNoBetMatch} isSelected={false} onOpen={() => {}} />,
+    );
+
+    expect(document.querySelector(".matchCard.state-complete")).not.toBeNull();
+  });
+
+  it("uses matching modal tones for pending and settled no-bet states", () => {
+    const pendingNoBetMatch: MatchCardRow = {
+      id: "pending-no-bet",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      needsReview: false,
+    };
+    const settledNoBetMatch: MatchCardRow = {
+      ...pendingNoBetMatch,
+      id: "settled-no-bet",
+      status: "Review Ready",
+      finalResult: "HOME",
+      homeScore: 2,
+      awayScore: 1,
+    };
+
+    const { rerender } = render(
+      <MatchDetailModal
+        match={pendingNoBetMatch}
+        isOpen
+        prediction={null}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    expect(document.querySelector(".detailModal.state-no-bet")).not.toBeNull();
+    expect(document.querySelector(".detailModal.state-complete")).toBeNull();
+
+    rerender(
+      <MatchDetailModal
+        match={settledNoBetMatch}
+        isOpen
+        prediction={null}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    expect(document.querySelector(".detailModal.state-complete")).not.toBeNull();
+  });
+
   it("opens a full report view from the detail modal", async () => {
     render(<App />);
 
@@ -1221,11 +1399,11 @@ describe("dashboard redesign", () => {
     );
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "View Full Intelligence Report" }),
+        screen.getByRole("button", { name: /View Full Intelligence Report/ }),
       ).toBeInTheDocument();
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "View Full Intelligence Report" }),
+      screen.getByRole("button", { name: /View Full Intelligence Report/ }),
     );
 
     expect(screen.getByRole("heading", { name: "Chelsea" })).toBeInTheDocument();
@@ -1239,8 +1417,8 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("Actual outcome")).toBeInTheDocument();
     expect(screen.getByText("Miss type")).toBeInTheDocument();
     expect(screen.getByText("Market verdict")).toBeInTheDocument();
-    expect(screen.getAllByText("HOME").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("AWAY").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Home").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Away").length).toBeGreaterThan(0);
     expect(screen.getAllByText("major directional miss").length).toBeGreaterThan(0);
     expect(screen.getByText("Market outperformed model")).toBeInTheDocument();
     expect(screen.getByText("Calibration evidence")).toBeInTheDocument();

@@ -59,3 +59,31 @@ describe("phase 6 history fetchers", () => {
     ]);
   });
 });
+
+describe("match pagination fetcher", () => {
+  it("requests the matches endpoint with league cursor parameters", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        items: [],
+        leagues: [],
+        selectedLeagueId: "premier-league",
+        nextCursor: "4",
+        totalMatches: 12,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchMatches } = await import("../lib/api");
+
+    await fetchMatches({
+      leagueId: "premier-league",
+      cursor: "4",
+      limit: 4,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/matches?leagueId=premier-league&cursor=4&limit=4",
+    );
+  });
+});

@@ -4,21 +4,13 @@ from dataclasses import dataclass
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from batch.src.ingest.fetch_fixtures import (
+    is_international_competition_id,
+    is_supported_competition_id,
+    is_supported_international_competition_id,
+)
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
-
-ALLOWED_COMPETITION_IDS = {
-    "premier-league",
-    "la-liga",
-    "bundesliga",
-    "serie-a",
-    "ligue-1",
-    "champions-league",
-    "europa-league",
-    "world-cup",
-    "european-championship",
-    "international-friendly",
-}
 
 
 @dataclass
@@ -29,6 +21,8 @@ class CleanupPlan:
     prediction_ids: list[str]
     review_match_ids: list[str]
     orphan_team_ids: list[str]
+    competition_updates: list[dict]
+    team_updates: list[dict]
 
 
 def build_cleanup_plan(client: SupabaseClient) -> CleanupPlan:
@@ -39,7 +33,7 @@ def build_cleanup_plan(client: SupabaseClient) -> CleanupPlan:
     reviews = client.read_rows("post_match_reviews")
 
     out_comp_ids = sorted(
-        c["id"] for c in competitions if c["id"] not in ALLOWED_COMPETITION_IDS
+        c["id"] for c in competitions if not is_supported_competition_id(c["id"])
     )
     out_match_ids = sorted(
         match["id"] for match in matches if match["competition_id"] in out_comp_ids
@@ -78,6 +72,47 @@ def build_cleanup_plan(client: SupabaseClient) -> CleanupPlan:
     }
     orphan_team_ids = sorted(out_team_ids - in_scope_team_ids)
 
+    team_by_id = {row["id"]: row for row in client.read_rows("teams")}
+    international_match_team_ids = {
+        match["home_team_id"]
+        for match in matches
+        if is_supported_international_competition_id(match["competition_id"])
+    } | {
+        match["away_team_id"]
+        for match in matches
+        if is_supported_international_competition_id(match["competition_id"])
+    }
+    club_scope_team_ids = {
+        match["home_team_id"]
+        for match in matches
+        if not is_international_competition_id(match["competition_id"])
+    } | {
+        match["away_team_id"]
+        for match in matches
+        if not is_international_competition_id(match["competition_id"])
+    }
+    team_updates = [
+        {
+            **team_by_id[team_id],
+            "team_type": "national",
+        }
+        for team_id in sorted(international_match_team_ids - club_scope_team_ids)
+        if team_id in team_by_id and team_by_id[team_id].get("team_type") != "national"
+    ]
+    competition_by_id = {row["id"]: row for row in competitions}
+    competition_updates = [
+        {
+            **competition_by_id[competition_id],
+            "competition_type": "international",
+        }
+        for competition_id in sorted(
+            cid
+            for cid in competition_by_id
+            if is_supported_international_competition_id(cid)
+        )
+        if competition_by_id[competition_id].get("competition_type") != "international"
+    ]
+
     return CleanupPlan(
         competition_ids=out_comp_ids,
         match_ids=out_match_ids,
@@ -85,6 +120,8 @@ def build_cleanup_plan(client: SupabaseClient) -> CleanupPlan:
         prediction_ids=out_prediction_ids,
         review_match_ids=out_review_match_ids,
         orphan_team_ids=orphan_team_ids,
+        competition_updates=competition_updates,
+        team_updates=team_updates,
     )
 
 
@@ -155,6 +192,16 @@ def main() -> None:
         deleted_competitions = delete_in_batches(
             client, "competitions", "id", plan.competition_ids
         )
+        updated_competitions = (
+            client.upsert_rows("competitions", plan.competition_updates)
+            if plan.competition_updates
+            else 0
+        )
+        updated_teams = (
+            client.upsert_rows("teams", plan.team_updates)
+            if plan.team_updates
+            else 0
+        )
         result["deleted"] = {
             "reviews": deleted_reviews,
             "predictions": deleted_predictions,
@@ -163,6 +210,15 @@ def main() -> None:
             "matches": deleted_matches,
             "teams": deleted_teams,
             "competitions": deleted_competitions,
+        }
+        result["updated"] = {
+            "competitions": updated_competitions,
+            "teams": updated_teams,
+        }
+    else:
+        result["updates"] = {
+            "competitions": [row["id"] for row in plan.competition_updates],
+            "teams": [row["id"] for row in plan.team_updates],
         }
 
     print(json.dumps(result, sort_keys=True))

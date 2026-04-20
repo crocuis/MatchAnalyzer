@@ -14,9 +14,16 @@ import type {
   TimelineCheckpoint,
 } from "../lib/api";
 import CheckpointTimeline from "./CheckpointTimeline";
+import MatchOutcomeBoard from "./MatchOutcomeBoard";
 import PostMatchReviewCard from "./PostMatchReviewCard";
 import PredictionCard from "./PredictionCard";
 import PredictionSourceEvaluationSection from "./PredictionSourceEvaluationSection";
+import {
+  resolveActualOutcome,
+  resolvePredictionPresentation,
+  resolveVerdictState,
+  summarizeSignalBadges,
+} from "../lib/predictionSummary";
 
 interface FullReportViewProps {
   match: MatchCardRow;
@@ -66,11 +73,33 @@ export default function FullReportView({
     match.homeScore !== undefined &&
     match.awayScore !== null &&
     match.awayScore !== undefined;
-  const mainRecommendation = prediction?.mainRecommendation ?? match.mainRecommendation ?? null;
+  const presentation = resolvePredictionPresentation({
+    mainRecommendation: prediction?.mainRecommendation ?? match.mainRecommendation ?? null,
+    recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
+    confidence: prediction?.confidence ?? match.confidence,
+  });
+  const mainRecommendation = presentation.mainRecommendation;
+  const predictedOutcomeCode = presentation.predictedOutcome;
+  const actualOutcomeCode = resolveActualOutcome(review?.actualOutcome ?? match.finalResult);
+  const betState = presentation.betState;
+  const verdictState = resolveVerdictState({
+    finalResult: review?.actualOutcome ?? match.finalResult,
+    mainRecommendation,
+    recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
+  });
+  const toneClass =
+    presentation.betState === "recommended"
+      ? "state-recommended"
+      : hasFinalScore
+        ? "state-complete"
+        : "state-no-bet";
+  const statusFlags = summarizeSignalBadges(
+    mainRecommendation,
+    prediction?.explanationPayload ?? match.explanationPayload,
+    match.needsReview,
+  );
   const predictedOutcome =
-    mainRecommendation && !mainRecommendation.recommended
-      ? t("matchCard.metrics.noBet")
-      : prediction?.recommendedPick ?? match.recommendedPick ?? null;
+    predictedOutcomeCode ? t(`matchOutcome.outcomes.${predictedOutcomeCode}`) : null;
   const actualOutcome = review?.actualOutcome ?? match.finalResult ?? null;
   const missType = review?.causeTags?.[0]?.replaceAll("_", " ") ?? null;
   const marketVerdict = review?.marketComparison?.comparison_available
@@ -80,15 +109,23 @@ export default function FullReportView({
     : t("report.marketUnavailable");
 
   return (
-    <div className="reportPage">
+    <div className={`reportPage ${toneClass}`}>
       <nav className="reportNav">
         <button className="backBtn" onClick={onBack}>
           ← {t("report.back")}
         </button>
       </nav>
 
-      <section aria-label="match report" className="reportLayout">
-        <header className="reportHero">
+      <section aria-label="match report" className={`reportLayout ${toneClass}`}>
+        <header
+          className={`reportHero ${
+            toneClass === "state-recommended"
+              ? "reportHero-bet"
+              : toneClass === "state-no-bet"
+                ? "reportHero-noBet"
+                : "reportHero-neutral"
+          }`}
+        >
           <div className="reportHeroMeta">
             <span className="reportEyebrow">{t("report.eyebrow")}</span>
             <span className="reportDate">{formattedDate}</span>
@@ -130,6 +167,14 @@ export default function FullReportView({
             <span className="statusBadge">{t(`status.${match.status}`)}</span>
             <span className="leagueLabel">{t(`leagues.${match.leagueId}`)}</span>
           </div>
+
+          <MatchOutcomeBoard
+            predictedOutcome={predictedOutcomeCode}
+            actualOutcome={actualOutcomeCode}
+            betState={betState}
+            verdict={verdictState}
+            statusFlags={statusFlags}
+          />
         </header>
 
         <div className="reportGrid">
@@ -144,12 +189,12 @@ export default function FullReportView({
                 />
               ) : (
                 <div className="contentPanel">
-                  <p style={{ color: "var(--text-muted)", margin: 0 }}>{t("modal.prediction.unavailableDesc")}</p>
+                  <p className="timelineNote">{t("modal.prediction.unavailableDesc")}</p>
                 </div>
               )}
             </section>
 
-            {(predictedOutcome || actualOutcome) && (
+            {(predictedOutcomeCode || actualOutcomeCode) && (
               <section className="reportSection">
                 <span className="panelTitle">{t("report.comparisonTitle")}</span>
                 <div className="comparisonGrid">
@@ -159,7 +204,7 @@ export default function FullReportView({
                   </div>
                   <div className="comparisonItem">
                     <span className="metricLabel">{t("report.actualOutcome")}</span>
-                    <strong>{actualOutcome ?? t("matchCard.metrics.unavailable")}</strong>
+                    <strong>{actualOutcomeCode ? t(`matchOutcome.outcomes.${actualOutcomeCode}`) : t("matchCard.metrics.unavailable")}</strong>
                   </div>
                   <div className="comparisonItem">
                     <span className="metricLabel">{t("report.missType")}</span>

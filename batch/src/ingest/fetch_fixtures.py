@@ -6,7 +6,7 @@ from typing import Any
 from batch.src.features.build_snapshots import build_snapshot
 from batch.src.ingest.normalizers import normalize_team_name
 
-ALLOWED_COMPETITION_IDS = {
+CORE_SUPPORTED_COMPETITION_IDS = {
     "premier-league",
     "la-liga",
     "bundesliga",
@@ -16,7 +16,6 @@ ALLOWED_COMPETITION_IDS = {
     "europa-league",
     "world-cup",
     "european-championship",
-    "international-friendly",
 }
 
 FOOTBALL_DATA_COMPETITION_CODES = {
@@ -212,16 +211,50 @@ def competition_emblem_url(competition_id: str) -> str | None:
     return f"https://crests.football-data.org/{code}.png"
 
 
+def is_supported_international_competition_id(competition_id: str) -> bool:
+    normalized = str(competition_id or "")
+    if normalized in {"world-cup", "fifa-world-cup", "european-championship"}:
+        return True
+    if "international-friendly" in normalized:
+        return False
+    if "world-cup" in normalized and any(
+        token in normalized
+        for token in ("qualif", "qualification", "qualifier")
+    ):
+        return True
+    if "european-championship" in normalized and any(
+        token in normalized
+        for token in ("qualif", "qualification", "qualifier")
+    ):
+        return True
+    return False
+
+
+def is_international_competition_id(competition_id: str) -> bool:
+    normalized = str(competition_id or "")
+    return (
+        normalized == "international-friendly"
+        or is_supported_international_competition_id(normalized)
+    )
+
+
+def is_supported_competition_id(competition_id: str) -> bool:
+    normalized = str(competition_id or "")
+    return normalized in CORE_SUPPORTED_COMPETITION_IDS or is_supported_international_competition_id(
+        normalized
+    )
+
+
 def filter_supported_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         event
         for event in events
-        if event.get("competition", {}).get("id") in ALLOWED_COMPETITION_IDS
+        if is_supported_competition_id(event.get("competition", {}).get("id", ""))
     ]
 
 
 def infer_competition_type(competition_id: str) -> str:
-    if competition_id in {"fifa-world-cup", "european-championship"}:
+    if is_international_competition_id(competition_id):
         return "international"
     if competition_id in {"champions-league", "europa-league"}:
         return "cup"
@@ -256,7 +289,7 @@ def build_team_rows_from_event(event: dict[str, Any]) -> list[dict[str, str]]:
             "id": team["id"],
             "name": team["name"],
             "team_type": "national"
-            if event["competition"]["id"] in {"fifa-world-cup", "european-championship"}
+            if is_international_competition_id(event["competition"]["id"])
             else "club",
             "country": venue_country,
         }
@@ -479,12 +512,17 @@ def _build_team_history_metrics(
     if recent_matches:
         goals_for: list[int] = []
         goals_against: list[int] = []
+        points_last_5 = 0
         for match in recent_matches:
             gf, ga = _goal_tallies_for_team(match, team_id)
             if gf is None or ga is None:
                 continue
             goals_for.append(int(gf))
             goals_against.append(int(ga))
+            if gf > ga:
+                points_last_5 += 3
+            elif gf == ga:
+                points_last_5 += 1
         xg_for = round(sum(goals_for) / len(goals_for), 4) if goals_for else None
         xg_against = (
             round(sum(goals_against) / len(goals_against), 4) if goals_against else None
@@ -492,6 +530,7 @@ def _build_team_history_metrics(
     else:
         xg_for = None
         xg_against = None
+        points_last_5 = None
 
     last_7_days = sum(
         1
@@ -499,11 +538,19 @@ def _build_team_history_metrics(
         if (_parse_kickoff(match["kickoff_at"]) >= target_kickoff - timedelta(days=7))
     )
 
+    if eligible_matches:
+        latest_match_kickoff = _parse_kickoff(eligible_matches[0]["kickoff_at"])
+        rest_days = max((target_kickoff - latest_match_kickoff).days, 0)
+    else:
+        rest_days = None
+
     return {
         "elo": round(elo_by_team.get(team_id, BASE_ELO), 4) if eligible_matches else None,
         "xg_for_last_5": xg_for,
         "xg_against_last_5": xg_against,
         "matches_last_7d": last_7_days if eligible_matches else None,
+        "points_last_5": points_last_5,
+        "rest_days": rest_days,
     }
 
 
@@ -550,6 +597,10 @@ def build_snapshot_rows_from_matches(
                 "away_xg_against_last_5": away_metrics["xg_against_last_5"],
                 "home_matches_last_7d": home_metrics["matches_last_7d"],
                 "away_matches_last_7d": away_metrics["matches_last_7d"],
+                "home_points_last_5": home_metrics["points_last_5"],
+                "away_points_last_5": away_metrics["points_last_5"],
+                "home_rest_days": home_metrics["rest_days"],
+                "away_rest_days": away_metrics["rest_days"],
                 "home_absence_count": lineup_context.get("home_absence_count"),
                 "away_absence_count": lineup_context.get("away_absence_count"),
                 "home_lineup_score": lineup_context.get("home_lineup_score"),

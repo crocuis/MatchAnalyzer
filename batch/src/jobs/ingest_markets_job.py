@@ -38,6 +38,17 @@ MATCH_SNAPSHOT_PERSISTED_FIELDS = {
 }
 
 
+def is_optional_missing_table_error(error: Exception, table_name: str) -> bool:
+    message = str(error)
+    if table_name not in message:
+        return False
+    return (
+        "does not exist" in message
+        or "schema cache" in message
+        or "Could not find the table" in message
+    )
+
+
 def select_real_market_snapshots(
     snapshot_rows: list[dict],
     match_rows: list[dict],
@@ -216,7 +227,16 @@ def main() -> None:
     if promoted_snapshots:
         client.upsert_rows("match_snapshots", promoted_snapshots)
     inserted = client.upsert_rows("market_probabilities", payload)
-    variant_inserted = client.upsert_rows("market_variants", prediction_market_variant_rows)
+    try:
+        variant_inserted = client.upsert_rows(
+            "market_variants",
+            prediction_market_variant_rows,
+        )
+    except ValueError as exc:
+        if is_optional_missing_table_error(exc, "market_variants"):
+            variant_inserted = 0
+        else:
+            raise
     print(
         json.dumps(
             {

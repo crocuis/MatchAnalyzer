@@ -194,6 +194,22 @@ def test_rollout_lane_state_migration_creates_latest_and_history_tables():
     assert "unique (rollout_channel, rollout_version)" in migration
 
 
+def test_market_schema_backfill_migration_restores_price_columns_and_variants_table():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604200002_market_schema_backfill.sql"
+        ).read_text()
+    )
+
+    assert "alter table market_probabilities add column if not exists home_price numeric" in migration
+    assert "add column if not exists draw_price numeric" in migration
+    assert "add column if not exists away_price numeric" in migration
+    assert "create table if not exists market_variants" in migration
+    assert "selection_a_label text not null" in migration
+    assert "selection_b_label text not null" in migration
+    assert "raw_payload jsonb not null default '{}'::jsonb" in migration
+
+
 def test_rollout_history_support_migration_adds_version_columns_and_history_tables():
     migration = normalize_sql(
         Path("supabase/migrations/202604190010_rollout_history_support.sql").read_text()

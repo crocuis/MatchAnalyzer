@@ -45,7 +45,11 @@ def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
         return []
     except ValueError as exc:
         message = str(exc).lower()
-        if "does not exist" in message or "relation" in message:
+        if (
+            "does not exist" in message
+            or "relation" in message
+            or "schema cache" in message
+        ):
             return []
         raise
 
@@ -668,6 +672,7 @@ def main() -> None:
         }
         scoring_context = {
             **feature_context,
+            "base_model_source": base_model_source,
             "baseline_model_trained": base_model_source == "trained_baseline",
             "source_agreement_ratio": build_source_agreement_ratio(
                 base_probs=base_probs,

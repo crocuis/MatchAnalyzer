@@ -1,4 +1,5 @@
 import json
+import re
 from hashlib import sha256
 from pathlib import Path
 from urllib.error import HTTPError
@@ -28,6 +29,24 @@ class SupabaseClient:
             "Content-Type": "application/json",
         }
 
+    def _retry_without_missing_column(
+        self,
+        table_name: str,
+        rows: list[dict],
+        body: str,
+    ) -> int | None:
+        match = re.search(r"Could not find the '([^']+)' column", body)
+        if not match:
+            return None
+        missing_column = match.group(1)
+        if not any(missing_column in row for row in rows):
+            return None
+        trimmed_rows = [
+            {key: value for key, value in row.items() if key != missing_column}
+            for row in rows
+        ]
+        return self.upsert_rows(table_name, trimmed_rows)
+
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
@@ -50,6 +69,13 @@ class SupabaseClient:
                     return len(rows)
             except HTTPError as exc:
                 body = exc.read().decode("utf-8")
+                retry_result = self._retry_without_missing_column(
+                    table_name,
+                    rows,
+                    body,
+                )
+                if retry_result is not None:
+                    return retry_result
                 raise ValueError(
                     f"Supabase upsert failed for table={table_name}: status={exc.code}, body={body}"
                 ) from exc
