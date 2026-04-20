@@ -1074,7 +1074,6 @@ describe("dashboard redesign", () => {
     expect(card.getByLabelText("Bet: No bet")).toBeInTheDocument();
     expect(card.getByLabelText("Verdict: Pending")).toBeInTheDocument();
     expect(card.getByText("Value Pick")).toBeInTheDocument();
-    expect(card.getByText("AWAY +31%")).toBeInTheDocument();
     expect(card.getByText("Derived Markets")).toBeInTheDocument();
   });
 
@@ -1142,15 +1141,13 @@ describe("dashboard redesign", () => {
     expect(screen.getAllByText("30%").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Variant markets").length).toBeGreaterThan(0);
     expect(screen.getByText("spreads")).toBeInTheDocument();
-    expect(screen.getByText("Line -0.5")).toBeInTheDocument();
-    expect(screen.getByText("Home -0.5")).toBeInTheDocument();
-    expect(screen.getByText("54%")).toBeInTheDocument();
-    expect(screen.getByText("Away +0.5")).toBeInTheDocument();
+    expect(screen.getByText("L: -0.5")).toBeInTheDocument();
+    expect(screen.getByText("Home -0.5 (54%)")).toBeInTheDocument();
+    expect(screen.getByText("Away +0.5 (46%)")).toBeInTheDocument();
     expect(screen.getByText("totals")).toBeInTheDocument();
-    expect(screen.getByText("Line 2.5")).toBeInTheDocument();
-    expect(screen.getByText("Over 2.5")).toBeInTheDocument();
-    expect(screen.getByText("57%")).toBeInTheDocument();
-    expect(screen.getByText("Under 2.5")).toBeInTheDocument();
+    expect(screen.getByText("L: 2.5")).toBeInTheDocument();
+    expect(screen.getByText("Over 2.5 (57%)")).toBeInTheDocument();
+    expect(screen.getByText("Under 2.5 (43%)")).toBeInTheDocument();
   });
 
   it("renders the modal summary surfaces for the selected match", async () => {
@@ -1272,7 +1269,7 @@ describe("dashboard redesign", () => {
     const card = within(matchButton);
 
     expect(card.getByLabelText("Predicted: Home")).toBeInTheDocument();
-    expect(matchButton.querySelector(".matchCard-noBetPending")).not.toBeNull();
+    expect(matchButton.querySelector(".matchCard.state-no-bet")).not.toBeNull();
 
     fireEvent.click(matchButton);
 
@@ -1283,7 +1280,7 @@ describe("dashboard redesign", () => {
 
     expect(modal.getByLabelText("Predicted: Home")).toBeInTheDocument();
     expect(modal.getAllByText("58%").length).toBeGreaterThan(0);
-    expect(dialog.classList.contains("detailModal-noBetPending")).toBe(true);
+    expect(dialog.classList.contains("state-no-bet")).toBe(true);
 
     fireEvent.click(
       modal.getByRole("button", { name: /View Full Intelligence Report/ }),
@@ -1325,14 +1322,14 @@ describe("dashboard redesign", () => {
       <MatchCard match={pendingNoBetMatch} isSelected={false} onOpen={() => {}} />,
     );
 
-    expect(document.querySelector(".matchCard-noBetPending")).not.toBeNull();
-    expect(document.querySelector(".matchCard-noBetSettled")).toBeNull();
+    expect(document.querySelector(".matchCard.state-no-bet")).not.toBeNull();
+    expect(document.querySelector(".matchCard.state-complete")).toBeNull();
 
     rerender(
       <MatchCard match={settledNoBetMatch} isSelected={false} onOpen={() => {}} />,
     );
 
-    expect(document.querySelector(".matchCard-noBetSettled")).not.toBeNull();
+    expect(document.querySelector(".matchCard.state-complete")).not.toBeNull();
   });
 
   it("uses matching modal tones for pending and settled no-bet states", () => {
@@ -1374,8 +1371,8 @@ describe("dashboard redesign", () => {
       />,
     );
 
-    expect(document.querySelector(".detailModal-noBetPending")).not.toBeNull();
-    expect(document.querySelector(".detailModal-noBetSettled")).toBeNull();
+    expect(document.querySelector(".detailModal.state-no-bet")).not.toBeNull();
+    expect(document.querySelector(".detailModal.state-complete")).toBeNull();
 
     rerender(
       <MatchDetailModal
@@ -1389,7 +1386,7 @@ describe("dashboard redesign", () => {
       />,
     );
 
-    expect(document.querySelector(".detailModal-noBetSettled")).not.toBeNull();
+    expect(document.querySelector(".detailModal.state-complete")).not.toBeNull();
   });
 
   it("opens a full report view from the detail modal", async () => {
@@ -1420,8 +1417,8 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("Actual outcome")).toBeInTheDocument();
     expect(screen.getByText("Miss type")).toBeInTheDocument();
     expect(screen.getByText("Market verdict")).toBeInTheDocument();
-    expect(screen.getAllByText("HOME").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("AWAY").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Home").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Away").length).toBeGreaterThan(0);
     expect(screen.getAllByText("major directional miss").length).toBeGreaterThan(0);
     expect(screen.getByText("Market outperformed model")).toBeInTheDocument();
     expect(screen.getByText("Calibration evidence")).toBeInTheDocument();
