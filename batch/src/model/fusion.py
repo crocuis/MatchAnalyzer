@@ -15,6 +15,7 @@ DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
     "overall",
 )
 SOURCE_VARIANTS = ("base_model", "bookmaker", "prediction_market")
+MAX_INFERRED_SOURCE_WEIGHT = 0.6
 
 
 def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
@@ -24,6 +25,44 @@ def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
     first_variant = next(iter(weights))
     weights[first_variant] = round(weights[first_variant] + remainder, 4)
     return weights
+
+
+def _cap_inferred_weights(
+    weights: dict[str, float],
+    *,
+    max_weight: float = MAX_INFERRED_SOURCE_WEIGHT,
+) -> dict[str, float]:
+    capped = dict(weights)
+    if len(capped) <= 1:
+        return capped
+
+    while True:
+        overweight = next(
+            (name for name, value in capped.items() if value > max_weight + 1e-12),
+            None,
+        )
+        if overweight is None:
+            break
+
+        excess = capped[overweight] - max_weight
+        capped[overweight] = max_weight
+        receivers = [name for name in capped if name != overweight]
+        receiver_total = sum(capped[name] for name in receivers)
+
+        if receiver_total <= 0:
+            share = excess / len(receivers)
+            for name in receivers:
+                capped[name] += share
+            continue
+
+        for name in receivers:
+            capped[name] += excess * (capped[name] / receiver_total)
+
+    rounded = {name: round(value, 4) for name, value in capped.items()}
+    remainder = round(1.0 - sum(rounded.values()), 4)
+    first_variant = next(iter(rounded))
+    rounded[first_variant] = round(rounded[first_variant] + remainder, 4)
+    return rounded
 
 
 def _probability_sharpness(probabilities: dict[str, float]) -> float:
@@ -59,9 +98,10 @@ def _build_inferred_weights(
         + (_probability_margin(probability_sources[variant]) * 7.0)
         for variant in allowed_variants
     }
-    return normalize_fusion_weights(raw_weights, allowed_variants) or _build_equal_weights(
-        allowed_variants
-    )
+    normalized = normalize_fusion_weights(raw_weights, allowed_variants)
+    if normalized is None:
+        return _build_equal_weights(allowed_variants)
+    return _cap_inferred_weights(normalized)
 
 
 def normalize_fusion_weights(
