@@ -2469,7 +2469,133 @@ def test_run_predictions_job_applies_stronger_draw_boost_for_tight_balanced_mark
     assert prediction["draw_prob"] > prediction["home_prob"]
 
 
-def test_run_predictions_job_blocks_unsupported_home_favorite_without_prediction_market(monkeypatch):
+def test_run_predictions_job_skips_strong_draw_boost_when_away_signals_are_aligned(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_away_t_minus_24h",
+                        "match_id": "match_away",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                        "home_elo": 1499.0,
+                        "away_elo": 1519.5658,
+                        "home_xg_for_last_5": 0.0,
+                        "home_xg_against_last_5": 3.0,
+                        "away_xg_for_last_5": 0.6667,
+                        "away_xg_against_last_5": 1.6667,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_away_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_away_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.2910424170916698,
+                        "draw_prob": 0.3525791130001631,
+                        "away_prob": 0.35637846990816713,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_away", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    prediction = state["predictions"][0]
+    explanation_payload = prediction["explanation_payload"]
+    assert explanation_payload["base_model_source"] == "bookmaker_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert prediction["recommended_pick"] == "AWAY"
+    assert prediction["away_prob"] > prediction["draw_prob"]
+
+
+def test_run_predictions_job_shifts_strong_home_fallback_toward_draw_when_xg_disagrees(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_home_draw_t_minus_24h",
+                        "match_id": "match_home_draw",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                        "home_elo": 1500.0,
+                        "away_elo": 1499.7374,
+                        "home_xg_for_last_5": 1.6667,
+                        "home_xg_against_last_5": 2.0,
+                        "away_xg_for_last_5": 1.3333,
+                        "away_xg_against_last_5": 0.3333,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_home_draw_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_home_draw_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "DraftKings",
+                        "home_prob": 0.5841446453407511,
+                        "draw_prob": 0.22600834492350486,
+                        "away_prob": 0.1898470097357441,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_home_draw", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    prediction = state["predictions"][0]
+    explanation_payload = prediction["explanation_payload"]
+    assert explanation_payload["base_model_source"] == "bookmaker_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert prediction["recommended_pick"] == "DRAW"
+    assert prediction["draw_prob"] > prediction["home_prob"]
+
+
+def test_run_predictions_job_shifts_unsupported_home_favorite_toward_draw_when_xg_disagrees(monkeypatch):
     state: dict[str, list[dict]] = {}
 
     class FakeClient:
@@ -2536,11 +2662,9 @@ def test_run_predictions_job_blocks_unsupported_home_favorite_without_prediction
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert explanation_payload["main_recommendation"]["recommended"] is False
-    assert (
-        explanation_payload["main_recommendation"]["no_bet_reason"]
-        == "unsupported_home_favorite"
-    )
-    assert explanation_payload["raw_confidence_score"] > 0.62
+    assert explanation_payload["main_recommendation"]["pick"] == "DRAW"
+    assert explanation_payload["main_recommendation"]["no_bet_reason"] == "low_confidence"
+    assert explanation_payload["raw_confidence_score"] < 0.62
 
 
 def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_without_prediction_market(
