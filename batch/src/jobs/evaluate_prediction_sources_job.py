@@ -63,6 +63,9 @@ def build_evaluation_report(
             book_probs,
             prediction_market,
         )
+        prediction_market_available = bool(
+            feature_context["prediction_market_available"]
+        )
         base_probs, _base_model_source = predict_base_probabilities(
             snapshot=snapshot,
             feature_context=feature_context,
@@ -87,6 +90,11 @@ def build_evaluation_report(
             base_probs,
             book_probs,
             prediction_market_probs,
+            allowed_variants=(
+                ("base_model", "bookmaker", "prediction_market")
+                if prediction_market_available
+                else ("base_model", "bookmaker")
+            ),
         )
         rows.extend(
             build_variant_evaluation_rows(
@@ -95,9 +103,7 @@ def build_evaluation_report(
                 checkpoint=snapshot["checkpoint_type"],
                 competition_id=str(match.get("competition_id") or "unknown"),
                 actual_outcome=str(match["final_result"]),
-                prediction_market_available=bool(
-                    feature_context["prediction_market_available"]
-                ),
+                prediction_market_available=prediction_market_available,
                 bookmaker_probs=book_probs,
                 prediction_market_probs=prediction_market_probs,
                 base_model_probs=base_probs,

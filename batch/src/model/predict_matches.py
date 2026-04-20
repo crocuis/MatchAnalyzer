@@ -33,11 +33,17 @@ def build_prediction_row(
     context: dict,
     source_weights: dict | None = None,
 ) -> dict:
+    allowed_variants = (
+        ("base_model", "bookmaker", "prediction_market")
+        if context.get("prediction_market_available", True)
+        else ("base_model", "bookmaker")
+    )
     fused = fuse_probabilities(
         base_probs,
         book_probs,
         market_probs,
         weights=source_weights,
+        allowed_variants=allowed_variants,
     )
     prediction_market_available = context.get("prediction_market_available", True)
     source_agreement_ratio = build_source_agreement_ratio(

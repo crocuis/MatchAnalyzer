@@ -214,13 +214,19 @@ def fuse_probabilities(
     book_probs: dict,
     market_probs: dict,
     weights: dict | None = None,
+    allowed_variants: tuple[str, ...] = SOURCE_VARIANTS,
 ) -> dict:
-    weights = weights or _build_equal_weights(SOURCE_VARIANTS)
+    active_variants = tuple(
+        variant for variant in SOURCE_VARIANTS if variant in allowed_variants
+    )
+    if not active_variants:
+        active_variants = SOURCE_VARIANTS
+    weights = weights or _build_equal_weights(active_variants)
     total_weight = sum(
-        float(weights.get(source_name, 0.0)) for source_name in SOURCE_VARIANTS
+        float(weights.get(source_name, 0.0)) for source_name in active_variants
     )
     if total_weight <= 0:
-        weights = _build_equal_weights(SOURCE_VARIANTS)
+        weights = _build_equal_weights(active_variants)
         total_weight = 1.0
     fused = {
         "home": (

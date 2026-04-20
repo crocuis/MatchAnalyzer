@@ -1,3 +1,5 @@
+import pytest
+
 from batch.src.model.explanations import build_explanation_bullets
 from batch.src.model.fusion import (
     build_fusion_policy_comparison,
@@ -38,6 +40,20 @@ def test_fuse_probabilities_accepts_dynamic_source_weights():
     assert round(sum(fused.values()), 5) == 1.0
     assert choose_recommended_pick(fused) == "HOME"
     assert round(fused["home"], 4) == 0.596
+
+
+def test_fuse_probabilities_skips_prediction_market_when_source_is_unavailable():
+    fused = fuse_probabilities(
+        base_probs={"home": 0.20, "draw": 0.23, "away": 0.57},
+        book_probs={"home": 0.52, "draw": 0.26, "away": 0.22},
+        market_probs={"home": 0.52, "draw": 0.26, "away": 0.22},
+        allowed_variants=("base_model", "bookmaker"),
+    )
+
+    assert round(sum(fused.values()), 5) == 1.0
+    assert fused["home"] == pytest.approx(0.36)
+    assert fused["draw"] == pytest.approx(0.245)
+    assert fused["away"] == pytest.approx(0.395)
 
 
 def test_choose_fusion_weights_prefers_checkpoint_market_segment_policy_and_filters_sources():
