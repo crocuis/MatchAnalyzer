@@ -1,3 +1,5 @@
+import math
+
 from batch.src.model.evaluate_walk_forward import confidence_bucket_label
 
 
@@ -13,6 +15,7 @@ DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
     "overall",
 )
 SOURCE_VARIANTS = ("base_model", "bookmaker", "prediction_market")
+MAX_INFERRED_SOURCE_WEIGHT = 0.6
 
 
 def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
@@ -22,6 +25,83 @@ def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
     first_variant = next(iter(weights))
     weights[first_variant] = round(weights[first_variant] + remainder, 4)
     return weights
+
+
+def _cap_inferred_weights(
+    weights: dict[str, float],
+    *,
+    max_weight: float = MAX_INFERRED_SOURCE_WEIGHT,
+) -> dict[str, float]:
+    capped = dict(weights)
+    if len(capped) <= 1:
+        return capped
+
+    while True:
+        overweight = next(
+            (name for name, value in capped.items() if value > max_weight + 1e-12),
+            None,
+        )
+        if overweight is None:
+            break
+
+        excess = capped[overweight] - max_weight
+        capped[overweight] = max_weight
+        receivers = [name for name in capped if name != overweight]
+        receiver_total = sum(capped[name] for name in receivers)
+
+        if receiver_total <= 0:
+            share = excess / len(receivers)
+            for name in receivers:
+                capped[name] += share
+            continue
+
+        for name in receivers:
+            capped[name] += excess * (capped[name] / receiver_total)
+
+    rounded = {name: round(value, 4) for name, value in capped.items()}
+    remainder = round(1.0 - sum(rounded.values()), 4)
+    first_variant = next(iter(rounded))
+    rounded[first_variant] = round(rounded[first_variant] + remainder, 4)
+    return rounded
+
+
+def _probability_sharpness(probabilities: dict[str, float]) -> float:
+    entropy = 0.0
+    for value in probabilities.values():
+        bounded = min(max(float(value), 1e-9), 1.0)
+        entropy -= bounded * math.log(bounded)
+    return round(1.0 - (entropy / math.log(3.0)), 4)
+
+
+def _probability_margin(probabilities: dict[str, float]) -> float:
+    ordered = sorted((float(value) for value in probabilities.values()), reverse=True)
+    if len(ordered) < 2:
+        return 0.0
+    return round(ordered[0] - ordered[1], 4)
+
+
+def _build_inferred_weights(
+    *,
+    base_probs: dict,
+    book_probs: dict,
+    market_probs: dict,
+    allowed_variants: tuple[str, ...],
+) -> dict[str, float]:
+    probability_sources = {
+        "base_model": base_probs,
+        "bookmaker": book_probs,
+        "prediction_market": market_probs,
+    }
+    raw_weights = {
+        variant: 1.0
+        + (_probability_sharpness(probability_sources[variant]) * 7.0)
+        + (_probability_margin(probability_sources[variant]) * 7.0)
+        for variant in allowed_variants
+    }
+    normalized = normalize_fusion_weights(raw_weights, allowed_variants)
+    if normalized is None:
+        return _build_equal_weights(allowed_variants)
+    return _cap_inferred_weights(normalized)
 
 
 def normalize_fusion_weights(
@@ -214,13 +294,24 @@ def fuse_probabilities(
     book_probs: dict,
     market_probs: dict,
     weights: dict | None = None,
+    allowed_variants: tuple[str, ...] = SOURCE_VARIANTS,
 ) -> dict:
-    weights = weights or _build_equal_weights(SOURCE_VARIANTS)
+    active_variants = tuple(
+        variant for variant in SOURCE_VARIANTS if variant in allowed_variants
+    )
+    if not active_variants:
+        active_variants = SOURCE_VARIANTS
+    weights = weights or _build_inferred_weights(
+        base_probs=base_probs,
+        book_probs=book_probs,
+        market_probs=market_probs,
+        allowed_variants=active_variants,
+    )
     total_weight = sum(
-        float(weights.get(source_name, 0.0)) for source_name in SOURCE_VARIANTS
+        float(weights.get(source_name, 0.0)) for source_name in active_variants
     )
     if total_weight <= 0:
-        weights = _build_equal_weights(SOURCE_VARIANTS)
+        weights = _build_equal_weights(active_variants)
         total_weight = 1.0
     fused = {
         "home": (

@@ -182,6 +182,7 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
     assert payload["rows_evaluated"] == 7
     assert payload["overall"]["base_model"]["count"] == 2
     assert payload["overall"]["base_model"]["hit_rate"] == 1.0
+    assert payload["overall"]["current_fused"]["avg_brier_score"] == 0.1312
     assert payload["by_checkpoint"]["T_MINUS_24H"]["prediction_market"]["count"] == 1
     assert payload["by_competition"]["ucl"]["bookmaker"]["hit_rate"] == 0.0
     assert payload["by_market_segment"]["without_prediction_market"]["current_fused"]["count"] == 1

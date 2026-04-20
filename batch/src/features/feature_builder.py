@@ -43,6 +43,10 @@ RAW_SIGNAL_FIELDS: tuple[str, ...] = (
     "lineup_strength_delta",
     "lineup_source_summary",
 )
+ABSENCE_SIGNAL_FIELDS: tuple[str, ...] = (
+    "home_absence_count",
+    "away_absence_count",
+)
 
 MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     (
@@ -85,12 +89,24 @@ MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] 
         "Lineup context was not collected or did not resolve before prediction time.",
         "Expand lineup sync coverage and persist lineup source summaries per match.",
     ),
+)
+
+ABSENCE_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     (
         "absence_feed_missing",
-        ("home_absence_count", "away_absence_count"),
+        ABSENCE_SIGNAL_FIELDS,
         "Absence counts were not available for this competition or sync window.",
         "Add competition-aware absence ingestion beyond the current limited feed coverage.",
     ),
+    (
+        "absence_coverage_unavailable",
+        ABSENCE_SIGNAL_FIELDS,
+        "Absence coverage is not currently available for this competition.",
+        "Treat this as source coverage debt until a competition-specific absence source is added.",
+    ),
+)
+MISSING_SIGNAL_REASON_TAXONOMY: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
+    MISSING_SIGNAL_REASON_GROUPS + ABSENCE_SIGNAL_REASON_GROUPS
 )
 
 
@@ -229,7 +245,12 @@ def feature_vector_to_model_input(feature_vector: dict) -> list[float]:
     return [float(feature_vector[field]) for field in FEATURE_VECTOR_FIELDS]
 
 
-def build_feature_metadata(snapshot: dict, feature_vector: dict) -> dict:
+def build_feature_metadata(
+    snapshot: dict,
+    feature_vector: dict,
+    *,
+    absence_reason_key: str = "absence_feed_missing",
+) -> dict:
     available_fields = sorted(
         field
         for field in RAW_SIGNAL_FIELDS
@@ -255,6 +276,29 @@ def build_feature_metadata(snapshot: dict, feature_vector: dict) -> dict:
             {
                 "reason_key": reason_key,
                 "fields": unresolved_fields,
+                "explanation": explanation,
+                "sync_action": sync_action,
+            }
+        )
+    unresolved_absence_fields = sorted(
+        field for field in ABSENCE_SIGNAL_FIELDS if field in missing_field_set
+    )
+    if unresolved_absence_fields:
+        absence_reason = next(
+            (
+                (reason_key, explanation, sync_action)
+                for reason_key, _fields, explanation, sync_action in ABSENCE_SIGNAL_REASON_GROUPS
+                if reason_key == absence_reason_key
+            ),
+            None,
+        )
+        if absence_reason is None:
+            raise ValueError(f"unknown absence_reason_key: {absence_reason_key}")
+        reason_key, explanation, sync_action = absence_reason
+        missing_reason_entries.append(
+            {
+                "reason_key": reason_key,
+                "fields": unresolved_absence_fields,
                 "explanation": explanation,
                 "sync_action": sync_action,
             }

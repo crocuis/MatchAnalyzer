@@ -6,7 +6,7 @@ import App from "../App";
 import MatchCard from "../components/MatchCard";
 import MatchDetailModal from "../components/MatchDetailModal";
 import i18n from "../i18n/config";
-import type { MatchCardRow } from "../lib/api";
+import type { MatchCardRow, PredictionSummary } from "../lib/api";
 
 afterEach(() => {
   cleanup();
@@ -611,9 +611,9 @@ beforeEach(async () => {
                   sourceName: "polymarket_totals",
                   lineValue: 2.5,
                   selectionALabel: "Over 2.5",
-                  selectionAPrice: 0.57,
+                  selectionAPrice: 0.43,
                   selectionBLabel: "Under 2.5",
-                  selectionBPrice: 0.43,
+                  selectionBPrice: 0.57,
                   marketSlug: "total-slug",
                 },
               ],
@@ -1074,7 +1074,9 @@ describe("dashboard redesign", () => {
     expect(card.getByLabelText("Bet: No bet")).toBeInTheDocument();
     expect(card.getByLabelText("Verdict: Pending")).toBeInTheDocument();
     expect(card.getByText("Value Pick")).toBeInTheDocument();
-    expect(card.getByText("Derived Markets")).toBeInTheDocument();
+    expect(card.queryByText("Derived Markets")).toBeNull();
+    expect(card.queryByText("spreads")).toBeNull();
+    expect(card.queryByText("totals")).toBeNull();
   });
 
   it("marks the card button as selected to prepare the modal flow", async () => {
@@ -1139,15 +1141,13 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("67% hit rate · 6 matches")).toBeInTheDocument();
     expect(screen.getByText("Market price")).toBeInTheDocument();
     expect(screen.getAllByText("30%").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Variant markets").length).toBeGreaterThan(0);
-    expect(screen.getByText("spreads")).toBeInTheDocument();
-    expect(screen.getByText("L: -0.5")).toBeInTheDocument();
-    expect(screen.getByText("Home -0.5 (54%)")).toBeInTheDocument();
-    expect(screen.getByText("Away +0.5 (46%)")).toBeInTheDocument();
-    expect(screen.getByText("totals")).toBeInTheDocument();
-    expect(screen.getByText("L: 2.5")).toBeInTheDocument();
-    expect(screen.getByText("Over 2.5 (57%)")).toBeInTheDocument();
-    expect(screen.getByText("Under 2.5 (43%)")).toBeInTheDocument();
+    expect(modal.getAllByText("Additional markets").length).toBeGreaterThan(0);
+    expect(modal.getByText("Handicap 0.5")).toBeInTheDocument();
+    expect(modal.getByText("Home -0.5 lead · 54% vs 46%")).toBeInTheDocument();
+    expect(modal.getByText("Over/Under 2.5")).toBeInTheDocument();
+    expect(modal.getByText("Under 2.5 lead · 57% vs 43%")).toBeInTheDocument();
+    expect(modal.queryByText("L: -0.5")).toBeNull();
+    expect(modal.queryByText("L: 2.5")).toBeNull();
   });
 
   it("renders the modal summary surfaces for the selected match", async () => {
@@ -1167,7 +1167,7 @@ describe("dashboard redesign", () => {
     expect(modal.getByText("Signal summary")).toBeInTheDocument();
     expect(modal.getByText("HOME lean with the strongest available support.")).toBeInTheDocument();
     expect(modal.getAllByText("Value Pick").length).toBeGreaterThan(0);
-    expect(modal.getAllByText("Variant markets").length).toBeGreaterThan(0);
+    expect(modal.getAllByText("Additional markets").length).toBeGreaterThan(0);
     expect(modal.getByRole("button", { name: /View Full Intelligence Report/ })).toBeInTheDocument();
   });
 
@@ -1387,6 +1387,242 @@ describe("dashboard redesign", () => {
     );
 
     expect(document.querySelector(".detailModal.state-complete")).not.toBeNull();
+  });
+
+  it("localizes the favored variant market summary in Korean", async () => {
+    await i18n.changeLanguage("ko");
+
+    const match: MatchCardRow = {
+      id: "variant-market-ko",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      needsReview: false,
+    };
+    const prediction: PredictionSummary = {
+      matchId: "variant-market-ko",
+      checkpointLabel: "T-12H",
+      homeWinProbability: 58,
+      drawProbability: 24,
+      awayWinProbability: 18,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      variantMarkets: [
+        {
+          marketFamily: "totals",
+          sourceName: "polymarket_totals",
+          lineValue: 2.5,
+          selectionALabel: "Over 2.5",
+          selectionAPrice: 0.43,
+          selectionBLabel: "Under 2.5",
+          selectionBPrice: 0.57,
+          marketSlug: "totals-ko",
+        },
+      ],
+    };
+
+    render(
+      <MatchDetailModal
+        match={match}
+        isOpen
+        prediction={prediction}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Liverpool vs Brentford" });
+    const modal = within(dialog);
+
+    expect(modal.getByText("추가 시장")).toBeInTheDocument();
+    expect(modal.getByText("언더/오버 2.5")).toBeInTheDocument();
+    expect(modal.getByText("언더 2.5 우세 · 57% vs 43%")).toBeInTheDocument();
+  });
+
+  it("preserves informative modal copy when only one variant side price is present", () => {
+    const match: MatchCardRow = {
+      id: "variant-market-partial",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      needsReview: false,
+    };
+    const prediction: PredictionSummary = {
+      matchId: "variant-market-partial",
+      checkpointLabel: "T-12H",
+      homeWinProbability: 58,
+      drawProbability: 24,
+      awayWinProbability: 18,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      variantMarkets: [
+        {
+          marketFamily: "totals",
+          sourceName: "polymarket_totals",
+          lineValue: 2.5,
+          selectionALabel: "Over 2.5",
+          selectionAPrice: null,
+          selectionBLabel: "Under 2.5",
+          selectionBPrice: 0.57,
+          marketSlug: "totals-partial",
+        },
+      ],
+    };
+
+    render(
+      <MatchDetailModal
+        match={match}
+        isOpen
+        prediction={prediction}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Liverpool vs Brentford" });
+    const modal = within(dialog);
+
+    expect(modal.getByText("Additional markets")).toBeInTheDocument();
+    expect(modal.getByText("Over/Under 2.5")).toBeInTheDocument();
+    expect(modal.getByText("Under 2.5 · 57%")).toBeInTheDocument();
+    expect(modal.queryByText("Over 2.5 vs Under 2.5")).toBeNull();
+  });
+
+  it("renders a neutral modal summary when both variant prices are tied", () => {
+    const match: MatchCardRow = {
+      id: "variant-market-tied",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      needsReview: false,
+    };
+    const prediction: PredictionSummary = {
+      matchId: "variant-market-tied",
+      checkpointLabel: "T-12H",
+      homeWinProbability: 58,
+      drawProbability: 24,
+      awayWinProbability: 18,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      variantMarkets: [
+        {
+          marketFamily: "totals",
+          sourceName: "polymarket_totals",
+          lineValue: 2.5,
+          selectionALabel: "Over 2.5",
+          selectionAPrice: 0.5,
+          selectionBLabel: "Under 2.5",
+          selectionBPrice: 0.5,
+          marketSlug: "totals-tied",
+        },
+      ],
+    };
+
+    render(
+      <MatchDetailModal
+        match={match}
+        isOpen
+        prediction={prediction}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Liverpool vs Brentford" });
+    const modal = within(dialog);
+
+    expect(modal.getByText("Over 2.5 vs Under 2.5")).toBeInTheDocument();
+    expect(modal.queryByText("Over 2.5 lead · 50% vs 50%")).toBeNull();
+  });
+
+  it("falls back to localized generic labels for unsupported variant markets in Korean", async () => {
+    await i18n.changeLanguage("ko");
+
+    const match: MatchCardRow = {
+      id: "variant-market-fallback-ko",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      needsReview: false,
+    };
+    const prediction: PredictionSummary = {
+      matchId: "variant-market-fallback-ko",
+      checkpointLabel: "T-12H",
+      homeWinProbability: 58,
+      drawProbability: 24,
+      awayWinProbability: 18,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      variantMarkets: [
+        {
+          marketFamily: "btts",
+          sourceName: "polymarket_btts",
+          lineValue: null,
+          selectionALabel: "Yes",
+          selectionAPrice: 0.6,
+          selectionBLabel: "No",
+          selectionBPrice: 0.4,
+          marketSlug: "btts-ko",
+        },
+      ],
+    };
+
+    render(
+      <MatchDetailModal
+        match={match}
+        isOpen
+        prediction={prediction}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Liverpool vs Brentford" });
+    const modal = within(dialog);
+
+    expect(modal.getAllByText("추가 시장").length).toBeGreaterThan(0);
+    expect(modal.getByText("선택지 A 우세 · 60% vs 40%")).toBeInTheDocument();
+    expect(modal.queryByText("Yes lead · 60% vs 40%")).toBeNull();
   });
 
   it("opens a full report view from the detail modal", async () => {

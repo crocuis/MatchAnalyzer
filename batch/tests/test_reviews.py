@@ -1588,16 +1588,16 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
                     },
                 ],
                 "matches": [
-                    {"id": "hist_home_1", "kickoff_at": "2026-04-10T18:00:00+00:00", "final_result": "HOME"},
-                    {"id": "hist_home_2", "kickoff_at": "2026-04-09T18:00:00+00:00", "final_result": "HOME"},
-                    {"id": "hist_home_3", "kickoff_at": "2026-04-08T18:00:00+00:00", "final_result": "HOME"},
-                    {"id": "hist_draw_1", "kickoff_at": "2026-04-07T18:00:00+00:00", "final_result": "DRAW"},
-                    {"id": "hist_draw_2", "kickoff_at": "2026-04-06T18:00:00+00:00", "final_result": "DRAW"},
-                    {"id": "hist_draw_3", "kickoff_at": "2026-04-05T18:00:00+00:00", "final_result": "DRAW"},
-                    {"id": "hist_away_1", "kickoff_at": "2026-04-04T18:00:00+00:00", "final_result": "AWAY"},
-                    {"id": "hist_away_2", "kickoff_at": "2026-04-03T18:00:00+00:00", "final_result": "AWAY"},
-                    {"id": "hist_away_3", "kickoff_at": "2026-04-02T18:00:00+00:00", "final_result": "AWAY"},
-                    {"id": "target_match", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                    {"id": "hist_home_1", "competition_id": "premier-league", "kickoff_at": "2026-04-10T18:00:00+00:00", "final_result": "HOME"},
+                    {"id": "hist_home_2", "competition_id": "premier-league", "kickoff_at": "2026-04-09T18:00:00+00:00", "final_result": "HOME"},
+                    {"id": "hist_home_3", "competition_id": "premier-league", "kickoff_at": "2026-04-08T18:00:00+00:00", "final_result": "HOME"},
+                    {"id": "hist_draw_1", "competition_id": "premier-league", "kickoff_at": "2026-04-07T18:00:00+00:00", "final_result": "DRAW"},
+                    {"id": "hist_draw_2", "competition_id": "premier-league", "kickoff_at": "2026-04-06T18:00:00+00:00", "final_result": "DRAW"},
+                    {"id": "hist_draw_3", "competition_id": "premier-league", "kickoff_at": "2026-04-05T18:00:00+00:00", "final_result": "DRAW"},
+                    {"id": "hist_away_1", "competition_id": "premier-league", "kickoff_at": "2026-04-04T18:00:00+00:00", "final_result": "AWAY"},
+                    {"id": "hist_away_2", "competition_id": "premier-league", "kickoff_at": "2026-04-03T18:00:00+00:00", "final_result": "AWAY"},
+                    {"id": "hist_away_3", "competition_id": "premier-league", "kickoff_at": "2026-04-02T18:00:00+00:00", "final_result": "AWAY"},
+                    {"id": "target_match", "competition_id": "premier-league", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
                 ],
             }
 
@@ -1803,6 +1803,257 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "market_slug": "total-slug",
         },
     ]
+
+
+def test_run_predictions_job_derives_form_and_rest_from_match_history_when_snapshot_fields_are_missing(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                        "lineup_status": "unknown",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.56,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.20,
+                    },
+                ],
+                "market_variants": [],
+                "matches": [
+                    {
+                        "id": "hist_home_1",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-13T18:00:00+00:00",
+                        "home_team_id": "arsenal",
+                        "away_team_id": "everton",
+                        "home_score": 2,
+                        "away_score": 0,
+                        "final_result": "HOME",
+                    },
+                    {
+                        "id": "hist_home_2",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-08T18:00:00+00:00",
+                        "home_team_id": "tottenham",
+                        "away_team_id": "arsenal",
+                        "home_score": 1,
+                        "away_score": 3,
+                        "final_result": "AWAY",
+                    },
+                    {
+                        "id": "hist_away_1",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-10T18:00:00+00:00",
+                        "home_team_id": "chelsea",
+                        "away_team_id": "liverpool",
+                        "home_score": 1,
+                        "away_score": 1,
+                        "final_result": "DRAW",
+                    },
+                    {
+                        "id": "hist_away_2",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-05T18:00:00+00:00",
+                        "home_team_id": "aston-villa",
+                        "away_team_id": "chelsea",
+                        "home_score": 2,
+                        "away_score": 1,
+                        "final_result": "HOME",
+                    },
+                    {
+                        "id": "target_match",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-15T18:00:00+00:00",
+                        "home_team_id": "arsenal",
+                        "away_team_id": "chelsea",
+                        "home_score": None,
+                        "away_score": None,
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **kwargs: (
+            kwargs["book_probs"],
+            "bookmaker_fallback",
+            {
+                "selected_candidate": None,
+                "selection_metric": None,
+                "selection_ran": False,
+                "candidate_scores": {},
+                "fallback_source": "bookmaker_fallback",
+            },
+        ),
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-08-15")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    explanation_payload = prediction["explanation_payload"]
+
+    assert explanation_payload["feature_context"]["form_delta"] == 5
+    assert explanation_payload["feature_context"]["rest_delta"] == -3
+    assert explanation_payload["feature_metadata"]["missing_fields"] == [
+        "away_absence_count",
+        "away_lineup_score",
+        "home_absence_count",
+        "home_lineup_score",
+        "lineup_source_summary",
+        "lineup_strength_delta",
+    ]
+    missing_reason_keys = {
+        reason["reason_key"]
+        for reason in explanation_payload["feature_metadata"]["missing_signal_reasons"]
+    }
+    assert missing_reason_keys == {
+        "lineup_context_missing",
+        "absence_feed_missing",
+    }
+
+
+def test_run_predictions_job_marks_absence_coverage_unavailable_for_non_premier_league(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "complete",
+                        "lineup_status": "unknown",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.40,
+                        "draw_prob": 0.30,
+                        "away_prob": 0.30,
+                    },
+                ],
+                "market_variants": [],
+                "matches": [
+                    {
+                        "id": "hist_home_1",
+                        "competition_id": "serie-a",
+                        "season": "serie-a-2025",
+                        "kickoff_at": "2026-04-13T18:00:00+00:00",
+                        "home_team_id": "home",
+                        "away_team_id": "other",
+                        "home_score": 2,
+                        "away_score": 0,
+                        "final_result": "HOME",
+                    },
+                    {
+                        "id": "hist_away_1",
+                        "competition_id": "serie-a",
+                        "season": "serie-a-2025",
+                        "kickoff_at": "2026-04-14T18:00:00+00:00",
+                        "home_team_id": "other",
+                        "away_team_id": "away",
+                        "home_score": 1,
+                        "away_score": 1,
+                        "final_result": "DRAW",
+                    },
+                    {
+                        "id": "target_match",
+                        "competition_id": "serie-a",
+                        "season": "serie-a-2025",
+                        "kickoff_at": "2026-04-20T18:45:00+00:00",
+                        "home_team_id": "home",
+                        "away_team_id": "away",
+                        "home_score": None,
+                        "away_score": None,
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **kwargs: (
+            kwargs["book_probs"],
+            "bookmaker_fallback",
+            {
+                "selected_candidate": None,
+                "selection_metric": None,
+                "selection_ran": False,
+                "candidate_scores": {},
+                "fallback_source": "bookmaker_fallback",
+            },
+        ),
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-20")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    missing_reason_keys = {
+        reason["reason_key"]
+        for reason in prediction["explanation_payload"]["feature_metadata"]["missing_signal_reasons"]
+    }
+
+    assert "absence_coverage_unavailable" in missing_reason_keys
+    assert "absence_feed_missing" not in missing_reason_keys
 
 
 def test_read_optional_rows_only_suppresses_missing_relation_errors():

@@ -1,3 +1,5 @@
+import pytest
+
 from batch.src.model.explanations import build_explanation_bullets
 from batch.src.model.fusion import (
     build_fusion_policy_comparison,
@@ -23,6 +25,18 @@ def test_fuse_probabilities_rewards_consensus_and_preserves_sum():
     assert fused["home"] > 0.48
 
 
+def test_fuse_probabilities_defaults_to_sharper_sources_when_no_weights_are_provided():
+    fused = fuse_probabilities(
+        base_probs={"home": 0.63, "draw": 0.17, "away": 0.20},
+        book_probs={"home": 0.56, "draw": 0.24, "away": 0.20},
+        market_probs={"home": 0.51, "draw": 0.22, "away": 0.27},
+    )
+
+    assert fused["home"] == pytest.approx(0.576929)
+    assert fused["draw"] == pytest.approx(0.205249)
+    assert fused["away"] == pytest.approx(0.217822)
+
+
 def test_fuse_probabilities_accepts_dynamic_source_weights():
     fused = fuse_probabilities(
         base_probs={"home": 0.68, "draw": 0.18, "away": 0.14},
@@ -38,6 +52,32 @@ def test_fuse_probabilities_accepts_dynamic_source_weights():
     assert round(sum(fused.values()), 5) == 1.0
     assert choose_recommended_pick(fused) == "HOME"
     assert round(fused["home"], 4) == 0.596
+
+
+def test_fuse_probabilities_skips_prediction_market_when_source_is_unavailable():
+    fused = fuse_probabilities(
+        base_probs={"home": 0.20, "draw": 0.23, "away": 0.57},
+        book_probs={"home": 0.52, "draw": 0.26, "away": 0.22},
+        market_probs={"home": 0.52, "draw": 0.26, "away": 0.22},
+        allowed_variants=("base_model", "bookmaker"),
+    )
+
+    assert round(sum(fused.values()), 5) == 1.0
+    assert fused["home"] == pytest.approx(0.342048)
+    assert fused["draw"] == pytest.approx(0.243317)
+    assert fused["away"] == pytest.approx(0.414635)
+
+
+def test_fuse_probabilities_caps_inferred_single_source_dominance():
+    fused = fuse_probabilities(
+        base_probs={"home": 0.95, "draw": 0.03, "away": 0.02},
+        book_probs={"home": 0.34, "draw": 0.33, "away": 0.33},
+        market_probs={"home": 0.35, "draw": 0.33, "away": 0.32},
+    )
+
+    assert fused["home"] == pytest.approx(0.708066)
+    assert fused["draw"] == pytest.approx(0.15)
+    assert fused["away"] == pytest.approx(0.141934)
 
 
 def test_choose_fusion_weights_prefers_checkpoint_market_segment_policy_and_filters_sources():

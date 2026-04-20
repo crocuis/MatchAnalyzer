@@ -253,6 +253,61 @@ def parse_draw_teams(question: str) -> tuple[str, str] | None:
     return match.group(1), match.group(2)
 
 
+def _read_numeric(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_first_signed_number(value: str) -> float | None:
+    match = re.search(r"([+-]?\d+(?:\.\d+)?)", value)
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def _extract_line_value_from_slug(slug: str) -> float | None:
+    match = re.search(r"-(\d+)pt(\d+)(?:-|$)", slug)
+    if not match:
+        return None
+    whole, fractional = match.groups()
+    return float(f"{whole}.{fractional}")
+
+
+def resolve_variant_line_value(
+    market_type: str,
+    market: dict[str, Any],
+    selection_a_label: str,
+    selection_b_label: str,
+) -> float | None:
+    raw_spread = _read_numeric(market.get("spread"))
+    if raw_spread is not None and abs(raw_spread) >= 0.1:
+        return raw_spread
+
+    label_candidates = [
+        _extract_first_signed_number(selection_a_label),
+        _extract_first_signed_number(selection_b_label),
+        _extract_first_signed_number(str(market.get("question") or "")),
+        _extract_line_value_from_slug(str(market.get("slug") or "")),
+    ]
+    if market_type == "spreads":
+        for candidate in label_candidates:
+            if candidate not in {None, 0.0}:
+                return candidate
+        return raw_spread
+    if market_type == "totals":
+        for candidate in label_candidates:
+            if candidate is not None and candidate > 0:
+                return abs(candidate)
+        return raw_spread
+    return raw_spread
+
+
 def overlap_score(left: str, right: str) -> float:
     left_tokens = set(normalize_market_text(left).split())
     right_tokens = set(normalize_market_text(right).split())
@@ -510,7 +565,12 @@ def build_prediction_market_variant_rows(
                     "selection_a_price": float(selection_a_price),
                     "selection_b_label": str(selection_b.get("name") or ""),
                     "selection_b_price": float(selection_b_price),
-                    "line_value": market.get("spread"),
+                    "line_value": resolve_variant_line_value(
+                        market_type,
+                        market,
+                        str(selection_a.get("name") or ""),
+                        str(selection_b.get("name") or ""),
+                    ),
                     "raw_payload": {
                         "market_slug": market.get("slug"),
                     },

@@ -52,7 +52,8 @@
       "rating_context_missing": "레이팅 데이터 누락",
       "xg_context_missing": "xG 컨텍스트 누락",
       "lineup_context_missing": "라인업 동기화 누락",
-      "absence_feed_missing": "결장 피드 누락"
+      "absence_feed_missing": "결장 피드 누락",
+      "absence_coverage_unavailable": "결장 커버리지 미지원"
     },
     "reasonTags": {
       "consensus": "합의 신호",
@@ -145,7 +146,23 @@
       "marketPrice": "시장 가격",
       "modelProbability": "모델 확률",
       "marketProbability": "시장 확률",
-      "variantMarketsTitle": "파생 시장",
+      "variantMarketsTitle": "추가 시장",
+      "variantMarketFamilies": {
+        "spreads": "핸디캡",
+        "totals": "언더/오버",
+        "fallback": "추가 시장"
+      },
+      "variantMarketSelections": {
+        "over": "오버",
+        "under": "언더",
+        "selectionA": "선택지 A",
+        "selectionB": "선택지 B"
+      },
+      "variantMarketSummary": {
+        "leading": "{{label}} 우세 · {{favoredPercent}}% vs {{otherPercent}}%",
+        "singlePrice": "{{label}} · {{percent}}%",
+        "versus": "{{selectionA}} vs {{selectionB}}"
+      },
       "breakdownTitle": "신뢰도 분석",
       "noBetReasons": {
         "low_confidence": "신뢰도 부족"

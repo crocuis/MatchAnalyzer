@@ -57,7 +57,6 @@ export default function MatchCard({
     predictionPresentation.predictedOutcome &&
     match.finalResult === predictionPresentation.predictedOutcome;
   const hasValuePick = Boolean(match.valueRecommendation?.recommended);
-  const hasVariantMarkets = Boolean(match.variantMarkets && match.variantMarkets.length > 0);
   const dateColor =
     predictionPresentation.betState === "recommended"
       ? "var(--accent-primary)"
@@ -183,15 +182,6 @@ export default function MatchCard({
                 </span>
               </div>
             </div>
-
-            {hasVariantMarkets ? (
-              <div className="matchMetric">
-                <span className="metricLabel">{t("matchCard.variantMarkets")}</span>
-                <span className="metricValue metricValue-small">
-                  {match.variantMarkets?.map((market) => market.marketFamily).join(" · ")}
-                </span>
-              </div>
-            ) : null}
           </div>
         </div>
       </article>
