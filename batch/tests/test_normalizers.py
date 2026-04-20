@@ -1287,6 +1287,74 @@ def test_supabase_client_retries_without_unknown_schema_cache_column(monkeypatch
     assert "away_price" not in captured_payloads[1][0]
 
 
+def test_supabase_client_retries_through_multiple_schema_cache_column_misses(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    captured_payloads: list[list[dict]] = []
+    missing_columns = ["market_family", "home_price", "draw_price", "away_price"]
+
+    class FakeResponse:
+        def __init__(self, status: int = 201) -> None:
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b""
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        payload = json.loads(request.data.decode("utf-8"))
+        captured_payloads.append(payload)
+        if len(captured_payloads) <= len(missing_columns):
+            missing_column = missing_columns[len(captured_payloads) - 1]
+            raise HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                hdrs=None,
+                fp=BytesIO(
+                    (
+                        "{\"code\":\"PGRST204\",\"message\":\"Could not find the '"
+                        + missing_column
+                        + "' column of 'market_probabilities' in the schema cache\"}"
+                    ).encode("utf-8")
+                ),
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    inserted = client.upsert_rows(
+        "market_probabilities",
+        [
+            {
+                "id": "market-1",
+                "snapshot_id": "snapshot-1",
+                "source_type": "prediction_market",
+                "source_name": "polymarket",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.4,
+                "draw_prob": 0.3,
+                "away_prob": 0.3,
+                "home_price": 0.41,
+                "draw_price": 0.29,
+                "away_price": 0.3,
+            }
+        ],
+    )
+
+    assert inserted == 1
+    assert captured_payloads[0][0]["market_family"] == "moneyline_3way"
+    assert "market_family" not in captured_payloads[1][0]
+    assert "home_price" not in captured_payloads[2][0]
+    assert "draw_price" not in captured_payloads[3][0]
+    assert "away_price" not in captured_payloads[4][0]
+
+
 def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, capsys):
     class FakeClient:
         def __init__(self, _base_url: str, _service_key: str) -> None:
