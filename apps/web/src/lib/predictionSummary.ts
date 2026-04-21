@@ -234,7 +234,7 @@ export function resolveMainRecommendation(
   }
   return {
     pick: recommendedPick ?? "UNKNOWN",
-    confidence,
+    confidence: confidence ?? null,
     recommended: recommendedPick !== null,
     noBetReason: recommendedPick === null ? "low_confidence" : null,
   };

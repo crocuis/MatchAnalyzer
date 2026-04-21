@@ -224,6 +224,64 @@ def test_rollout_history_support_migration_adds_version_columns_and_history_tabl
     assert "source_report_id text not null references prediction_source_evaluation_report_versions(id)" in migration
 
 
+def test_dashboard_performance_index_migration_adds_lookup_indexes():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604220001_dashboard_performance_indexes.sql"
+        ).read_text()
+    )
+
+    assert "create index if not exists matches_competition_kickoff_idx on matches (competition_id, kickoff_at desc)" in migration
+    assert "create index if not exists matches_kickoff_idx on matches (kickoff_at desc)" in migration
+    assert "create index if not exists predictions_match_created_idx on predictions (match_id, created_at desc)" in migration
+    assert "create index if not exists match_snapshots_match_checkpoint_idx on match_snapshots (match_id, checkpoint_type)" in migration
+    assert "create index if not exists post_match_reviews_match_created_idx on post_match_reviews (match_id, created_at desc)" in migration
+
+
+def test_dashboard_league_summary_view_migration_creates_security_invoker_view():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604220002_dashboard_league_summaries_view.sql"
+        ).read_text()
+    )
+
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as" in migration
+    assert "select distinct match_id from post_match_reviews" in migration
+    assert "count(matches.id)::int as match_count" in migration
+    assert "count(review_matches.match_id)::int as review_count" in migration
+
+
+def test_dashboard_match_cards_view_migration_creates_security_invoker_view():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604220003_dashboard_match_cards_view.sql"
+        ).read_text()
+    )
+
+    assert "create or replace view dashboard_match_cards with (security_invoker = true) as" in migration
+    assert "row_number() over ( partition by predictions.match_id" in migration
+    assert "representative_recommended_pick" in migration
+    assert "market_explanation_payload" in migration
+    assert "sort_bucket" in migration
+    assert "sort_epoch" in migration
+
+
+def test_dashboard_league_summary_prediction_fields_migration_redefines_summary_view():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604220004_dashboard_league_summaries_prediction_fields.sql"
+        ).read_text()
+    )
+
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as" in migration
+    assert "from dashboard_match_cards" in migration
+    assert "predicted_count" in migration
+    assert "evaluated_count" in migration
+    assert "correct_count" in migration
+    assert "incorrect_count" in migration
+    assert "success_rate" in migration
+
+
 def test_seed_links_competition_teams_and_match():
     seed = normalize_sql(Path("supabase/seed.sql").read_text())
 

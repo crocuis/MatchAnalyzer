@@ -102,7 +102,15 @@ export default function MatchDetailModal({
     recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
     confidence: prediction?.confidence ?? match.confidence,
   });
-  const missingSignals = match.explanationPayload?.missingSignals || [];
+  const missingSignals = Array.isArray(match.explanationPayload?.missingSignals)
+    ? match.explanationPayload.missingSignals.filter(
+        (signal): signal is string => typeof signal === "string",
+      )
+    : Array.isArray(match.explanationPayload?.missing_signals)
+      ? match.explanationPayload.missing_signals.filter(
+          (signal): signal is string => typeof signal === "string",
+        )
+      : [];
   const hasMissingSignals = missingSignals.length > 0;
   const actualOutcome = resolveActualOutcome(match.finalResult);
   const verdict = resolveVerdictState({
@@ -156,6 +164,18 @@ export default function MatchDetailModal({
             <span className="modalEyebrow">
               {formattedDate} • {t(`status.${match.status}`)}
             </span>
+            <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+              {presentation.betState === "recommended" && (
+                <span className="recommendedBadge">
+                  {t("matchOutcome.bet.recommended")}
+                </span>
+              )}
+              {Boolean(match.valueRecommendation?.recommended) && (
+                <span className="valueBadge">
+                  {t("matchCard.valuePick")}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="matchTeams">

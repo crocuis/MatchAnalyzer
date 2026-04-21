@@ -145,7 +145,19 @@ type MatchListItem = {
   needsReview: boolean;
 };
 
+type MatchSourceRow = {
+  id: string;
+  competition_id: string;
+  kickoff_at: string;
+  home_team_id: string;
+  away_team_id: string;
+  final_result: string | null;
+  home_score: number | null;
+  away_score: number | null;
+};
+
 type MatchPredictionSummary = {
+  predictedCount: number;
   evaluatedCount: number;
   correctCount: number;
   incorrectCount: number;
@@ -167,6 +179,40 @@ type MatchListView = {
   totalMatches: number;
 };
 
+type LeagueSummaryRow = {
+  league_id: string;
+  league_label: string;
+  league_emblem_url: string | null;
+  match_count: number;
+  review_count: number;
+  predicted_count?: number | null;
+  evaluated_count?: number | null;
+  correct_count?: number | null;
+  incorrect_count?: number | null;
+  success_rate?: number | null;
+};
+
+type DashboardMatchCardRow = {
+  id: string;
+  league_id: string;
+  league_label: string;
+  league_emblem_url: string | null;
+  home_team: string;
+  home_team_logo_url: string | null;
+  away_team: string;
+  away_team_logo_url: string | null;
+  kickoff_at: string;
+  final_result: string | null;
+  home_score: number | null;
+  away_score: number | null;
+  representative_recommended_pick: string | null;
+  representative_confidence_score: number | null;
+  explanation_payload: unknown;
+  market_explanation_payload: unknown;
+  has_prediction: boolean;
+  needs_review: boolean;
+};
+
 function buildPredictionSummary(
   matches: Array<{ id: string; final_result: string | null }>,
   predictionByMatchId: Map<
@@ -179,16 +225,19 @@ function buildPredictionSummary(
     } | null
   >,
 ): MatchPredictionSummary {
+  let predictedCount = 0;
   let evaluatedCount = 0;
   let correctCount = 0;
 
   for (const match of matches) {
-    if (!match.final_result) {
+    const prediction = predictionByMatchId.get(match.id);
+    if (!prediction) {
       continue;
     }
 
-    const prediction = predictionByMatchId.get(match.id);
-    if (!prediction) {
+    predictedCount += 1;
+
+    if (!match.final_result) {
       continue;
     }
 
@@ -210,6 +259,7 @@ function buildPredictionSummary(
   const incorrectCount = evaluatedCount - correctCount;
 
   return {
+    predictedCount,
     evaluatedCount,
     correctCount,
     incorrectCount,
@@ -217,55 +267,18 @@ function buildPredictionSummary(
   };
 }
 
-export async function loadMatchPageView(
+async function loadCompetitionLabels(
   supabase: ApiSupabaseClient,
-  options: LoadMatchItemsOptions = {},
-): Promise<MatchListView> {
-  const { data: matchRows, error } = await supabase
-    .from("matches")
-    .select(
-      "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result, home_score, away_score",
-    )
-    .order("kickoff_at", { ascending: true })
-    .limit(MAX_MATCH_SUMMARY_ROWS);
-
-  if (error) {
-    throw new Error(`matches query failed: ${error.message}`);
+  competitionIds: string[],
+) {
+  if (competitionIds.length === 0) {
+    return new Map<string, { label: string; emblemUrl: string | null }>();
   }
 
-  const matchesData = matchRows ?? [];
-  if (matchesData.length === 0) {
-    return {
-      items: [],
-      leagues: [],
-      predictionSummary: null,
-      selectedLeagueId: null,
-      nextCursor: null,
-      totalMatches: 0,
-    };
-  }
-
-  const competitionIds = [...new Set(matchesData.map((match) => match.competition_id))];
-  const matchIds = matchesData.map((match) => match.id);
-
-  const [
-    competitionsResult,
-    { data: reviewRows, error: reviewsError },
-  ] = await Promise.all([
-    supabase
-      .from("competitions")
-      .select("id, name, emblem_url")
-      .in("id", competitionIds),
-    supabase
-      .from("post_match_reviews")
-      .select("match_id, cause_tags, created_at")
-      .in("match_id", matchIds)
-      .order("created_at", { ascending: false }),
-  ]);
-
-  if (reviewsError) {
-    throw new Error("related match queries failed");
-  }
+  const competitionsResult = await supabase
+    .from("competitions")
+    .select("id, name, emblem_url")
+    .in("id", competitionIds);
 
   let competitions = competitionsResult.data;
   let competitionsError = competitionsResult.error;
@@ -286,41 +299,81 @@ export async function loadMatchPageView(
     throw new Error("related match queries failed");
   }
 
-  const competitionById = new Map(
+  return new Map(
     (competitions ?? []).map((row) => [
       row.id,
       { label: row.name, emblemUrl: row.emblem_url },
     ]),
   );
-  const reviewByMatchId = new Map<string, { needsReview: boolean }>();
-  for (const row of reviewRows ?? []) {
-    if (!reviewByMatchId.has(row.match_id)) {
-      const causeTags = Array.isArray(row.cause_tags) ? row.cause_tags : [];
-      reviewByMatchId.set(row.match_id, { needsReview: causeTags.length > 0 });
-    }
+}
+
+async function loadBootstrapLeagueSummaries(
+  supabase: ApiSupabaseClient,
+) {
+  const { data, error } = await supabase
+    .from("dashboard_league_summaries")
+    .select(
+      "league_id, league_label, league_emblem_url, match_count, review_count, predicted_count, evaluated_count, correct_count, incorrect_count, success_rate",
+    )
+    .order("league_id", { ascending: true });
+
+  if (error) {
+    throw new Error(`league summary query failed: ${error.message}`);
   }
 
-  const sortedLeagueIds = sortLeagueIds(competitionIds);
-  const requestedLeagueId = options.leagueId;
+  const summaries = ((data ?? []) as LeagueSummaryRow[])
+    .map((row) => ({
+      id: row.league_id,
+      label: row.league_label,
+      emblemUrl: row.league_emblem_url,
+      matchCount: Number(row.match_count ?? 0),
+      reviewCount: Number(row.review_count ?? 0),
+      predictedCount: Number(row.predicted_count ?? 0),
+      evaluatedCount: Number(row.evaluated_count ?? 0),
+      correctCount: Number(row.correct_count ?? 0),
+      incorrectCount: Number(row.incorrect_count ?? 0),
+      successRate:
+        typeof row.success_rate === "number" ? row.success_rate : null,
+    }))
+    .filter((row) => row.matchCount > 0);
+
+  const orderByLeague = new Map(
+    sortLeagueIds(summaries.map((summary) => summary.id)).map((leagueId, index) => [
+      leagueId,
+      index,
+    ]),
+  );
+
+  return summaries.sort(
+    (left, right) =>
+      (orderByLeague.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+      - (orderByLeague.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+function isMissingRelationError(error: { message?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return (
+    message.includes("does not exist")
+    || message.includes("relation")
+    || message.includes("schema cache")
+  );
+}
+
+async function loadDashboardMatchCardsPageView(
+  supabase: ApiSupabaseClient,
+  options: LoadMatchItemsOptions = {},
+): Promise<MatchListView> {
+  const leagues = await loadBootstrapLeagueSummaries(supabase);
   const selectedLeagueId =
-    requestedLeagueId && sortedLeagueIds.includes(requestedLeagueId)
-      ? requestedLeagueId
-      : (sortedLeagueIds[0] ?? null);
-  const leagues = sortedLeagueIds.map((leagueId) => {
-    const leagueMatches = matchesData.filter((match) => match.competition_id === leagueId);
-    return {
-      id: leagueId,
-      label: competitionById.get(leagueId)?.label ?? leagueId,
-      emblemUrl: competitionById.get(leagueId)?.emblemUrl ?? null,
-      matchCount: leagueMatches.length,
-      reviewCount: leagueMatches.filter((match) => reviewByMatchId.get(match.id)?.needsReview).length,
-    };
-  });
+    options.leagueId && leagues.some((league) => league.id === options.leagueId)
+      ? options.leagueId
+      : (leagues[0]?.id ?? null);
 
   if (!selectedLeagueId) {
     return {
       items: [],
-      leagues,
+      leagues: [],
       predictionSummary: null,
       selectedLeagueId: null,
       nextCursor: null,
@@ -328,43 +381,127 @@ export async function loadMatchPageView(
     };
   }
 
-  const filteredMatches = matchesData.filter(
-    (match) => match.competition_id === selectedLeagueId,
+  const selectedLeague = leagues.find((league) => league.id === selectedLeagueId) ?? null;
+  const limit = parsePageSize(
+    typeof options.limit === "number" ? String(options.limit) : options.limit,
   );
-  const filteredMatchIds = filteredMatches.map((match) => match.id);
-  const filteredTeamIds = [
-    ...new Set(
-      filteredMatches.flatMap((match) => [match.home_team_id, match.away_team_id]),
-    ),
-  ];
+  const offset = parseCursorOffset(options.cursor);
+  const upperBound = offset + limit - 1;
+  const cardsQuery: any = supabase
+    .from("dashboard_match_cards")
+    .select(
+      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, explanation_payload, market_explanation_payload, has_prediction, needs_review",
+    );
+  const scopedCardsQuery =
+    typeof cardsQuery.eq === "function"
+      ? cardsQuery.eq("league_id", selectedLeagueId)
+      : cardsQuery;
+  const orderedCardsQuery =
+    scopedCardsQuery
+      .order("sort_bucket", { ascending: true })
+      .order("sort_epoch", { ascending: true });
+  const { data: cardRows, error } = await orderedCardsQuery.range(offset, upperBound);
 
-  const [
-    teamsResult,
-    { data: predictionRows, error: predictionsError },
-    { data: snapshotRows, error: snapshotsError },
-  ] = await Promise.all([
-    supabase.from("teams").select("id, name, crest_url").in("id", filteredTeamIds),
-    supabase
-      .from("predictions")
-      .select(
-        "match_id, snapshot_id, recommended_pick, confidence_score, explanation_payload, created_at",
-      )
-      .in("match_id", filteredMatchIds)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("match_snapshots")
-      .select("id, checkpoint_type")
-      .in("match_id", filteredMatchIds),
-  ]);
-
-  if (predictionsError || snapshotsError) {
-    throw new Error("related match queries failed");
+  if (error) {
+    throw new Error(`dashboard card query failed: ${error.message}`);
   }
+
+  const items = ((cardRows ?? []) as DashboardMatchCardRow[]).map((row) => {
+    const mainRecommendation = row.has_prediction
+      ? normalizeMainRecommendation(
+          row.explanation_payload,
+          row.representative_recommended_pick ?? "UNKNOWN",
+          Number(row.representative_confidence_score ?? 0),
+        )
+      : null;
+    const valueRecommendation = row.has_prediction
+      ? normalizeValueRecommendation(row.market_explanation_payload)
+      : null;
+    const variantMarkets = row.has_prediction
+      ? normalizeVariantMarkets(row.market_explanation_payload)
+      : [];
+
+    return {
+      id: row.id,
+      leagueId: row.league_id,
+      leagueLabel: row.league_label,
+      leagueEmblemUrl: row.league_emblem_url,
+      homeTeam: row.home_team,
+      homeTeamLogoUrl: row.home_team_logo_url,
+      awayTeam: row.away_team,
+      awayTeamLogoUrl: row.away_team_logo_url,
+      kickoffAt: row.kickoff_at,
+      finalResult: row.final_result,
+      homeScore: row.home_score,
+      awayScore: row.away_score,
+      status: deriveMatchStatus({
+        finalResult: row.final_result,
+        hasPrediction: row.has_prediction,
+        needsReview: row.needs_review,
+      }),
+      recommendedPick: mainRecommendation?.recommended
+        ? mainRecommendation.pick
+        : null,
+      confidence: mainRecommendation?.recommended
+        ? mainRecommendation.confidence
+        : null,
+      mainRecommendation,
+      valueRecommendation,
+      variantMarkets,
+      noBetReason: mainRecommendation?.recommended
+        ? null
+        : (mainRecommendation?.noBetReason ?? null),
+      ...(row.has_prediction && typeof row.explanation_payload === "object"
+        ? { explanationPayload: row.explanation_payload }
+        : {}),
+      needsReview: row.needs_review,
+    };
+  });
+
+  return {
+    items,
+    leagues: leagues.map((league) => ({
+      id: league.id,
+      label: league.label,
+      emblemUrl: league.emblemUrl,
+      matchCount: league.matchCount,
+      reviewCount: league.reviewCount,
+    })),
+    predictionSummary: selectedLeague
+      ? {
+          predictedCount: (selectedLeague as typeof selectedLeague & { predictedCount: number }).predictedCount,
+          evaluatedCount: (selectedLeague as typeof selectedLeague & { evaluatedCount: number }).evaluatedCount,
+          correctCount: (selectedLeague as typeof selectedLeague & { correctCount: number }).correctCount,
+          incorrectCount: (selectedLeague as typeof selectedLeague & { incorrectCount: number }).incorrectCount,
+          successRate: (selectedLeague as typeof selectedLeague & { successRate: number | null }).successRate,
+        }
+      : null,
+    selectedLeagueId,
+    nextCursor:
+      selectedLeague && offset + limit < selectedLeague.matchCount
+        ? String(offset + limit)
+        : null,
+    totalMatches: selectedLeague?.matchCount ?? 0,
+  };
+}
+
+async function loadTeamLabels(
+  supabase: ApiSupabaseClient,
+  teamIds: string[],
+) {
+  if (teamIds.length === 0) {
+    return new Map<string, { label: string; crestUrl: string | null }>();
+  }
+
+  const teamsResult = await supabase
+    .from("teams")
+    .select("id, name, crest_url")
+    .in("id", teamIds);
 
   let teams = teamsResult.data;
   let teamsError = teamsResult.error;
   if (teamsError?.message?.includes("crest_url")) {
-    const fallback = await supabase.from("teams").select("id, name").in("id", filteredTeamIds);
+    const fallback = await supabase.from("teams").select("id, name").in("id", teamIds);
     teams = (fallback.data ?? []).map((row) => ({
       ...row,
       crest_url: null,
@@ -376,11 +513,125 @@ export async function loadMatchPageView(
     throw new Error("related match queries failed");
   }
 
-  const teamById = new Map(
+  return new Map(
     (teams ?? []).map((row) => [
       row.id,
       { label: row.name, crestUrl: row.crest_url },
     ]),
+  );
+}
+
+function buildReviewMap(
+  reviewRows: Array<{ match_id: string; cause_tags: unknown }> | null,
+) {
+  const reviewByMatchId = new Map<string, { needsReview: boolean }>();
+
+  for (const row of reviewRows ?? []) {
+    if (!reviewByMatchId.has(row.match_id)) {
+      const causeTags = Array.isArray(row.cause_tags) ? row.cause_tags : [];
+      reviewByMatchId.set(row.match_id, { needsReview: causeTags.length > 0 });
+    }
+  }
+
+  return reviewByMatchId;
+}
+
+async function loadSelectedLeaguePageView(
+  supabase: ApiSupabaseClient,
+  leagueId: string,
+  options: LoadMatchItemsOptions,
+): Promise<MatchListView> {
+  const matchesBaseQuery: any = supabase
+    .from("matches")
+    .select(
+      "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result, home_score, away_score",
+    );
+  const scopedMatchesQuery =
+    typeof matchesBaseQuery.eq === "function"
+      ? matchesBaseQuery.eq("competition_id", leagueId)
+      : matchesBaseQuery;
+  const { data: matchRows, error } = await scopedMatchesQuery
+    .order("kickoff_at", { ascending: false })
+    .limit(MAX_MATCH_SUMMARY_ROWS);
+
+  if (error) {
+    throw new Error(`matches query failed: ${error.message}`);
+  }
+
+  const matchesData = (matchRows ?? []) as MatchSourceRow[];
+  const competitionById = await loadCompetitionLabels(supabase, [leagueId]);
+  if (matchesData.length === 0) {
+    return {
+      items: [],
+      leagues: [],
+      predictionSummary: null,
+      selectedLeagueId: leagueId,
+      nextCursor: null,
+      totalMatches: 0,
+    };
+  }
+
+  const matchIds = matchesData.map((match) => match.id);
+  const sortedMatches = [...matchesData].sort((left, right) => {
+    const leftIsUpcoming = left.final_result === null;
+    const rightIsUpcoming = right.final_result === null;
+    if (leftIsUpcoming !== rightIsUpcoming) {
+      return leftIsUpcoming ? -1 : 1;
+    }
+
+    const leftKickoff = parseKickoffTime(left.kickoff_at);
+    const rightKickoff = parseKickoffTime(right.kickoff_at);
+    if (leftIsUpcoming) {
+      return leftKickoff - rightKickoff;
+    }
+    return rightKickoff - leftKickoff;
+  });
+  const limit = parsePageSize(
+    typeof options.limit === "number" ? String(options.limit) : options.limit,
+  );
+  const offset = parseCursorOffset(options.cursor);
+  const pagedMatches = sortedMatches.slice(offset, offset + limit);
+  const nextCursor =
+    offset + limit < sortedMatches.length ? String(offset + limit) : null;
+  const pagedMatchIds = pagedMatches.map((match) => match.id);
+  const pagedTeamIds = [
+    ...new Set(
+      pagedMatches.flatMap((match) => [match.home_team_id, match.away_team_id]),
+    ),
+  ];
+  const [
+    { data: reviewRows, error: reviewsError },
+    teamById,
+    { data: predictionRows, error: predictionsError },
+    { data: snapshotRows, error: snapshotsError },
+  ] = await Promise.all([
+    pagedMatchIds.length > 0
+      ? supabase
+          .from("post_match_reviews")
+          .select("match_id, cause_tags, created_at")
+          .in("match_id", pagedMatchIds)
+          .order("created_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
+    loadTeamLabels(supabase, pagedTeamIds),
+    supabase
+      .from("predictions")
+      .select(
+        "match_id, snapshot_id, recommended_pick, confidence_score, explanation_payload, created_at",
+      )
+      .in("match_id", matchIds)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("match_snapshots")
+      .select("id, checkpoint_type")
+      .in("match_id", matchIds),
+  ]);
+
+  if (reviewsError || predictionsError || snapshotsError) {
+    throw new Error("related match queries failed");
+  }
+
+  const reviewByMatchId = buildReviewMap(
+    (reviewRows ?? []) as Array<{ match_id: string; cause_tags: unknown }>,
   );
   const snapshotsById = new Map(
     (snapshotRows ?? []).map((row) => [
@@ -434,55 +685,7 @@ export async function loadMatchPageView(
         : null,
     );
   }
-  const predictionSummary = buildPredictionSummary(filteredMatches, predictionByMatchId);
-  const sortPriority = (
-    matchId: string,
-    finalResult: string | null,
-  ) => {
-    const prediction = predictionByMatchId.get(matchId);
-    const review = reviewByMatchId.get(matchId);
-    const mainRecommendation = prediction
-      ? normalizeMainRecommendation(
-          prediction.explanationPayload,
-          prediction.recommendedPick,
-          prediction.confidence,
-        )
-      : null;
-    if (mainRecommendation?.recommended) {
-      return 0;
-    }
-    if (review?.needsReview) {
-      return 1;
-    }
-    if (prediction) {
-      return 2;
-    }
-    if (finalResult === null) {
-      return 3;
-    }
-    return 4;
-  };
-  const sortedMatches = [...filteredMatches].sort((left, right) => {
-    const leftPriority = sortPriority(left.id, left.final_result);
-    const rightPriority = sortPriority(right.id, right.final_result);
-    if (leftPriority !== rightPriority) {
-      return leftPriority - rightPriority;
-    }
-
-    const leftKickoff = parseKickoffTime(left.kickoff_at);
-    const rightKickoff = parseKickoffTime(right.kickoff_at);
-    if (left.final_result === null && right.final_result === null) {
-      return leftKickoff - rightKickoff;
-    }
-    return rightKickoff - leftKickoff;
-  });
-  const limit = parsePageSize(
-    typeof options.limit === "number" ? String(options.limit) : options.limit,
-  );
-  const offset = parseCursorOffset(options.cursor);
-  const pagedMatches = sortedMatches.slice(offset, offset + limit);
-  const nextCursor =
-    offset + limit < sortedMatches.length ? String(offset + limit) : null;
+  const predictionSummary = buildPredictionSummary(matchesData, predictionByMatchId);
 
   const items = pagedMatches.map((match) => {
     const prediction = predictionByMatchId.get(match.id);
@@ -503,8 +706,7 @@ export async function loadMatchPageView(
     return {
       id: match.id,
       leagueId: match.competition_id,
-      leagueLabel:
-        competitionById.get(match.competition_id)?.label ?? match.competition_id,
+      leagueLabel: competitionById.get(match.competition_id)?.label ?? match.competition_id,
       leagueEmblemUrl: competitionById.get(match.competition_id)?.emblemUrl ?? null,
       homeTeam: teamById.get(match.home_team_id)?.label ?? match.home_team_id,
       homeTeamLogoUrl: teamById.get(match.home_team_id)?.crestUrl ?? null,
@@ -540,11 +742,51 @@ export async function loadMatchPageView(
 
   return {
     items,
-    leagues,
+    leagues: [],
     predictionSummary,
-    selectedLeagueId,
+    selectedLeagueId: leagueId,
     nextCursor,
-    totalMatches: filteredMatches.length,
+    totalMatches: matchesData.length,
+  };
+}
+
+export async function loadMatchPageView(
+  supabase: ApiSupabaseClient,
+  options: LoadMatchItemsOptions = {},
+): Promise<MatchListView> {
+  if (options.leagueId) {
+    return loadSelectedLeaguePageView(supabase, options.leagueId, options);
+  }
+
+  const leagues = await loadBootstrapLeagueSummaries(supabase);
+  const selectedLeagueId = leagues[0]?.id ?? null;
+  if (!selectedLeagueId) {
+    return {
+      items: [],
+      leagues: [],
+      predictionSummary: null,
+      selectedLeagueId: null,
+      nextCursor: null,
+      totalMatches: 0,
+    };
+  }
+
+  const selectedLeaguePage = await loadSelectedLeaguePageView(
+    supabase,
+    selectedLeagueId,
+    options,
+  );
+
+  return {
+    ...selectedLeaguePage,
+    leagues: leagues.map((league) => ({
+      id: league.id,
+      label: league.label,
+      emblemUrl: league.emblemUrl,
+      matchCount: league.matchCount,
+      reviewCount: league.reviewCount,
+    })),
+    selectedLeagueId,
   };
 }
 
@@ -561,6 +803,10 @@ matches.get("/", async (c) => {
   const leagueId = c.req.query("leagueId") ?? undefined;
   const cursor = c.req.query("cursor") ?? undefined;
   const limit = c.req.query("limit") ?? undefined;
+  c.header(
+    "Cache-Control",
+    "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+  );
 
   if (!supabase) {
     return c.json({
@@ -574,13 +820,25 @@ matches.get("/", async (c) => {
   }
   try {
     return c.json(
-      await loadMatchPageView(supabase, {
+      await loadDashboardMatchCardsPageView(supabase, {
         leagueId,
         cursor,
         limit,
       }),
     );
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error
+      && isMissingRelationError({ message: error.message })
+    ) {
+      return c.json(
+        await loadMatchPageView(supabase, {
+          leagueId,
+          cursor,
+          limit,
+        }),
+      );
+    }
     return c.json(
       {
         items: [],

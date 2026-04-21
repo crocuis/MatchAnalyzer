@@ -70,11 +70,14 @@ function resolveLeaguePayload(
     totalMatches?: number;
   },
   t: (key: string) => string,
+  currentLeagues: LeagueSummary[] = [],
 ) {
   const resolvedLeagues =
     response.leagues && response.leagues.length > 0
       ? response.leagues
-      : deriveLeagueSummaries(response.items, t);
+      : currentLeagues.length > 0
+        ? currentLeagues
+        : deriveLeagueSummaries(response.items, t);
   const resolvedLeagueId =
     response.selectedLeagueId
     ?? resolvedLeagues[0]?.id
@@ -262,7 +265,7 @@ export default function App() {
         if (!isMounted) {
           return;
         }
-        const resolved = resolveLeaguePayload(response, t);
+        const resolved = resolveLeaguePayload(response, t, leagues);
         setLeagues(resolved.leagues);
         setLeaguePages((current) => ({
           ...current,
@@ -286,7 +289,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [leaguePages, selectedLeagueId]);
+  }, [leaguePages, leagues, selectedLeagueId]);
 
   const fallbackSelectedMatchId = leagueMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
@@ -361,7 +364,6 @@ export default function App() {
     }
 
     void ensureMatchDetail(activeMatchId);
-    void ensureEvaluationData();
   }, [activeMatchId, isModalOpen]);
 
   useEffect(() => {
@@ -410,7 +412,7 @@ export default function App() {
           cursor: nextCursor,
           limit: PAGE_SIZE,
         });
-        const resolved = resolveLeaguePayload(response, t);
+        const resolved = resolveLeaguePayload(response, t, leagues);
         setLeagues(resolved.leagues);
         setLeaguePages((current) => {
           const existing = current[leagueId]?.items ?? [];
@@ -530,14 +532,6 @@ export default function App() {
           onClose={handleCloseModal}
           onOpenReport={handleOpenReport}
           prediction={activeDetail?.prediction ?? null}
-          evaluationReport={evaluationReport}
-          evaluationHistoryView={evaluationHistoryView}
-          modelRegistryReport={modelRegistryReport}
-          fusionPolicyReport={fusionPolicyReport}
-          fusionPolicyHistoryView={fusionPolicyHistoryView}
-          reviewAggregationReport={reviewAggregationReport}
-          reviewAggregationHistoryView={reviewAggregationHistoryView}
-          promotionDecisionReport={promotionDecisionReport}
           checkpoints={activeDetail?.checkpoints ?? []}
           review={activeDetail?.review ?? null}
         />

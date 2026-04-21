@@ -86,4 +86,86 @@ describe("match pagination fetcher", () => {
       "/api/matches?leagueId=premier-league&cursor=4&limit=4",
     );
   });
+
+  it("preserves server ordering for fetched matches", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        items: [
+          {
+            id: "recent-older",
+            leagueId: "premier-league",
+            homeTeam: "Chelsea",
+            awayTeam: "Arsenal",
+            kickoffAt: "2026-04-12T19:00:00Z",
+            status: "Review Ready",
+            finalResult: "HOME",
+            homeScore: 2,
+            awayScore: 1,
+            recommendedPick: "HOME",
+            confidence: 0.72,
+            needsReview: false,
+          },
+          {
+            id: "upcoming-later",
+            leagueId: "premier-league",
+            homeTeam: "Liverpool",
+            awayTeam: "Brentford",
+            kickoffAt: "2026-04-28T19:00:00Z",
+            status: "Prediction Ready",
+            finalResult: null,
+            homeScore: null,
+            awayScore: null,
+            recommendedPick: "HOME",
+            confidence: 0.58,
+            needsReview: false,
+          },
+          {
+            id: "recent-newer",
+            leagueId: "premier-league",
+            homeTeam: "Manchester City",
+            awayTeam: "Fulham",
+            kickoffAt: "2026-04-20T19:00:00Z",
+            status: "Needs Review",
+            finalResult: "AWAY",
+            homeScore: 1,
+            awayScore: 2,
+            recommendedPick: "HOME",
+            confidence: 0.63,
+            needsReview: true,
+          },
+          {
+            id: "upcoming-sooner",
+            leagueId: "premier-league",
+            homeTeam: "Tottenham",
+            awayTeam: "Brighton",
+            kickoffAt: "2026-04-24T19:00:00Z",
+            status: "Scheduled",
+            finalResult: null,
+            homeScore: null,
+            awayScore: null,
+            recommendedPick: null,
+            confidence: null,
+            needsReview: false,
+          },
+        ],
+        leagues: [],
+        selectedLeagueId: "premier-league",
+        nextCursor: null,
+        totalMatches: 4,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchMatches } = await import("../lib/api");
+
+    const response = await fetchMatches({ leagueId: "premier-league", limit: 4 });
+
+    expect(response.items.map((item) => item.id)).toEqual([
+      "recent-older",
+      "upcoming-later",
+      "recent-newer",
+      "upcoming-sooner",
+    ]);
+  });
 });

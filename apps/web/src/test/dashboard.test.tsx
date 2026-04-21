@@ -176,12 +176,14 @@ beforeEach(async () => {
             predictionSummary:
               leagueId === "champions-league"
                 ? {
+                    predictedCount: 1,
                     evaluatedCount: 1,
                     correctCount: 1,
                     incorrectCount: 0,
                     successRate: 1,
                   }
                 : {
+                    predictedCount: 2,
                     evaluatedCount: 1,
                     correctCount: 0,
                     incorrectCount: 1,
@@ -1010,6 +1012,29 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("Match Analysis Hub")).toBeInTheDocument();
   });
 
+  it("does not fetch evaluation reports when opening the match detail modal", async () => {
+    render(<App />);
+
+    const fetchMock = vi.mocked(fetch);
+
+    const matchButton = await screen.findByRole("button", {
+      name: "Chelsea vs Manchester City",
+    });
+    fireEvent.click(matchButton);
+
+    await screen.findByRole("dialog", { name: "Chelsea vs Manchester City" });
+
+    const calledUrls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(calledUrls).not.toContain("/api/predictions/source-evaluation/latest");
+    expect(calledUrls).not.toContain("/api/predictions/source-evaluation/history");
+    expect(calledUrls).not.toContain("/api/predictions/model-registry/latest");
+    expect(calledUrls).not.toContain("/api/predictions/fusion-policy/latest");
+    expect(calledUrls).not.toContain("/api/predictions/fusion-policy/history");
+    expect(calledUrls).not.toContain("/api/reviews/aggregation/latest");
+    expect(calledUrls).not.toContain("/api/reviews/aggregation/history");
+    expect(calledUrls).not.toContain("/api/rollouts/promotion/latest");
+  });
+
   it("renders league tabs and summary metadata before the match grid", async () => {
     render(<App />);
 
@@ -1024,6 +1049,7 @@ describe("dashboard redesign", () => {
     expect(screen.getAllByText(/3 matches/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/1 need review/i)).toBeInTheDocument();
     expect(screen.getByRole("tabpanel", { name: "Match Timeline" })).toBeInTheDocument();
+    expect(screen.getByText("Showing 3 of 3 matches")).toBeInTheDocument();
   });
 
   it("renders a card-grid style match list with operator metadata", async () => {
@@ -1657,13 +1683,15 @@ describe("dashboard redesign", () => {
     expect(screen.getAllByText("Away").length).toBeGreaterThan(0);
     expect(screen.getAllByText("major directional miss").length).toBeGreaterThan(0);
     expect(screen.getByText("Market outperformed model")).toBeInTheDocument();
-    expect(screen.getByText("Calibration evidence")).toBeInTheDocument();
-    expect(screen.getByText("67% hit rate · 6 matches")).toBeInTheDocument();
-    expect(screen.getByText("Source Performance")).toBeInTheDocument();
-    expect(screen.getByText("Checkpoint performance")).toBeInTheDocument();
-    expect(screen.getByText("LINEUP CONFIRMED")).toBeInTheDocument();
-    expect(screen.getAllByText("Prediction market segment").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("with prediction market").length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getByText("Calibration evidence")).toBeInTheDocument();
+      expect(screen.getByText("67% hit rate · 6 matches")).toBeInTheDocument();
+      expect(screen.getByText("Source Performance")).toBeInTheDocument();
+      expect(screen.getByText("Checkpoint performance")).toBeInTheDocument();
+      expect(screen.getByText("LINEUP CONFIRMED")).toBeInTheDocument();
+      expect(screen.getAllByText("Prediction market segment").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("with prediction market").length).toBeGreaterThan(0);
+    });
   });
 
   it("closes the detail modal on Escape", async () => {
