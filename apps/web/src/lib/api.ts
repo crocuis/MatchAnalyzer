@@ -121,6 +121,8 @@ export interface PredictionFeatureMetadata {
 }
 
 export interface PredictionExplanationPayload {
+  missingSignals?: string[];
+  missing_signals?: string[];
   rawConfidence?: number;
   raw_confidence_score?: number;
   calibratedConfidence?: number;
@@ -322,6 +324,7 @@ export interface MatchListResponse {
 }
 
 export interface LeaguePredictionSummary {
+  predictedCount: number;
   evaluatedCount: number;
   correctCount: number;
   incorrectCount: number;
@@ -407,6 +410,16 @@ export interface ReviewAggregationHistoryResponse {
   history: Array<ReportHistoryEntry<PostMatchReviewAggregationReport>>;
   shadow: HistoryLaneSummary | null;
   rollout: HistoryLaneSummary | null;
+}
+
+export function isDashboardRecentMatch(
+  match: Pick<MatchCardRow, "status" | "finalResult">,
+): boolean {
+  return (
+    match.status === "Needs Review"
+    || match.status === "Review Ready"
+    || Boolean(match.finalResult && match.finalResult !== "PENDING")
+  );
 }
 
 async function fetchJson<T>(path: string): Promise<T> {

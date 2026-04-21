@@ -111,12 +111,16 @@
     }
   },
   "matchTable": {
+    "upcomingMatches": "Upcoming Matches",
+    "recentResults": "Recent Results",
     "loadMore": "Load More Matches",
     "showingStatus": "Showing {{count}} of {{total}} matches",
     "allLoaded": "All matches loaded",
     "summary": {
       "title": "League prediction summary",
       "caption": "Settled matches included in evaluation, regardless of bet recommendation",
+      "predictionData": "Prediction data",
+      "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "Evaluated",
       "correct": "Correct",
       "incorrect": "Incorrect",

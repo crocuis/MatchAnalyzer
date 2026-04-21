@@ -111,12 +111,16 @@
     }
   },
   "matchTable": {
+    "upcomingMatches": "예정된 경기",
+    "recentResults": "최근 경기 결과",
     "loadMore": "매치 더 보기",
     "showingStatus": "전체 {{total}}개 중 {{count}}개 매치 표시 중",
     "allLoaded": "모든 매치를 불러왔습니다",
     "summary": {
       "title": "리그 예측 요약",
       "caption": "베팅 추천 여부와 관계없이 평가 대상에 포함된 종료 경기 기준",
+      "predictionData": "예측 데이터",
+      "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "평가 대상",
       "correct": "적중",
       "incorrect": "미적중",

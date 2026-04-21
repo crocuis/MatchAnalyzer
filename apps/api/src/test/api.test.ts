@@ -160,6 +160,15 @@ describe("prediction API", () => {
     expect(response.headers.get("access-control-allow-methods")).toContain("GET");
   });
 
+  it("sets cache headers for the matches payload", async () => {
+    const response = await app.request("/matches");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+    );
+  });
+
   it("surfaces query failures from the route helpers", async () => {
     const failingQuery = {
       select: vi.fn().mockReturnThis(),
@@ -186,8 +195,31 @@ describe("prediction API", () => {
   });
 
   it("pages matches by league with a next cursor and league summaries", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "champions-league",
+            league_label: "UEFA Champions League",
+            league_emblem_url: null,
+            match_count: 1,
+            review_count: 0,
+          },
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 4,
+            review_count: 1,
+          },
+        ],
+        error: null,
+      }),
+    };
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue({
         data: [
@@ -223,10 +255,10 @@ describe("prediction API", () => {
           },
           {
             id: "match-4",
-            competition_id: "champions-league",
-            kickoff_at: "2026-04-20T20:00:00Z",
-            home_team_id: "inter",
-            away_team_id: "bayern",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-23T19:00:00Z",
+            home_team_id: "villa",
+            away_team_id: "wolves",
             final_result: null,
             home_score: null,
             away_score: null,
@@ -238,10 +270,7 @@ describe("prediction API", () => {
     const competitions = {
       select: vi.fn().mockReturnThis(),
       in: vi.fn().mockResolvedValue({
-        data: [
-          { id: "premier-league", name: "Premier League", emblem_url: null },
-          { id: "champions-league", name: "UEFA Champions League", emblem_url: null },
-        ],
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
         error: null,
       }),
     };
@@ -279,6 +308,7 @@ describe("prediction API", () => {
 
     const from = vi
       .fn()
+      .mockReturnValueOnce(leagueSummaries)
       .mockReturnValueOnce(matchesQuery)
       .mockReturnValueOnce(competitions)
       .mockReturnValueOnce(reviews)
@@ -287,21 +317,21 @@ describe("prediction API", () => {
       .mockReturnValueOnce(snapshots);
 
     const page = await loadMatchPageView({ from } as never, {
-      leagueId: "premier-league",
       limit: "2",
       cursor: "0",
     });
 
     expect(page.selectedLeagueId).toBe("premier-league");
+    expect(matchesQuery.eq).toHaveBeenCalledWith("competition_id", "premier-league");
     expect(page.items).toHaveLength(2);
-    expect(page.totalMatches).toBe(3);
+    expect(page.totalMatches).toBe(4);
     expect(page.nextCursor).toBe("2");
     expect(page.leagues).toEqual([
       {
         id: "premier-league",
         label: "Premier League",
         emblemUrl: null,
-        matchCount: 3,
+        matchCount: 4,
         reviewCount: 1,
       },
       {
@@ -312,6 +342,184 @@ describe("prediction API", () => {
         reviewCount: 0,
       },
     ]);
+  });
+
+  it("returns an empty bootstrap payload when the dashboard league summary view has no active leagues", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [],
+        error: null,
+      }),
+    };
+
+    const page = await loadMatchPageView(
+      { from: vi.fn().mockReturnValueOnce(leagueSummaries) } as never,
+    );
+
+    expect(page).toEqual({
+      items: [],
+      leagues: [],
+      predictionSummary: null,
+      selectedLeagueId: null,
+      nextCursor: null,
+      totalMatches: 0,
+    });
+  });
+
+  it("uses a league-scoped query when the caller already knows the selected league", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-20T19:00:00Z",
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "chelsea", name: "Chelsea", crest_url: null },
+          { id: "man-city", name: "Manchester City", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(matchesQuery)
+      .mockReturnValueOnce(competitions)
+      .mockReturnValueOnce(reviews)
+      .mockReturnValueOnce(teams)
+      .mockReturnValueOnce(predictions)
+      .mockReturnValueOnce(snapshots);
+
+    const page = await loadMatchPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "1",
+      cursor: "0",
+    });
+
+    expect(matchesQuery.eq).toHaveBeenCalledWith("competition_id", "premier-league");
+    expect(competitions.in).toHaveBeenCalledWith("id", ["premier-league"]);
+    expect(page.leagues).toEqual([]);
+    expect(page.selectedLeagueId).toBe("premier-league");
+  });
+
+  it("loads team metadata only for the paged league matches", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-20T19:00:00Z",
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+          {
+            id: "match-2",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-21T19:00:00Z",
+            home_team_id: "arsenal",
+            away_team_id: "fulham",
+            final_result: "HOME",
+            home_score: 2,
+            away_score: 0,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "chelsea", name: "Chelsea", crest_url: null },
+          { id: "man-city", name: "Manchester City", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(matchesQuery)
+      .mockReturnValueOnce(competitions)
+      .mockReturnValueOnce(reviews)
+      .mockReturnValueOnce(teams)
+      .mockReturnValueOnce(predictions)
+      .mockReturnValueOnce(snapshots);
+
+    await loadMatchPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "1",
+      cursor: "0",
+    });
+
+    expect(teams.in).toHaveBeenCalledWith("id", ["chelsea", "man-city"]);
   });
 
   it("returns full-league prediction accuracy summary independent of the current page size", async () => {
@@ -472,6 +680,7 @@ describe("prediction API", () => {
     expect(page.totalMatches).toBe(4);
     expect(page.nextCursor).toBe("1");
     expect(page.predictionSummary).toEqual({
+      predictedCount: 4,
       evaluatedCount: 3,
       correctCount: 2,
       incorrectCount: 1,
@@ -479,7 +688,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("prioritizes actionable recommended matches ahead of older no-bet rows", async () => {
+  it("orders upcoming fixtures before recent results for the dashboard timeline", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
@@ -627,8 +836,121 @@ describe("prediction API", () => {
     });
 
     expect(page.items).toHaveLength(2);
-    expect(page.items[0]?.id).toBe("match-actionable");
-    expect(page.items[0]?.recommendedPick).toBe("HOME");
+    expect(page.items[0]?.id).toBe("match-future-no-bet");
+    expect(page.items[1]?.id).toBe("match-actionable");
+  });
+
+  it("prefers the latest kickoff window before page slicing so upcoming matches are not pushed out by old history", async () => {
+    let orderedAscending = true;
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn((_column: string, options?: { ascending?: boolean }) => {
+        orderedAscending = options?.ascending ?? true;
+        return matchesQuery;
+      }),
+      limit: vi.fn().mockImplementation(async () => ({
+        data: orderedAscending
+          ? [
+              {
+                id: "match-old-1",
+                competition_id: "premier-league",
+                kickoff_at: "2026-01-27T19:00:00Z",
+                home_team_id: "old-home-1",
+                away_team_id: "old-away-1",
+                final_result: "HOME",
+                home_score: 2,
+                away_score: 0,
+              },
+              {
+                id: "match-old-2",
+                competition_id: "premier-league",
+                kickoff_at: "2026-01-28T19:00:00Z",
+                home_team_id: "old-home-2",
+                away_team_id: "old-away-2",
+                final_result: "DRAW",
+                home_score: 1,
+                away_score: 1,
+              },
+            ]
+          : [
+              {
+                id: "match-upcoming",
+                competition_id: "premier-league",
+                kickoff_at: "2026-04-27T19:00:00Z",
+                home_team_id: "future-home",
+                away_team_id: "future-away",
+                final_result: null,
+                home_score: null,
+                away_score: null,
+              },
+              {
+                id: "match-recent",
+                competition_id: "premier-league",
+                kickoff_at: "2026-04-21T19:00:00Z",
+                home_team_id: "recent-home",
+                away_team_id: "recent-away",
+                final_result: "AWAY",
+                home_score: 1,
+                away_score: 3,
+              },
+            ],
+        error: null,
+      })),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "old-home-1", name: "Old Home 1", crest_url: null },
+          { id: "old-away-1", name: "Old Away 1", crest_url: null },
+          { id: "old-home-2", name: "Old Home 2", crest_url: null },
+          { id: "old-away-2", name: "Old Away 2", crest_url: null },
+          { id: "future-home", name: "Future Home", crest_url: null },
+          { id: "future-away", name: "Future Away", crest_url: null },
+          { id: "recent-home", name: "Recent Home", crest_url: null },
+          { id: "recent-away", name: "Recent Away", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(matchesQuery)
+      .mockReturnValueOnce(competitions)
+      .mockReturnValueOnce(reviews)
+      .mockReturnValueOnce(teams)
+      .mockReturnValueOnce(predictions)
+      .mockReturnValueOnce(snapshots);
+
+    const page = await loadMatchPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "2",
+      cursor: "0",
+    });
+
+    expect(page.items.map((item) => item.id)).toEqual(["match-upcoming", "match-recent"]);
   });
 
   it("builds current/previous source evaluation history views with optional shadow and rollout metadata", async () => {
@@ -801,18 +1123,27 @@ describe("prediction API", () => {
       order: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
 
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(matchesQuery)
-      .mockReturnValueOnce(competitionsPrimary)
-      .mockReturnValueOnce(reviewsQuery)
-      .mockReturnValueOnce(competitionsFallback)
-      .mockReturnValueOnce(teamsPrimary)
-      .mockReturnValueOnce(predictionsQuery)
-      .mockReturnValueOnce(snapshotsQuery)
-      .mockReturnValueOnce(teamsFallback);
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") {
+        return competitionsPrimary.in.mock.calls.length === 0
+          ? competitionsPrimary
+          : competitionsFallback;
+      }
+      if (tableName === "post_match_reviews") return reviewsQuery;
+      if (tableName === "teams") {
+        return teamsPrimary.in.mock.calls.length === 0
+          ? teamsPrimary
+          : teamsFallback;
+      }
+      if (tableName === "predictions") return predictionsQuery;
+      if (tableName === "match_snapshots") return snapshotsQuery;
+      throw new Error(`unexpected table ${tableName}`);
+    });
 
-    const items = await loadMatchItems({ from } as never);
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+    });
 
     expect(items).toEqual([
       {
@@ -930,16 +1261,19 @@ describe("prediction API", () => {
       order: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
 
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(matchesQuery)
-      .mockReturnValueOnce(competitions)
-      .mockReturnValueOnce(reviews)
-      .mockReturnValueOnce(teams)
-      .mockReturnValueOnce(predictions)
-      .mockReturnValueOnce(snapshots);
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "post_match_reviews") return reviews;
+      if (tableName === "teams") return teams;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      throw new Error(`unexpected table ${tableName}`);
+    });
 
-    const items = await loadMatchItems({ from } as never);
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+    });
 
     expect(items[0]?.recommendedPick).toBe("DRAW");
     expect(items[0]?.confidence).toBe(0.41);
@@ -1030,16 +1364,19 @@ describe("prediction API", () => {
       order: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
 
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(matchesQuery)
-      .mockReturnValueOnce(competitions)
-      .mockReturnValueOnce(reviews)
-      .mockReturnValueOnce(teams)
-      .mockReturnValueOnce(predictions)
-      .mockReturnValueOnce(snapshots);
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "post_match_reviews") return reviews;
+      if (tableName === "teams") return teams;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      throw new Error(`unexpected table ${tableName}`);
+    });
 
-    const items = await loadMatchItems({ from } as never);
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+    });
 
     expect(items[0]?.recommendedPick).toBe("AWAY");
     expect(items[0]?.confidence).toBe(0.61);
@@ -1144,16 +1481,19 @@ describe("prediction API", () => {
       order: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
 
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(matchesQuery)
-      .mockReturnValueOnce(competitions)
-      .mockReturnValueOnce(reviews)
-      .mockReturnValueOnce(teams)
-      .mockReturnValueOnce(predictions)
-      .mockReturnValueOnce(snapshots);
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "post_match_reviews") return reviews;
+      if (tableName === "teams") return teams;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      throw new Error(`unexpected table ${tableName}`);
+    });
 
-    const items = await loadMatchItems({ from } as never);
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+    });
 
     expect(items[0]?.recommendedPick).toBeNull();
     expect(items[0]?.confidence).toBeNull();

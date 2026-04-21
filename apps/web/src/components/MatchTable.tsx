@@ -1,6 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { LeaguePredictionSummary, MatchCardRow } from "../lib/api";
+import {
+  isDashboardRecentMatch,
+  type LeaguePredictionSummary,
+  type MatchCardRow,
+} from "../lib/api";
 import MatchCard from "./MatchCard";
 
 interface MatchTableProps {
@@ -28,12 +32,15 @@ export default function MatchTable({
   const isAllLoaded = matches.length >= totalMatches;
   const progressPercent = Math.min((matches.length / totalMatches) * 100, 100);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const successRate = predictionSummary?.successRate ?? 0;
   const successRateLabel =
     predictionSummary?.successRate === null || predictionSummary === null
       ? t("matchTable.summary.noData")
-      : t("matchTable.summary.successRateValue", {
-          rate: Math.round(predictionSummary.successRate * 100),
-        });
+      : Math.round(successRate * 100);
+  const groupedMatches = useMemo(() => ({
+    upcoming: matches.filter((match) => !isDashboardRecentMatch(match)),
+    past: matches.filter((match) => isDashboardRecentMatch(match)),
+  }), [matches]);
 
   useEffect(() => {
     if (isAllLoaded || isLoadingMore || !loadMoreRef.current) {
@@ -49,6 +56,18 @@ export default function MatchTable({
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
   }, [isAllLoaded, isLoadingMore, onLoadMore]);
+
+  // SVG Gauge calculations
+  const radius = 60;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (successRate * circumference);
+
+  // Dynamic color for the gauge
+  const gaugeColor = successRate >= 0.7
+    ? "var(--accent-success)"
+    : successRate <= 0.4 && successRate > 0
+    ? "var(--accent-danger)"
+    : "var(--accent-primary)";
 
   return (
     <section
@@ -68,36 +87,82 @@ export default function MatchTable({
       </div>
 
       <section className="predictionSummaryBanner" aria-label={t("matchTable.summary.title")}>
-        <div className="predictionSummaryBannerHeader">
-          <span className="panelTitle" style={{ marginBottom: 0 }}>
-            {t("matchTable.summary.title")}
-          </span>
-          <span className="predictionSummaryBannerCaption">
-            {t("matchTable.summary.caption")}
-          </span>
+        <div className="predictionSummaryGauge">
+          <svg className="gaugeSvg" viewBox="0 0 140 140">
+            <circle className="gaugeBg" cx="70" cy="70" r={radius} />
+            <circle
+              className="gaugeValue"
+              cx="70"
+              cy="70"
+              r={radius}
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              style={{ stroke: gaugeColor }}
+            />
+          </svg>
+          <div className="gaugeInfo">
+            <span className="gaugePercent" style={{ color: gaugeColor }}>
+              {typeof successRateLabel === "number" ? `${successRateLabel}%` : successRateLabel}
+            </span>
+            <span className="gaugeLabel">{t("matchTable.summary.successRate")}</span>
+          </div>
         </div>
-        <div className="predictionSummaryGrid">
-          <div className="predictionSummaryStat">
-            <span className="metricLabel">{t("matchTable.summary.evaluated")}</span>
-            <strong className="predictionSummaryValue">
-              {predictionSummary?.evaluatedCount ?? 0}
-            </strong>
+
+        <div className="predictionSummaryContent">
+          <div className="predictionSummaryBannerHeader">
+            <span className="panelTitle" style={{ marginBottom: 0 }}>
+              {t("matchTable.summary.title")}
+            </span>
+            <span className="predictionSummaryBannerCaption">
+              {t("matchTable.summary.caption")}
+            </span>
           </div>
-          <div className="predictionSummaryStat">
-            <span className="metricLabel">{t("matchTable.summary.correct")}</span>
-            <strong className="predictionSummaryValue predictionSummaryValue-success">
-              {predictionSummary?.correctCount ?? 0}
-            </strong>
-          </div>
-          <div className="predictionSummaryStat">
-            <span className="metricLabel">{t("matchTable.summary.incorrect")}</span>
-            <strong className="predictionSummaryValue predictionSummaryValue-danger">
-              {predictionSummary?.incorrectCount ?? 0}
-            </strong>
-          </div>
-          <div className="predictionSummaryStat">
-            <span className="metricLabel">{t("matchTable.summary.successRate")}</span>
-            <strong className="predictionSummaryValue">{successRateLabel}</strong>
+          <div className="predictionSummaryGrid">
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>
+                </div>
+                <span className="metricLabel">{t("matchTable.summary.predictionData")}</span>
+              </div>
+              <strong className="predictionSummaryValue">
+                {predictionSummary?.predictedCount ?? 0}
+                <span className="predictionSummarySubValue"> / {totalMatches}</span>
+              </strong>
+            </div>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></svg>
+                </div>
+                <span className="metricLabel">{t("matchTable.summary.evaluated")}</span>
+              </div>
+              <strong className="predictionSummaryValue">
+                {predictionSummary?.evaluatedCount ?? 0}
+              </strong>
+            </div>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon" style={{ color: "var(--accent-success)" }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                </div>
+                <span className="metricLabel">{t("matchTable.summary.correct")}</span>
+              </div>
+              <strong className="predictionSummaryValue predictionSummaryValue-success">
+                {predictionSummary?.correctCount ?? 0}
+              </strong>
+            </div>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon" style={{ color: "var(--accent-danger)" }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                </div>
+                <span className="metricLabel">{t("matchTable.summary.incorrect")}</span>
+              </div>
+              <strong className="predictionSummaryValue predictionSummaryValue-danger">
+                {predictionSummary?.incorrectCount ?? 0}
+              </strong>
+            </div>
           </div>
         </div>
       </section>
@@ -108,16 +173,47 @@ export default function MatchTable({
         </div>
       ) : (
         <>
-          <div className="matchGrid">
-            {matches.map((match) => (
-              <MatchCard
-                key={match.id}
-                match={match}
-                isSelected={selectedMatchId === match.id}
-                onOpen={onOpen}
-              />
-            ))}
-          </div>
+          {groupedMatches.upcoming.length > 0 ? (
+            <div style={{ marginBottom: "40px" }}>
+              <h3
+                className="panelTitle"
+                style={{ fontSize: "1.1rem", marginBottom: "16px", color: "var(--accent-primary)" }}
+              >
+                {t("matchTable.upcomingMatches")}
+              </h3>
+              <div className="matchGrid">
+                {groupedMatches.upcoming.map((match) => (
+                  <MatchCard
+                    key={match.id}
+                    match={match}
+                    isSelected={selectedMatchId === match.id}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {groupedMatches.past.length > 0 ? (
+            <div>
+              <h3
+                className="panelTitle"
+                style={{ fontSize: "1.1rem", marginBottom: "16px", color: "var(--text-secondary)" }}
+              >
+                {t("matchTable.recentResults")}
+              </h3>
+              <div className="matchGrid">
+                {groupedMatches.past.map((match) => (
+                  <MatchCard
+                    key={match.id}
+                    match={match}
+                    isSelected={selectedMatchId === match.id}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="paginationContainer">
             {/* Progress indicator */}

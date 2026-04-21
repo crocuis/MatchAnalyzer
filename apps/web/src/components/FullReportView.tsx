@@ -129,6 +129,18 @@ export default function FullReportView({
           <div className="reportHeroMeta">
             <span className="reportEyebrow">{t("report.eyebrow")}</span>
             <span className="reportDate">{formattedDate}</span>
+            <div style={{ display: "flex", gap: "8px", marginTop: "16px", justifyContent: "center" }}>
+              {presentation.betState === "recommended" && (
+                <span className="recommendedBadge">
+                  {t("matchOutcome.bet.recommended")}
+                </span>
+              )}
+              {Boolean(match.valueRecommendation?.recommended) && (
+                <span className="valueBadge">
+                  {t("matchCard.valuePick")}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="reportScoreboard">

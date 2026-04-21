@@ -19,6 +19,7 @@ export default function MatchCard({
   const { t, i18n } = useTranslation();
 
   const formattedDate = new Date(match.kickoffAt).toLocaleString(i18n.language, {
+    year: "numeric",
     month: "long",
     day: "numeric",
     weekday: "short",
@@ -85,6 +86,11 @@ export default function MatchCard({
               {formattedDate}
             </span>
             <div style={{ display: "flex", gap: "8px" }}>
+              {predictionPresentation.betState === "recommended" && (
+                <span className="recommendedBadge">
+                  {t("matchOutcome.bet.recommended")}
+                </span>
+              )}
               {hasValuePick && (
                 <span className="valueBadge">
                   {t("matchCard.valuePick")}
