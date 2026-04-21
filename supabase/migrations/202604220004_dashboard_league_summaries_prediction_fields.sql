@@ -12,13 +12,6 @@ with card_predictions as (
       when dashboard_match_cards.has_prediction is false then null
       when jsonb_typeof(dashboard_match_cards.explanation_payload) = 'object'
         and jsonb_typeof(dashboard_match_cards.explanation_payload -> 'main_recommendation') = 'object'
-        and coalesce(
-          (dashboard_match_cards.explanation_payload -> 'main_recommendation' ->> 'recommended')::boolean,
-          true
-        ) = false
-      then null
-      when jsonb_typeof(dashboard_match_cards.explanation_payload) = 'object'
-        and jsonb_typeof(dashboard_match_cards.explanation_payload -> 'main_recommendation') = 'object'
       then coalesce(
         dashboard_match_cards.explanation_payload -> 'main_recommendation' ->> 'pick',
         dashboard_match_cards.representative_recommended_pick
