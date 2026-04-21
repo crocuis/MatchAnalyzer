@@ -86,15 +86,20 @@ def build_evaluation_report(
             if prediction_market
             else book_probs["away"],
         }
-        fused_probs = fuse_probabilities(
-            base_probs,
-            book_probs,
-            prediction_market_probs,
-            allowed_variants=(
-                ("base_model", "bookmaker", "prediction_market")
-                if prediction_market_available
-                else ("base_model", "bookmaker")
-            ),
+        fused_probs = (
+            dict(base_probs)
+            if not prediction_market_available
+            and _base_model_source in {"bookmaker_fallback", "centroid_fallback"}
+            else fuse_probabilities(
+                base_probs,
+                book_probs,
+                prediction_market_probs,
+                allowed_variants=(
+                    ("base_model", "bookmaker", "prediction_market")
+                    if prediction_market_available
+                    else ("base_model", "bookmaker")
+                ),
+            )
         )
         rows.extend(
             build_variant_evaluation_rows(

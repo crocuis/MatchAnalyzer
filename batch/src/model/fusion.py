@@ -80,6 +80,60 @@ def _probability_margin(probabilities: dict[str, float]) -> float:
     return round(ordered[0] - ordered[1], 4)
 
 
+def _top_pick(probabilities: dict[str, float]) -> str:
+    return str(max(probabilities, key=probabilities.get))
+
+
+def _rebalance_for_dual_source_consensus(
+    raw_weights: dict[str, float],
+    *,
+    probability_sources: dict[str, dict[str, float]],
+    allowed_variants: tuple[str, ...],
+) -> dict[str, float]:
+    if len(allowed_variants) != 3 or set(allowed_variants) != set(SOURCE_VARIANTS):
+        return raw_weights
+
+    top_picks = {
+        variant: _top_pick(probability_sources[variant])
+        for variant in allowed_variants
+    }
+    consensus_pick = next(
+        (
+            pick
+            for pick in ("home", "draw", "away")
+            if list(top_picks.values()).count(pick) == 2
+        ),
+        None,
+    )
+    if consensus_pick is None:
+        return raw_weights
+
+    consensus_variants = [
+        variant for variant, pick in top_picks.items() if pick == consensus_pick
+    ]
+    outlier_variants = [
+        variant for variant in allowed_variants if variant not in consensus_variants
+    ]
+    if len(consensus_variants) != 2 or len(outlier_variants) != 1:
+        return raw_weights
+
+    outlier_variant = outlier_variants[0]
+    outlier_pick = top_picks[outlier_variant]
+    consensus_strength = min(
+        float(probability_sources[variant][consensus_pick])
+        for variant in consensus_variants
+    )
+    outlier_strength = float(probability_sources[outlier_variant][outlier_pick])
+    if consensus_strength < 0.4 or outlier_strength < 0.65:
+        return raw_weights
+
+    adjusted = dict(raw_weights)
+    adjusted[outlier_variant] *= 0.02
+    for variant in consensus_variants:
+        adjusted[variant] *= 1.4
+    return adjusted
+
+
 def _build_inferred_weights(
     *,
     base_probs: dict,
@@ -98,6 +152,11 @@ def _build_inferred_weights(
         + (_probability_margin(probability_sources[variant]) * 7.0)
         for variant in allowed_variants
     }
+    raw_weights = _rebalance_for_dual_source_consensus(
+        raw_weights,
+        probability_sources=probability_sources,
+        allowed_variants=allowed_variants,
+    )
     normalized = normalize_fusion_weights(raw_weights, allowed_variants)
     if normalized is None:
         return _build_equal_weights(allowed_variants)
