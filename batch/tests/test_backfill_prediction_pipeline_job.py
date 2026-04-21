@@ -76,3 +76,43 @@ def test_backfill_prediction_pipeline_job_rejects_unknown_stage(monkeypatch):
         assert "Unknown pipeline stages" in str(exc)
     else:
         raise AssertionError("Expected ValueError for unknown stage")
+
+
+def test_backfill_prediction_pipeline_job_skips_known_empty_stage_errors(monkeypatch, capsys):
+    def fake_fixtures() -> None:
+        print(json.dumps({"stage": "fixtures"}))
+
+    def fake_markets() -> None:
+        raise ValueError("T_MINUS_24H match_snapshots must exist before ingesting real markets")
+
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "fixtures",
+        ("REAL_FIXTURE_DATE", fake_fixtures),
+    )
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "markets",
+        ("REAL_MARKET_DATE", fake_markets),
+    )
+    monkeypatch.setattr(pipeline_job, "run_evaluation", lambda: {})
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-20")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-20")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "fixtures,markets")
+
+    pipeline_job.main()
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["stage_results"] == [
+        {
+            "stage": "fixtures",
+            "target_date": "2026-04-20",
+            "result": {"stage": "fixtures"},
+        },
+        {
+            "stage": "markets",
+            "target_date": "2026-04-20",
+            "result": None,
+            "skip_reason": "T_MINUS_24H match_snapshots must exist before ingesting real markets",
+        },
+    ]

@@ -19,6 +19,21 @@ PIPELINE_STAGE_CONFIG = {
     "reviews": ("REAL_REVIEW_DATE", run_post_match_review_job.main),
 }
 
+SKIPPABLE_STAGE_ERRORS = {
+    "markets": (
+        "T_MINUS_24H match_snapshots must exist before ingesting real markets",
+        "no market payload was generated",
+    ),
+    "predictions": (
+        "T_MINUS_24H match_snapshots must exist before running real predictions",
+        "no prediction payload was generated",
+    ),
+    "reviews": (
+        "no review payload was generated",
+        "predictions must exist before post-match review",
+    ),
+}
+
 
 def run_stage_for_date(stage: str, target_date: str) -> dict:
     env_name, runner = PIPELINE_STAGE_CONFIG[stage]
@@ -28,6 +43,19 @@ def run_stage_for_date(stage: str, target_date: str) -> dict:
     try:
         with contextlib.redirect_stdout(buffer):
             runner()
+    except ValueError as exc:
+        message = str(exc)
+        if any(
+            known_message in message
+            for known_message in SKIPPABLE_STAGE_ERRORS.get(stage, ())
+        ):
+            return {
+                "stage": stage,
+                "target_date": target_date,
+                "result": None,
+                "skip_reason": message,
+            }
+        raise
     finally:
         if previous_value is None:
             os.environ.pop(env_name, None)
