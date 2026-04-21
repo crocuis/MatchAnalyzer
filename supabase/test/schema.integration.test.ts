@@ -190,6 +190,87 @@ describe("supabase schema integration", () => {
     ]);
   });
 
+  it("counts no-bet predictions in evaluated and hit totals for the summary view", async () => {
+    const db = await createDb();
+
+    await db.exec(`
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      update matches
+      set final_result = 'HOME',
+          home_score = 2,
+          away_score = 1
+      where id = 'match_001';
+
+      insert into matches (id, competition_id, season, kickoff_at, home_team_id, away_team_id, final_result, home_score, away_score)
+      values ('match_002', 'epl', '2026-2027', '2026-08-16T15:00:00Z', 'arsenal', 'chelsea', 'DRAW', 1, 1);
+
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values
+        ('snapshot_001', 'match_001', 'LINEUP_CONFIRMED', 'unknown', 'complete'),
+        ('snapshot_002', 'match_002', 'LINEUP_CONFIRMED', 'unknown', 'complete');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score,
+        explanation_payload
+      )
+      values
+        (
+          'prediction_001',
+          'snapshot_001',
+          'match_001',
+          'model_v1',
+          0.5,
+          0.25,
+          0.25,
+          'HOME',
+          0.75,
+          '{"main_recommendation":{"pick":"HOME","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
+        ),
+        (
+          'prediction_002',
+          'snapshot_002',
+          'match_002',
+          'model_v1',
+          0.3,
+          0.4,
+          0.3,
+          'DRAW',
+          0.41,
+          '{"main_recommendation":{"pick":"DRAW","confidence":0.41,"recommended":false,"no_bet_reason":"low_confidence"}}'::jsonb
+        );
+    `);
+
+    const summaries = await db.query<{
+      predicted_count: number;
+      evaluated_count: number;
+      correct_count: number;
+      incorrect_count: number;
+    }>(
+      `select predicted_count, evaluated_count, correct_count, incorrect_count
+       from dashboard_league_summaries
+       where league_id = 'epl'`,
+    );
+
+    expect(summaries.rows).toEqual([
+      {
+        predicted_count: 2,
+        evaluated_count: 2,
+        correct_count: 2,
+        incorrect_count: 0,
+      },
+    ]);
+  });
+
   it("exposes dashboard match cards with sort metadata and review flags", async () => {
     const db = await createDb();
 
