@@ -66,7 +66,7 @@ def build_evaluation_report(
         prediction_market_available = bool(
             feature_context["prediction_market_available"]
         )
-        base_probs, _base_model_source = predict_base_probabilities(
+        base_probs, _base_model_source, _model_selection = predict_base_probabilities(
             snapshot=snapshot,
             feature_context=feature_context,
             book_probs=book_probs,

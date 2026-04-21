@@ -154,10 +154,18 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
         market_by_snapshot: dict[str, dict[str, dict]],
         match_rows: list[dict],
         target_date: str | None,
-    ) -> tuple[dict, str]:
+    ) -> tuple[dict, str, dict]:
         if snapshot["id"] == "snapshot-001":
-            return {"home": 0.63, "draw": 0.17, "away": 0.20}, "trained_baseline"
-        return {"home": 0.20, "draw": 0.23, "away": 0.57}, "trained_baseline"
+            return (
+                {"home": 0.63, "draw": 0.17, "away": 0.20},
+                "trained_baseline",
+                {},
+            )
+        return (
+            {"home": 0.20, "draw": 0.23, "away": 0.57},
+            "trained_baseline",
+            {},
+        )
 
     monkeypatch.setattr(evaluation_job, "SupabaseClient", FakeClient)
     monkeypatch.setattr(
