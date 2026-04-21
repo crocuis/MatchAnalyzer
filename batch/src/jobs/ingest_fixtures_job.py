@@ -92,6 +92,17 @@ def extract_season_year(season_id: str) -> str | None:
     return season_id.rsplit("-", 1)[-1]
 
 
+def build_hydration_season_years(season_id: str) -> tuple[str | None, ...]:
+    season_year = extract_season_year(season_id)
+    if season_year is None:
+        return (None,)
+    try:
+        current_year = int(season_year)
+    except ValueError:
+        return (season_year,)
+    return (season_year, str(current_year - 1))
+
+
 def hydrate_recent_historical_matches(
     match_rows: list[dict],
     historical_matches: list[dict],
@@ -104,29 +115,30 @@ def hydrate_recent_historical_matches(
 
     for match_row in match_rows:
         competition_id = str(match_row.get("competition_id") or "")
-        season_year = extract_season_year(str(match_row.get("season") or ""))
+        season_years = build_hydration_season_years(str(match_row.get("season") or ""))
         for team_id in (
             str(match_row.get("home_team_id") or ""),
             str(match_row.get("away_team_id") or ""),
         ):
             if not team_id or not competition_id:
                 continue
-            cache_key = (team_id, competition_id, season_year)
-            if cache_key not in schedule_cache:
-                schedule_cache[cache_key] = fixture_ingest.fetch_team_schedule(
-                    team_id,
-                    competition_id=competition_id,
-                    season_year=season_year,
-                ).get("events", [])
-            for event in schedule_cache[cache_key]:
-                if event.get("status") != "closed" or not event.get("id"):
-                    continue
-                if event["id"] in target_match_ids or event["id"] in hydrated_by_id:
-                    continue
-                historical_row = fixture_ingest.build_match_row_from_event(event)
-                if historical_row.get("final_result") is None:
-                    continue
-                hydrated_by_id[historical_row["id"]] = historical_row
+            for season_year in season_years:
+                cache_key = (team_id, competition_id, season_year)
+                if cache_key not in schedule_cache:
+                    schedule_cache[cache_key] = fixture_ingest.fetch_team_schedule(
+                        team_id,
+                        competition_id=competition_id,
+                        season_year=season_year,
+                    ).get("events", [])
+                for event in schedule_cache[cache_key]:
+                    if event.get("status") != "closed" or not event.get("id"):
+                        continue
+                    if event["id"] in target_match_ids or event["id"] in hydrated_by_id:
+                        continue
+                    historical_row = fixture_ingest.build_match_row_from_event(event)
+                    if historical_row.get("final_result") is None:
+                        continue
+                    hydrated_by_id[historical_row["id"]] = historical_row
 
     return list(hydrated_by_id.values())
 
