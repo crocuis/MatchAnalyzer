@@ -7,6 +7,9 @@ MAIN_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.62
 MAIN_RECOMMENDATION_MIN_BUCKET_COUNT = 5
 MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP = 0.08
 VALUE_RECOMMENDATION_EV_THRESHOLD = 0.15
+DECISIVE_MARKET_CONSENSUS_BOOK_GAP_MIN = 0.24
+DECISIVE_MARKET_CONSENSUS_MARKET_GAP_MIN = 0.25
+DECISIVE_MARKET_CONSENSUS_BONUS = 0.25
 DEFAULT_FUSION_POLICY_ID = "latest"
 DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
     "by_checkpoint_market_segment",
@@ -421,11 +424,22 @@ def confidence_score(
         max(float(context.get("max_abs_divergence", 0.0)), 0.0),
         1.0,
     )
+    decisive_market_consensus_bonus = 0.0
+    if (
+        context.get("prediction_market_available", True)
+        and source_agreement_ratio >= 0.999
+        and float(context.get("book_favorite_gap", 0.0))
+        >= DECISIVE_MARKET_CONSENSUS_BOOK_GAP_MIN
+        and float(context.get("market_favorite_gap", 0.0))
+        >= DECISIVE_MARKET_CONSENSUS_MARKET_GAP_MIN
+    ):
+        decisive_market_consensus_bonus = DECISIVE_MARKET_CONSENSUS_BONUS
     raw_score = (
         0.35
         + (fused_margin * 0.55)
         + (base_margin * 0.35)
         + (source_agreement_ratio * 0.15)
+        + decisive_market_consensus_bonus
         - (divergence_penalty * 0.6)
         + (0.04 if context.get("snapshot_quality_complete", 1) else 0.0)
         + (0.03 if context.get("lineup_confirmed") else 0.0)
