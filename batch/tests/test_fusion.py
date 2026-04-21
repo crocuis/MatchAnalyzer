@@ -346,6 +346,36 @@ def test_confidence_score_promotes_decisive_away_consensus_without_prediction_ma
     assert score > 0.62
 
 
+def test_confidence_score_promotes_centroid_draw_without_market_when_away_signals_are_strong():
+    score = confidence_score(
+        {
+            "home": 0.15727751674870952,
+            "draw": 0.5665079684593419,
+            "away": 0.27621451479194864,
+        },
+        base_probs={
+            "away": 0.27621451479194864,
+            "draw": 0.5665079684593419,
+            "home": 0.15727751674870952,
+        },
+        context={
+            "base_model_source": "centroid_fallback",
+            "baseline_model_trained": False,
+            "book_favorite_gap": 0.14760914760914762,
+            "elo_delta": -1.535412000000001,
+            "lineup_confirmed": 0,
+            "market_favorite_gap": 0.14760914760914762,
+            "max_abs_divergence": 0.0,
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 0,
+            "source_agreement_ratio": 0.5,
+            "xg_proxy_delta": -1.6,
+        },
+    )
+
+    assert score > 0.67
+
+
 def test_build_main_recommendation_returns_no_bet_below_threshold():
     recommendation = build_main_recommendation(
         pick="HOME",
