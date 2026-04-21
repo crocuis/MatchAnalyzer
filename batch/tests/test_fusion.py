@@ -314,7 +314,7 @@ def test_confidence_score_recovers_decisive_prediction_market_consensus_from_fal
         },
     )
 
-    assert score > 0.62
+    assert score >= 0.76
 
 
 def test_build_main_recommendation_returns_no_bet_below_threshold():
