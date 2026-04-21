@@ -282,6 +282,21 @@ def test_dashboard_league_summary_prediction_fields_migration_redefines_summary_
     assert "success_rate" in migration
 
 
+def test_dashboard_league_summary_no_bet_fix_migration_reapplies_summary_view():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202604220005_fix_dashboard_league_summary_no_bet_counts.sql"
+        ).read_text()
+    )
+
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as" in migration
+    assert "from dashboard_match_cards" in migration
+    assert "predicted_outcome" in migration
+    assert "evaluated_count" in migration
+    assert "correct_count" in migration
+    assert "incorrect_count" in migration
+
+
 def test_seed_links_competition_teams_and_match():
     seed = normalize_sql(Path("supabase/seed.sql").read_text())
 
