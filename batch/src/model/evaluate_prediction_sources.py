@@ -309,6 +309,10 @@ def _current_fused_fallback(candidate: dict) -> dict[str, float]:
     )
 
 
+def _selector_history_eligible(candidate: dict) -> bool:
+    return bool(candidate.get("selector_history_eligible", True))
+
+
 def _candidate_sort_key(candidate: dict) -> tuple[str, str]:
     return (
         str(candidate.get("kickoff_at") or ""),
@@ -341,9 +345,10 @@ def _matching_historical_candidates(
 
 
 def current_fused_selector_history_ready(candidates: list[dict]) -> bool:
-    if len(candidates) < CURRENT_FUSED_SELECTOR_MIN_ROWS:
+    eligible_candidates = [row for row in candidates if _selector_history_eligible(row)]
+    if len(eligible_candidates) < CURRENT_FUSED_SELECTOR_MIN_ROWS:
         return False
-    labels = [str(row.get("actual_outcome") or "") for row in candidates]
+    labels = [str(row.get("actual_outcome") or "") for row in eligible_candidates]
     class_counts = Counter(labels)
     return (
         len(class_counts) >= len(OUTCOME_KEYS)
@@ -357,7 +362,10 @@ def select_current_fused_probabilities(
     historical_candidates: list[dict],
 ) -> dict[str, float]:
     fallback = _current_fused_fallback(candidate)
-    if not current_fused_selector_history_ready(historical_candidates):
+    if (
+        not _selector_history_eligible(candidate)
+        or not current_fused_selector_history_ready(historical_candidates)
+    ):
         return fallback
 
     try:
@@ -425,6 +433,6 @@ def build_current_fused_probabilities(
                 historical_candidates=matching_historical,
             )
         )
-        if candidate.get("actual_outcome"):
+        if candidate.get("actual_outcome") and _selector_history_eligible(candidate):
             historical_candidates.append(candidate)
     return probabilities_by_snapshot

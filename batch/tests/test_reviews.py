@@ -1510,6 +1510,15 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
                         "confidence_score": 0.78,
                         "summary_payload": {
                             "base_model_probs": {"home": 0.69, "draw": 0.18, "away": 0.13},
+                            "raw_current_fused_probs": {
+                                "home": 0.67,
+                                "draw": 0.19,
+                                "away": 0.14,
+                            },
+                            "current_fused_selection": {
+                                "selected_source": "raw_fused",
+                                "historical_candidate_count": 0,
+                            },
                             "prediction_market_available": False,
                             "source_agreement_ratio": 1.0,
                             "max_abs_divergence": 0.02,
@@ -1547,6 +1556,15 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
                         "confidence_score": 0.77,
                         "summary_payload": {
                             "base_model_probs": {"home": 0.68, "draw": 0.19, "away": 0.13},
+                            "raw_current_fused_probs": {
+                                "home": 0.66,
+                                "draw": 0.20,
+                                "away": 0.14,
+                            },
+                            "current_fused_selection": {
+                                "selected_source": "raw_fused",
+                                "historical_candidate_count": 1,
+                            },
                             "prediction_market_available": False,
                             "source_agreement_ratio": 1.0,
                             "max_abs_divergence": 0.02,
@@ -1584,6 +1602,15 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
                         "confidence_score": 0.76,
                         "summary_payload": {
                             "base_model_probs": {"home": 0.63, "draw": 0.20, "away": 0.17},
+                            "raw_current_fused_probs": {
+                                "home": 0.61,
+                                "draw": 0.21,
+                                "away": 0.18,
+                            },
+                            "current_fused_selection": {
+                                "selected_source": "raw_fused",
+                                "historical_candidate_count": 2,
+                            },
                             "prediction_market_available": False,
                             "source_agreement_ratio": 0.5,
                             "max_abs_divergence": 0.03,
@@ -1621,6 +1648,15 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
                         "confidence_score": 0.75,
                         "summary_payload": {
                             "base_model_probs": {"home": 0.62, "draw": 0.21, "away": 0.17},
+                            "raw_current_fused_probs": {
+                                "home": 0.60,
+                                "draw": 0.22,
+                                "away": 0.18,
+                            },
+                            "current_fused_selection": {
+                                "selected_source": "raw_fused",
+                                "historical_candidate_count": 3,
+                            },
                             "prediction_market_available": False,
                             "source_agreement_ratio": 0.5,
                             "max_abs_divergence": 0.03,
@@ -1658,6 +1694,15 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
                         "confidence_score": 0.72,
                         "summary_payload": {
                             "base_model_probs": {"home": 0.18, "draw": 0.21, "away": 0.61},
+                            "raw_current_fused_probs": {
+                                "home": 0.16,
+                                "draw": 0.20,
+                                "away": 0.64,
+                            },
+                            "current_fused_selection": {
+                                "selected_source": "raw_fused",
+                                "historical_candidate_count": 4,
+                            },
                             "prediction_market_available": False,
                             "source_agreement_ratio": 1.0,
                             "max_abs_divergence": 0.02,
@@ -1695,6 +1740,15 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
                         "confidence_score": 0.71,
                         "summary_payload": {
                             "base_model_probs": {"home": 0.19, "draw": 0.21, "away": 0.60},
+                            "raw_current_fused_probs": {
+                                "home": 0.17,
+                                "draw": 0.21,
+                                "away": 0.62,
+                            },
+                            "current_fused_selection": {
+                                "selected_source": "raw_fused",
+                                "historical_candidate_count": 5,
+                            },
                             "prediction_market_available": False,
                             "source_agreement_ratio": 1.0,
                             "max_abs_divergence": 0.02,

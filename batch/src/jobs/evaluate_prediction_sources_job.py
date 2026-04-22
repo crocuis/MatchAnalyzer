@@ -132,6 +132,9 @@ def build_evaluation_report(
 
         prediction = prediction_by_snapshot_id.get(snapshot["id"])
         prediction_payload = read_prediction_payload(prediction)
+        stored_raw_fused_probs = read_probability_map(
+            prediction_payload.get("raw_current_fused_probs")
+        )
         bookmaker_probs = read_prediction_source_probabilities(
             prediction_payload,
             "bookmaker",
@@ -179,6 +182,7 @@ def build_evaluation_report(
                     ),
                     "base_model_probs": base_probs,
                     "raw_fused_probs": fused_probs,
+                    "selector_history_eligible": stored_raw_fused_probs is not None,
                     "confidence": (
                         prediction.get("confidence_score")
                         if isinstance(prediction, dict)
