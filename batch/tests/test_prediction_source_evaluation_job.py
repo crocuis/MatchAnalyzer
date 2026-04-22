@@ -136,13 +136,19 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
             state[table_name] = list(existing.values())
             return len(rows)
 
-    def fake_build_snapshot_context(snapshot: dict, book_probs: dict, prediction_market: dict | None) -> dict:
+    def fake_build_snapshot_context(
+        snapshot: dict,
+        book_probs: dict,
+        prediction_market: dict | None,
+        bookmaker_available: bool = True,
+    ) -> dict:
         return {
             "prediction_market_available": prediction_market is not None,
             "snapshot_quality_complete": 1,
             "lineup_confirmed": int(snapshot["lineup_status"] == "confirmed"),
             "sources_agree": 0,
             "max_abs_divergence": 0.0,
+            "bookmaker_available": int(bookmaker_available),
         }
 
     def fake_predict_base_probabilities(
@@ -339,3 +345,59 @@ def test_build_evaluation_report_uses_persisted_prediction_payload_when_market_r
     assert report["overall"]["bookmaker"]["count"] == 1
     assert report["overall"]["base_model"]["count"] == 1
     assert report["overall"]["current_fused"]["count"] == 1
+
+
+def test_build_evaluation_report_uses_prior_fallback_when_bookmaker_rows_are_missing(
+    monkeypatch,
+) -> None:
+    snapshot_rows = [
+        {
+            "id": "snapshot-001",
+            "match_id": "match-001",
+            "checkpoint_type": "T_MINUS_24H",
+            "lineup_status": "unknown",
+            "snapshot_quality": "partial",
+        }
+    ]
+    match_rows = [
+        {
+            "id": "match-001",
+            "competition_id": "epl",
+            "kickoff_at": "2026-04-10T19:00:00+00:00",
+            "final_result": "HOME",
+        }
+    ]
+
+    monkeypatch.setattr(
+        evaluation_job,
+        "build_snapshot_context",
+        lambda snapshot, book_probs, prediction_market, bookmaker_available=True: {
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 0,
+            "lineup_confirmed": 0,
+            "sources_agree": 0,
+            "max_abs_divergence": 0.0,
+            "bookmaker_available": int(bookmaker_available),
+        },
+    )
+    monkeypatch.setattr(
+        evaluation_job,
+        "predict_base_probabilities",
+        lambda **_kwargs: (
+            {"home": 0.4, "draw": 0.35, "away": 0.25},
+            "prior_fallback",
+            {},
+        ),
+    )
+
+    report = evaluation_job.build_evaluation_report(
+        snapshot_rows=snapshot_rows,
+        prediction_rows=[],
+        market_rows=[],
+        match_rows=match_rows,
+    )
+
+    assert report["snapshots_evaluated"] == 1
+    assert report["overall"]["base_model"]["count"] == 1
+    assert report["overall"]["current_fused"]["count"] == 1
+    assert "bookmaker" not in report["overall"]

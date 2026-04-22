@@ -18,7 +18,7 @@ from batch.src.model.prediction_graph_integrity import (
     plan_missing_snapshot_repairs,
 )
 from batch.src.model.posthoc_recalibration import recalibrate_predictions
-from batch.src.model.predict_matches import build_prediction_row
+from batch.src.model.predict_matches import build_prediction_row, build_source_agreement_ratio
 from batch.src.review.post_match_review import build_review
 
 
@@ -2751,6 +2751,131 @@ def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_withou
         == "unsupported_high_confidence_fallback"
     )
     assert explanation_payload["raw_confidence_score"] > 0.8
+
+
+def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    explanation_payload = prediction["explanation_payload"]
+    source_metadata = explanation_payload["source_metadata"]
+
+    assert explanation_payload["base_model_source"] == "prior_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert source_metadata["market_sources"]["bookmaker"]["available"] is False
+    assert source_metadata["market_sources"]["bookmaker"]["probabilities"] is None
+    assert source_metadata["fusion_weights"] == {"base_model": 1.0}
+
+
+def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_without_bookmaker():
+    summary = run_predictions_job.build_confidence_bucket_summary(
+        snapshot_rows=[
+            {
+                "id": "hist_snapshot",
+                "match_id": "hist_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "snapshot_quality": "partial",
+            }
+        ],
+        market_by_snapshot={},
+        match_rows=[
+            {
+                "id": "hist_match",
+                "kickoff_at": "2026-04-10T18:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+        checkpoint_type="T_MINUS_24H",
+        target_date="2026-04-11",
+    )
+
+    assert summary == {
+        "0.3-0.4": {
+            "count": 1,
+            "hit_rate": 1.0,
+        }
+    }
+
+
+def test_build_prediction_row_uses_prediction_market_when_prior_fallback_has_no_bookmaker():
+    prediction = build_prediction_row(
+        match_id="match_a",
+        checkpoint="T_MINUS_24H",
+        base_probs={"home": 0.6, "draw": 0.25, "away": 0.15},
+        book_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        market_probs={"home": 0.2, "draw": 0.3, "away": 0.5},
+        context={
+            "prediction_market_available": True,
+            "bookmaker_available": False,
+            "base_model_source": "prior_fallback",
+            "form_delta": 1,
+            "rest_delta": 0,
+            "elo_delta": 0.0,
+            "xg_proxy_delta": 0.0,
+            "fixture_congestion_delta": 0.0,
+            "lineup_strength_delta": 0.0,
+            "market_gap_home": 0.0,
+            "market_gap_draw": 0.0,
+            "market_gap_away": 0.0,
+            "snapshot_quality_complete": 0,
+            "lineup_confirmed": 0,
+            "sources_agree": 0,
+            "max_abs_divergence": 0.0,
+        },
+        source_weights={"base_model": 0.5, "prediction_market": 0.5},
+    )
+
+    assert prediction["home_prob"] == 0.4
+    assert prediction["draw_prob"] == 0.275
+    assert prediction["away_prob"] == 0.325
+
+
+def test_build_source_agreement_ratio_is_neutral_for_single_source():
+    ratio = build_source_agreement_ratio(
+        base_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        book_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        market_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        bookmaker_available=False,
+        prediction_market_available=False,
+    )
+
+    assert ratio == 0.5
 
 
 def build_recalibration_fixture_rows() -> tuple[list[dict], list[dict], list[dict]]:
