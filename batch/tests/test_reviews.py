@@ -2927,28 +2927,32 @@ def test_recalibrate_predictions_skips_rows_with_broken_graph() -> None:
     assert summary["skipped_graph_broken_rows"] == 2
 
 
-def test_recalibrate_predictions_skips_competitions_where_recalibration_regresses(
+def test_recalibrate_predictions_skips_low_uplift_changes(
     monkeypatch,
 ) -> None:
     predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
-    targeted_predictions = predictions[:6]
-    targeted_matches = []
-    for match in matches[:3]:
-        targeted_matches.append({**match, "competition_id": "good-league"})
-    for match in matches[3:6]:
-        targeted_matches.append({**match, "competition_id": "bad-league"})
+    targeted_predictions = predictions[:2]
 
     class FakeModel:
         classes_ = ["HOME", "DRAW", "AWAY"]
 
+        def __init__(self):
+            self._calls = 0
+
         def predict_proba(self, rows):
-            return [[0.8, 0.1, 0.1] for _ in rows]
+            responses = (
+                [0.39, 0.31, 0.30],
+                [0.8, 0.1, 0.1],
+            )
+            response = responses[min(self._calls, len(responses) - 1)]
+            self._calls += 1
+            return [response for _ in rows]
 
     monkeypatch.setattr(
         "batch.src.model.posthoc_recalibration.train_recalibration_model",
-        lambda **_: (
-            FakeModel(),
-            {
+            lambda **_: (
+                FakeModel(),
+                {
                 "applied": True,
                 "model_id": "fake_model",
                 "training_rows": 6,
@@ -2960,22 +2964,17 @@ def test_recalibrate_predictions_skips_competitions_where_recalibration_regresse
 
     updated_predictions, summary = recalibrate_predictions(
         predictions=targeted_predictions,
-        matches=targeted_matches,
-        snapshot_rows=snapshot_rows[:6],
+        matches=matches[:2],
+        snapshot_rows=snapshot_rows[:2],
     )
 
-    assert [row["recommended_pick"] for row in updated_predictions[:3]] == [
-        "HOME",
-        "HOME",
-        "HOME",
-    ]
-    assert [row["recommended_pick"] for row in updated_predictions[3:6]] == [
-        "DRAW",
-        "DRAW",
-        "DRAW",
-    ]
-    assert summary["changed_rows"] == 3
-    assert summary["competition_policy"]["skipped_competitions"] == ["bad-league"]
+    assert updated_predictions[0]["recommended_pick"] == "DRAW"
+    assert updated_predictions[1]["recommended_pick"] == "HOME"
+    assert updated_predictions[1]["explanation_payload"]["posthoc_recalibration"][
+        "confidence_uplift"
+    ] == 0.45
+    assert summary["changed_rows"] == 1
+    assert summary["min_confidence_uplift"] == 0.05
 
 
 def test_plan_missing_snapshot_repairs_rebuilds_snapshot_rows_from_feature_snapshots() -> None:

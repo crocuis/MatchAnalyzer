@@ -25,8 +25,7 @@ CHECKPOINT_PRIORITIES = {
 RECALIBRATION_MODEL_ID = "decision_tree_depth6_v1"
 RECALIBRATION_MAX_DEPTH = 6
 RECALIBRATION_MIN_CLASS_COUNT = 3
-RECALIBRATION_COMPETITION_MIN_ROWS = 3
-RECALIBRATION_COMPETITION_MAX_REGRESSION = -0.02
+RECALIBRATION_MIN_CONFIDENCE_UPLIFT = 0.05
 
 
 def _normalize_probability_map(probability_by_label: dict[str, float]) -> dict[str, float]:
@@ -269,75 +268,6 @@ def _predict_recalibrated_result(
     )
 
 
-def build_competition_recalibration_policy(
-    *,
-    predictions: list[dict],
-    matches: list[dict],
-    snapshot_rows: list[dict],
-    model: DecisionTreeClassifier,
-    summary: dict,
-) -> dict:
-    match_by_id = {
-        row["id"]: row for row in matches if isinstance(row, dict) and row.get("id")
-    }
-    snapshot_rows_by_id = {
-        row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")
-    }
-    competition_scores: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"count": 0, "original_hits": 0, "recalibrated_hits": 0}
-    )
-
-    for prediction in representative_predictions(predictions, snapshot_rows):
-        match = match_by_id.get(str(prediction.get("match_id") or ""))
-        if not match:
-            continue
-        competition_id = str(match.get("competition_id") or "")
-        actual_outcome = str(match.get("final_result") or "")
-        if not competition_id or actual_outcome not in OUTCOME_LABELS:
-            continue
-        recalibrated = _predict_recalibrated_result(
-            prediction=prediction,
-            model=model,
-            summary=summary,
-            snapshot_rows_by_id=snapshot_rows_by_id,
-        )
-        if recalibrated is None:
-            continue
-        predicted_pick = recalibrated[1]
-        original_pick = str(prediction.get("recommended_pick") or "")
-        competition_scores[competition_id]["count"] += 1
-        competition_scores[competition_id]["original_hits"] += int(
-            original_pick == actual_outcome
-        )
-        competition_scores[competition_id]["recalibrated_hits"] += int(
-            predicted_pick == actual_outcome
-        )
-
-    skipped_competitions: list[str] = []
-    competition_deltas: dict[str, dict[str, float | int]] = {}
-    for competition_id, scores in sorted(competition_scores.items()):
-        count = scores["count"]
-        original_hit_rate = scores["original_hits"] / count
-        recalibrated_hit_rate = scores["recalibrated_hits"] / count
-        delta = recalibrated_hit_rate - original_hit_rate
-        competition_deltas[competition_id] = {
-            "count": count,
-            "original_hit_rate": round(original_hit_rate, 4),
-            "recalibrated_hit_rate": round(recalibrated_hit_rate, 4),
-            "hit_rate_delta": round(delta, 4),
-        }
-        if (
-            count >= RECALIBRATION_COMPETITION_MIN_ROWS
-            and delta < RECALIBRATION_COMPETITION_MAX_REGRESSION
-        ):
-            skipped_competitions.append(competition_id)
-
-    return {
-        "skipped_competitions": skipped_competitions,
-        "competition_deltas": competition_deltas,
-    }
-
-
 def recalibrate_predictions(
     *,
     predictions: list[dict],
@@ -354,17 +284,6 @@ def recalibrate_predictions(
 
     snapshot_rows_by_id = {
         row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")
-    }
-    competition_policy = build_competition_recalibration_policy(
-        predictions=predictions,
-        matches=matches,
-        snapshot_rows=snapshot_rows,
-        model=model,
-        summary=summary,
-    )
-    skipped_competitions = set(competition_policy["skipped_competitions"])
-    match_by_id = {
-        row["id"]: row for row in matches if isinstance(row, dict) and row.get("id")
     }
     match_ids = {
         str(row["id"]) for row in matches if isinstance(row, dict) and row.get("id")
@@ -396,12 +315,6 @@ def recalibrate_predictions(
             updated_predictions.append(prediction)
             continue
 
-        match = match_by_id.get(str(prediction.get("match_id") or ""))
-        competition_id = str(match.get("competition_id") or "") if match else ""
-        if competition_id and competition_id in skipped_competitions:
-            updated_predictions.append(prediction)
-            continue
-
         recalibrated = _predict_recalibrated_result(
             prediction=prediction,
             model=model,
@@ -414,10 +327,13 @@ def recalibrate_predictions(
         updated_probability_map, predicted_pick, updated_confidence, updated_recommendation = (
             recalibrated
         )
-        payload = deepcopy(_prediction_payload(prediction))
-
         original_pick = str(prediction.get("recommended_pick") or "")
         original_confidence = round(float(prediction.get("confidence_score") or 0.0), 4)
+        confidence_uplift = round(updated_confidence - original_confidence, 4)
+        if confidence_uplift < RECALIBRATION_MIN_CONFIDENCE_UPLIFT:
+            updated_predictions.append(prediction)
+            continue
+        payload = deepcopy(_prediction_payload(prediction))
         payload["raw_confidence_score"] = updated_confidence
         payload["calibrated_confidence_score"] = updated_confidence
         payload["main_recommendation"] = updated_recommendation
@@ -429,6 +345,7 @@ def recalibrate_predictions(
             "class_counts": summary["class_counts"],
             "original_pick": original_pick,
             "original_confidence_score": original_confidence,
+            "confidence_uplift": confidence_uplift,
             "predicted_probabilities": updated_probability_map,
         }
         updated_prediction = {
@@ -455,6 +372,6 @@ def recalibrate_predictions(
         "changed_pick_rows": changed_pick_rows,
         "updated_match_count": len(updated_match_ids),
         "skipped_graph_broken_rows": skipped_graph_broken_rows,
-        "competition_policy": competition_policy,
+        "min_confidence_uplift": RECALIBRATION_MIN_CONFIDENCE_UPLIFT,
     }
     return updated_predictions, summary
