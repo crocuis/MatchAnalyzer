@@ -86,6 +86,7 @@ def test_backfill_fixture_season_job_collects_supported_competitions(
                 "id": "match_001_t_minus_24h",
                 "match_id": "match_001",
                 "checkpoint_type": "T_MINUS_24H",
+                "captured_hydrate_history": kwargs["hydrate_historical_matches"],
             }
         ],
     )
@@ -103,3 +104,5 @@ def test_backfill_fixture_season_job_collects_supported_competitions(
     assert payload["event_count"] == 1
     assert payload["fixture_rows"] == 1
     assert payload["snapshot_rows"] == 1
+    assert payload["hydrate_historical_matches"] is False
+    assert payload["backfill_assets_enabled"] is False

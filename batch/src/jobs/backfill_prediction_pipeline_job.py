@@ -5,12 +5,15 @@ import os
 from datetime import date
 
 from batch.src.jobs.backfill_assets_job import iter_dates
-import batch.src.jobs.evaluate_prediction_sources_job as evaluate_prediction_sources_job
 import batch.src.jobs.backfill_fixture_season_job as backfill_fixture_season_job
+import batch.src.jobs.evaluate_prediction_sources_job as evaluate_prediction_sources_job
+import batch.src.jobs.evaluate_prediction_sources_job as evaluate_prediction_sources_job
 import batch.src.jobs.ingest_fixtures_job as ingest_fixtures_job
 import batch.src.jobs.ingest_markets_job as ingest_markets_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 import batch.src.jobs.run_predictions_job as run_predictions_job
+from batch.src.settings import load_settings
+from batch.src.storage.supabase_client import SupabaseClient
 
 
 PIPELINE_STAGE_CONFIG = {
@@ -98,6 +101,22 @@ def run_fixture_season_backfill(season_year: str) -> dict:
     return json.loads(lines[-1]) if lines else {}
 
 
+def resolve_pipeline_dates(*, start: str, end: str, date_source: str) -> list[str]:
+    if date_source == "calendar":
+        return iter_dates(date.fromisoformat(start), date.fromisoformat(end))
+    if date_source != "matches":
+        raise ValueError(f"Unknown PIPELINE_BACKFILL_DATE_SOURCE: {date_source}")
+
+    settings = load_settings()
+    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    target_dates = sorted(
+        {
+            str(row.get("kickoff_at", ""))[:10]
+            for row in client.read_rows("matches")
+            if start <= str(row.get("kickoff_at", ""))[:10] <= end
+        }
+    )
+    return [target_date for target_date in target_dates if target_date]
 def main() -> None:
     start = os.environ.get("PIPELINE_BACKFILL_START")
     end = os.environ.get("PIPELINE_BACKFILL_END")
@@ -118,7 +137,11 @@ def main() -> None:
         raise ValueError(f"Unknown pipeline stages: {', '.join(sorted(unknown_stages))}")
 
     fixture_season_year = os.environ.get("PIPELINE_FIXTURE_SEASON_YEAR")
-    dates = iter_dates(date.fromisoformat(start), date.fromisoformat(end))
+    date_source = os.environ.get(
+        "PIPELINE_BACKFILL_DATE_SOURCE",
+        "calendar" if "fixtures" in stage_names else "matches",
+    )
+    dates = resolve_pipeline_dates(start=start, end=end, date_source=date_source)
     stage_results: list[dict] = []
     if fixture_season_year:
         stage_results.append(
@@ -161,6 +184,7 @@ def main() -> None:
                 "date_start": start,
                 "date_end": end,
                 "date_count": len(dates),
+                "date_source": date_source,
                 "stages": stage_names,
                 "stage_results": stage_results,
                 "evaluation_result": evaluation_result,

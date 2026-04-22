@@ -11,6 +11,7 @@ from batch.src.ingest.fetch_fixtures import (
 )
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
+    dedupe_rows,
     prepare_sync_asset_rows,
 )
 from batch.src.settings import load_settings
@@ -39,13 +40,29 @@ def main() -> None:
     season_year = os.environ.get("REAL_FIXTURE_SEASON_YEAR")
     if not season_year:
         raise KeyError("REAL_FIXTURE_SEASON_YEAR")
+    hydrate_historical_matches = os.environ.get(
+        "REAL_FIXTURE_SEASON_HYDRATE_HISTORY", "0"
+    ) in {"1", "true", "TRUE", "yes", "YES"}
+    backfill_assets_enabled = os.environ.get(
+        "REAL_FIXTURE_SEASON_BACKFILL_ASSETS", "0"
+    ) in {"1", "true", "TRUE", "yes", "YES"}
+    competitions_raw = os.environ.get("REAL_FIXTURE_SEASON_COMPETITIONS")
+    competition_ids = (
+        tuple(
+            competition_id.strip()
+            for competition_id in competitions_raw.split(",")
+            if competition_id.strip()
+        )
+        if competitions_raw
+        else SUPPORTED_COMPETITION_IDS
+    )
 
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
 
     all_events: list[dict] = []
     archive_payload: dict[str, list[dict]] = {}
-    for competition_id in SUPPORTED_COMPETITION_IDS:
+    for competition_id in competition_ids:
         season_id = f"{competition_id}-{season_year}"
         events = fetch_season_events(competition_id=competition_id, season_id=season_id)
         archive_payload[season_id] = events
@@ -58,6 +75,9 @@ def main() -> None:
         competition_rows.append(build_competition_row_from_event(event))
         team_rows.extend(build_team_rows_from_event(event))
         payload.append(build_match_row_from_event(event))
+    competition_rows = dedupe_rows(competition_rows)
+    team_rows = dedupe_rows(team_rows)
+    payload = dedupe_rows(payload)
 
     captured_at = datetime.now(timezone.utc).isoformat()
     historical_matches = client.read_rows("matches")
@@ -66,23 +86,24 @@ def main() -> None:
         captured_at=captured_at,
         historical_matches=historical_matches,
         lineup_context_by_match={},
-        hydrate_historical_matches=True,
+        hydrate_historical_matches=hydrate_historical_matches,
     )
-    competition_rows, team_rows = prepare_sync_asset_rows(
-        competition_rows=competition_rows,
-        team_rows=team_rows,
-        match_rows=payload,
-        schedules=[
-            {
-                "data": {
-                    "events": events,
+    if backfill_assets_enabled:
+        competition_rows, team_rows = prepare_sync_asset_rows(
+            competition_rows=competition_rows,
+            team_rows=team_rows,
+            match_rows=payload,
+            schedules=[
+                {
+                    "data": {
+                        "events": events,
+                    }
                 }
-            }
-            for events in archive_payload.values()
-        ],
-        existing_competitions=client.read_rows("competitions"),
-        existing_teams=client.read_rows("teams"),
-    )
+                for events in archive_payload.values()
+            ],
+            existing_competitions=client.read_rows("competitions"),
+            existing_teams=client.read_rows("teams"),
+        )
 
     archive_uri = R2Client(
         settings.r2_bucket,
@@ -111,6 +132,9 @@ def main() -> None:
                 "fixture_rows": fixture_rows,
                 "snapshot_rows": snapshot_rows,
                 "event_count": len(all_events),
+                "competition_ids": list(competition_ids),
+                "hydrate_historical_matches": hydrate_historical_matches,
+                "backfill_assets_enabled": backfill_assets_enabled,
                 "archive_uri": archive_uri,
             },
             sort_keys=True,

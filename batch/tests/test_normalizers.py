@@ -1752,6 +1752,82 @@ def test_supabase_client_retries_through_multiple_schema_cache_column_misses(mon
     assert "away_price" not in captured_payloads[4][0]
 
 
+def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    requests: list[tuple[str, str | None]] = []
+
+    class FakeResponse:
+        def __init__(self, payload: list[dict], status: int = 200) -> None:
+            self.payload = payload
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        requests.append((request.full_url, request.headers.get("Range")))
+        if request.headers.get("Range") == "0-999":
+            return FakeResponse([{"id": f"match_{index:04d}"} for index in range(1000)])
+        if request.headers.get("Range") == "1000-1999":
+            return FakeResponse([{"id": "match_1000"}, {"id": "match_1001"}])
+        raise AssertionError(f"unexpected range: {request.headers.get('Range')}")
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    rows = client.read_rows("matches")
+
+    assert len(rows) == 1002
+    assert requests == [
+        ("https://project.supabase.co/rest/v1/matches?select=%2A&order=id.asc", "0-999"),
+        ("https://project.supabase.co/rest/v1/matches?select=%2A&order=id.asc", "1000-1999"),
+    ]
+
+
+def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+
+    class FakeResponse:
+        def __init__(self, payload: list[dict], status: int = 200) -> None:
+            self.payload = payload
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        if "order=id.asc" in request.full_url:
+            raise HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                hdrs=None,
+                fp=BytesIO(
+                    b'{"code":"42703","message":"column dashboard_league_summaries.id does not exist"}'
+                ),
+            )
+        return FakeResponse([{"league_id": "bundesliga", "match_count": 25}])
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    rows = client.read_rows("dashboard_league_summaries")
+
+    assert rows == [{"league_id": "bundesliga", "match_count": 25}]
+
+
 def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, capsys):
     class FakeClient:
         def __init__(self, _base_url: str, _service_key: str) -> None:
