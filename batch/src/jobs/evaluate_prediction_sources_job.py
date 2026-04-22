@@ -17,7 +17,6 @@ from batch.src.model.evaluate_prediction_sources import (
 from batch.src.model.fusion import (
     build_fusion_policy_comparison,
     build_latest_fusion_policy,
-    choose_current_fused_probabilities,
     fuse_probabilities,
 )
 from batch.src.rollout.promotion_policy import (
@@ -87,6 +86,12 @@ def read_prediction_fused_probabilities(
 ) -> dict[str, float] | None:
     if not isinstance(prediction, dict):
         return None
+    prediction_payload = read_prediction_payload(prediction)
+    raw_fused_probs = read_probability_map(
+        prediction_payload.get("raw_current_fused_probs")
+    )
+    if raw_fused_probs is not None:
+        return raw_fused_probs
     return read_probability_map(
         {
             "home": prediction.get("home_prob"),
@@ -163,6 +168,7 @@ def build_evaluation_report(
                 {
                     "match_id": snapshot["match_id"],
                     "snapshot_id": snapshot["id"],
+                    "kickoff_at": str(match.get("kickoff_at") or ""),
                     "checkpoint": snapshot["checkpoint_type"],
                     "competition_id": str(match.get("competition_id") or "unknown"),
                     "actual_outcome": str(match["final_result"]),

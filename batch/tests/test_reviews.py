@@ -1421,6 +1421,360 @@ def test_run_predictions_job_falls_back_to_derived_weights_when_latest_policy_is
     }
 
 
+def test_run_predictions_job_applies_historical_current_fused_selector_to_live_predictions(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "hist_home_1_snapshot",
+                        "match_id": "hist_home_1",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 5,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "hist_home_2_snapshot",
+                        "match_id": "hist_home_2",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 4,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "hist_draw_1_snapshot",
+                        "match_id": "hist_draw_1",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 0,
+                        "rest_delta": 0,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "hist_draw_2_snapshot",
+                        "match_id": "hist_draw_2",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 0,
+                        "rest_delta": 0,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "hist_away_1_snapshot",
+                        "match_id": "hist_away_1",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": -4,
+                        "rest_delta": -1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "hist_away_2_snapshot",
+                        "match_id": "hist_away_2",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": -5,
+                        "rest_delta": -1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 0,
+                        "rest_delta": 0,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.31,
+                        "draw_prob": 0.44,
+                        "away_prob": 0.25,
+                    },
+                ],
+                "predictions": [
+                    {
+                        "id": "hist_home_1_prediction",
+                        "snapshot_id": "hist_home_1_snapshot",
+                        "match_id": "hist_home_1",
+                        "created_at": "2026-04-01T18:30:00+00:00",
+                        "home_prob": 0.67,
+                        "draw_prob": 0.19,
+                        "away_prob": 0.14,
+                        "confidence_score": 0.78,
+                        "summary_payload": {
+                            "base_model_probs": {"home": 0.69, "draw": 0.18, "away": 0.13},
+                            "prediction_market_available": False,
+                            "source_agreement_ratio": 1.0,
+                            "max_abs_divergence": 0.02,
+                            "feature_context": {
+                                "prediction_market_available": False,
+                                "lineup_confirmed": 0,
+                                "elo_delta": 0.35,
+                                "xg_proxy_delta": 0.42,
+                                "book_favorite_gap": 0.18,
+                                "market_favorite_gap": 0.18,
+                            },
+                            "source_metadata": {
+                                "market_sources": {
+                                    "bookmaker": {
+                                        "available": True,
+                                        "source_name": "book",
+                                        "probabilities": {
+                                            "home": 0.59,
+                                            "draw": 0.23,
+                                            "away": 0.18,
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "id": "hist_home_2_prediction",
+                        "snapshot_id": "hist_home_2_snapshot",
+                        "match_id": "hist_home_2",
+                        "created_at": "2026-04-02T18:30:00+00:00",
+                        "home_prob": 0.66,
+                        "draw_prob": 0.20,
+                        "away_prob": 0.14,
+                        "confidence_score": 0.77,
+                        "summary_payload": {
+                            "base_model_probs": {"home": 0.68, "draw": 0.19, "away": 0.13},
+                            "prediction_market_available": False,
+                            "source_agreement_ratio": 1.0,
+                            "max_abs_divergence": 0.02,
+                            "feature_context": {
+                                "prediction_market_available": False,
+                                "lineup_confirmed": 0,
+                                "elo_delta": 0.33,
+                                "xg_proxy_delta": 0.40,
+                                "book_favorite_gap": 0.17,
+                                "market_favorite_gap": 0.17,
+                            },
+                            "source_metadata": {
+                                "market_sources": {
+                                    "bookmaker": {
+                                        "available": True,
+                                        "source_name": "book",
+                                        "probabilities": {
+                                            "home": 0.58,
+                                            "draw": 0.24,
+                                            "away": 0.18,
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "id": "hist_draw_1_prediction",
+                        "snapshot_id": "hist_draw_1_snapshot",
+                        "match_id": "hist_draw_1",
+                        "created_at": "2026-04-03T18:30:00+00:00",
+                        "home_prob": 0.61,
+                        "draw_prob": 0.21,
+                        "away_prob": 0.18,
+                        "confidence_score": 0.76,
+                        "summary_payload": {
+                            "base_model_probs": {"home": 0.63, "draw": 0.20, "away": 0.17},
+                            "prediction_market_available": False,
+                            "source_agreement_ratio": 0.5,
+                            "max_abs_divergence": 0.03,
+                            "feature_context": {
+                                "prediction_market_available": False,
+                                "lineup_confirmed": 0,
+                                "elo_delta": 0.01,
+                                "xg_proxy_delta": -0.04,
+                                "book_favorite_gap": 0.07,
+                                "market_favorite_gap": 0.07,
+                            },
+                            "source_metadata": {
+                                "market_sources": {
+                                    "bookmaker": {
+                                        "available": True,
+                                        "source_name": "book",
+                                        "probabilities": {
+                                            "home": 0.31,
+                                            "draw": 0.44,
+                                            "away": 0.25,
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "id": "hist_draw_2_prediction",
+                        "snapshot_id": "hist_draw_2_snapshot",
+                        "match_id": "hist_draw_2",
+                        "created_at": "2026-04-04T18:30:00+00:00",
+                        "home_prob": 0.60,
+                        "draw_prob": 0.22,
+                        "away_prob": 0.18,
+                        "confidence_score": 0.75,
+                        "summary_payload": {
+                            "base_model_probs": {"home": 0.62, "draw": 0.21, "away": 0.17},
+                            "prediction_market_available": False,
+                            "source_agreement_ratio": 0.5,
+                            "max_abs_divergence": 0.03,
+                            "feature_context": {
+                                "prediction_market_available": False,
+                                "lineup_confirmed": 0,
+                                "elo_delta": -0.01,
+                                "xg_proxy_delta": -0.06,
+                                "book_favorite_gap": 0.07,
+                                "market_favorite_gap": 0.07,
+                            },
+                            "source_metadata": {
+                                "market_sources": {
+                                    "bookmaker": {
+                                        "available": True,
+                                        "source_name": "book",
+                                        "probabilities": {
+                                            "home": 0.30,
+                                            "draw": 0.45,
+                                            "away": 0.25,
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "id": "hist_away_1_prediction",
+                        "snapshot_id": "hist_away_1_snapshot",
+                        "match_id": "hist_away_1",
+                        "created_at": "2026-04-05T18:30:00+00:00",
+                        "home_prob": 0.16,
+                        "draw_prob": 0.20,
+                        "away_prob": 0.64,
+                        "confidence_score": 0.72,
+                        "summary_payload": {
+                            "base_model_probs": {"home": 0.18, "draw": 0.21, "away": 0.61},
+                            "prediction_market_available": False,
+                            "source_agreement_ratio": 1.0,
+                            "max_abs_divergence": 0.02,
+                            "feature_context": {
+                                "prediction_market_available": False,
+                                "lineup_confirmed": 1,
+                                "elo_delta": -0.31,
+                                "xg_proxy_delta": -0.45,
+                                "book_favorite_gap": 0.19,
+                                "market_favorite_gap": 0.19,
+                            },
+                            "source_metadata": {
+                                "market_sources": {
+                                    "bookmaker": {
+                                        "available": True,
+                                        "source_name": "book",
+                                        "probabilities": {
+                                            "home": 0.28,
+                                            "draw": 0.24,
+                                            "away": 0.48,
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "id": "hist_away_2_prediction",
+                        "snapshot_id": "hist_away_2_snapshot",
+                        "match_id": "hist_away_2",
+                        "created_at": "2026-04-06T18:30:00+00:00",
+                        "home_prob": 0.17,
+                        "draw_prob": 0.21,
+                        "away_prob": 0.62,
+                        "confidence_score": 0.71,
+                        "summary_payload": {
+                            "base_model_probs": {"home": 0.19, "draw": 0.21, "away": 0.60},
+                            "prediction_market_available": False,
+                            "source_agreement_ratio": 1.0,
+                            "max_abs_divergence": 0.02,
+                            "feature_context": {
+                                "prediction_market_available": False,
+                                "lineup_confirmed": 1,
+                                "elo_delta": -0.29,
+                                "xg_proxy_delta": -0.43,
+                                "book_favorite_gap": 0.18,
+                                "market_favorite_gap": 0.18,
+                            },
+                            "source_metadata": {
+                                "market_sources": {
+                                    "bookmaker": {
+                                        "available": True,
+                                        "source_name": "book",
+                                        "probabilities": {
+                                            "home": 0.29,
+                                            "draw": 0.23,
+                                            "away": 0.48,
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                    },
+                ],
+                "matches": [
+                    {"id": "hist_home_1", "competition_id": "epl", "kickoff_at": "2026-04-01T18:00:00+00:00", "final_result": "HOME"},
+                    {"id": "hist_home_2", "competition_id": "epl", "kickoff_at": "2026-04-02T18:00:00+00:00", "final_result": "HOME"},
+                    {"id": "hist_draw_1", "competition_id": "epl", "kickoff_at": "2026-04-03T18:00:00+00:00", "final_result": "DRAW"},
+                    {"id": "hist_draw_2", "competition_id": "epl", "kickoff_at": "2026-04-04T18:00:00+00:00", "final_result": "DRAW"},
+                    {"id": "hist_away_1", "competition_id": "epl", "kickoff_at": "2026-04-05T18:00:00+00:00", "final_result": "AWAY"},
+                    {"id": "hist_away_2", "competition_id": "epl", "kickoff_at": "2026-04-06T18:00:00+00:00", "final_result": "AWAY"},
+                    {"id": "target_match", "competition_id": "epl", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **_kwargs: (
+            {"home": 0.62, "draw": 0.20, "away": 0.18},
+            "trained_baseline",
+            {
+                "selected_candidate": "logistic_regression",
+                "selection_metric": "neg_log_loss",
+                "selection_ran": True,
+                "candidate_scores": {"logistic_regression": 0.8},
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_historical_source_performance_summary",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+
+    assert prediction["recommended_pick"] == "DRAW"
+    assert prediction["draw_prob"] > prediction["home_prob"]
+
+
 def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch):
     state: dict[str, list[dict]] = {}
 

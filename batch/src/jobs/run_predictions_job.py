@@ -28,9 +28,13 @@ from batch.src.model.fusion import (
     choose_fusion_weights,
     build_main_recommendation,
     build_value_recommendation,
+    choose_recommended_pick,
+    confidence_score,
 )
 from batch.src.model.evaluate_prediction_sources import (
+    build_current_fused_probabilities,
     build_variant_evaluation_rows,
+    current_fused_selector_history_ready,
     derive_variant_weights,
     summarize_variant_metrics,
 )
@@ -125,6 +129,152 @@ def build_market_probabilities(snapshot_id: str, market_by_snapshot: dict[str, d
         "draw": bookmaker["draw_prob"],
         "away": bookmaker["away_prob"],
     }, prediction_market
+
+
+def read_prediction_payload(prediction: dict | None) -> dict:
+    if not isinstance(prediction, dict):
+        return {}
+    summary_payload = prediction.get("summary_payload")
+    explanation_payload = prediction.get("explanation_payload")
+    if isinstance(summary_payload, dict):
+        return summary_payload
+    if isinstance(explanation_payload, dict):
+        return explanation_payload
+    return {}
+
+
+def read_probability_map(value: object) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    probabilities: dict[str, float] = {}
+    for key in ("home", "draw", "away"):
+        probability = value.get(key)
+        if not isinstance(probability, (int, float)):
+            return None
+        probabilities[key] = float(probability)
+    return probabilities
+
+
+def read_prediction_source_probabilities(
+    prediction_payload: dict,
+    source_name: str,
+) -> dict[str, float] | None:
+    source_metadata = prediction_payload.get("source_metadata")
+    if not isinstance(source_metadata, dict):
+        return None
+    market_sources = source_metadata.get("market_sources")
+    if not isinstance(market_sources, dict):
+        return None
+    source = market_sources.get(source_name)
+    if not isinstance(source, dict):
+        return None
+    return read_probability_map(source.get("probabilities"))
+
+
+def read_prediction_fused_probabilities(prediction: dict | None) -> dict[str, float] | None:
+    if not isinstance(prediction, dict):
+        return None
+    prediction_payload = read_prediction_payload(prediction)
+    raw_fused_probs = read_probability_map(prediction_payload.get("raw_current_fused_probs"))
+    if raw_fused_probs is not None:
+        return raw_fused_probs
+    return read_probability_map(
+        {
+            "home": prediction.get("home_prob"),
+            "draw": prediction.get("draw_prob"),
+            "away": prediction.get("away_prob"),
+        }
+    )
+
+
+def build_historical_current_fused_candidates(
+    *,
+    prediction_rows: list[dict],
+    snapshot_rows: list[dict],
+    match_rows: list[dict],
+    checkpoint_type: str,
+    target_date: str,
+    prediction_market_available: bool,
+) -> list[dict]:
+    snapshot_by_id = {
+        row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")
+    }
+    match_by_id = {
+        row["id"]: row for row in match_rows if isinstance(row, dict) and row.get("id")
+    }
+    latest_prediction_by_snapshot: dict[str, dict] = {}
+    for prediction in prediction_rows:
+        snapshot_id = prediction.get("snapshot_id")
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            continue
+        current = latest_prediction_by_snapshot.get(snapshot_id)
+        if current is None or str(prediction.get("created_at") or "") > str(
+            current.get("created_at") or ""
+        ):
+            latest_prediction_by_snapshot[snapshot_id] = prediction
+
+    candidates: list[dict] = []
+    for prediction in latest_prediction_by_snapshot.values():
+        snapshot = snapshot_by_id.get(str(prediction.get("snapshot_id") or ""))
+        if not snapshot or snapshot.get("checkpoint_type") != checkpoint_type:
+            continue
+        match = match_by_id.get(str(prediction.get("match_id") or snapshot.get("match_id") or ""))
+        if not match or not match.get("final_result"):
+            continue
+        kickoff_at = str(match.get("kickoff_at") or "")
+        if not kickoff_at or kickoff_at[:10] >= target_date:
+            continue
+        prediction_payload = read_prediction_payload(prediction)
+        bookmaker_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "bookmaker",
+        )
+        base_model_probs = read_probability_map(prediction_payload.get("base_model_probs"))
+        if base_model_probs is None:
+            base_model_probs = read_prediction_source_probabilities(
+                prediction_payload,
+                "base_model",
+            )
+        raw_fused_probs = read_prediction_fused_probabilities(prediction)
+        feature_context = prediction_payload.get("feature_context")
+        if not isinstance(feature_context, dict):
+            feature_context = {}
+        candidate_prediction_market_available = bool(
+            prediction_payload.get(
+                "prediction_market_available",
+                feature_context.get("prediction_market_available", False),
+            )
+        )
+        if (
+            bookmaker_probs is None
+            or base_model_probs is None
+            or raw_fused_probs is None
+            or candidate_prediction_market_available != prediction_market_available
+        ):
+            continue
+        candidates.append(
+            {
+                "snapshot_id": snapshot["id"],
+                "kickoff_at": kickoff_at,
+                "checkpoint": snapshot["checkpoint_type"],
+                "prediction_market_available": candidate_prediction_market_available,
+                "actual_outcome": str(match["final_result"]),
+                "base_model_probs": base_model_probs,
+                "bookmaker_probs": bookmaker_probs,
+                "raw_fused_probs": raw_fused_probs,
+                "confidence": (
+                    prediction_payload.get("raw_confidence_score")
+                    if prediction_payload.get("raw_confidence_score") is not None
+                    else prediction.get("confidence_score")
+                ),
+                "context": {
+                    **feature_context,
+                    "source_agreement_ratio": prediction_payload.get("source_agreement_ratio"),
+                    "max_abs_divergence": prediction_payload.get("max_abs_divergence"),
+                },
+            }
+        )
+    return candidates
 
 
 def enrich_snapshot_with_match_history(
@@ -726,6 +876,8 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "base_model_source",
         "model_selection",
         "base_model_probs",
+        "raw_current_fused_probs",
+        "current_fused_selection",
         "raw_confidence_score",
         "calibrated_confidence_score",
         "prediction_market_available",
@@ -755,6 +907,7 @@ def main() -> None:
     )
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
+    prediction_rows = read_optional_rows(client, "predictions")
     variant_rows = read_optional_rows(client, "market_variants")
     use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
     if not snapshot_rows:
@@ -930,6 +1083,69 @@ def main() -> None:
             source_weights=source_weights,
         )
         raw_confidence_score = row["confidence_score"]
+        raw_fused_probs = {
+            "home": row["home_prob"],
+            "draw": row["draw_prob"],
+            "away": row["away_prob"],
+        }
+        current_fused_selection = {
+            "selected_source": "raw_fused",
+            "historical_candidate_count": 0,
+        }
+        if use_real_predictions:
+            historical_current_fused_candidates = build_historical_current_fused_candidates(
+                prediction_rows=prediction_rows,
+                snapshot_rows=snapshot_rows,
+                match_rows=match_rows,
+                checkpoint_type=enriched_snapshot["checkpoint_type"],
+                target_date=use_real_predictions,
+                prediction_market_available=bool(
+                    feature_context["prediction_market_available"]
+                ),
+            )
+            if current_fused_selector_history_ready(historical_current_fused_candidates):
+                selected_fused_probs = build_current_fused_probabilities(
+                    [
+                        *historical_current_fused_candidates,
+                        {
+                            "snapshot_id": enriched_snapshot["id"],
+                            "kickoff_at": next(
+                                (
+                                    str(match.get("kickoff_at") or "")
+                                    for match in match_rows
+                                    if match.get("id") == enriched_snapshot["match_id"]
+                                ),
+                                "",
+                            ),
+                            "checkpoint": enriched_snapshot["checkpoint_type"],
+                            "prediction_market_available": bool(
+                                feature_context["prediction_market_available"]
+                            ),
+                            "actual_outcome": None,
+                            "base_model_probs": base_probs,
+                            "bookmaker_probs": book_probs,
+                            "raw_fused_probs": raw_fused_probs,
+                            "confidence": raw_confidence_score,
+                            "context": scoring_context,
+                        },
+                    ]
+                )[enriched_snapshot["id"]]
+                row["home_prob"] = selected_fused_probs["home"]
+                row["draw_prob"] = selected_fused_probs["draw"]
+                row["away_prob"] = selected_fused_probs["away"]
+                row["recommended_pick"] = choose_recommended_pick(selected_fused_probs)
+                row["confidence_score"] = confidence_score(
+                    selected_fused_probs,
+                    base_probs=base_probs,
+                    context=scoring_context,
+                )
+                selected_source = "historical_selector"
+                if selected_fused_probs == raw_fused_probs:
+                    selected_source = "raw_fused"
+                current_fused_selection = {
+                    "selected_source": selected_source,
+                    "historical_candidate_count": len(historical_current_fused_candidates),
+                }
         confidence_bucket_summary = (
             build_confidence_bucket_summary(
                 snapshot_rows=snapshot_rows,
@@ -998,6 +1214,8 @@ def main() -> None:
             "base_model_source": base_model_source,
             "model_selection": model_selection,
             "base_model_probs": base_probs,
+            "raw_current_fused_probs": raw_fused_probs,
+            "current_fused_selection": current_fused_selection,
             "raw_confidence_score": raw_confidence_score,
             "calibrated_confidence_score": row["confidence_score"],
             "prediction_market_available": feature_context[

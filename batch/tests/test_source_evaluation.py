@@ -11,6 +11,7 @@ from batch.src.model.evaluate_prediction_sources import (
     summarize_variant_metrics,
     summarize_variant_metrics_by_field,
 )
+from batch.src.model.fusion import choose_current_fused_probabilities
 
 
 def test_multiclass_scores_reward_better_probabilities() -> None:
@@ -281,3 +282,152 @@ def test_build_current_fused_probabilities_falls_back_when_class_coverage_is_ins
         "snapshot-001": {"home": 0.31, "draw": 0.44, "away": 0.25},
         "snapshot-002": {"home": 0.24, "draw": 0.23, "away": 0.53},
     }
+
+
+def test_build_current_fused_probabilities_does_not_leak_future_outcomes() -> None:
+    target = {
+        "snapshot_id": "target-early",
+        "kickoff_at": "2026-04-02T18:00:00+00:00",
+        "actual_outcome": "DRAW",
+        "base_model_probs": {"home": 0.62, "draw": 0.20, "away": 0.18},
+        "bookmaker_probs": {"home": 0.56, "draw": 0.25, "away": 0.19},
+        "raw_fused_probs": {"home": 0.61, "draw": 0.21, "away": 0.18},
+        "confidence": 0.78,
+        "context": {
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.02,
+            "book_favorite_gap": 0.18,
+            "market_favorite_gap": 0.18,
+            "elo_delta": 0.34,
+            "xg_proxy_delta": 0.41,
+            "prediction_market_available": 0,
+            "lineup_confirmed": 0,
+        },
+    }
+    candidates = [
+        {
+            "snapshot_id": "home-1",
+            "kickoff_at": "2026-04-01T18:00:00+00:00",
+            "actual_outcome": "HOME",
+            "base_model_probs": {"home": 0.68, "draw": 0.18, "away": 0.14},
+            "bookmaker_probs": {"home": 0.58, "draw": 0.24, "away": 0.18},
+            "raw_fused_probs": {"home": 0.66, "draw": 0.19, "away": 0.15},
+            "confidence": 0.77,
+            "context": {
+                "source_agreement_ratio": 1.0,
+                "max_abs_divergence": 0.03,
+                "book_favorite_gap": 0.16,
+                "market_favorite_gap": 0.16,
+                "elo_delta": 0.31,
+                "xg_proxy_delta": 0.39,
+                "prediction_market_available": 0,
+                "lineup_confirmed": 0,
+            },
+        },
+        target,
+        {
+            "snapshot_id": "draw-1",
+            "kickoff_at": "2026-04-03T18:00:00+00:00",
+            "actual_outcome": "DRAW",
+            "base_model_probs": {"home": 0.25, "draw": 0.54, "away": 0.21},
+            "bookmaker_probs": {"home": 0.31, "draw": 0.41, "away": 0.28},
+            "raw_fused_probs": {"home": 0.24, "draw": 0.55, "away": 0.21},
+            "confidence": 0.64,
+            "context": {
+                "source_agreement_ratio": 1.0,
+                "max_abs_divergence": 0.02,
+                "book_favorite_gap": 0.08,
+                "market_favorite_gap": 0.08,
+                "elo_delta": 0.01,
+                "xg_proxy_delta": -0.08,
+                "prediction_market_available": 0,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "away-1",
+            "kickoff_at": "2026-04-04T18:00:00+00:00",
+            "actual_outcome": "AWAY",
+            "base_model_probs": {"home": 0.16, "draw": 0.20, "away": 0.64},
+            "bookmaker_probs": {"home": 0.27, "draw": 0.24, "away": 0.49},
+            "raw_fused_probs": {"home": 0.15, "draw": 0.20, "away": 0.65},
+            "confidence": 0.73,
+            "context": {
+                "source_agreement_ratio": 1.0,
+                "max_abs_divergence": 0.02,
+                "book_favorite_gap": 0.21,
+                "market_favorite_gap": 0.21,
+                "elo_delta": -0.33,
+                "xg_proxy_delta": -0.52,
+                "prediction_market_available": 0,
+                "lineup_confirmed": 1,
+            },
+        },
+        {
+            "snapshot_id": "home-2",
+            "kickoff_at": "2026-04-05T18:00:00+00:00",
+            "actual_outcome": "HOME",
+            "base_model_probs": {"home": 0.69, "draw": 0.18, "away": 0.13},
+            "bookmaker_probs": {"home": 0.59, "draw": 0.23, "away": 0.18},
+            "raw_fused_probs": {"home": 0.68, "draw": 0.19, "away": 0.13},
+            "confidence": 0.78,
+            "context": {
+                "source_agreement_ratio": 1.0,
+                "max_abs_divergence": 0.03,
+                "book_favorite_gap": 0.18,
+                "market_favorite_gap": 0.18,
+                "elo_delta": 0.36,
+                "xg_proxy_delta": 0.42,
+                "prediction_market_available": 0,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "draw-2",
+            "kickoff_at": "2026-04-06T18:00:00+00:00",
+            "actual_outcome": "DRAW",
+            "base_model_probs": {"home": 0.24, "draw": 0.56, "away": 0.20},
+            "bookmaker_probs": {"home": 0.29, "draw": 0.42, "away": 0.29},
+            "raw_fused_probs": {"home": 0.23, "draw": 0.57, "away": 0.20},
+            "confidence": 0.65,
+            "context": {
+                "source_agreement_ratio": 1.0,
+                "max_abs_divergence": 0.02,
+                "book_favorite_gap": 0.07,
+                "market_favorite_gap": 0.07,
+                "elo_delta": 0.0,
+                "xg_proxy_delta": -0.06,
+                "prediction_market_available": 0,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "away-2",
+            "kickoff_at": "2026-04-07T18:00:00+00:00",
+            "actual_outcome": "AWAY",
+            "base_model_probs": {"home": 0.18, "draw": 0.22, "away": 0.60},
+            "bookmaker_probs": {"home": 0.28, "draw": 0.24, "away": 0.48},
+            "raw_fused_probs": {"home": 0.17, "draw": 0.22, "away": 0.61},
+            "confidence": 0.71,
+            "context": {
+                "source_agreement_ratio": 1.0,
+                "max_abs_divergence": 0.03,
+                "book_favorite_gap": 0.19,
+                "market_favorite_gap": 0.19,
+                "elo_delta": -0.29,
+                "xg_proxy_delta": -0.47,
+                "prediction_market_available": 0,
+                "lineup_confirmed": 1,
+            },
+        },
+    ]
+
+    probabilities = build_current_fused_probabilities(candidates)
+
+    assert probabilities["target-early"] == choose_current_fused_probabilities(
+        raw_fused_probs=target["raw_fused_probs"],
+        bookmaker_probs=target["bookmaker_probs"],
+        confidence=target["confidence"],
+        context=target["context"],
+    )
+    assert max(probabilities["target-early"], key=probabilities["target-early"].get) == "home"
