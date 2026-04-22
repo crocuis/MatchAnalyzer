@@ -25,6 +25,7 @@ CHECKPOINT_PRIORITIES = {
 RECALIBRATION_MODEL_ID = "decision_tree_depth6_v1"
 RECALIBRATION_MAX_DEPTH = 6
 RECALIBRATION_MIN_CLASS_COUNT = 3
+RECALIBRATION_MIN_CONFIDENCE_UPLIFT = 0.05
 
 
 def _normalize_probability_map(probability_by_label: dict[str, float]) -> dict[str, float]:
@@ -215,6 +216,58 @@ def train_recalibration_model(
     return model, summary
 
 
+def _predict_recalibrated_result(
+    *,
+    prediction: dict,
+    model: DecisionTreeClassifier,
+    summary: dict,
+    snapshot_rows_by_id: dict[str, dict],
+) -> tuple[dict[str, float], str, float, dict] | None:
+    feature_vector = build_recalibration_features(
+        prediction,
+        snapshot_rows_by_id=snapshot_rows_by_id,
+    )
+    if feature_vector is None:
+        return None
+
+    payload = deepcopy(_prediction_payload(prediction))
+    probabilities = model.predict_proba([feature_vector])[0]
+    probability_by_label = {
+        str(label): float(probability)
+        for label, probability in zip(model.classes_, probabilities, strict=True)
+    }
+    updated_probability_map = _normalize_probability_map(probability_by_label)
+    predicted_pick = max(
+        OUTCOME_LABELS,
+        key=lambda label: probability_by_label.get(label, 0.0),
+    )
+    updated_confidence = round(float(probability_by_label.get(predicted_pick, 0.0)), 4)
+    feature_context = _feature_context(payload)
+    updated_recommendation = build_main_recommendation(
+        pick=predicted_pick,
+        confidence=updated_confidence,
+        context={
+            **feature_context,
+            "base_model_source": payload.get("base_model_source"),
+            "prediction_market_available": payload.get(
+                "prediction_market_available",
+                feature_context.get("prediction_market_available", True),
+            ),
+        },
+        bucket_summary=(
+            payload.get("confidence_calibration")
+            if isinstance(payload.get("confidence_calibration"), dict)
+            else None
+        ),
+    )
+    return (
+        updated_probability_map,
+        predicted_pick,
+        updated_confidence,
+        updated_recommendation,
+    )
+
+
 def recalibrate_predictions(
     *,
     predictions: list[dict],
@@ -262,39 +315,25 @@ def recalibrate_predictions(
             updated_predictions.append(prediction)
             continue
 
-        payload = deepcopy(_prediction_payload(prediction))
-        probabilities = model.predict_proba([feature_vector])[0]
-        probability_by_label = {
-            str(label): float(probability)
-            for label, probability in zip(model.classes_, probabilities, strict=True)
-        }
-        updated_probability_map = _normalize_probability_map(probability_by_label)
-        predicted_pick = max(
-            OUTCOME_LABELS,
-            key=lambda label: probability_by_label.get(label, 0.0),
+        recalibrated = _predict_recalibrated_result(
+            prediction=prediction,
+            model=model,
+            summary=summary,
+            snapshot_rows_by_id=snapshot_rows_by_id,
         )
-        updated_confidence = round(float(probability_by_label.get(predicted_pick, 0.0)), 4)
-        feature_context = _feature_context(payload)
-        updated_recommendation = build_main_recommendation(
-            pick=predicted_pick,
-            confidence=updated_confidence,
-            context={
-                **feature_context,
-                "base_model_source": payload.get("base_model_source"),
-                "prediction_market_available": payload.get(
-                    "prediction_market_available",
-                    feature_context.get("prediction_market_available", True),
-                ),
-            },
-            bucket_summary=(
-                payload.get("confidence_calibration")
-                if isinstance(payload.get("confidence_calibration"), dict)
-                else None
-            ),
+        if recalibrated is None:
+            updated_predictions.append(prediction)
+            continue
+        updated_probability_map, predicted_pick, updated_confidence, updated_recommendation = (
+            recalibrated
         )
-
         original_pick = str(prediction.get("recommended_pick") or "")
         original_confidence = round(float(prediction.get("confidence_score") or 0.0), 4)
+        confidence_uplift = round(updated_confidence - original_confidence, 4)
+        if confidence_uplift < RECALIBRATION_MIN_CONFIDENCE_UPLIFT:
+            updated_predictions.append(prediction)
+            continue
+        payload = deepcopy(_prediction_payload(prediction))
         payload["raw_confidence_score"] = updated_confidence
         payload["calibrated_confidence_score"] = updated_confidence
         payload["main_recommendation"] = updated_recommendation
@@ -306,6 +345,7 @@ def recalibrate_predictions(
             "class_counts": summary["class_counts"],
             "original_pick": original_pick,
             "original_confidence_score": original_confidence,
+            "confidence_uplift": confidence_uplift,
             "predicted_probabilities": updated_probability_map,
         }
         updated_prediction = {
@@ -332,5 +372,6 @@ def recalibrate_predictions(
         "changed_pick_rows": changed_pick_rows,
         "updated_match_count": len(updated_match_ids),
         "skipped_graph_broken_rows": skipped_graph_broken_rows,
+        "min_confidence_uplift": RECALIBRATION_MIN_CONFIDENCE_UPLIFT,
     }
     return updated_predictions, summary
