@@ -216,6 +216,7 @@ def build_latest_fusion_policy(
     comparison_payload: dict | None = None,
     history_row_id: str | None = None,
     created_at: str | None = None,
+    artifact_id: str | None = None,
 ) -> dict:
     row = {
         "id": policy_id,
@@ -245,6 +246,8 @@ def build_latest_fusion_policy(
         row["history_row_id"] = history_row_id
     if created_at is not None:
         row["created_at"] = created_at
+    if artifact_id is not None:
+        row["artifact_id"] = artifact_id
     return row
 
 

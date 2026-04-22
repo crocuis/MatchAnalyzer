@@ -4,8 +4,15 @@ import { deriveMatchStatus } from "@match-analyzer/contracts";
 import type { AppBindings } from "../env";
 import {
   normalizeMainRecommendation,
+  normalizeMainRecommendationFromSummary,
+  normalizeSummaryPayload,
   normalizeVariantMarkets,
+  normalizeVariantMarketsFromSummary,
   normalizeValueRecommendation,
+  normalizeValueRecommendationFromSummary,
+  type MainRecommendation,
+  type ValueRecommendation,
+  type VariantMarket,
 } from "../lib/prediction-lanes";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
@@ -49,13 +56,7 @@ function comparePredictionRows(
 }
 
 function pickRepresentativePrediction(
-  predictions: Array<{
-    snapshotId: string;
-    recommendedPick: string;
-    confidence: number;
-    createdAt: string | null;
-    explanationPayload: unknown;
-  }>,
+  predictions: PredictionCandidate[],
   snapshotsById: Map<string, { checkpointType: string }>,
 ) {
   const sorted = [...predictions].sort((left, right) =>
@@ -66,13 +67,17 @@ function pickRepresentativePrediction(
 }
 
 function pickMarketEnrichedPrediction(
-  predictions: Array<{ explanationPayload: unknown }>,
+  predictions: PredictionCandidate[],
 ) {
   return (
     predictions.find(
       (prediction) =>
-        normalizeValueRecommendation(prediction.explanationPayload) !== null ||
-        normalizeVariantMarkets(prediction.explanationPayload).length > 0,
+        prediction.valueRecommendationPick !== null ||
+        normalizeValueRecommendation(prediction.legacyPayload) !== null ||
+        normalizeVariantMarketsFromSummary(
+          { variantMarketsSummary: prediction.variantMarketsSummary },
+          prediction.legacyPayload,
+        ).length > 0,
     ) ?? null
   );
 }
@@ -145,6 +150,34 @@ type MatchListItem = {
   needsReview: boolean;
 };
 
+type PredictionCandidate = {
+  snapshotId: string;
+  recommendedPick: string;
+  confidence: number;
+  createdAt: string | null;
+  summaryPayload: unknown;
+  legacyPayload: unknown;
+  mainRecommendationPick: string | null;
+  mainRecommendationConfidence: number | null;
+  mainRecommendationRecommended: boolean | null;
+  mainRecommendationNoBetReason: string | null;
+  valueRecommendationPick: string | null;
+  valueRecommendationRecommended: boolean | null;
+  valueRecommendationEdge: number | null;
+  valueRecommendationExpectedValue: number | null;
+  valueRecommendationMarketPrice: number | null;
+  valueRecommendationModelProbability: number | null;
+  valueRecommendationMarketProbability: number | null;
+  valueRecommendationMarketSource: string | null;
+  variantMarketsSummary: unknown;
+};
+
+type PredictionListSummary = {
+  mainRecommendation: MainRecommendation;
+  valueRecommendation: ValueRecommendation | null;
+  variantMarkets: VariantMarket[];
+};
+
 type MatchSourceRow = {
   id: string;
   competition_id: string;
@@ -207,23 +240,29 @@ type DashboardMatchCardRow = {
   away_score: number | null;
   representative_recommended_pick: string | null;
   representative_confidence_score: number | null;
-  explanation_payload: unknown;
-  market_explanation_payload: unknown;
+  summary_payload: unknown;
+  main_recommendation_pick: string | null;
+  main_recommendation_confidence: number | null;
+  main_recommendation_recommended: boolean | null;
+  main_recommendation_no_bet_reason: string | null;
+  value_recommendation_pick: string | null;
+  value_recommendation_recommended: boolean | null;
+  value_recommendation_edge: number | null;
+  value_recommendation_expected_value: number | null;
+  value_recommendation_market_price: number | null;
+  value_recommendation_model_probability: number | null;
+  value_recommendation_market_probability: number | null;
+  value_recommendation_market_source: string | null;
+  variant_markets_summary: unknown;
+  explanation_artifact_id: string | null;
+  explanation_artifact_uri: string | null;
   has_prediction: boolean;
   needs_review: boolean;
 };
 
 function buildPredictionSummary(
   matches: Array<{ id: string; final_result: string | null }>,
-  predictionByMatchId: Map<
-    string,
-    {
-      recommendedPick: string;
-      confidence: number;
-      explanationPayload: unknown;
-      marketExplanationPayload: unknown;
-    } | null
-  >,
+  predictionByMatchId: Map<string, PredictionListSummary | null>,
 ): MatchPredictionSummary {
   let predictedCount = 0;
   let evaluatedCount = 0;
@@ -241,11 +280,7 @@ function buildPredictionSummary(
       continue;
     }
 
-    const mainRecommendation = normalizeMainRecommendation(
-      prediction.explanationPayload,
-      prediction.recommendedPick,
-      prediction.confidence,
-    );
+    const mainRecommendation = prediction.mainRecommendation;
     if (!mainRecommendation) {
       continue;
     }
@@ -390,7 +425,7 @@ async function loadDashboardMatchCardsPageView(
   const cardsQuery: any = supabase
     .from("dashboard_match_cards")
     .select(
-      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, explanation_payload, market_explanation_payload, has_prediction, needs_review",
+      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, explanation_artifact_uri, has_prediction, needs_review",
     );
   const scopedCardsQuery =
     typeof cardsQuery.eq === "function"
@@ -408,17 +443,39 @@ async function loadDashboardMatchCardsPageView(
 
   const items = ((cardRows ?? []) as DashboardMatchCardRow[]).map((row) => {
     const mainRecommendation = row.has_prediction
-      ? normalizeMainRecommendation(
-          row.explanation_payload,
+      ? normalizeMainRecommendationFromSummary(
+          {
+            summaryPayload: row.summary_payload,
+            mainRecommendationPick: row.main_recommendation_pick,
+            mainRecommendationConfidence: row.main_recommendation_confidence,
+            mainRecommendationRecommended: row.main_recommendation_recommended,
+            mainRecommendationNoBetReason: row.main_recommendation_no_bet_reason,
+          },
           row.representative_recommended_pick ?? "UNKNOWN",
           Number(row.representative_confidence_score ?? 0),
+          null,
         )
       : null;
     const valueRecommendation = row.has_prediction
-      ? normalizeValueRecommendation(row.market_explanation_payload)
+      ? normalizeValueRecommendationFromSummary(
+          {
+            valueRecommendationPick: row.value_recommendation_pick,
+            valueRecommendationRecommended: row.value_recommendation_recommended,
+            valueRecommendationEdge: row.value_recommendation_edge,
+            valueRecommendationExpectedValue: row.value_recommendation_expected_value,
+            valueRecommendationMarketPrice: row.value_recommendation_market_price,
+            valueRecommendationModelProbability: row.value_recommendation_model_probability,
+            valueRecommendationMarketProbability: row.value_recommendation_market_probability,
+            valueRecommendationMarketSource: row.value_recommendation_market_source,
+          },
+          null,
+        )
       : null;
     const variantMarkets = row.has_prediction
-      ? normalizeVariantMarkets(row.market_explanation_payload)
+      ? normalizeVariantMarketsFromSummary(
+          { variantMarketsSummary: row.variant_markets_summary },
+          null,
+        )
       : [];
 
     return {
@@ -451,9 +508,6 @@ async function loadDashboardMatchCardsPageView(
       noBetReason: mainRecommendation?.recommended
         ? null
         : (mainRecommendation?.noBetReason ?? null),
-      ...(row.has_prediction && typeof row.explanation_payload === "object"
-        ? { explanationPayload: row.explanation_payload }
-        : {}),
       needsReview: row.needs_review,
     };
   });
@@ -616,7 +670,7 @@ async function loadSelectedLeaguePageView(
     supabase
       .from("predictions")
       .select(
-        "match_id, snapshot_id, recommended_pick, confidence_score, explanation_payload, created_at",
+        "match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_payload, created_at",
       )
       .in("match_id", matchIds)
       .order("created_at", { ascending: false }),
@@ -639,16 +693,7 @@ async function loadSelectedLeaguePageView(
       { checkpointType: row.checkpoint_type },
     ]),
   );
-  const predictionCandidatesByMatchId = new Map<
-    string,
-    Array<{
-      snapshotId: string;
-      recommendedPick: string;
-      confidence: number;
-      createdAt: string | null;
-      explanationPayload: unknown;
-    }>
-  >();
+  const predictionCandidatesByMatchId = new Map<string, PredictionCandidate[]>();
   for (const row of predictionRows ?? []) {
     const current = predictionCandidatesByMatchId.get(row.match_id) ?? [];
     current.push({
@@ -656,19 +701,49 @@ async function loadSelectedLeaguePageView(
       recommendedPick: row.recommended_pick,
       confidence: Number(row.confidence_score ?? 0),
       createdAt: row.created_at ?? null,
-      explanationPayload: row.explanation_payload,
+      summaryPayload: normalizeSummaryPayload(row.summary_payload, row.explanation_payload),
+      legacyPayload: row.explanation_payload,
+      mainRecommendationPick: row.main_recommendation_pick ?? null,
+      mainRecommendationConfidence:
+        row.main_recommendation_confidence == null
+          ? null
+          : Number(row.main_recommendation_confidence),
+      mainRecommendationRecommended:
+        typeof row.main_recommendation_recommended === "boolean"
+          ? row.main_recommendation_recommended
+          : row.main_recommendation_recommended ?? null,
+      mainRecommendationNoBetReason: row.main_recommendation_no_bet_reason ?? null,
+      valueRecommendationPick: row.value_recommendation_pick ?? null,
+      valueRecommendationRecommended:
+        typeof row.value_recommendation_recommended === "boolean"
+          ? row.value_recommendation_recommended
+          : row.value_recommendation_recommended ?? null,
+      valueRecommendationEdge:
+        row.value_recommendation_edge == null
+          ? null
+          : Number(row.value_recommendation_edge),
+      valueRecommendationExpectedValue:
+        row.value_recommendation_expected_value == null
+          ? null
+          : Number(row.value_recommendation_expected_value),
+      valueRecommendationMarketPrice:
+        row.value_recommendation_market_price == null
+          ? null
+          : Number(row.value_recommendation_market_price),
+      valueRecommendationModelProbability:
+        row.value_recommendation_model_probability == null
+          ? null
+          : Number(row.value_recommendation_model_probability),
+      valueRecommendationMarketProbability:
+        row.value_recommendation_market_probability == null
+          ? null
+          : Number(row.value_recommendation_market_probability),
+      valueRecommendationMarketSource: row.value_recommendation_market_source ?? null,
+      variantMarketsSummary: row.variant_markets_summary ?? null,
     });
     predictionCandidatesByMatchId.set(row.match_id, current);
   }
-  const predictionByMatchId = new Map<
-    string,
-    {
-      recommendedPick: string;
-      confidence: number;
-      explanationPayload: unknown;
-      marketExplanationPayload: unknown;
-    } | null
-  >();
+  const predictionByMatchId = new Map<string, PredictionListSummary | null>();
   for (const [matchId, predictions] of predictionCandidatesByMatchId.entries()) {
     const representative = pickRepresentativePrediction(predictions, snapshotsById);
     const marketEnriched = pickMarketEnrichedPrediction(predictions);
@@ -676,11 +751,47 @@ async function loadSelectedLeaguePageView(
       matchId,
       representative
         ? {
-            recommendedPick: representative.recommendedPick,
-            confidence: representative.confidence,
-            explanationPayload: representative.explanationPayload,
-            marketExplanationPayload:
-              marketEnriched?.explanationPayload ?? representative.explanationPayload,
+            mainRecommendation: normalizeMainRecommendationFromSummary(
+              {
+                summaryPayload: representative.summaryPayload,
+                mainRecommendationPick: representative.mainRecommendationPick,
+                mainRecommendationConfidence:
+                  representative.mainRecommendationConfidence,
+                mainRecommendationRecommended:
+                  representative.mainRecommendationRecommended,
+                mainRecommendationNoBetReason:
+                  representative.mainRecommendationNoBetReason,
+              },
+              representative.recommendedPick,
+              representative.confidence,
+              representative.legacyPayload,
+            ),
+            valueRecommendation: normalizeValueRecommendationFromSummary(
+              {
+                valueRecommendationPick: marketEnriched?.valueRecommendationPick ?? null,
+                valueRecommendationRecommended:
+                  marketEnriched?.valueRecommendationRecommended ?? null,
+                valueRecommendationEdge: marketEnriched?.valueRecommendationEdge ?? null,
+                valueRecommendationExpectedValue:
+                  marketEnriched?.valueRecommendationExpectedValue ?? null,
+                valueRecommendationMarketPrice:
+                  marketEnriched?.valueRecommendationMarketPrice ?? null,
+                valueRecommendationModelProbability:
+                  marketEnriched?.valueRecommendationModelProbability ?? null,
+                valueRecommendationMarketProbability:
+                  marketEnriched?.valueRecommendationMarketProbability ?? null,
+                valueRecommendationMarketSource:
+                  marketEnriched?.valueRecommendationMarketSource ?? null,
+              },
+              marketEnriched?.legacyPayload ?? representative.legacyPayload,
+            ),
+            variantMarkets: normalizeVariantMarketsFromSummary(
+              {
+                variantMarketsSummary:
+                  marketEnriched?.variantMarketsSummary ?? representative.variantMarketsSummary,
+              },
+              marketEnriched?.legacyPayload ?? representative.legacyPayload,
+            ),
           }
         : null,
     );
@@ -690,19 +801,9 @@ async function loadSelectedLeaguePageView(
   const items = pagedMatches.map((match) => {
     const prediction = predictionByMatchId.get(match.id);
     const review = reviewByMatchId.get(match.id);
-    const mainRecommendation = prediction
-      ? normalizeMainRecommendation(
-          prediction.explanationPayload,
-          prediction.recommendedPick,
-          prediction.confidence,
-        )
-      : null;
-    const valueRecommendation = prediction
-      ? normalizeValueRecommendation(prediction.marketExplanationPayload)
-      : null;
-    const variantMarkets = prediction
-      ? normalizeVariantMarkets(prediction.marketExplanationPayload)
-      : [];
+    const mainRecommendation = prediction?.mainRecommendation ?? null;
+    const valueRecommendation = prediction?.valueRecommendation ?? null;
+    const variantMarkets = prediction?.variantMarkets ?? [];
     return {
       id: match.id,
       leagueId: match.competition_id,
@@ -733,9 +834,6 @@ async function loadSelectedLeaguePageView(
       noBetReason: mainRecommendation?.recommended
         ? null
         : (mainRecommendation?.noBetReason ?? null),
-      ...(prediction && typeof prediction.explanationPayload === "object"
-        ? { explanationPayload: prediction.explanationPayload }
-        : {}),
       needsReview: review?.needsReview ?? false,
     };
   });

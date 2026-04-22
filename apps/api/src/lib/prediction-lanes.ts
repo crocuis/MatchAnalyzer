@@ -45,6 +45,23 @@ export interface VariantMarket {
   marketSlug: string | null;
 }
 
+export interface PredictionLaneSummaryFields {
+  summaryPayload?: unknown;
+  mainRecommendationPick?: unknown;
+  mainRecommendationConfidence?: unknown;
+  mainRecommendationRecommended?: unknown;
+  mainRecommendationNoBetReason?: unknown;
+  valueRecommendationPick?: unknown;
+  valueRecommendationRecommended?: unknown;
+  valueRecommendationEdge?: unknown;
+  valueRecommendationExpectedValue?: unknown;
+  valueRecommendationMarketPrice?: unknown;
+  valueRecommendationModelProbability?: unknown;
+  valueRecommendationMarketProbability?: unknown;
+  valueRecommendationMarketSource?: unknown;
+  variantMarketsSummary?: unknown;
+}
+
 export function normalizeMainRecommendation(
   explanationPayload: unknown,
   fallbackPick: string,
@@ -151,4 +168,99 @@ export function normalizeVariantMarkets(
       },
     ];
   });
+}
+
+export function normalizeSummaryPayload(
+  summaryPayload: unknown,
+  fallbackPayload: unknown = null,
+): unknown {
+  if (isRecord(summaryPayload)) {
+    return summaryPayload;
+  }
+  return fallbackPayload;
+}
+
+export function normalizeMainRecommendationFromSummary(
+  summary: PredictionLaneSummaryFields,
+  fallbackPick: string,
+  fallbackConfidence: number,
+  fallbackPayload: unknown = null,
+): MainRecommendation {
+  const pick = readString(summary.mainRecommendationPick);
+  const confidence = readNumber(summary.mainRecommendationConfidence);
+  const recommended = readBoolean(summary.mainRecommendationRecommended);
+  const noBetReason = readString(summary.mainRecommendationNoBetReason);
+
+  if (pick !== null || confidence !== null || recommended !== null || noBetReason !== null) {
+    return {
+      pick: pick ?? fallbackPick,
+      confidence: confidence ?? fallbackConfidence,
+      recommended: recommended ?? true,
+      noBetReason,
+    };
+  }
+
+  return normalizeMainRecommendation(fallbackPayload, fallbackPick, fallbackConfidence);
+}
+
+export function normalizeValueRecommendationFromSummary(
+  summary: PredictionLaneSummaryFields,
+  fallbackPayload: unknown = null,
+): ValueRecommendation | null {
+  const pick = readString(summary.valueRecommendationPick);
+  const recommended = readBoolean(summary.valueRecommendationRecommended);
+  const edge = readNumber(summary.valueRecommendationEdge);
+  const expectedValue = readNumber(summary.valueRecommendationExpectedValue);
+  const marketPrice = readNumber(summary.valueRecommendationMarketPrice);
+  const modelProbability = readNumber(summary.valueRecommendationModelProbability);
+  const marketProbability = readNumber(summary.valueRecommendationMarketProbability);
+  const marketSource = readString(summary.valueRecommendationMarketSource);
+
+  if (
+    pick !== null ||
+    recommended !== null ||
+    edge !== null ||
+    expectedValue !== null ||
+    marketPrice !== null ||
+    modelProbability !== null ||
+    marketProbability !== null ||
+    marketSource !== null
+  ) {
+    if (
+      pick === null ||
+      recommended === null ||
+      edge === null ||
+      expectedValue === null ||
+      marketPrice === null ||
+      modelProbability === null ||
+      marketProbability === null ||
+      marketSource === null
+    ) {
+      return null;
+    }
+
+    return {
+      pick,
+      recommended,
+      edge,
+      expectedValue,
+      marketPrice,
+      modelProbability,
+      marketProbability,
+      marketSource,
+    };
+  }
+
+  return normalizeValueRecommendation(fallbackPayload);
+}
+
+export function normalizeVariantMarketsFromSummary(
+  summary: PredictionLaneSummaryFields,
+  fallbackPayload: unknown = null,
+): VariantMarket[] {
+  if (Array.isArray(summary.variantMarketsSummary)) {
+    return normalizeVariantMarkets({ variant_markets: summary.variantMarketsSummary });
+  }
+
+  return normalizeVariantMarkets(fallbackPayload);
 }

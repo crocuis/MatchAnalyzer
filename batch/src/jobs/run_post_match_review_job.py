@@ -11,6 +11,8 @@ from batch.src.rollout.promotion_policy import (
     build_rollout_promotion_decision,
 )
 from batch.src.settings import load_settings
+from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import (
     build_history_row_id,
     next_rollout_version,
@@ -213,6 +215,7 @@ def build_review_aggregation_comparison(
 
 def run_review_job(
     client: SupabaseClient,
+    r2_client: R2Client,
     *,
     target_date: str | None,
 ) -> dict:
@@ -291,7 +294,41 @@ def run_review_job(
         raise ValueError("no review payload was generated")
     if len(payload) != expected_review_count:
         raise ValueError("review pipeline requires a review per prediction")
-    inserted = client.upsert_rows("post_match_reviews", payload)
+    artifact_payload = []
+    for review_row in payload:
+        artifact_id = f"review_artifact_{review_row['id']}"
+        artifact_payload.append(
+            archive_json_artifact(
+                r2_client=r2_client,
+                artifact_id=artifact_id,
+                owner_type="post_match_review",
+                owner_id=review_row["id"],
+                artifact_kind="review_summary",
+                key=f"reviews/{review_row['match_id']}/{review_row['id']}.json",
+                payload=review_row["market_comparison_summary"],
+                summary_payload={
+                    "match_id": review_row["match_id"],
+                    "prediction_id": review_row["prediction_id"],
+                    "actual_outcome": review_row["actual_outcome"],
+                },
+            )
+        )
+        taxonomy = review_row["market_comparison_summary"].get("taxonomy") or {}
+        attribution = review_row["market_comparison_summary"].get("attribution_summary") or {}
+        review_row["summary_payload"] = review_row["market_comparison_summary"]
+        review_row["comparison_available"] = review_row["market_comparison_summary"].get(
+            "comparison_available"
+        )
+        review_row["market_outperformed_model"] = review_row["market_comparison_summary"].get(
+            "market_outperformed_model"
+        )
+        review_row["taxonomy_miss_family"] = taxonomy.get("miss_family")
+        review_row["taxonomy_severity"] = taxonomy.get("severity")
+        review_row["taxonomy_consensus_level"] = taxonomy.get("consensus_level")
+        review_row["taxonomy_market_signal"] = taxonomy.get("market_signal")
+        review_row["attribution_primary_signal"] = attribution.get("primary_signal")
+        review_row["attribution_secondary_signal"] = attribution.get("secondary_signal")
+        review_row["review_artifact_id"] = artifact_id
     aggregation_report = build_review_aggregation_report(payload)
     rollout_channel = "current"
     existing_aggregation_rows = read_optional_rows(
@@ -318,6 +355,49 @@ def run_review_job(
         rollout_channel=rollout_channel,
         rollout_version=rollout_version,
     )
+    latest_aggregation_artifact_id = (
+        f"post_match_review_aggregation_latest_{rollout_channel}"
+    )
+    history_aggregation_artifact_id = (
+        f"post_match_review_aggregation_{rollout_channel}_v{rollout_version}"
+    )
+    artifact_payload.extend([
+        archive_json_artifact(
+            r2_client=r2_client,
+            artifact_id=latest_aggregation_artifact_id,
+            owner_type="post_match_review_aggregation",
+            owner_id="latest",
+            artifact_kind="review_aggregation_report",
+            key=f"reports/review-aggregation/latest-{rollout_channel}-v{rollout_version}.json",
+            payload=aggregation_report,
+            summary_payload={
+                "rollout_channel": rollout_channel,
+                "rollout_version": rollout_version,
+            },
+        ),
+        archive_json_artifact(
+            r2_client=r2_client,
+            artifact_id=history_aggregation_artifact_id,
+            owner_type="post_match_review_aggregation_version",
+            owner_id=history_row_id,
+            artifact_kind="review_aggregation_report",
+            key=f"reports/review-aggregation/history/{history_row_id}.json",
+            payload=aggregation_report,
+            summary_payload={
+                "rollout_channel": rollout_channel,
+                "rollout_version": rollout_version,
+            },
+        ),
+    ])
+    artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
+    persisted_review_rows = [
+        {
+            **review_row,
+            "market_comparison_summary": {},
+        }
+        for review_row in payload
+    ]
+    inserted = client.upsert_rows("post_match_reviews", persisted_review_rows)
     aggregation_rows = client.upsert_rows(
         "post_match_review_aggregations",
         [
@@ -325,6 +405,7 @@ def run_review_job(
                 {
                     "id": "latest",
                     "report_payload": aggregation_report,
+                    "artifact_id": latest_aggregation_artifact_id,
                 },
                 rollout_channel=rollout_channel,
                 rollout_version=rollout_version,
@@ -341,6 +422,7 @@ def run_review_job(
                 {
                     "id": history_row_id,
                     "report_payload": aggregation_report,
+                    "artifact_id": history_aggregation_artifact_id,
                 },
                 rollout_channel=rollout_channel,
                 rollout_version=rollout_version,
@@ -417,6 +499,7 @@ def run_review_job(
     return {
         "result_rows": result_count,
         "inserted_rows": inserted,
+        "artifact_rows": artifact_rows,
         "aggregation_rows": aggregation_rows,
         "aggregation_history_rows": aggregation_history_rows,
         "promotion_rows": promotion_rows,
@@ -430,8 +513,15 @@ def run_review_job(
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    r2_client = R2Client(
+        getattr(settings, "r2_bucket", "workflow-artifacts"),
+        access_key_id=getattr(settings, "r2_access_key_id", None),
+        secret_access_key=getattr(settings, "r2_secret_access_key", None),
+        s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+    )
     result = run_review_job(
         client,
+        r2_client,
         target_date=os.environ.get("REAL_REVIEW_DATE"),
     )
     print(json.dumps(result, sort_keys=True))

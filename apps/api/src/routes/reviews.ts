@@ -138,6 +138,46 @@ function normalizeReviewHistoryEntry(
   };
 }
 
+async function loadArtifactById(
+  supabase: ApiSupabaseClient,
+  artifactId: string | null | undefined,
+) {
+  if (!artifactId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("stored_artifacts")
+    .select(
+      "id, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256",
+    )
+    .eq("id", artifactId)
+    .maybeSingle();
+
+  if (error) {
+    if (error.message.includes("does not exist") || error.message.includes("relation")) {
+      return null;
+    }
+    throw new Error(`artifact query failed: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    storageBackend: data.storage_backend,
+    bucketName: data.bucket_name,
+    objectKey: data.object_key,
+    storageUri: data.storage_uri,
+    contentType: data.content_type,
+    sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : null,
+    checksumSha256:
+      typeof data.checksum_sha256 === "string" ? data.checksum_sha256 : null,
+  };
+}
+
 export async function loadReviewView(
   supabase: ApiSupabaseClient,
   matchId: string,
@@ -145,7 +185,7 @@ export async function loadReviewView(
   const { data, error } = await supabase
     .from("post_match_reviews")
     .select(
-      "match_id, actual_outcome, error_summary, cause_tags, market_comparison_summary, created_at",
+      "match_id, actual_outcome, error_summary, cause_tags, market_comparison_summary, summary_payload, comparison_available, market_outperformed_model, taxonomy_miss_family, taxonomy_severity, taxonomy_consensus_level, taxonomy_market_signal, attribution_primary_signal, attribution_secondary_signal, review_artifact_id, created_at",
     )
     .eq("match_id", matchId)
     .order("created_at", { ascending: false })
@@ -156,6 +196,10 @@ export async function loadReviewView(
     throw new Error(`review query failed: ${error.message}`);
   }
 
+  const artifact = data
+    ? await loadArtifactById(supabase, data.review_artifact_id)
+    : null;
+
   return {
     matchId,
     review: data
@@ -165,10 +209,30 @@ export async function loadReviewView(
           actualOutcome: data.actual_outcome,
           summary: data.error_summary,
           causeTags: data.cause_tags,
-          taxonomy: data.market_comparison_summary?.taxonomy ?? null,
+          taxonomy:
+            data.taxonomy_miss_family ||
+            data.taxonomy_severity ||
+            data.taxonomy_consensus_level ||
+            data.taxonomy_market_signal
+              ? {
+                  miss_family: data.taxonomy_miss_family ?? undefined,
+                  severity: data.taxonomy_severity ?? undefined,
+                  consensus_level: data.taxonomy_consensus_level ?? undefined,
+                  market_signal: data.taxonomy_market_signal ?? undefined,
+                }
+              : (data.market_comparison_summary?.taxonomy ?? null),
           attributionSummary:
-            data.market_comparison_summary?.attribution_summary ?? null,
-          marketComparison: data.market_comparison_summary,
+            data.attribution_primary_signal || data.attribution_secondary_signal
+              ? {
+                  primary_signal: data.attribution_primary_signal ?? null,
+                  secondary_signal: data.attribution_secondary_signal ?? null,
+                }
+              : (data.market_comparison_summary?.attribution_summary ?? null),
+          marketComparison:
+            data.summary_payload && typeof data.summary_payload === "object"
+              ? data.summary_payload
+              : data.market_comparison_summary,
+          artifact,
         }
       : null,
   };

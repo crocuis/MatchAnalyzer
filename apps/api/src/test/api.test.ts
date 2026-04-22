@@ -1219,13 +1219,26 @@ describe("prediction API", () => {
             recommended_pick: "HOME",
             confidence_score: 0.55,
             created_at: "2026-04-27T10:00:00Z",
-            explanation_payload: {
+            summary_payload: {
               source_agreement_ratio: 0.67,
               feature_context: {
                 elo_delta: 0.25,
                 xg_proxy_delta: 0.18,
               },
             },
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.55,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
           },
           {
             match_id: "match-1",
@@ -1233,13 +1246,26 @@ describe("prediction API", () => {
             recommended_pick: "DRAW",
             confidence_score: 0.41,
             created_at: "2026-04-27T12:00:00Z",
-            explanation_payload: {
+            summary_payload: {
               source_agreement_ratio: 1,
               feature_context: {
                 elo_delta: 0.42,
                 xg_proxy_delta: 0.31,
               },
             },
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.41,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
           },
         ],
         error: null,
@@ -1280,13 +1306,13 @@ describe("prediction API", () => {
     expect(items[0]?.finalResult).toBe("AWAY");
     expect(items[0]?.homeScore).toBe(1);
     expect(items[0]?.awayScore).toBe(2);
-    expect(items[0]?.explanationPayload).toEqual({
-      source_agreement_ratio: 1,
-      feature_context: {
-        elo_delta: 0.42,
-        xg_proxy_delta: 0.31,
-      },
-    });
+    expect(items[0]?.explanationPayload).toBeUndefined();
+    expect(predictions.select).toHaveBeenCalledWith(
+      expect.stringContaining("main_recommendation_pick"),
+    );
+    expect(predictions.select).toHaveBeenCalledWith(
+      expect.stringContaining("summary_payload"),
+    );
   });
 
   it("prefers the most recent prediction when multiple rows share the same checkpoint", async () => {
@@ -1337,7 +1363,20 @@ describe("prediction API", () => {
             recommended_pick: "HOME",
             confidence_score: 0.52,
             created_at: "2026-04-27T11:00:00Z",
-            explanation_payload: { source_agreement_ratio: 0.67 },
+            summary_payload: { source_agreement_ratio: 0.67 },
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.52,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
           },
           {
             match_id: "match-1",
@@ -1345,7 +1384,20 @@ describe("prediction API", () => {
             recommended_pick: "AWAY",
             confidence_score: 0.61,
             created_at: "2026-04-27T12:00:00Z",
-            explanation_payload: { source_agreement_ratio: 1 },
+            summary_payload: { source_agreement_ratio: 1 },
+            main_recommendation_pick: "AWAY",
+            main_recommendation_confidence: 0.61,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
           },
         ],
         error: null,
@@ -1382,7 +1434,7 @@ describe("prediction API", () => {
     expect(items[0]?.confidence).toBe(0.61);
     expect(items[0]?.homeScore).toBe(1);
     expect(items[0]?.awayScore).toBe(2);
-    expect(items[0]?.explanationPayload).toEqual({ source_agreement_ratio: 1 });
+    expect(items[0]?.explanationPayload).toBeUndefined();
   });
 
   it("exposes no-bet main lane separately from value recommendation", async () => {
@@ -1433,36 +1485,31 @@ describe("prediction API", () => {
             recommended_pick: "HOME",
             confidence_score: 0.57,
             created_at: "2026-04-27T12:00:00Z",
-            explanation_payload: {
-              main_recommendation: {
-                pick: "HOME",
-                confidence: 0.57,
-                recommended: false,
-                no_bet_reason: "low_confidence",
+            summary_payload: {},
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.57,
+            main_recommendation_recommended: false,
+            main_recommendation_no_bet_reason: "low_confidence",
+            value_recommendation_pick: "AWAY",
+            value_recommendation_recommended: true,
+            value_recommendation_edge: 0.1,
+            value_recommendation_expected_value: 0.3125,
+            value_recommendation_market_price: 0.24,
+            value_recommendation_model_probability: 0.42,
+            value_recommendation_market_probability: 0.32,
+            value_recommendation_market_source: "prediction_market",
+            variant_markets_summary: [
+              {
+                market_family: "spreads",
+                source_name: "polymarket_spreads",
+                line_value: -0.5,
+                selection_a_label: "Home -0.5",
+                selection_a_price: 0.54,
+                selection_b_label: "Away +0.5",
+                selection_b_price: 0.46,
+                market_slug: "spread-slug",
               },
-              value_recommendation: {
-                pick: "AWAY",
-                recommended: true,
-                edge: 0.1,
-                expected_value: 0.3125,
-                market_price: 0.24,
-                model_probability: 0.42,
-                market_probability: 0.32,
-                market_source: "prediction_market",
-              },
-              variant_markets: [
-                {
-                  market_family: "spreads",
-                  source_name: "polymarket_spreads",
-                  line_value: -0.5,
-                  selection_a_label: "Home -0.5",
-                  selection_a_price: 0.54,
-                  selection_b_label: "Away +0.5",
-                  selection_b_price: 0.46,
-                  market_slug: "spread-slug",
-                },
-              ],
-            },
+            ],
           },
         ],
         error: null,

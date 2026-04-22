@@ -14,6 +14,17 @@ export type MatchStatus =
   | "Review Ready"
   | "Needs Review";
 
+export interface ArtifactPointer {
+  id: string;
+  storageBackend: "r2";
+  bucketName: string;
+  objectKey: string;
+  storageUri: string;
+  contentType: string;
+  sizeBytes?: number | null;
+  checksumSha256?: string | null;
+}
+
 export type MatchSnapshotRecord = {
   matchId: string;
   checkpoint: Checkpoint;

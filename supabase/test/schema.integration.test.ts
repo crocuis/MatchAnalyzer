@@ -86,6 +86,24 @@ describe("supabase schema integration", () => {
          'post_match_review_aggregations'
        ) and column_name = 'comparison_payload'`,
     );
+    const artifactPointerColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name in (
+         'predictions',
+         'post_match_reviews',
+         'prediction_source_evaluation_reports',
+         'prediction_source_evaluation_report_versions',
+         'prediction_fusion_policies',
+         'prediction_fusion_policy_versions',
+         'post_match_review_aggregations',
+         'post_match_review_aggregation_versions'
+       ) and column_name in (
+         'explanation_artifact_id',
+         'review_artifact_id',
+         'artifact_id'
+       )`,
+    );
     const dashboardLeagueSummaryViews = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.views
@@ -95,6 +113,33 @@ describe("supabase schema integration", () => {
       `select count(*)::int as count
        from information_schema.views
        where table_name = 'dashboard_match_cards'`,
+    );
+    const artifactTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'stored_artifacts'`,
+    );
+    const predictionSummaryColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'predictions'
+         and column_name in (
+           'summary_payload',
+           'main_recommendation_pick',
+           'main_recommendation_confidence',
+           'main_recommendation_recommended',
+           'main_recommendation_no_bet_reason',
+           'value_recommendation_pick',
+           'value_recommendation_recommended',
+           'value_recommendation_edge',
+           'value_recommendation_expected_value',
+           'value_recommendation_market_price',
+           'value_recommendation_model_probability',
+           'value_recommendation_market_probability',
+           'value_recommendation_market_source',
+           'variant_markets_summary',
+           'explanation_artifact_id'
+         )`,
     );
 
     expect(competitions.rows[0]?.count).toBe(1);
@@ -109,8 +154,11 @@ describe("supabase schema integration", () => {
     expect(reviewAggregationHistoryTables.rows[0]?.count).toBe(1);
     expect(rolloutVersionColumns.rows[0]?.count).toBe(3);
     expect(comparisonPayloadColumns.rows[0]?.count).toBe(3);
+    expect(artifactPointerColumns.rows[0]?.count).toBe(8);
     expect(dashboardLeagueSummaryViews.rows[0]?.count).toBe(1);
     expect(dashboardMatchCardViews.rows[0]?.count).toBe(1);
+    expect(artifactTables.rows[0]?.count).toBe(1);
+    expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
   });
 
   it("exposes dashboard league counts through the summary view", async () => {
@@ -281,6 +329,29 @@ describe("supabase schema integration", () => {
       insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
       values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
 
+      insert into stored_artifacts (
+        id,
+        owner_type,
+        owner_id,
+        artifact_kind,
+        storage_backend,
+        bucket_name,
+        object_key,
+        storage_uri,
+        content_type
+      )
+      values (
+        'artifact_prediction_001',
+        'prediction',
+        'prediction_001',
+        'prediction_explanation',
+        'r2',
+        'workflow-artifacts',
+        'predictions/match_001/latest.json',
+        'r2://workflow-artifacts/predictions/match_001/latest.json',
+        'application/json'
+      );
+
       insert into predictions (
         id,
         snapshot_id,
@@ -291,7 +362,22 @@ describe("supabase schema integration", () => {
         away_prob,
         recommended_pick,
         confidence_score,
-        explanation_payload
+        explanation_payload,
+        summary_payload,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended,
+        main_recommendation_no_bet_reason,
+        value_recommendation_pick,
+        value_recommendation_recommended,
+        value_recommendation_edge,
+        value_recommendation_expected_value,
+        value_recommendation_market_price,
+        value_recommendation_model_probability,
+        value_recommendation_market_probability,
+        value_recommendation_market_source,
+        variant_markets_summary,
+        explanation_artifact_id
       )
       values (
         'prediction_001',
@@ -303,7 +389,22 @@ describe("supabase schema integration", () => {
         0.25,
         'HOME',
         0.75,
-        '{"value_recommendation":{"pick":"AWAY","recommended":true,"edge":0.12,"expected_value":0.31,"market_price":0.24,"model_probability":0.42,"market_probability":0.30,"market_source":"prediction_market"}}'::jsonb
+        '{"value_recommendation":{"pick":"AWAY","recommended":true,"edge":0.12,"expected_value":0.31,"market_price":0.24,"model_probability":0.42,"market_probability":0.30,"market_source":"prediction_market"}}'::jsonb,
+        '{"source_agreement_ratio":0.67}'::jsonb,
+        'HOME',
+        0.75,
+        true,
+        null,
+        'AWAY',
+        true,
+        0.12,
+        0.31,
+        0.24,
+        0.42,
+        0.30,
+        'prediction_market',
+        '[]'::jsonb,
+        'artifact_prediction_001'
       );
 
       insert into post_match_reviews (
@@ -331,9 +432,20 @@ describe("supabase schema integration", () => {
       has_prediction: boolean;
       needs_review: boolean;
       sort_bucket: number;
-      market_explanation_payload: unknown;
+      main_recommendation_pick: string | null;
+      value_recommendation_pick: string | null;
+      summary_payload: unknown;
+      explanation_artifact_id: string | null;
     }>(
-      `select id, has_prediction, needs_review, sort_bucket, market_explanation_payload
+      `select
+         id,
+         has_prediction,
+         needs_review,
+         sort_bucket,
+         main_recommendation_pick,
+         value_recommendation_pick,
+         summary_payload,
+         explanation_artifact_id
        from dashboard_match_cards
        where id = 'match_001'`,
     );
@@ -342,7 +454,10 @@ describe("supabase schema integration", () => {
     expect(cards.rows[0]?.has_prediction).toBe(true);
     expect(cards.rows[0]?.needs_review).toBe(true);
     expect(cards.rows[0]?.sort_bucket).toBe(0);
-    expect(cards.rows[0]?.market_explanation_payload).toBeTruthy();
+    expect(cards.rows[0]?.main_recommendation_pick).toBe("HOME");
+    expect(cards.rows[0]?.value_recommendation_pick).toBe("AWAY");
+    expect(cards.rows[0]?.summary_payload).toEqual({ source_agreement_ratio: 0.67 });
+    expect(cards.rows[0]?.explanation_artifact_id).toBe("artifact_prediction_001");
   });
 
   it("exposes historical form and rest columns on match snapshots", async () => {
