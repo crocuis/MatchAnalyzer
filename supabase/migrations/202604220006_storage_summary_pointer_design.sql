@@ -247,10 +247,19 @@ set
 alter table prediction_source_evaluation_reports
   add column if not exists artifact_id text references stored_artifacts(id);
 
+alter table prediction_source_evaluation_report_versions
+  add column if not exists artifact_id text references stored_artifacts(id);
+
 alter table prediction_fusion_policies
   add column if not exists artifact_id text references stored_artifacts(id);
 
+alter table prediction_fusion_policy_versions
+  add column if not exists artifact_id text references stored_artifacts(id);
+
 alter table post_match_review_aggregations
+  add column if not exists artifact_id text references stored_artifacts(id);
+
+alter table post_match_review_aggregation_versions
   add column if not exists artifact_id text references stored_artifacts(id);
 
 drop view if exists dashboard_league_summaries;

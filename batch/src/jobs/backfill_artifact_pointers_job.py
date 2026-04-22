@@ -27,7 +27,13 @@ def _archive_prediction_rows(rows: list[dict], r2_client: R2Client) -> tuple[lis
                 summary_payload={"match_id": row.get("match_id")},
             )
         )
-        archived_rows.append({**row, "explanation_artifact_id": artifact_id})
+        archived_rows.append(
+            {
+                **row,
+                "explanation_artifact_id": artifact_id,
+                "explanation_payload": row.get("summary_payload") or {},
+            }
+        )
     return archived_rows, artifact_rows
 
 
@@ -51,8 +57,43 @@ def _archive_review_rows(rows: list[dict], r2_client: R2Client) -> tuple[list[di
                 summary_payload={"match_id": row.get("match_id")},
             )
         )
-        archived_rows.append({**row, "review_artifact_id": artifact_id})
+        archived_rows.append(
+            {
+                **row,
+                "review_artifact_id": artifact_id,
+                "market_comparison_summary": {},
+            }
+        )
     return archived_rows, artifact_rows
+
+
+def _build_evaluation_report_summary(payload: dict) -> dict:
+    return {
+        "snapshots_evaluated": payload.get("snapshots_evaluated"),
+        "rows_evaluated": payload.get("rows_evaluated"),
+        "overall": dict(payload.get("overall") or {}),
+        "by_checkpoint": dict(payload.get("by_checkpoint") or {}),
+        "by_competition": dict(payload.get("by_competition") or {}),
+        "by_market_segment": dict(payload.get("by_market_segment") or {}),
+    }
+
+
+def _build_fusion_policy_summary(payload: dict) -> dict:
+    weights = payload.get("weights") or {}
+    return {
+        "policy_id": payload.get("policy_id"),
+        "policy_version": payload.get("policy_version"),
+        "rollout_channel": payload.get("rollout_channel"),
+        "selection_order": list(payload.get("selection_order") or []),
+        "weights": {
+            "overall": dict(weights.get("overall") or {}),
+            "by_checkpoint": dict(weights.get("by_checkpoint") or {}),
+            "by_market_segment": dict(weights.get("by_market_segment") or {}),
+            "by_checkpoint_market_segment": dict(
+                weights.get("by_checkpoint_market_segment") or {}
+            ),
+        },
+    }
 
 
 def _archive_report_rows(
@@ -72,6 +113,17 @@ def _archive_report_rows(
             archived_rows.append(row)
             continue
         artifact_id = f"{owner_type}_{row['id']}"
+        if row.get("id") == "latest":
+            suffix = str(row.get("rollout_channel") or "current")
+            artifact_id = f"{owner_type}_latest_{suffix}"
+        payload = row[payload_column]
+        persisted_payload = payload
+        if payload_column == "report_payload" and owner_type.startswith(
+            "prediction_source_evaluation_report"
+        ):
+            persisted_payload = _build_evaluation_report_summary(payload)
+        elif payload_column == "policy_payload":
+            persisted_payload = _build_fusion_policy_summary(payload)
         artifact_rows.append(
             archive_json_artifact(
                 r2_client=r2_client,
@@ -80,14 +132,20 @@ def _archive_report_rows(
                 owner_id=row["id"],
                 artifact_kind=artifact_kind,
                 key=f"backfill/{key_prefix}/{row['id']}.json",
-                payload=row[payload_column],
+                payload=payload,
                 summary_payload={
                     "rollout_channel": row.get("rollout_channel"),
                     "rollout_version": row.get("rollout_version"),
                 },
             )
         )
-        archived_rows.append({**row, artifact_column: artifact_id})
+        archived_rows.append(
+            {
+                **row,
+                artifact_column: artifact_id,
+                payload_column: persisted_payload,
+            }
+        )
     return archived_rows, artifact_rows
 
 
@@ -103,18 +161,15 @@ def main() -> None:
 
     artifact_rows: list[dict] = []
     updated_counts: dict[str, int] = {}
+    pending_table_updates: list[tuple[str, list[dict]]] = []
 
     predictions = read_optional_rows(client, "predictions")
     archived_predictions, prediction_artifacts = _archive_prediction_rows(predictions, r2_client)
-    if prediction_artifacts:
-        client.upsert_rows("predictions", archived_predictions)
     artifact_rows.extend(prediction_artifacts)
     updated_counts["predictions"] = len(prediction_artifacts)
 
     reviews = read_optional_rows(client, "post_match_reviews")
     archived_reviews, review_artifacts = _archive_review_rows(reviews, r2_client)
-    if review_artifacts:
-        client.upsert_rows("post_match_reviews", archived_reviews)
     artifact_rows.extend(review_artifacts)
     updated_counts["post_match_reviews"] = len(review_artifacts)
 
@@ -188,11 +243,17 @@ def main() -> None:
             r2_client=r2_client,
         )
         if table_artifacts:
-            client.upsert_rows(table_name, archived_rows)
+            pending_table_updates.append((table_name, archived_rows))
         artifact_rows.extend(table_artifacts)
         updated_counts[table_name] = len(table_artifacts)
 
     persisted_artifacts = client.upsert_rows("stored_artifacts", artifact_rows) if artifact_rows else 0
+    if prediction_artifacts:
+        client.upsert_rows("predictions", archived_predictions)
+    if review_artifacts:
+        client.upsert_rows("post_match_reviews", archived_reviews)
+    for table_name, archived_rows in pending_table_updates:
+        client.upsert_rows(table_name, archived_rows)
     print(
         json.dumps(
             {

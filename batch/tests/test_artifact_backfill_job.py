@@ -82,11 +82,13 @@ def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_
     assert output["updated_counts"]["prediction_fusion_policies"] == 1
     assert output["updated_counts"]["post_match_review_aggregations"] == 1
     assert state["predictions"][0]["explanation_artifact_id"] == "prediction_artifact_prediction_001"
+    assert state["predictions"][0]["explanation_payload"] == {}
     assert state["post_match_reviews"][0]["review_artifact_id"] == "review_artifact_review_001"
+    assert state["post_match_reviews"][0]["market_comparison_summary"] == {}
     assert state["prediction_source_evaluation_reports"][0]["artifact_id"] == (
-        "prediction_source_evaluation_report_latest"
+        "prediction_source_evaluation_report_latest_current"
     )
-    assert state["prediction_fusion_policies"][0]["artifact_id"] == "prediction_fusion_policy_latest"
+    assert state["prediction_fusion_policies"][0]["artifact_id"] == "prediction_fusion_policy_latest_current"
     assert state["post_match_review_aggregations"][0]["artifact_id"] == (
-        "post_match_review_aggregation_latest"
+        "post_match_review_aggregation_latest_current"
     )

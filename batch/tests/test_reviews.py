@@ -755,7 +755,8 @@ def test_run_post_match_review_job_persists_latest_review_aggregation(monkeypatc
     assert aggregation["report_payload"]["by_primary_signal"] == {
         "strengthHome": 1,
     }
-    assert aggregation["artifact_id"] == "post_match_review_aggregation_latest_current_v2"
+    assert aggregation["artifact_id"] == "post_match_review_aggregation_latest_current"
+    assert aggregation_history["artifact_id"] == "post_match_review_aggregation_current_v2"
     assert len(state["stored_artifacts"]) == 3
     assert aggregation_history["rollout_version"] == 2
     latest_promotion = next(
@@ -1654,19 +1655,17 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     assert explanation_payload["base_model_probs"]["home"] > 0.5
     assert explanation_payload["base_model_probs"]["home"] > explanation_payload["base_model_probs"]["draw"]
     assert explanation_payload["confidence_calibration"]
-    assert explanation_payload["main_recommendation"]["recommended"] is True
-    assert explanation_payload["main_recommendation"]["pick"] == "HOME"
-    assert explanation_payload["value_recommendation"] == {
-        "edge": 0.16,
-        "expected_value": 0.2963,
-        "market_price": 0.54,
-        "market_probability": 0.54,
-        "market_source": "prediction_market",
-        "model_probability": 0.7,
-        "pick": "HOME",
-        "recommended": True,
-    }
-    assert explanation_payload["variant_markets"] == []
+    assert prediction["main_recommendation_recommended"] is True
+    assert prediction["main_recommendation_pick"] == "HOME"
+    assert prediction["value_recommendation_pick"] == "HOME"
+    assert prediction["value_recommendation_recommended"] is True
+    assert prediction["value_recommendation_edge"] == 0.16
+    assert prediction["value_recommendation_expected_value"] == 0.2963
+    assert prediction["value_recommendation_market_price"] == 0.54
+    assert prediction["value_recommendation_market_probability"] == 0.54
+    assert prediction["value_recommendation_market_source"] == "prediction_market"
+    assert prediction["value_recommendation_model_probability"] == 0.7
+    assert prediction["variant_markets_summary"] == []
     assert explanation_payload["raw_confidence_score"] >= explanation_payload["calibrated_confidence_score"]
     assert explanation_payload["source_agreement_ratio"] >= 0.5
     assert explanation_payload["feature_metadata"]["available_signal_count"] >= 9
@@ -1792,7 +1791,7 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    assert prediction["explanation_payload"]["variant_markets"] == [
+    assert prediction["variant_markets_summary"] == [
         {
             "market_family": "spreads",
             "source_name": "polymarket_spreads",
@@ -2365,8 +2364,8 @@ def test_run_predictions_job_uses_standard_confidence_gate_for_bookmaker_fallbac
     explanation_payload = state["predictions"][0]["explanation_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
-    assert explanation_payload["main_recommendation"]["recommended"] is False
-    assert explanation_payload["main_recommendation"]["no_bet_reason"] == "low_confidence"
+    assert state["predictions"][0]["main_recommendation_recommended"] is False
+    assert state["predictions"][0]["main_recommendation_no_bet_reason"] == "low_confidence"
     assert explanation_payload["raw_confidence_score"] == state["predictions"][0]["confidence_score"]
     assert explanation_payload["raw_confidence_score"] < 0.6
 
@@ -2672,9 +2671,9 @@ def test_run_predictions_job_shifts_unsupported_home_favorite_toward_draw_when_x
     explanation_payload = state["predictions"][0]["explanation_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
-    assert explanation_payload["main_recommendation"]["recommended"] is False
-    assert explanation_payload["main_recommendation"]["pick"] == "DRAW"
-    assert explanation_payload["main_recommendation"]["no_bet_reason"] == "low_confidence"
+    assert state["predictions"][0]["main_recommendation_recommended"] is False
+    assert state["predictions"][0]["main_recommendation_pick"] == "DRAW"
+    assert state["predictions"][0]["main_recommendation_no_bet_reason"] == "low_confidence"
     assert explanation_payload["raw_confidence_score"] < 0.62
 
 
@@ -2746,9 +2745,9 @@ def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_withou
     explanation_payload = state["predictions"][0]["explanation_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
-    assert explanation_payload["main_recommendation"]["recommended"] is False
+    assert state["predictions"][0]["main_recommendation_recommended"] is False
     assert (
-        explanation_payload["main_recommendation"]["no_bet_reason"]
+        state["predictions"][0]["main_recommendation_no_bet_reason"]
         == "unsupported_high_confidence_fallback"
     )
     assert explanation_payload["raw_confidence_score"] > 0.8

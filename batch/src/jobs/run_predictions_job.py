@@ -1079,7 +1079,7 @@ def main() -> None:
                 ),
                 "variant_markets_summary": variant_markets,
                 "explanation_artifact_id": artifact_id,
-                "explanation_payload": explanation_payload,
+                "explanation_payload": summary_payload,
             }
         )
         feature_snapshot_payload.append(

@@ -86,6 +86,24 @@ describe("supabase schema integration", () => {
          'post_match_review_aggregations'
        ) and column_name = 'comparison_payload'`,
     );
+    const artifactPointerColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name in (
+         'predictions',
+         'post_match_reviews',
+         'prediction_source_evaluation_reports',
+         'prediction_source_evaluation_report_versions',
+         'prediction_fusion_policies',
+         'prediction_fusion_policy_versions',
+         'post_match_review_aggregations',
+         'post_match_review_aggregation_versions'
+       ) and column_name in (
+         'explanation_artifact_id',
+         'review_artifact_id',
+         'artifact_id'
+       )`,
+    );
     const dashboardLeagueSummaryViews = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.views
@@ -136,6 +154,7 @@ describe("supabase schema integration", () => {
     expect(reviewAggregationHistoryTables.rows[0]?.count).toBe(1);
     expect(rolloutVersionColumns.rows[0]?.count).toBe(3);
     expect(comparisonPayloadColumns.rows[0]?.count).toBe(3);
+    expect(artifactPointerColumns.rows[0]?.count).toBe(8);
     expect(dashboardLeagueSummaryViews.rows[0]?.count).toBe(1);
     expect(dashboardMatchCardViews.rows[0]?.count).toBe(1);
     expect(artifactTables.rows[0]?.count).toBe(1);

@@ -262,14 +262,17 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
             "by_checkpoint_market_segment"
         ]["T_MINUS_24H"]["with_prediction_market"]["bookmaker"]
     )
-    assert (
-        latest_report["report_payload"]["recommended_fusion_weights"]["overall"][
-            "base_model"
-        ]
-        > latest_report["report_payload"]["recommended_fusion_weights"]["overall"][
-            "bookmaker"
-        ]
-    )
-    assert latest_report["artifact_id"] == "prediction_source_evaluation_report_latest_current_v2"
-    assert latest_policy["artifact_id"] == "prediction_fusion_policy_latest_current_v2"
+    assert "recommended_fusion_weights" not in latest_report["report_payload"]
+    assert latest_report["report_payload"] == {
+        "snapshots_evaluated": 2,
+        "rows_evaluated": 7,
+        "overall": latest_report["report_payload"]["overall"],
+        "by_checkpoint": latest_report["report_payload"]["by_checkpoint"],
+        "by_competition": latest_report["report_payload"]["by_competition"],
+        "by_market_segment": latest_report["report_payload"]["by_market_segment"],
+    }
+    assert latest_report["artifact_id"] == "prediction_source_evaluation_report_latest_current"
+    assert report_history["artifact_id"] == "prediction_source_evaluation_report_current_v2"
+    assert latest_policy["artifact_id"] == "prediction_fusion_policy_latest_current"
+    assert policy_history["artifact_id"] == "prediction_fusion_policy_current_v2"
     assert len(state["stored_artifacts"]) == 4

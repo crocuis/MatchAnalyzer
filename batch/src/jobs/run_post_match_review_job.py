@@ -329,8 +329,6 @@ def run_review_job(
         review_row["attribution_primary_signal"] = attribution.get("primary_signal")
         review_row["attribution_secondary_signal"] = attribution.get("secondary_signal")
         review_row["review_artifact_id"] = artifact_id
-    artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
-    inserted = client.upsert_rows("post_match_reviews", payload)
     aggregation_report = build_review_aggregation_report(payload)
     rollout_channel = "current"
     existing_aggregation_rows = read_optional_rows(
@@ -358,7 +356,7 @@ def run_review_job(
         rollout_version=rollout_version,
     )
     latest_aggregation_artifact_id = (
-        f"post_match_review_aggregation_latest_{rollout_channel}_v{rollout_version}"
+        f"post_match_review_aggregation_latest_{rollout_channel}"
     )
     history_aggregation_artifact_id = (
         f"post_match_review_aggregation_{rollout_channel}_v{rollout_version}"
@@ -392,6 +390,14 @@ def run_review_job(
         ),
     ])
     artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
+    persisted_review_rows = [
+        {
+            **review_row,
+            "market_comparison_summary": {},
+        }
+        for review_row in payload
+    ]
+    inserted = client.upsert_rows("post_match_reviews", persisted_review_rows)
     aggregation_rows = client.upsert_rows(
         "post_match_review_aggregations",
         [

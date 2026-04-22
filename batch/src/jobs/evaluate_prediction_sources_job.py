@@ -205,6 +205,35 @@ def build_evaluation_report_comparison(
     }
 
 
+def build_evaluation_report_summary(report: dict) -> dict:
+    return {
+        "snapshots_evaluated": report.get("snapshots_evaluated"),
+        "rows_evaluated": report.get("rows_evaluated"),
+        "overall": dict(report.get("overall") or {}),
+        "by_checkpoint": dict(report.get("by_checkpoint") or {}),
+        "by_competition": dict(report.get("by_competition") or {}),
+        "by_market_segment": dict(report.get("by_market_segment") or {}),
+    }
+
+
+def build_fusion_policy_summary(policy_payload: dict) -> dict:
+    weights = policy_payload.get("weights") or {}
+    return {
+        "policy_id": policy_payload.get("policy_id"),
+        "policy_version": policy_payload.get("policy_version"),
+        "rollout_channel": policy_payload.get("rollout_channel"),
+        "selection_order": list(policy_payload.get("selection_order") or []),
+        "weights": {
+            "overall": dict(weights.get("overall") or {}),
+            "by_checkpoint": dict(weights.get("by_checkpoint") or {}),
+            "by_market_segment": dict(weights.get("by_market_segment") or {}),
+            "by_checkpoint_market_segment": dict(
+                weights.get("by_checkpoint_market_segment") or {}
+            ),
+        },
+    }
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
@@ -223,6 +252,7 @@ def main() -> None:
         market_rows=market_rows,
         match_rows=match_rows,
     )
+    report_summary = build_evaluation_report_summary(report)
     rollout_channel = "current"
     existing_report_rows = read_optional_rows(
         client,
@@ -247,7 +277,7 @@ def main() -> None:
         rollout_version=rollout_version,
     )
     latest_report_artifact_id = (
-        f"prediction_source_evaluation_report_latest_{rollout_channel}_v{rollout_version}"
+        f"prediction_source_evaluation_report_latest_{rollout_channel}"
     )
     history_report_artifact_id = (
         f"prediction_source_evaluation_report_{rollout_channel}_v{rollout_version}"
@@ -263,7 +293,8 @@ def main() -> None:
         policy_version=rollout_version,
         rollout_channel=rollout_channel,
     )["policy_payload"]
-    latest_policy_artifact_id = f"prediction_fusion_policy_latest_{rollout_channel}_v{rollout_version}"
+    current_policy_summary = build_fusion_policy_summary(current_policy_payload)
+    latest_policy_artifact_id = f"prediction_fusion_policy_latest_{rollout_channel}"
     history_policy_artifact_id = f"prediction_fusion_policy_{rollout_channel}_v{rollout_version}"
     artifact_rows = [
         archive_json_artifact(
@@ -326,7 +357,7 @@ def main() -> None:
             stamp_rollout_row(
                 {
                     "id": "latest",
-                    "report_payload": report,
+                    "report_payload": report_summary,
                     "snapshots_evaluated": report["snapshots_evaluated"],
                     "rows_evaluated": report["rows_evaluated"],
                     "artifact_id": latest_report_artifact_id,
@@ -345,7 +376,7 @@ def main() -> None:
             stamp_rollout_row(
                 {
                     "id": report_history_id,
-                    "report_payload": report,
+                    "report_payload": report_summary,
                     "snapshots_evaluated": report["snapshots_evaluated"],
                     "rows_evaluated": report["rows_evaluated"],
                     "artifact_id": history_report_artifact_id,
@@ -369,31 +400,38 @@ def main() -> None:
     persisted_policy_rows = client.upsert_rows(
         "prediction_fusion_policies",
         [
-            build_latest_fusion_policy(
-                report_id="latest",
-                recommended_weights=report["recommended_fusion_weights"],
-                policy_version=rollout_version,
-                rollout_channel=rollout_channel,
-                comparison_payload=policy_comparison,
-                history_row_id=policy_history_id,
-                created_at=created_at,
-                artifact_id=latest_policy_artifact_id,
-            )
+            {
+                **build_latest_fusion_policy(
+                    report_id="latest",
+                    recommended_weights=report["recommended_fusion_weights"],
+                    policy_version=rollout_version,
+                    rollout_channel=rollout_channel,
+                    comparison_payload=policy_comparison,
+                    history_row_id=policy_history_id,
+                    created_at=created_at,
+                    artifact_id=latest_policy_artifact_id,
+                    policy_id="latest",
+                ),
+                "policy_payload": current_policy_summary,
+            }
         ],
     )
     persisted_policy_history_rows = client.upsert_rows(
         "prediction_fusion_policy_versions",
         [
-            build_latest_fusion_policy(
-                report_id=report_history_id,
-                recommended_weights=report["recommended_fusion_weights"],
-                policy_id=policy_history_id,
-                policy_version=rollout_version,
-                rollout_channel=rollout_channel,
-                comparison_payload=policy_comparison,
-                created_at=created_at,
-                artifact_id=history_policy_artifact_id,
-            )
+            {
+                **build_latest_fusion_policy(
+                    report_id=report_history_id,
+                    recommended_weights=report["recommended_fusion_weights"],
+                    policy_id=policy_history_id,
+                    policy_version=rollout_version,
+                    rollout_channel=rollout_channel,
+                    comparison_payload=policy_comparison,
+                    created_at=created_at,
+                    artifact_id=history_policy_artifact_id,
+                ),
+                "policy_payload": current_policy_summary,
+            }
         ],
     )
     existing_promotion_rows = read_optional_rows(client, "rollout_promotion_decisions")

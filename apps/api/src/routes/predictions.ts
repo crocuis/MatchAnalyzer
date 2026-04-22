@@ -767,8 +767,14 @@ function pickMarketEnrichedPrediction(
   return (
     predictions.find(
       (prediction) =>
+        prediction.value_recommendation_pick != null ||
         normalizeValueRecommendation(prediction.explanation_payload) !== null ||
-        normalizeVariantMarkets(prediction.explanation_payload).length > 0,
+        normalizeVariantMarketsFromSummary(
+          {
+            variantMarketsSummary: prediction.variant_markets_summary,
+          },
+          prediction.explanation_payload,
+        ).length > 0,
     ) ?? null
   );
 }
@@ -818,11 +824,17 @@ export async function loadPredictionView(
       const prediction = sortedPredictions.find(
         (row) => row.snapshot_id === snapshot.id,
       );
+      const normalizedSummary = normalizeSummaryPayload(
+        prediction?.summary_payload,
+        prediction?.explanation_payload,
+      ) as { bullets?: unknown; explanation_bullets?: unknown } | null;
       const bullets =
-        prediction?.explanation_payload &&
-        typeof prediction.explanation_payload === "object" &&
-        Array.isArray(prediction.explanation_payload.bullets)
-          ? prediction.explanation_payload.bullets
+        normalizedSummary &&
+        Array.isArray(normalizedSummary.bullets)
+          ? normalizedSummary.bullets
+          : normalizedSummary &&
+            Array.isArray(normalizedSummary.explanation_bullets)
+            ? normalizedSummary.explanation_bullets
           : [];
       return {
         id: snapshot.id,
