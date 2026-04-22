@@ -27,6 +27,7 @@ from batch.src.model.predict_matches import (
 from batch.src.model.fusion import (
     choose_fusion_weights,
     build_main_recommendation,
+    fuse_probabilities,
     build_value_recommendation,
 )
 from batch.src.model.evaluate_prediction_sources import (
@@ -128,6 +129,18 @@ def build_market_probabilities(snapshot_id: str, market_by_snapshot: dict[str, d
     }, prediction_market
 
 
+def resolve_bookmaker_context(
+    book_probs: dict,
+    *,
+    allow_prior_fallback: bool,
+) -> tuple[dict, bool]:
+    if book_probs:
+        return dict(book_probs), True
+    if allow_prior_fallback:
+        return dict(DEFAULT_NO_BOOKMAKER_PRIOR_PROBS), False
+    return {}, False
+
+
 def enrich_snapshot_with_match_history(
     snapshot: dict,
     *,
@@ -191,12 +204,17 @@ def build_historical_source_performance_summary(
         book_probs, prediction_market = build_market_probabilities(
             enriched_snapshot["id"], market_by_snapshot
         )
+        book_probs, bookmaker_available = resolve_bookmaker_context(
+            book_probs,
+            allow_prior_fallback=True,
+        )
         if not book_probs:
             continue
         feature_context = build_snapshot_context(
             enriched_snapshot,
             book_probs,
             prediction_market,
+            bookmaker_available=bookmaker_available,
         )
         historical_segment = (
             "with_prediction_market"
@@ -225,6 +243,33 @@ def build_historical_source_performance_summary(
             if prediction_market
             else book_probs["away"],
         }
+        prediction_market_available = bool(feature_context["prediction_market_available"])
+        available_variants = (
+            (
+                ("base_model", "bookmaker", "prediction_market")
+                if bookmaker_available
+                else ("base_model", "prediction_market")
+            )
+            if prediction_market_available
+            else (
+                ("base_model", "bookmaker")
+                if bookmaker_available
+                else ("base_model",)
+            )
+        )
+        fused_probs = (
+            dict(base_probs)
+            if (
+                _base_model_source in {"bookmaker_fallback", "centroid_fallback", "prior_fallback"}
+                and (not prediction_market_available or not bookmaker_available)
+            )
+            else fuse_probabilities(
+                base_probs,
+                book_probs,
+                prediction_market_probs,
+                allowed_variants=available_variants,
+            )
+        )
         rows.extend(
             build_variant_evaluation_rows(
                 match_id=snapshot["match_id"],
@@ -232,13 +277,12 @@ def build_historical_source_performance_summary(
                 checkpoint=snapshot["checkpoint_type"],
                 competition_id=str(match.get("competition_id") or "unknown"),
                 actual_outcome=str(match["final_result"]),
-                prediction_market_available=bool(
-                    feature_context["prediction_market_available"]
-                ),
+                bookmaker_available=bookmaker_available,
+                prediction_market_available=prediction_market_available,
                 bookmaker_probs=book_probs,
                 prediction_market_probs=prediction_market_probs,
                 base_model_probs=base_probs,
-                fused_probs=book_probs,
+                fused_probs=fused_probs,
             )
         )
     return summarize_variant_metrics(rows) if rows else {}
@@ -659,9 +703,18 @@ def build_confidence_bucket_summary(
         book_probs, prediction_market = build_market_probabilities(
             snapshot["id"], market_by_snapshot
         )
+        book_probs, bookmaker_available = resolve_bookmaker_context(
+            book_probs,
+            allow_prior_fallback=True,
+        )
         if not book_probs:
             continue
-        feature_context = build_snapshot_context(snapshot, book_probs, prediction_market)
+        feature_context = build_snapshot_context(
+            snapshot,
+            book_probs,
+            prediction_market,
+            bookmaker_available=bookmaker_available,
+        )
         base_probs, base_model_source, _model_selection = predict_base_probabilities(
             snapshot=snapshot,
             feature_context=feature_context,

@@ -2803,6 +2803,36 @@ def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing
     assert source_metadata["fusion_weights"] == {"base_model": 1.0}
 
 
+def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_without_bookmaker():
+    summary = run_predictions_job.build_confidence_bucket_summary(
+        snapshot_rows=[
+            {
+                "id": "hist_snapshot",
+                "match_id": "hist_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "snapshot_quality": "partial",
+            }
+        ],
+        market_by_snapshot={},
+        match_rows=[
+            {
+                "id": "hist_match",
+                "kickoff_at": "2026-04-10T18:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+        checkpoint_type="T_MINUS_24H",
+        target_date="2026-04-11",
+    )
+
+    assert summary == {
+        "0.3-0.4": {
+            "count": 1,
+            "hit_rate": 1.0,
+        }
+    }
+
+
 def build_recalibration_fixture_rows() -> tuple[list[dict], list[dict], list[dict]]:
     templates = {
         "home": {
