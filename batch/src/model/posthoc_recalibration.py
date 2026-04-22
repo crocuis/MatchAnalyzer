@@ -6,6 +6,7 @@ from copy import deepcopy
 from sklearn.tree import DecisionTreeClassifier
 
 from batch.src.features.feature_builder import FEATURE_VECTOR_FIELDS
+from batch.src.model.prediction_graph_integrity import prediction_graph_status
 from batch.src.model.fusion import build_main_recommendation
 
 
@@ -156,12 +157,25 @@ def train_recalibration_model(
     match_by_id = {
         row["id"]: row for row in matches if isinstance(row, dict) and row.get("id")
     }
+    match_ids = set(match_by_id)
     snapshot_rows_by_id = {
         row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")
     }
+    snapshot_ids = set(snapshot_rows_by_id)
     features: list[list[float]] = []
     labels: list[str] = []
+    skipped_graph_broken_rows = 0
     for prediction in representative_predictions(predictions, snapshot_rows):
+        if (
+            prediction_graph_status(
+                prediction,
+                match_ids=match_ids,
+                snapshot_ids=snapshot_ids,
+            )
+            != "ok"
+        ):
+            skipped_graph_broken_rows += 1
+            continue
         match = match_by_id.get(str(prediction.get("match_id") or ""))
         if not match:
             continue
@@ -183,6 +197,7 @@ def train_recalibration_model(
         "model_id": RECALIBRATION_MODEL_ID,
         "training_rows": len(features),
         "class_counts": dict(class_counts),
+        "skipped_graph_broken_rows": skipped_graph_broken_rows,
     }
     if (
         len(class_counts) != len(OUTCOME_LABELS)
@@ -217,12 +232,28 @@ def recalibrate_predictions(
     snapshot_rows_by_id = {
         row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")
     }
+    match_ids = {
+        str(row["id"]) for row in matches if isinstance(row, dict) and row.get("id")
+    }
+    snapshot_ids = set(snapshot_rows_by_id)
     updated_predictions: list[dict] = []
     changed_rows = 0
     changed_pick_rows = 0
     updated_match_ids: set[str] = set()
+    skipped_graph_broken_rows = 0
 
     for prediction in predictions:
+        if (
+            prediction_graph_status(
+                prediction,
+                match_ids=match_ids,
+                snapshot_ids=snapshot_ids,
+            )
+            != "ok"
+        ):
+            skipped_graph_broken_rows += 1
+            updated_predictions.append(prediction)
+            continue
         feature_vector = build_recalibration_features(
             prediction,
             snapshot_rows_by_id=snapshot_rows_by_id,
@@ -300,5 +331,6 @@ def recalibrate_predictions(
         "changed_rows": changed_rows,
         "changed_pick_rows": changed_pick_rows,
         "updated_match_count": len(updated_match_ids),
+        "skipped_graph_broken_rows": skipped_graph_broken_rows,
     }
     return updated_predictions, summary

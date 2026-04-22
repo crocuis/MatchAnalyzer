@@ -1,15 +1,22 @@
+from copy import deepcopy
 import json
 from types import SimpleNamespace
 
 import pytest
 
 import batch.src.jobs.backfill_post_match_reviews_job as backfill_post_match_reviews_job
+import batch.src.jobs.repair_prediction_match_graph_job as repair_prediction_match_graph_job
 import batch.src.jobs.backfill_prediction_recalibration_job as backfill_prediction_recalibration_job
+import batch.src.jobs.repair_prediction_snapshot_graph_job as repair_prediction_snapshot_graph_job
 import batch.src.jobs.run_predictions_job as run_predictions_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
 from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
 from batch.src.markets import index_market_rows_by_snapshot
+from batch.src.model.prediction_graph_integrity import (
+    plan_missing_match_repairs,
+    plan_missing_snapshot_repairs,
+)
 from batch.src.model.posthoc_recalibration import recalibrate_predictions
 from batch.src.model.predict_matches import build_prediction_row
 from batch.src.review.post_match_review import build_review
@@ -2897,6 +2904,224 @@ def test_recalibrate_predictions_rewrites_bookmaker_fallback_rows() -> None:
     )
 
 
+def test_recalibrate_predictions_skips_rows_with_broken_graph() -> None:
+    predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
+    missing_snapshot_prediction = deepcopy(predictions[0])
+    missing_snapshot_prediction["id"] = "broken_snapshot_prediction"
+    missing_snapshot_prediction["snapshot_id"] = "missing_snapshot_id"
+    orphan_prediction = deepcopy(predictions[1])
+    orphan_prediction["id"] = "orphan_prediction"
+    orphan_prediction["match_id"] = "missing_match_id"
+    orphan_prediction["snapshot_id"] = "missing_snapshot_id_2"
+
+    updated_predictions, summary = recalibrate_predictions(
+        predictions=predictions + [missing_snapshot_prediction, orphan_prediction],
+        matches=matches,
+        snapshot_rows=snapshot_rows,
+    )
+
+    updated_by_id = {row["id"]: row for row in updated_predictions}
+    assert updated_by_id["broken_snapshot_prediction"] == missing_snapshot_prediction
+    assert updated_by_id["orphan_prediction"] == orphan_prediction
+    assert summary["changed_rows"] == 9
+    assert summary["skipped_graph_broken_rows"] == 2
+
+
+def test_plan_missing_snapshot_repairs_rebuilds_snapshot_rows_from_feature_snapshots() -> None:
+    predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
+    target_prediction = deepcopy(predictions[0])
+    orphan_prediction = deepcopy(predictions[1])
+    orphan_prediction["id"] = "orphan_prediction"
+    orphan_prediction["match_id"] = "missing_match_id"
+    orphan_prediction["snapshot_id"] = "missing_snapshot_id_2"
+
+    feature_snapshot_rows = [
+        {
+            "id": target_prediction["id"],
+            "prediction_id": target_prediction["id"],
+            "snapshot_id": target_prediction["snapshot_id"],
+            "match_id": target_prediction["match_id"],
+            "model_version_id": "model_v1",
+            "checkpoint_type": "T_MINUS_24H",
+            "feature_context": target_prediction["explanation_payload"]["feature_context"],
+            "feature_metadata": {
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+            },
+            "source_metadata": target_prediction["explanation_payload"]["source_metadata"],
+            "created_at": "2026-04-12T12:00:00Z",
+        }
+    ]
+
+    created_rows, summary = plan_missing_snapshot_repairs(
+        predictions=[target_prediction, orphan_prediction],
+        matches=matches,
+        snapshot_rows=[],
+        feature_snapshot_rows=feature_snapshot_rows,
+    )
+
+    assert summary["created_snapshot_rows"] == 1
+    assert summary["missing_snapshot_rows"] == 1
+    assert summary["missing_match_and_snapshot_rows"] == 1
+    assert len(created_rows) == 1
+    assert created_rows[0]["id"] == target_prediction["snapshot_id"]
+    assert created_rows[0]["match_id"] == target_prediction["match_id"]
+    assert created_rows[0]["checkpoint_type"] == "T_MINUS_24H"
+    assert created_rows[0]["lineup_status"] == "unknown"
+    assert created_rows[0]["snapshot_quality"] == "partial"
+    assert created_rows[0]["lineup_source_summary"] is None
+
+
+def test_plan_missing_match_repairs_rebuilds_orphan_match_graph() -> None:
+    orphan_feature_snapshot = {
+        "id": "746952_t_minus_24h_model_v1",
+        "prediction_id": "746952_t_minus_24h_model_v1",
+        "snapshot_id": "746952_t_minus_24h",
+        "match_id": "746952",
+        "model_version_id": "model_v1",
+        "checkpoint_type": "T_MINUS_24H",
+        "feature_context": {
+            "home_lineup_score": 0.0,
+            "away_lineup_score": 0.0,
+            "lineup_strength_delta": 0.0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+            "lineup_confirmed": 0,
+        },
+        "feature_metadata": {
+            "lineup_status": "unknown",
+            "snapshot_quality": "partial",
+        },
+        "source_metadata": {},
+        "created_at": "2026-03-21T14:30:00+00:00",
+    }
+    event_summary = {
+        "data": {
+            "event": {
+                "id": "746952",
+                "status": "closed",
+                "start_time": "2026-03-21T14:30Z",
+                "competition": {"id": "bundesliga", "name": "Bundesliga"},
+                "season": {"id": "bundesliga-2025", "name": "2025", "year": "2025"},
+                "venue": {"country": "Germany"},
+                "competitors": [
+                    {"team": {"id": "6418", "name": "1. FC Heidenheim 1846"}, "qualifier": "home", "score": 3},
+                    {"team": {"id": "131", "name": "Bayer Leverkusen"}, "qualifier": "away", "score": 3},
+                ],
+                "scores": {"home": 3, "away": 3},
+            }
+        }
+    }
+
+    competitions, teams, matches, snapshots, summary = plan_missing_match_repairs(
+        matches=[],
+        feature_snapshot_rows=[orphan_feature_snapshot],
+        fetch_event_summary=lambda event_id: event_summary,
+        allowed_competition_ids={"bundesliga"},
+    )
+
+    assert [row["id"] for row in competitions] == ["bundesliga"]
+    assert {row["id"] for row in teams} == {"131", "6418"}
+    assert matches[0]["id"] == "746952"
+    assert matches[0]["final_result"] == "DRAW"
+    assert snapshots[0]["id"] == "746952_t_minus_24h"
+    assert snapshots[0]["match_id"] == "746952"
+    assert summary["repaired_matches"] == 1
+    assert summary["repaired_snapshots"] == 1
+    assert summary["errors"] == []
+
+
+def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
+    monkeypatch,
+    capsys,
+):
+    state: dict[str, list[dict]] = {}
+    feature_snapshot_rows = [
+        {
+            "id": "746952_t_minus_24h_model_v1",
+            "prediction_id": "746952_t_minus_24h_model_v1",
+            "snapshot_id": "746952_t_minus_24h",
+            "match_id": "746952",
+            "model_version_id": "model_v1",
+            "checkpoint_type": "T_MINUS_24H",
+            "feature_context": {
+                "home_lineup_score": 0.0,
+                "away_lineup_score": 0.0,
+                "lineup_strength_delta": 0.0,
+                "lineup_source_summary": "none",
+                "snapshot_quality_complete": 0,
+                "lineup_confirmed": 0,
+            },
+            "feature_metadata": {
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+            },
+            "source_metadata": {},
+            "created_at": "2026-03-21T14:30:00+00:00",
+        }
+    ]
+    event_summary = {
+        "data": {
+            "event": {
+                "id": "746952",
+                "status": "closed",
+                "start_time": "2026-03-21T14:30Z",
+                "competition": {"id": "bundesliga", "name": "Bundesliga"},
+                "season": {"id": "bundesliga-2025", "name": "2025", "year": "2025"},
+                "venue": {"country": "Germany"},
+                "competitors": [
+                    {"team": {"id": "6418", "name": "1. FC Heidenheim 1846"}, "qualifier": "home", "score": 3},
+                    {"team": {"id": "131", "name": "Bayer Leverkusen"}, "qualifier": "away", "score": 3},
+                ],
+                "scores": {"home": 3, "away": 3},
+            }
+        }
+    }
+
+    class FakeFootball:
+        @staticmethod
+        def get_event_summary(*, event_id: str):
+            assert event_id == "746952"
+            return event_summary
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "matches": [],
+                "prediction_feature_snapshots": feature_snapshot_rows,
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        repair_prediction_match_graph_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(repair_prediction_match_graph_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        repair_prediction_match_graph_job,
+        "load_sports_skills_football",
+        lambda: FakeFootball(),
+    )
+    monkeypatch.setenv("REPAIR_APPLY", "1")
+    monkeypatch.setenv("REPAIR_COMPETITION_IDS", "bundesliga")
+
+    repair_prediction_match_graph_job.main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["match_rows"] == 1
+    assert out["snapshot_rows"] == 1
+    assert out["summary"]["repaired_matches"] == 1
+    assert state["matches"][0]["id"] == "746952"
+    assert state["match_snapshots"][0]["id"] == "746952_t_minus_24h"
+
+
 def test_backfill_prediction_recalibration_job_updates_changed_rows(
     monkeypatch,
     capsys,
@@ -2946,3 +3171,59 @@ def test_backfill_prediction_recalibration_job_updates_changed_rows(
         "AWAY",
         "AWAY",
     ]
+
+
+def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
+    monkeypatch,
+    capsys,
+):
+    state: dict[str, list[dict]] = {}
+    predictions, matches, _snapshot_rows = build_recalibration_fixture_rows()
+    feature_snapshot_rows = [
+        {
+            "id": predictions[0]["id"],
+            "prediction_id": predictions[0]["id"],
+            "snapshot_id": predictions[0]["snapshot_id"],
+            "match_id": predictions[0]["match_id"],
+            "model_version_id": "model_v1",
+            "checkpoint_type": "T_MINUS_24H",
+            "feature_context": predictions[0]["explanation_payload"]["feature_context"],
+            "feature_metadata": {
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+            },
+            "source_metadata": predictions[0]["explanation_payload"]["source_metadata"],
+            "created_at": "2026-04-12T12:00:00Z",
+        }
+    ]
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "predictions": [predictions[0]],
+                "matches": [matches[0]],
+                "match_snapshots": [],
+                "prediction_feature_snapshots": feature_snapshot_rows,
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        repair_prediction_snapshot_graph_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(repair_prediction_snapshot_graph_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REPAIR_APPLY", "1")
+
+    repair_prediction_snapshot_graph_job.main()
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["inserted_rows"] == 1
+    assert out["summary"]["created_snapshot_rows"] == 1
+    assert state["match_snapshots"][0]["id"] == predictions[0]["snapshot_id"]

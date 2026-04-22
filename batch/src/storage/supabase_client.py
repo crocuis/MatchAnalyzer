@@ -6,6 +6,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+REMOTE_READ_PAGE_SIZE = 1000
+
 
 def validate_table_name(table: str) -> str:
     if not table or "/" in table or "\\" in table or ".." in table:
@@ -28,6 +30,71 @@ class SupabaseClient:
             "Authorization": f"Bearer {self.service_key}",
             "Content-Type": "application/json",
         }
+
+    def _read_remote_rows_page(
+        self,
+        table_name: str,
+        *,
+        start: int,
+        page_size: int,
+        ordered: bool,
+    ) -> list[dict]:
+        params = {"select": "*"}
+        if ordered:
+            params["order"] = "id.asc"
+        request = Request(
+            url=f"{self.base_url}/rest/v1/{table_name}?{urlencode(params)}",
+            headers={
+                **self._headers(),
+                "Range-Unit": "items",
+                "Range": f"{start}-{start + page_size - 1}",
+            },
+            method="GET",
+        )
+        with urlopen(request, timeout=30) as response:
+            if response.status >= 400:
+                raise ValueError(f"Supabase read failed with status {response.status}")
+            return json.loads(response.read().decode("utf-8"))
+
+    def _read_rows_remote(self, table_name: str) -> list[dict]:
+        rows: list[dict] = []
+        start = 0
+
+        while True:
+            try:
+                page = self._read_remote_rows_page(
+                    table_name,
+                    start=start,
+                    page_size=REMOTE_READ_PAGE_SIZE,
+                    ordered=True,
+                )
+            except HTTPError as exc:
+                body = exc.read().decode("utf-8")
+                if (
+                    start == 0
+                    and exc.code == 400
+                    and "column" in body
+                    and ".id does not exist" in body
+                ):
+                    fallback_page = self._read_remote_rows_page(
+                        table_name,
+                        start=0,
+                        page_size=REMOTE_READ_PAGE_SIZE,
+                        ordered=False,
+                    )
+                    if len(fallback_page) >= REMOTE_READ_PAGE_SIZE:
+                        raise ValueError(
+                            "Supabase read requires pagination, but table/view lacks an id column for stable ordering"
+                        ) from exc
+                    return fallback_page
+                raise ValueError(
+                    f"Supabase read failed for table={table_name}: status={exc.code}, body={body}"
+                ) from exc
+
+            rows.extend(page)
+            if len(page) < REMOTE_READ_PAGE_SIZE:
+                return rows
+            start += REMOTE_READ_PAGE_SIZE
 
     def _retry_without_missing_column(
         self,
@@ -95,24 +162,7 @@ class SupabaseClient:
     def read_rows(self, table: str) -> list[dict]:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
-            params = urlencode({"select": "*", "order": "id.asc"})
-            request = Request(
-                url=f"{self.base_url}/rest/v1/{table_name}?{params}",
-                headers=self._headers(),
-                method="GET",
-            )
-            try:
-                with urlopen(request, timeout=30) as response:
-                    if response.status >= 400:
-                        raise ValueError(
-                            f"Supabase read failed with status {response.status}"
-                        )
-                    return json.loads(response.read().decode("utf-8"))
-            except HTTPError as exc:
-                body = exc.read().decode("utf-8")
-                raise ValueError(
-                    f"Supabase read failed for table={table_name}: status={exc.code}, body={body}"
-                ) from exc
+            return self._read_rows_remote(table_name)
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
