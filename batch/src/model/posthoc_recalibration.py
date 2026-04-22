@@ -26,6 +26,16 @@ RECALIBRATION_MAX_DEPTH = 6
 RECALIBRATION_MIN_CLASS_COUNT = 3
 
 
+def _normalize_probability_map(probability_by_label: dict[str, float]) -> dict[str, float]:
+    rounded = {
+        key: round(float(probability_by_label.get(label, 0.0)), 4)
+        for label, key in OUTCOME_KEY_BY_LABEL.items()
+    }
+    remainder = round(1.0 - sum(rounded.values()), 4)
+    rounded["home"] = round(rounded["home"] + remainder, 4)
+    return rounded
+
+
 def _prediction_payload(prediction: dict) -> dict:
     payload = prediction.get("explanation_payload")
     return payload if isinstance(payload, dict) else {}
@@ -227,10 +237,7 @@ def recalibrate_predictions(
             str(label): float(probability)
             for label, probability in zip(model.classes_, probabilities, strict=True)
         }
-        updated_probability_map = {
-            key: round(float(probability_by_label.get(label, 0.0)), 4)
-            for label, key in OUTCOME_KEY_BY_LABEL.items()
-        }
+        updated_probability_map = _normalize_probability_map(probability_by_label)
         predicted_pick = max(
             OUTCOME_LABELS,
             key=lambda label: probability_by_label.get(label, 0.0),
