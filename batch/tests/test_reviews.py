@@ -2753,6 +2753,56 @@ def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_withou
     assert explanation_payload["raw_confidence_score"] > 0.8
 
 
+def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    },
+                ],
+                "market_probabilities": [],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    explanation_payload = prediction["explanation_payload"]
+    source_metadata = explanation_payload["source_metadata"]
+
+    assert explanation_payload["base_model_source"] == "prior_fallback"
+    assert explanation_payload["prediction_market_available"] is False
+    assert source_metadata["market_sources"]["bookmaker"]["available"] is False
+    assert source_metadata["market_sources"]["bookmaker"]["probabilities"] is None
+    assert source_metadata["fusion_weights"] == {"base_model": 1.0}
+
+
 def build_recalibration_fixture_rows() -> tuple[list[dict], list[dict], list[dict]]:
     templates = {
         "home": {

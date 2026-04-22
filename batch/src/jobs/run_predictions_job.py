@@ -54,6 +54,7 @@ BOOKMAKER_FALLBACK_HOME_MIN_PROBABILITY = 0.55
 BOOKMAKER_FALLBACK_DRAW_MAX_PROBABILITY = 0.24
 BOOKMAKER_FALLBACK_NEUTRAL_ELO_MAX_ABS = 0.05
 BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
+DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
 
 
 def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
@@ -289,7 +290,7 @@ def build_source_metadata(
                 "source_name": (
                     bookmaker_row.get("source_name") if bookmaker_row else None
                 ),
-                "probabilities": book_probs,
+                "probabilities": book_probs if bookmaker_row is not None else None,
             },
             "prediction_market": {
                 "available": prediction_market_row is not None,
@@ -308,7 +309,13 @@ def build_source_metadata(
     }
 
 
-def build_snapshot_context(snapshot: dict, book_probs: dict, prediction_market: dict | None) -> dict:
+def build_snapshot_context(
+    snapshot: dict,
+    book_probs: dict,
+    prediction_market: dict | None,
+    *,
+    bookmaker_available: bool = True,
+) -> dict:
     feature_input = {
         "book_home_prob": book_probs["home"],
         "book_draw_prob": book_probs["draw"],
@@ -358,7 +365,9 @@ def build_snapshot_context(snapshot: dict, book_probs: dict, prediction_market: 
         or snapshot.get("away_rest_days") is None
     ):
         feature_input["rest_delta"] = SAMPLE_PREDICTION_CONTEXT["rest_delta"]
-    return build_feature_vector(feature_input)
+    feature_vector = build_feature_vector(feature_input)
+    feature_vector["bookmaker_available"] = int(bookmaker_available)
+    return feature_vector
 
 
 def build_training_dataset(
@@ -546,7 +555,14 @@ def predict_base_probabilities(
     match_rows: list[dict],
     target_date: str | None,
     ) -> tuple[dict, str, dict]:
+    bookmaker_available = bool(feature_context.get("bookmaker_available", 1))
     if not target_date:
+        if not bookmaker_available:
+            return (
+                dict(book_probs),
+                "prior_fallback",
+                build_model_selection_metadata(base_model_source="prior_fallback"),
+            )
         fallback_probs = rebalance_bookmaker_fallback_draw(
             book_probs,
             prediction_market_available=feature_context["prediction_market_available"],
@@ -568,6 +584,12 @@ def predict_base_probabilities(
         checkpoint_type=snapshot["checkpoint_type"],
     )
     if not {"HOME", "DRAW", "AWAY"}.issubset(set(labels)):
+        if not bookmaker_available:
+            return (
+                dict(book_probs),
+                "prior_fallback",
+                build_model_selection_metadata(base_model_source="prior_fallback"),
+            )
         fallback_probs = rebalance_bookmaker_fallback_draw(
             book_probs,
             prediction_market_available=feature_context["prediction_market_available"],
@@ -666,6 +688,7 @@ def build_confidence_bucket_summary(
                     if prediction_market
                     else book_probs["away"],
                 },
+                bookmaker_available=bool(feature_context.get("bookmaker_available", 1)),
                 prediction_market_available=feature_context["prediction_market_available"],
             ),
         }
@@ -811,9 +834,10 @@ def main() -> None:
         book_probs, prediction_market = build_market_probabilities(
             enriched_snapshot["id"], market_by_snapshot
         )
+        bookmaker_available = bool(book_probs)
         if use_real_predictions:
-            if not book_probs:
-                book_probs = {"home": 0.4, "draw": 0.35, "away": 0.25}
+            if not bookmaker_available:
+                book_probs = dict(DEFAULT_NO_BOOKMAKER_PRIOR_PROBS)
         elif not book_probs:
             skipped_snapshots.append(snapshot["id"])
             continue
@@ -821,6 +845,7 @@ def main() -> None:
             enriched_snapshot,
             book_probs,
             prediction_market,
+            bookmaker_available=bookmaker_available,
         )
         base_probs, base_model_source, model_selection = predict_base_probabilities(
             snapshot=enriched_snapshot,
@@ -861,6 +886,7 @@ def main() -> None:
                 base_probs=base_probs,
                 book_probs=book_probs,
                 market_probs=prediction_market_probs,
+                bookmaker_available=bool(feature_context.get("bookmaker_available", 1)),
                 prediction_market_available=feature_context["prediction_market_available"],
             ),
         }
@@ -893,9 +919,17 @@ def main() -> None:
                 else "with_prediction_market",
             )
         available_variants = (
-            ("base_model", "bookmaker", "prediction_market")
+            (
+                ("base_model", "bookmaker", "prediction_market")
+                if bool(feature_context.get("bookmaker_available", 1))
+                else ("base_model", "prediction_market")
+            )
             if feature_context["prediction_market_available"]
-            else ("base_model", "bookmaker")
+            else (
+                ("base_model", "bookmaker")
+                if bool(feature_context.get("bookmaker_available", 1))
+                else ("base_model",)
+            )
         )
         persisted_policy = choose_fusion_weights(
             policy_payload=(
@@ -916,8 +950,11 @@ def main() -> None:
             )
         )
         if (
-            base_model_source in {"bookmaker_fallback", "centroid_fallback"}
-            and not feature_context["prediction_market_available"]
+            base_model_source in {"bookmaker_fallback", "centroid_fallback", "prior_fallback"}
+            and (
+                not feature_context["prediction_market_available"]
+                or not bool(feature_context.get("bookmaker_available", 1))
+            )
         ):
             source_weights = {"base_model": 1.0}
         row = build_prediction_row(

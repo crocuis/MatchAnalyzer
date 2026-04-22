@@ -13,12 +13,12 @@ def build_source_agreement_ratio(
     base_probs: dict,
     book_probs: dict,
     market_probs: dict,
+    bookmaker_available: bool,
     prediction_market_available: bool,
 ) -> float:
-    source_votes = [
-        max(base_probs, key=base_probs.get),
-        max(book_probs, key=book_probs.get),
-    ]
+    source_votes = [max(base_probs, key=base_probs.get)]
+    if bookmaker_available:
+        source_votes.append(max(book_probs, key=book_probs.get))
     if prediction_market_available:
         source_votes.append(max(market_probs, key=market_probs.get))
     return max(source_votes.count(vote) for vote in set(source_votes)) / len(source_votes)
@@ -50,6 +50,7 @@ def build_prediction_row(
         base_probs=base_probs,
         book_probs=book_probs,
         market_probs=market_probs,
+        bookmaker_available=bool(context.get("bookmaker_available", 1)),
         prediction_market_available=prediction_market_available,
     )
     scored_context = {
