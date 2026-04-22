@@ -3,6 +3,7 @@ import json
 import pytest
 
 from batch.src.model.evaluate_prediction_sources import (
+    build_current_fused_probabilities,
     build_variant_evaluation_rows,
     derive_variant_weights,
     multiclass_brier_score,
@@ -114,3 +115,169 @@ def test_derive_variant_weights_rewards_better_historical_sources() -> None:
     assert round(sum(weights.values()), 5) == 1.0
     assert weights["base_model"] > weights["bookmaker"] > weights["prediction_market"]
     assert weights["base_model"] > 0.4
+
+
+def test_build_current_fused_probabilities_fits_in_sample_selector_when_rows_are_separable() -> None:
+    candidates = [
+        {
+            "snapshot_id": "home-1",
+            "actual_outcome": "HOME",
+            "base_model_probs": {"home": 0.70, "draw": 0.20, "away": 0.10},
+            "bookmaker_probs": {"home": 0.60, "draw": 0.25, "away": 0.15},
+            "raw_fused_probs": {"home": 0.68, "draw": 0.20, "away": 0.12},
+            "confidence": 0.80,
+            "context": {
+                "source_agreement_ratio": 0.80,
+                "max_abs_divergence": 0.02,
+                "book_favorite_gap": 0.20,
+                "market_favorite_gap": 0.20,
+                "elo_delta": 0.40,
+                "xg_proxy_delta": 0.50,
+                "prediction_market_available": True,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "home-2",
+            "actual_outcome": "HOME",
+            "base_model_probs": {"home": 0.69, "draw": 0.18, "away": 0.13},
+            "bookmaker_probs": {"home": 0.58, "draw": 0.27, "away": 0.15},
+            "raw_fused_probs": {"home": 0.66, "draw": 0.20, "away": 0.14},
+            "confidence": 0.79,
+            "context": {
+                "source_agreement_ratio": 0.78,
+                "max_abs_divergence": 0.03,
+                "book_favorite_gap": 0.18,
+                "market_favorite_gap": 0.18,
+                "elo_delta": 0.38,
+                "xg_proxy_delta": 0.48,
+                "prediction_market_available": True,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "draw-1",
+            "actual_outcome": "DRAW",
+            "base_model_probs": {"home": 0.25, "draw": 0.55, "away": 0.20},
+            "bookmaker_probs": {"home": 0.31, "draw": 0.42, "away": 0.27},
+            "raw_fused_probs": {"home": 0.24, "draw": 0.56, "away": 0.20},
+            "confidence": 0.62,
+            "context": {
+                "source_agreement_ratio": 0.70,
+                "max_abs_divergence": 0.02,
+                "book_favorite_gap": 0.08,
+                "market_favorite_gap": 0.08,
+                "elo_delta": 0.00,
+                "xg_proxy_delta": -0.10,
+                "prediction_market_available": False,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "draw-2",
+            "actual_outcome": "DRAW",
+            "base_model_probs": {"home": 0.22, "draw": 0.58, "away": 0.20},
+            "bookmaker_probs": {"home": 0.30, "draw": 0.44, "away": 0.26},
+            "raw_fused_probs": {"home": 0.20, "draw": 0.59, "away": 0.21},
+            "confidence": 0.64,
+            "context": {
+                "source_agreement_ratio": 0.68,
+                "max_abs_divergence": 0.03,
+                "book_favorite_gap": 0.09,
+                "market_favorite_gap": 0.09,
+                "elo_delta": 0.01,
+                "xg_proxy_delta": -0.12,
+                "prediction_market_available": False,
+                "lineup_confirmed": 0,
+            },
+        },
+        {
+            "snapshot_id": "away-1",
+            "actual_outcome": "AWAY",
+            "base_model_probs": {"home": 0.15, "draw": 0.20, "away": 0.65},
+            "bookmaker_probs": {"home": 0.28, "draw": 0.25, "away": 0.47},
+            "raw_fused_probs": {"home": 0.14, "draw": 0.19, "away": 0.67},
+            "confidence": 0.72,
+            "context": {
+                "source_agreement_ratio": 0.75,
+                "max_abs_divergence": 0.01,
+                "book_favorite_gap": 0.22,
+                "market_favorite_gap": 0.22,
+                "elo_delta": -0.35,
+                "xg_proxy_delta": -0.60,
+                "prediction_market_available": False,
+                "lineup_confirmed": 1,
+            },
+        },
+        {
+            "snapshot_id": "away-2",
+            "actual_outcome": "AWAY",
+            "base_model_probs": {"home": 0.17, "draw": 0.21, "away": 0.62},
+            "bookmaker_probs": {"home": 0.26, "draw": 0.27, "away": 0.47},
+            "raw_fused_probs": {"home": 0.16, "draw": 0.20, "away": 0.64},
+            "confidence": 0.70,
+            "context": {
+                "source_agreement_ratio": 0.77,
+                "max_abs_divergence": 0.02,
+                "book_favorite_gap": 0.20,
+                "market_favorite_gap": 0.20,
+                "elo_delta": -0.33,
+                "xg_proxy_delta": -0.55,
+                "prediction_market_available": False,
+                "lineup_confirmed": 1,
+            },
+        },
+    ]
+
+    probabilities = build_current_fused_probabilities(candidates)
+
+    assert set(probabilities) == {
+        "home-1",
+        "home-2",
+        "draw-1",
+        "draw-2",
+        "away-1",
+        "away-2",
+    }
+    assert max(probabilities["home-1"], key=probabilities["home-1"].get) == "home"
+    assert max(probabilities["draw-1"], key=probabilities["draw-1"].get) == "draw"
+    assert max(probabilities["away-1"], key=probabilities["away-1"].get) == "away"
+    assert round(sum(probabilities["away-2"].values()), 5) == 1.0
+
+
+def test_build_current_fused_probabilities_falls_back_when_class_coverage_is_insufficient() -> None:
+    probabilities = build_current_fused_probabilities(
+        [
+            {
+                "snapshot_id": "snapshot-001",
+                "actual_outcome": "HOME",
+                "base_model_probs": {"home": 0.58, "draw": 0.24, "away": 0.18},
+                "bookmaker_probs": {"home": 0.31, "draw": 0.44, "away": 0.25},
+                "raw_fused_probs": {"home": 0.61, "draw": 0.22, "away": 0.17},
+                "confidence": 0.44,
+                "context": {
+                    "source_agreement_ratio": 0.34,
+                    "max_abs_divergence": 0.08,
+                    "prediction_market_available": False,
+                },
+            },
+            {
+                "snapshot_id": "snapshot-002",
+                "actual_outcome": "AWAY",
+                "base_model_probs": {"home": 0.20, "draw": 0.24, "away": 0.56},
+                "bookmaker_probs": {"home": 0.52, "draw": 0.26, "away": 0.22},
+                "raw_fused_probs": {"home": 0.24, "draw": 0.23, "away": 0.53},
+                "confidence": 0.58,
+                "context": {
+                    "source_agreement_ratio": 0.67,
+                    "max_abs_divergence": 0.04,
+                    "prediction_market_available": False,
+                },
+            },
+        ]
+    )
+
+    assert probabilities == {
+        "snapshot-001": {"home": 0.31, "draw": 0.44, "away": 0.25},
+        "snapshot-002": {"home": 0.24, "draw": 0.23, "away": 0.53},
+    }

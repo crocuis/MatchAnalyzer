@@ -7,6 +7,7 @@ from batch.src.jobs.run_predictions_job import (
 )
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.evaluate_prediction_sources import (
+    build_current_fused_probabilities,
     build_variant_evaluation_rows,
     derive_variant_weights,
     summarize_variant_metrics,
@@ -106,6 +107,7 @@ def build_evaluation_report(
     market_by_snapshot = index_market_rows_by_snapshot(market_rows)
     prediction_by_snapshot_id: dict[str, dict] = {}
     rows: list[dict] = []
+    payload_candidates: list[dict] = []
     evaluated_snapshot_ids: set[str] = set()
 
     for prediction in prediction_rows:
@@ -157,33 +159,28 @@ def build_evaluation_report(
                 "source_agreement_ratio": prediction_payload.get("source_agreement_ratio"),
                 "max_abs_divergence": prediction_payload.get("max_abs_divergence"),
             }
-            current_fused_probs = choose_current_fused_probabilities(
-                raw_fused_probs=fused_probs,
-                bookmaker_probs=bookmaker_probs,
-                confidence=(
-                    prediction.get("confidence_score")
-                    if isinstance(prediction, dict)
-                    else prediction_payload.get("calibrated_confidence_score")
-                ),
-                context=selection_context,
-            )
-            rows.extend(
-                build_variant_evaluation_rows(
-                    match_id=snapshot["match_id"],
-                    snapshot_id=snapshot["id"],
-                    checkpoint=snapshot["checkpoint_type"],
-                    competition_id=str(match.get("competition_id") or "unknown"),
-                    actual_outcome=str(match["final_result"]),
-                    prediction_market_available=prediction_market_available,
-                    bookmaker_probs=bookmaker_probs,
-                    prediction_market_probs=(
+            payload_candidates.append(
+                {
+                    "match_id": snapshot["match_id"],
+                    "snapshot_id": snapshot["id"],
+                    "checkpoint": snapshot["checkpoint_type"],
+                    "competition_id": str(match.get("competition_id") or "unknown"),
+                    "actual_outcome": str(match["final_result"]),
+                    "prediction_market_available": prediction_market_available,
+                    "bookmaker_probs": bookmaker_probs,
+                    "prediction_market_probs": (
                         prediction_market_probs if prediction_market_available else bookmaker_probs
                     ),
-                    base_model_probs=base_probs,
-                    fused_probs=current_fused_probs,
-                )
+                    "base_model_probs": base_probs,
+                    "raw_fused_probs": fused_probs,
+                    "confidence": (
+                        prediction.get("confidence_score")
+                        if isinstance(prediction, dict)
+                        else prediction_payload.get("calibrated_confidence_score")
+                    ),
+                    "context": selection_context,
+                }
             )
-            evaluated_snapshot_ids.add(snapshot["id"])
             continue
 
         book_probs, prediction_market = build_market_probabilities(
@@ -251,6 +248,25 @@ def build_evaluation_report(
             )
         )
         evaluated_snapshot_ids.add(snapshot["id"])
+
+    if payload_candidates:
+        current_fused_by_snapshot = build_current_fused_probabilities(payload_candidates)
+        for candidate in payload_candidates:
+            rows.extend(
+                build_variant_evaluation_rows(
+                    match_id=candidate["match_id"],
+                    snapshot_id=candidate["snapshot_id"],
+                    checkpoint=candidate["checkpoint"],
+                    competition_id=candidate["competition_id"],
+                    actual_outcome=candidate["actual_outcome"],
+                    prediction_market_available=candidate["prediction_market_available"],
+                    bookmaker_probs=candidate["bookmaker_probs"],
+                    prediction_market_probs=candidate["prediction_market_probs"],
+                    base_model_probs=candidate["base_model_probs"],
+                    fused_probs=current_fused_by_snapshot[candidate["snapshot_id"]],
+                )
+            )
+            evaluated_snapshot_ids.add(candidate["snapshot_id"])
 
     if not rows:
         raise ValueError("no completed snapshots with bookmaker probabilities were found")

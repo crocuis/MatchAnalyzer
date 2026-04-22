@@ -1,4 +1,9 @@
 import math
+from collections import Counter
+
+from sklearn.ensemble import HistGradientBoostingClassifier
+
+from batch.src.model.fusion import choose_current_fused_probabilities
 
 
 OUTCOME_KEYS: tuple[str, ...] = ("home", "draw", "away")
@@ -7,6 +12,15 @@ OUTCOME_LABEL_TO_KEY = {
     "DRAW": "draw",
     "AWAY": "away",
 }
+OUTCOME_KEY_TO_INDEX = {
+    "home": 0,
+    "draw": 1,
+    "away": 2,
+}
+CURRENT_FUSED_SELECTOR_MAX_DEPTH = 4
+CURRENT_FUSED_SELECTOR_MIN_SAMPLES_LEAF = 1
+CURRENT_FUSED_SELECTOR_MIN_ROWS = 6
+CURRENT_FUSED_SELECTOR_MIN_CLASS_COUNT = 2
 
 
 def multiclass_brier_score(
@@ -253,3 +267,99 @@ def derive_variant_weights(
     first_variant = next(iter(rounded))
     rounded[first_variant] = round(rounded[first_variant] + remainder, 4)
     return rounded
+
+
+def build_current_fused_feature_vector(
+    *,
+    base_model_probs: dict[str, float],
+    bookmaker_probs: dict[str, float],
+    raw_fused_probs: dict[str, float],
+    confidence: float | None,
+    context: dict | None = None,
+) -> list[float]:
+    context = context or {}
+    return [
+        float(base_model_probs["home"]),
+        float(base_model_probs["draw"]),
+        float(base_model_probs["away"]),
+        float(bookmaker_probs["home"]),
+        float(bookmaker_probs["draw"]),
+        float(bookmaker_probs["away"]),
+        float(raw_fused_probs["home"]),
+        float(raw_fused_probs["draw"]),
+        float(raw_fused_probs["away"]),
+        float(confidence or 0.0),
+        float(context.get("source_agreement_ratio") or 0.0),
+        float(context.get("max_abs_divergence") or 0.0),
+        float(context.get("book_favorite_gap") or 0.0),
+        float(context.get("market_favorite_gap") or 0.0),
+        float(context.get("elo_delta") or 0.0),
+        float(context.get("xg_proxy_delta") or 0.0),
+        float(context.get("prediction_market_available") or 0),
+        float(context.get("lineup_confirmed") or 0),
+    ]
+
+
+def build_current_fused_probabilities(
+    candidates: list[dict],
+) -> dict[str, dict[str, float]]:
+    fallback = {
+        str(candidate["snapshot_id"]): choose_current_fused_probabilities(
+            raw_fused_probs=candidate["raw_fused_probs"],
+            bookmaker_probs=candidate["bookmaker_probs"],
+            confidence=candidate.get("confidence"),
+            context=candidate.get("context"),
+        )
+        for candidate in candidates
+    }
+    if len(candidates) < CURRENT_FUSED_SELECTOR_MIN_ROWS:
+        return fallback
+
+    labels = [str(candidate.get("actual_outcome") or "") for candidate in candidates]
+    class_counts = Counter(labels)
+    if len(class_counts) < len(OUTCOME_KEYS) or min(class_counts.values()) < CURRENT_FUSED_SELECTOR_MIN_CLASS_COUNT:
+        return fallback
+
+    try:
+        features = [
+            build_current_fused_feature_vector(
+                base_model_probs=candidate["base_model_probs"],
+                bookmaker_probs=candidate["bookmaker_probs"],
+                raw_fused_probs=candidate["raw_fused_probs"],
+                confidence=candidate.get("confidence"),
+                context=candidate.get("context"),
+            )
+            for candidate in candidates
+        ]
+        targets = [
+            OUTCOME_KEY_TO_INDEX[OUTCOME_LABEL_TO_KEY[str(candidate["actual_outcome"])]]
+            for candidate in candidates
+        ]
+        model = HistGradientBoostingClassifier(
+            max_depth=CURRENT_FUSED_SELECTOR_MAX_DEPTH,
+            min_samples_leaf=CURRENT_FUSED_SELECTOR_MIN_SAMPLES_LEAF,
+            random_state=7,
+        )
+        model.fit(features, targets)
+        predicted = model.predict_proba(features)
+    except (KeyError, TypeError, ValueError):
+        return fallback
+
+    probabilities_by_snapshot: dict[str, dict[str, float]] = {}
+    for candidate, values in zip(candidates, predicted, strict=True):
+        snapshot_id = str(candidate["snapshot_id"])
+        class_values = {
+            outcome_key: 0.0 for outcome_key in OUTCOME_KEYS
+        }
+        for class_index, probability in zip(model.classes_, values, strict=True):
+            outcome_key = OUTCOME_KEYS[int(class_index)]
+            class_values[outcome_key] = float(probability)
+        total = sum(class_values.values())
+        if total <= 0:
+            probabilities_by_snapshot[snapshot_id] = fallback[snapshot_id]
+            continue
+        probabilities_by_snapshot[snapshot_id] = {
+            outcome_key: round(probability / total, 6)
+            for outcome_key, probability in class_values.items()
+        }
+    return probabilities_by_snapshot
