@@ -270,3 +270,6 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
             "bookmaker"
         ]
     )
+    assert latest_report["artifact_id"] == "prediction_source_evaluation_report_latest_current_v2"
+    assert latest_policy["artifact_id"] == "prediction_fusion_policy_latest_current_v2"
+    assert len(state["stored_artifacts"]) == 4

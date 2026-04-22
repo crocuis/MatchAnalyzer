@@ -36,6 +36,8 @@ from batch.src.model.evaluate_prediction_sources import (
 )
 from batch.src.model.train_baseline import train_baseline_model
 from batch.src.settings import load_settings
+from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
 
 
@@ -717,9 +719,40 @@ def build_variant_markets(variant_rows: list[dict]) -> list[dict]:
     return markets
 
 
+def build_prediction_summary_payload(explanation_payload: dict) -> dict:
+    summary_keys = (
+        "bullets",
+        "feature_attribution",
+        "base_model_source",
+        "model_selection",
+        "base_model_probs",
+        "raw_confidence_score",
+        "calibrated_confidence_score",
+        "prediction_market_available",
+        "confidence_calibration",
+        "source_agreement_ratio",
+        "sources_agree",
+        "max_abs_divergence",
+        "feature_context",
+        "feature_metadata",
+        "source_metadata",
+    )
+    return {
+        key: explanation_payload[key]
+        for key in summary_keys
+        if key in explanation_payload
+    }
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    r2_client = R2Client(
+        getattr(settings, "r2_bucket", "workflow-artifacts"),
+        access_key_id=getattr(settings, "r2_access_key_id", None),
+        secret_access_key=getattr(settings, "r2_secret_access_key", None),
+        s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+    )
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     variant_rows = read_optional_rows(client, "market_variants")
@@ -766,6 +799,7 @@ def main() -> None:
         variant_rows_by_snapshot.setdefault(row["snapshot_id"], []).append(row)
     payload = []
     feature_snapshot_payload = []
+    artifact_payload = []
     model_selection_by_checkpoint: dict[str, dict] = {}
     skipped_snapshots = []
     for snapshot in target_snapshots:
@@ -981,7 +1015,28 @@ def main() -> None:
             "feature_metadata": feature_metadata,
             "source_metadata": source_metadata,
         }
+        summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[enriched_snapshot["checkpoint_type"]] = model_selection
+        artifact_id = f"prediction_artifact_{prediction_id}"
+        artifact_payload.append(
+            archive_json_artifact(
+                r2_client=r2_client,
+                artifact_id=artifact_id,
+                owner_type="prediction",
+                owner_id=prediction_id,
+                artifact_kind="prediction_explanation",
+                key=f"predictions/{row['match_id']}/{prediction_id}.json",
+                payload=explanation_payload,
+                summary_payload={
+                    "match_id": row["match_id"],
+                    "snapshot_id": enriched_snapshot["id"],
+                    "checkpoint_type": enriched_snapshot["checkpoint_type"],
+                },
+                metadata={
+                    "model_version_id": SAMPLE_MODEL_VERSION_ID,
+                },
+            )
+        )
         payload.append(
             {
                 "id": prediction_id,
@@ -993,6 +1048,37 @@ def main() -> None:
                 "away_prob": row["away_prob"],
                 "recommended_pick": row["recommended_pick"],
                 "confidence_score": row["confidence_score"],
+                "summary_payload": summary_payload,
+                "main_recommendation_pick": main_recommendation["pick"],
+                "main_recommendation_confidence": main_recommendation["confidence"],
+                "main_recommendation_recommended": main_recommendation["recommended"],
+                "main_recommendation_no_bet_reason": main_recommendation["no_bet_reason"],
+                "value_recommendation_pick": (
+                    value_recommendation["pick"] if value_recommendation else None
+                ),
+                "value_recommendation_recommended": (
+                    value_recommendation["recommended"] if value_recommendation else None
+                ),
+                "value_recommendation_edge": (
+                    value_recommendation["edge"] if value_recommendation else None
+                ),
+                "value_recommendation_expected_value": (
+                    value_recommendation["expected_value"] if value_recommendation else None
+                ),
+                "value_recommendation_market_price": (
+                    value_recommendation["market_price"] if value_recommendation else None
+                ),
+                "value_recommendation_model_probability": (
+                    value_recommendation["model_probability"] if value_recommendation else None
+                ),
+                "value_recommendation_market_probability": (
+                    value_recommendation["market_probability"] if value_recommendation else None
+                ),
+                "value_recommendation_market_source": (
+                    value_recommendation["market_source"] if value_recommendation else None
+                ),
+                "variant_markets_summary": variant_markets,
+                "explanation_artifact_id": artifact_id,
                 "explanation_payload": explanation_payload,
             }
         )
@@ -1017,6 +1103,7 @@ def main() -> None:
         "model_versions",
         [build_model_version_row(by_checkpoint_selection=model_selection_by_checkpoint)],
     )
+    artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
     inserted = client.upsert_rows("predictions", payload)
     feature_snapshots_inserted = client.upsert_rows(
         "prediction_feature_snapshots", feature_snapshot_payload
@@ -1027,6 +1114,7 @@ def main() -> None:
                 "snapshot_rows": len(snapshot_rows),
                 "target_snapshot_rows": len(target_snapshots),
                 "model_rows": model_rows,
+                "artifact_rows": artifact_rows,
                 "inserted_rows": inserted,
                 "feature_snapshot_rows": feature_snapshots_inserted,
                 "skipped_snapshots": skipped_snapshots,

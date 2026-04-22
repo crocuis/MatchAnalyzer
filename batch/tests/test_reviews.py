@@ -755,6 +755,8 @@ def test_run_post_match_review_job_persists_latest_review_aggregation(monkeypatc
     assert aggregation["report_payload"]["by_primary_signal"] == {
         "strengthHome": 1,
     }
+    assert aggregation["artifact_id"] == "post_match_review_aggregation_latest_current_v2"
+    assert len(state["stored_artifacts"]) == 3
     assert aggregation_history["rollout_version"] == 2
     latest_promotion = next(
         row for row in state["rollout_promotion_decisions"] if row["id"] == "latest"

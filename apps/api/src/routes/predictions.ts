@@ -7,8 +7,12 @@ import {
 } from "../lib/rollout-lane-states";
 import {
   normalizeMainRecommendation,
+  normalizeMainRecommendationFromSummary,
+  normalizeSummaryPayload,
   normalizeVariantMarkets,
+  normalizeVariantMarketsFromSummary,
   normalizeValueRecommendation,
+  normalizeValueRecommendationFromSummary,
 } from "../lib/prediction-lanes";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
@@ -259,6 +263,46 @@ function extractPredictionSourceEvaluationPayload(row: Record<string, unknown>) 
     (isRecord(row.evaluation_report) && row.evaluation_report) ||
     row;
   return isRecord(nestedPayload) ? nestedPayload : row;
+}
+
+async function loadArtifactById(
+  supabase: ApiSupabaseClient,
+  artifactId: string | null | undefined,
+) {
+  if (!artifactId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("stored_artifacts")
+    .select(
+      "id, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256",
+    )
+    .eq("id", artifactId)
+    .maybeSingle();
+
+  if (error) {
+    if (error.message.includes("does not exist") || error.message.includes("relation")) {
+      return null;
+    }
+    throw new Error(`artifact query failed: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    storageBackend: data.storage_backend,
+    bucketName: data.bucket_name,
+    objectKey: data.object_key,
+    storageUri: data.storage_uri,
+    contentType: data.content_type,
+    sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : null,
+    checksumSha256:
+      typeof data.checksum_sha256 === "string" ? data.checksum_sha256 : null,
+  };
 }
 
 function normalizePredictionModelRegistryReport(
@@ -707,7 +751,18 @@ function comparePredictionRows(
 }
 
 function pickMarketEnrichedPrediction(
-  predictions: Array<{ explanation_payload: unknown }>,
+  predictions: Array<{
+    explanation_payload: unknown;
+    value_recommendation_pick?: string | null;
+    value_recommendation_recommended?: boolean | null;
+    value_recommendation_edge?: number | null;
+    value_recommendation_expected_value?: number | null;
+    value_recommendation_market_price?: number | null;
+    value_recommendation_model_probability?: number | null;
+    value_recommendation_market_probability?: number | null;
+    value_recommendation_market_source?: string | null;
+    variant_markets_summary?: unknown;
+  }>,
 ) {
   return (
     predictions.find(
@@ -729,7 +784,7 @@ export async function loadPredictionView(
     supabase
       .from("predictions")
       .select(
-        "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, explanation_payload, created_at",
+        "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, explanation_payload, created_at",
       )
       .eq("match_id", matchId)
       .order("created_at", { ascending: false }),
@@ -750,6 +805,9 @@ export async function loadPredictionView(
 
   const latestPrediction = sortedPredictions[0] ?? null;
   const marketEnrichedPrediction = pickMarketEnrichedPrediction(sortedPredictions);
+  const artifact = latestPrediction
+    ? await loadArtifactById(supabase, latestPrediction.explanation_artifact_id)
+    : null;
   const checkpoints = (snapshotRows ?? [])
     .sort(
       (left, right) =>
@@ -775,10 +833,20 @@ export async function loadPredictionView(
             ? `${
                 snapshot.snapshot_quality
               } snapshot · ${
-                normalizeMainRecommendation(
-                  prediction.explanation_payload,
+                normalizeMainRecommendationFromSummary(
+                  {
+                    summaryPayload: prediction.summary_payload,
+                    mainRecommendationPick: prediction.main_recommendation_pick,
+                    mainRecommendationConfidence:
+                      prediction.main_recommendation_confidence,
+                    mainRecommendationRecommended:
+                      prediction.main_recommendation_recommended,
+                    mainRecommendationNoBetReason:
+                      prediction.main_recommendation_no_bet_reason,
+                  },
                   prediction.recommended_pick,
                   Number(prediction.confidence_score ?? 0),
+                  prediction.explanation_payload,
                 ).recommended
                   ? `Pick ${prediction.recommended_pick}`
                   : "No bet"
@@ -789,20 +857,52 @@ export async function loadPredictionView(
     });
 
   const mainRecommendation = latestPrediction
-    ? normalizeMainRecommendation(
-        latestPrediction.explanation_payload,
+    ? normalizeMainRecommendationFromSummary(
+        {
+          summaryPayload: latestPrediction.summary_payload,
+          mainRecommendationPick: latestPrediction.main_recommendation_pick,
+          mainRecommendationConfidence:
+            latestPrediction.main_recommendation_confidence,
+          mainRecommendationRecommended:
+            latestPrediction.main_recommendation_recommended,
+          mainRecommendationNoBetReason:
+            latestPrediction.main_recommendation_no_bet_reason,
+        },
         latestPrediction.recommended_pick,
         Number(latestPrediction.confidence_score),
+        latestPrediction.explanation_payload,
       )
     : null;
   const valueRecommendation = latestPrediction
-    ? normalizeValueRecommendation(
+    ? normalizeValueRecommendationFromSummary(
+        {
+          valueRecommendationPick:
+            marketEnrichedPrediction?.value_recommendation_pick ?? null,
+          valueRecommendationRecommended:
+            marketEnrichedPrediction?.value_recommendation_recommended ?? null,
+          valueRecommendationEdge: marketEnrichedPrediction?.value_recommendation_edge ?? null,
+          valueRecommendationExpectedValue:
+            marketEnrichedPrediction?.value_recommendation_expected_value ?? null,
+          valueRecommendationMarketPrice:
+            marketEnrichedPrediction?.value_recommendation_market_price ?? null,
+          valueRecommendationModelProbability:
+            marketEnrichedPrediction?.value_recommendation_model_probability ?? null,
+          valueRecommendationMarketProbability:
+            marketEnrichedPrediction?.value_recommendation_market_probability ?? null,
+          valueRecommendationMarketSource:
+            marketEnrichedPrediction?.value_recommendation_market_source ?? null,
+        },
         marketEnrichedPrediction?.explanation_payload ??
           latestPrediction.explanation_payload,
       )
     : null;
   const variantMarkets = latestPrediction
-    ? normalizeVariantMarkets(
+    ? normalizeVariantMarketsFromSummary(
+        {
+          variantMarketsSummary:
+            marketEnrichedPrediction?.variant_markets_summary ??
+            latestPrediction.variant_markets_summary,
+        },
         marketEnrichedPrediction?.explanation_payload ??
           latestPrediction.explanation_payload,
       )
@@ -831,7 +931,11 @@ export async function loadPredictionView(
           noBetReason: mainRecommendation?.recommended
             ? null
             : (mainRecommendation?.noBetReason ?? null),
-          explanationPayload: latestPrediction.explanation_payload,
+          explanationPayload: normalizeSummaryPayload(
+            latestPrediction.summary_payload,
+            latestPrediction.explanation_payload,
+          ),
+          artifact,
         }
       : null,
     checkpoints,

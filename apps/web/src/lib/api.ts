@@ -1,4 +1,4 @@
-import type { MatchStatus } from "@match-analyzer/contracts";
+import type { ArtifactPointer, MatchStatus } from "@match-analyzer/contracts";
 
 export interface MatchRow {
   id: string;
@@ -48,6 +48,7 @@ export interface PredictionSummary {
   variantMarkets?: VariantMarket[];
   noBetReason?: string | null;
   explanationPayload?: PredictionExplanationPayload;
+  artifact?: ArtifactPointer | null;
 }
 
 export interface MainRecommendation {
@@ -218,6 +219,7 @@ export interface PostMatchReview {
     market_outperformed_model?: boolean | null;
     [key: string]: unknown;
   };
+  artifact?: ArtifactPointer | null;
 }
 
 export interface MatchReport {

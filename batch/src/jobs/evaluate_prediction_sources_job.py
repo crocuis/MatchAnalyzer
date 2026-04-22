@@ -24,6 +24,8 @@ from batch.src.rollout.promotion_policy import (
     build_rollout_promotion_decision,
 )
 from batch.src.settings import load_settings
+from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import (
     build_history_row_id,
     next_rollout_version,
@@ -206,6 +208,12 @@ def build_evaluation_report_comparison(
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    r2_client = R2Client(
+        getattr(settings, "r2_bucket", "workflow-artifacts"),
+        access_key_id=getattr(settings, "r2_access_key_id", None),
+        secret_access_key=getattr(settings, "r2_secret_access_key", None),
+        s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+    )
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     match_rows = client.read_rows("matches")
@@ -238,6 +246,80 @@ def main() -> None:
         rollout_channel=rollout_channel,
         rollout_version=rollout_version,
     )
+    latest_report_artifact_id = (
+        f"prediction_source_evaluation_report_latest_{rollout_channel}_v{rollout_version}"
+    )
+    history_report_artifact_id = (
+        f"prediction_source_evaluation_report_{rollout_channel}_v{rollout_version}"
+    )
+    policy_history_id = build_history_row_id(
+        "prediction_fusion_policy_versions",
+        rollout_channel=rollout_channel,
+        rollout_version=rollout_version,
+    )
+    current_policy_payload = build_latest_fusion_policy(
+        report_id="latest",
+        recommended_weights=report["recommended_fusion_weights"],
+        policy_version=rollout_version,
+        rollout_channel=rollout_channel,
+    )["policy_payload"]
+    latest_policy_artifact_id = f"prediction_fusion_policy_latest_{rollout_channel}_v{rollout_version}"
+    history_policy_artifact_id = f"prediction_fusion_policy_{rollout_channel}_v{rollout_version}"
+    artifact_rows = [
+        archive_json_artifact(
+            r2_client=r2_client,
+            artifact_id=latest_report_artifact_id,
+            owner_type="prediction_source_evaluation_report",
+            owner_id="latest",
+            artifact_kind="source_evaluation_report",
+            key=f"reports/source-evaluation/latest-{rollout_channel}-v{rollout_version}.json",
+            payload=report,
+            summary_payload={
+                "rollout_channel": rollout_channel,
+                "rollout_version": rollout_version,
+            },
+        ),
+        archive_json_artifact(
+            r2_client=r2_client,
+            artifact_id=history_report_artifact_id,
+            owner_type="prediction_source_evaluation_report_version",
+            owner_id=report_history_id,
+            artifact_kind="source_evaluation_report",
+            key=f"reports/source-evaluation/history/{report_history_id}.json",
+            payload=report,
+            summary_payload={
+                "rollout_channel": rollout_channel,
+                "rollout_version": rollout_version,
+            },
+        ),
+        archive_json_artifact(
+            r2_client=r2_client,
+            artifact_id=latest_policy_artifact_id,
+            owner_type="prediction_fusion_policy",
+            owner_id="latest",
+            artifact_kind="fusion_policy_report",
+            key=f"reports/fusion-policy/latest-{rollout_channel}-v{rollout_version}.json",
+            payload=current_policy_payload,
+            summary_payload={
+                "rollout_channel": rollout_channel,
+                "rollout_version": rollout_version,
+            },
+        ),
+        archive_json_artifact(
+            r2_client=r2_client,
+            artifact_id=history_policy_artifact_id,
+            owner_type="prediction_fusion_policy_version",
+            owner_id=policy_history_id,
+            artifact_kind="fusion_policy_report",
+            key=f"reports/fusion-policy/history/{policy_history_id}.json",
+            payload=current_policy_payload,
+            summary_payload={
+                "rollout_channel": rollout_channel,
+                "rollout_version": rollout_version,
+            },
+        ),
+    ]
+    persisted_artifact_rows = client.upsert_rows("stored_artifacts", artifact_rows)
     persisted_rows = client.upsert_rows(
         "prediction_source_evaluation_reports",
         [
@@ -247,6 +329,7 @@ def main() -> None:
                     "report_payload": report,
                     "snapshots_evaluated": report["snapshots_evaluated"],
                     "rows_evaluated": report["rows_evaluated"],
+                    "artifact_id": latest_report_artifact_id,
                 },
                 rollout_channel=rollout_channel,
                 rollout_version=rollout_version,
@@ -265,6 +348,7 @@ def main() -> None:
                     "report_payload": report,
                     "snapshots_evaluated": report["snapshots_evaluated"],
                     "rows_evaluated": report["rows_evaluated"],
+                    "artifact_id": history_report_artifact_id,
                 },
                 rollout_channel=rollout_channel,
                 rollout_version=rollout_version,
@@ -278,20 +362,9 @@ def main() -> None:
         existing_policy_rows,
         rollout_channel=rollout_channel,
     )
-    current_policy_payload = build_latest_fusion_policy(
-        report_id="latest",
-        recommended_weights=report["recommended_fusion_weights"],
-        policy_version=rollout_version,
-        rollout_channel=rollout_channel,
-    )["policy_payload"]
     policy_comparison = build_fusion_policy_comparison(
         current_policy_payload,
         previous_latest_policy.get("policy_payload") if previous_latest_policy else None,
-    )
-    policy_history_id = build_history_row_id(
-        "prediction_fusion_policy_versions",
-        rollout_channel=rollout_channel,
-        rollout_version=rollout_version,
     )
     persisted_policy_rows = client.upsert_rows(
         "prediction_fusion_policies",
@@ -304,6 +377,7 @@ def main() -> None:
                 comparison_payload=policy_comparison,
                 history_row_id=policy_history_id,
                 created_at=created_at,
+                artifact_id=latest_policy_artifact_id,
             )
         ],
     )
@@ -318,6 +392,7 @@ def main() -> None:
                 rollout_channel=rollout_channel,
                 comparison_payload=policy_comparison,
                 created_at=created_at,
+                artifact_id=history_policy_artifact_id,
             )
         ],
     )
@@ -389,6 +464,7 @@ def main() -> None:
                 **report,
                 "rollout_version": rollout_version,
                 "comparison_payload": report_comparison,
+                "persisted_artifact_rows": persisted_artifact_rows,
                 "persisted_rows": persisted_rows,
                 "persisted_history_rows": persisted_history_rows,
                 "persisted_policy_rows": persisted_policy_rows,
