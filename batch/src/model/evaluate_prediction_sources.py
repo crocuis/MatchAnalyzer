@@ -69,6 +69,7 @@ def build_variant_evaluation_rows(
     checkpoint: str,
     competition_id: str,
     actual_outcome: str,
+    bookmaker_available: bool = True,
     prediction_market_available: bool,
     bookmaker_probs: dict[str, float],
     prediction_market_probs: dict[str, float],
@@ -80,18 +81,20 @@ def build_variant_evaluation_rows(
         if prediction_market_available
         else "without_prediction_market"
     )
-    rows = [
-        _build_variant_row(
-            variant="bookmaker",
-            match_id=match_id,
-            snapshot_id=snapshot_id,
-            checkpoint=checkpoint,
-            competition_id=competition_id,
-            market_segment=market_segment,
-            actual_outcome=actual_outcome,
-            probabilities=bookmaker_probs,
-        ),
-    ]
+    rows = []
+    if bookmaker_available:
+        rows.append(
+            _build_variant_row(
+                variant="bookmaker",
+                match_id=match_id,
+                snapshot_id=snapshot_id,
+                checkpoint=checkpoint,
+                competition_id=competition_id,
+                market_segment=market_segment,
+                actual_outcome=actual_outcome,
+                probabilities=bookmaker_probs,
+            )
+        )
 
     if prediction_market_available:
         rows.append(

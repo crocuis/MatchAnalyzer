@@ -2,6 +2,7 @@ import json
 
 from batch.src.jobs.run_predictions_job import (
     build_market_probabilities,
+    resolve_bookmaker_context,
     build_snapshot_context,
     predict_base_probabilities,
 )
@@ -57,6 +58,10 @@ def build_evaluation_report(
             snapshot["id"],
             market_by_snapshot,
         )
+        book_probs, bookmaker_available = resolve_bookmaker_context(
+            book_probs,
+            allow_prior_fallback=True,
+        )
         if not book_probs:
             continue
 
@@ -64,6 +69,7 @@ def build_evaluation_report(
             snapshot,
             book_probs,
             prediction_market,
+            bookmaker_available=bookmaker_available,
         )
         prediction_market_available = bool(
             feature_context["prediction_market_available"]
@@ -90,16 +96,33 @@ def build_evaluation_report(
         }
         fused_probs = (
             dict(base_probs)
-            if not prediction_market_available
-            and _base_model_source in {"bookmaker_fallback", "centroid_fallback"}
+            if (
+                (
+                    _base_model_source in {"bookmaker_fallback", "centroid_fallback"}
+                    and not prediction_market_available
+                )
+                or (
+                    _base_model_source == "prior_fallback"
+                    and not prediction_market_available
+                    and not bookmaker_available
+                )
+            )
             else fuse_probabilities(
                 base_probs,
                 book_probs,
                 prediction_market_probs,
                 allowed_variants=(
-                    ("base_model", "bookmaker", "prediction_market")
+                    (
+                        ("base_model", "bookmaker", "prediction_market")
+                        if bookmaker_available
+                        else ("base_model", "prediction_market")
+                    )
                     if prediction_market_available
-                    else ("base_model", "bookmaker")
+                    else (
+                        ("base_model", "bookmaker")
+                        if bookmaker_available
+                        else ("base_model",)
+                    )
                 ),
             )
         )
@@ -110,6 +133,7 @@ def build_evaluation_report(
                 checkpoint=snapshot["checkpoint_type"],
                 competition_id=str(match.get("competition_id") or "unknown"),
                 actual_outcome=str(match["final_result"]),
+                bookmaker_available=bookmaker_available,
                 prediction_market_available=prediction_market_available,
                 bookmaker_probs=book_probs,
                 prediction_market_probs=prediction_market_probs,
