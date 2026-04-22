@@ -7,6 +7,7 @@ from datetime import date
 from batch.src.jobs.backfill_assets_job import iter_dates
 import batch.src.jobs.backfill_fixture_season_job as backfill_fixture_season_job
 import batch.src.jobs.evaluate_prediction_sources_job as evaluate_prediction_sources_job
+import batch.src.jobs.evaluate_prediction_sources_job as evaluate_prediction_sources_job
 import batch.src.jobs.ingest_fixtures_job as ingest_fixtures_job
 import batch.src.jobs.ingest_markets_job as ingest_markets_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
@@ -116,8 +117,6 @@ def resolve_pipeline_dates(*, start: str, end: str, date_source: str) -> list[st
         }
     )
     return [target_date for target_date in target_dates if target_date]
-
-
 def main() -> None:
     start = os.environ.get("PIPELINE_BACKFILL_START")
     end = os.environ.get("PIPELINE_BACKFILL_END")

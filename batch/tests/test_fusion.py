@@ -288,6 +288,94 @@ def test_confidence_score_penalizes_divergence_and_missing_market():
     assert high_quality > low_quality
 
 
+def test_confidence_score_recovers_decisive_prediction_market_consensus_from_fallback_penalty():
+    score = confidence_score(
+        {
+            "home": 0.6938105477879742,
+            "draw": 0.17885071080110948,
+            "away": 0.12733874141091633,
+        },
+        base_probs={
+            "away": 0.19075947959524076,
+            "draw": 0.26131435560991884,
+            "home": 0.5479261647948405,
+        },
+        context={
+            "baseline_model_trained": False,
+            "book_favorite_gap": 0.28661180918492163,
+            "elo_delta": 0.09472400000000107,
+            "lineup_confirmed": 0,
+            "market_favorite_gap": 0.971655892590751,
+            "max_abs_divergence": 0.43765314897940133,
+            "prediction_market_available": True,
+            "snapshot_quality_complete": 0,
+            "source_agreement_ratio": 1.0,
+            "xg_proxy_delta": 1.0,
+        },
+    )
+
+    assert score >= 0.76
+
+
+def test_confidence_score_promotes_decisive_away_consensus_without_prediction_market():
+    score = confidence_score(
+        {
+            "home": 0.2391304347826087,
+            "draw": 0.2391304347826087,
+            "away": 0.5217391304347826,
+        },
+        base_probs={
+            "away": 0.5217391304347826,
+            "draw": 0.2391304347826087,
+            "home": 0.2391304347826087,
+        },
+        context={
+            "baseline_model_trained": False,
+            "book_favorite_gap": 0.2826086956521739,
+            "elo_delta": 0.0027949999999987087,
+            "lineup_confirmed": 0,
+            "market_favorite_gap": 0.2826086956521739,
+            "max_abs_divergence": 0.0,
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 0,
+            "source_agreement_ratio": 1.0,
+            "xg_proxy_delta": 0.8332999999999999,
+        },
+    )
+
+    assert score > 0.62
+
+
+def test_confidence_score_promotes_centroid_draw_without_market_when_away_signals_are_strong():
+    score = confidence_score(
+        {
+            "home": 0.15727751674870952,
+            "draw": 0.5665079684593419,
+            "away": 0.27621451479194864,
+        },
+        base_probs={
+            "away": 0.27621451479194864,
+            "draw": 0.5665079684593419,
+            "home": 0.15727751674870952,
+        },
+        context={
+            "base_model_source": "centroid_fallback",
+            "baseline_model_trained": False,
+            "book_favorite_gap": 0.14760914760914762,
+            "elo_delta": -1.535412000000001,
+            "lineup_confirmed": 0,
+            "market_favorite_gap": 0.14760914760914762,
+            "max_abs_divergence": 0.0,
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 0,
+            "source_agreement_ratio": 0.5,
+            "xg_proxy_delta": -1.6,
+        },
+    )
+
+    assert score > 0.67
+
+
 def test_build_main_recommendation_returns_no_bet_below_threshold():
     recommendation = build_main_recommendation(
         pick="HOME",
