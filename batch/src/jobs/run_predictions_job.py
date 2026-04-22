@@ -1003,10 +1003,14 @@ def main() -> None:
             )
         )
         if (
-            base_model_source in {"bookmaker_fallback", "centroid_fallback", "prior_fallback"}
-            and (
-                not feature_context["prediction_market_available"]
-                or not bool(feature_context.get("bookmaker_available", 1))
+            (
+                base_model_source in {"bookmaker_fallback", "centroid_fallback"}
+                and not feature_context["prediction_market_available"]
+            )
+            or (
+                base_model_source == "prior_fallback"
+                and not feature_context["prediction_market_available"]
+                and not bool(feature_context.get("bookmaker_available", 1))
             )
         ):
             source_weights = {"base_model": 1.0}

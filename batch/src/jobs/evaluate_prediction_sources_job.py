@@ -97,8 +97,15 @@ def build_evaluation_report(
         fused_probs = (
             dict(base_probs)
             if (
-                _base_model_source in {"bookmaker_fallback", "centroid_fallback", "prior_fallback"}
-                and (not prediction_market_available or not bookmaker_available)
+                (
+                    _base_model_source in {"bookmaker_fallback", "centroid_fallback"}
+                    and not prediction_market_available
+                )
+                or (
+                    _base_model_source == "prior_fallback"
+                    and not prediction_market_available
+                    and not bookmaker_available
+                )
             )
             else fuse_probabilities(
                 base_probs,
