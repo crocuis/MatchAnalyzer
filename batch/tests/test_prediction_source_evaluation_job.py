@@ -339,3 +339,70 @@ def test_build_evaluation_report_uses_persisted_prediction_payload_when_market_r
     assert report["overall"]["bookmaker"]["count"] == 1
     assert report["overall"]["base_model"]["count"] == 1
     assert report["overall"]["current_fused"]["count"] == 1
+
+
+def test_build_evaluation_report_applies_current_fused_safeguard_to_persisted_payload() -> None:
+    report = evaluation_job.build_evaluation_report(
+        snapshot_rows=[
+            {
+                "id": "snapshot-001",
+                "match_id": "match-001",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        prediction_rows=[
+            {
+                "id": "prediction-001",
+                "match_id": "match-001",
+                "snapshot_id": "snapshot-001",
+                "home_prob": 0.61,
+                "draw_prob": 0.22,
+                "away_prob": 0.17,
+                "confidence_score": 0.44,
+                "summary_payload": {
+                    "base_model_probs": {
+                        "home": 0.58,
+                        "draw": 0.24,
+                        "away": 0.18,
+                    },
+                    "prediction_market_available": False,
+                    "source_agreement_ratio": 0.34,
+                    "max_abs_divergence": 0.08,
+                    "feature_context": {
+                        "lineup_confirmed": 0,
+                        "prediction_market_available": False,
+                    },
+                    "source_metadata": {
+                        "market_sources": {
+                            "bookmaker": {
+                                "available": True,
+                                "source_name": "book-a",
+                                "probabilities": {
+                                    "home": 0.31,
+                                    "draw": 0.44,
+                                    "away": 0.25,
+                                },
+                            },
+                            "prediction_market": {
+                                "available": False,
+                                "source_name": None,
+                                "probabilities": None,
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+        market_rows=[],
+        match_rows=[
+            {
+                "id": "match-001",
+                "competition_id": "epl",
+                "kickoff_at": "2026-04-10T19:00:00+00:00",
+                "final_result": "DRAW",
+            }
+        ],
+    )
+
+    assert report["overall"]["bookmaker"]["hit_rate"] == 1.0
+    assert report["overall"]["current_fused"]["hit_rate"] == 1.0

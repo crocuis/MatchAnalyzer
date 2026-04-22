@@ -16,6 +16,7 @@ from batch.src.model.evaluate_prediction_sources import (
 from batch.src.model.fusion import (
     build_fusion_policy_comparison,
     build_latest_fusion_policy,
+    choose_current_fused_probabilities,
     fuse_probabilities,
 )
 from batch.src.rollout.promotion_policy import (
@@ -148,6 +149,24 @@ def build_evaluation_report(
             prediction_market_available = bool(
                 prediction_payload.get("prediction_market_available")
             ) and prediction_market_probs is not None
+            feature_context = prediction_payload.get("feature_context")
+            if not isinstance(feature_context, dict):
+                feature_context = {}
+            selection_context = {
+                **feature_context,
+                "source_agreement_ratio": prediction_payload.get("source_agreement_ratio"),
+                "max_abs_divergence": prediction_payload.get("max_abs_divergence"),
+            }
+            current_fused_probs = choose_current_fused_probabilities(
+                raw_fused_probs=fused_probs,
+                bookmaker_probs=bookmaker_probs,
+                confidence=(
+                    prediction.get("confidence_score")
+                    if isinstance(prediction, dict)
+                    else prediction_payload.get("calibrated_confidence_score")
+                ),
+                context=selection_context,
+            )
             rows.extend(
                 build_variant_evaluation_rows(
                     match_id=snapshot["match_id"],
@@ -161,7 +180,7 @@ def build_evaluation_report(
                         prediction_market_probs if prediction_market_available else bookmaker_probs
                     ),
                     base_model_probs=base_probs,
-                    fused_probs=fused_probs,
+                    fused_probs=current_fused_probs,
                 )
             )
             evaluated_snapshot_ids.add(snapshot["id"])
