@@ -276,3 +276,66 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
     assert latest_policy["artifact_id"] == "prediction_fusion_policy_latest_current"
     assert policy_history["artifact_id"] == "prediction_fusion_policy_current_v2"
     assert len(state["stored_artifacts"]) == 4
+
+
+def test_build_evaluation_report_uses_persisted_prediction_payload_when_market_rows_are_missing() -> None:
+    report = evaluation_job.build_evaluation_report(
+        snapshot_rows=[
+            {
+                "id": "snapshot-001",
+                "match_id": "match-001",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        prediction_rows=[
+            {
+                "id": "prediction-001",
+                "match_id": "match-001",
+                "snapshot_id": "snapshot-001",
+                "home_prob": 0.61,
+                "draw_prob": 0.22,
+                "away_prob": 0.17,
+                "summary_payload": {
+                    "base_model_probs": {
+                        "home": 0.58,
+                        "draw": 0.24,
+                        "away": 0.18,
+                    },
+                    "prediction_market_available": False,
+                    "source_metadata": {
+                        "market_sources": {
+                            "bookmaker": {
+                                "available": False,
+                                "source_name": None,
+                                "probabilities": {
+                                    "home": 0.4,
+                                    "draw": 0.35,
+                                    "away": 0.25,
+                                },
+                            },
+                            "prediction_market": {
+                                "available": False,
+                                "source_name": None,
+                                "probabilities": None,
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+        market_rows=[],
+        match_rows=[
+            {
+                "id": "match-001",
+                "competition_id": "epl",
+                "kickoff_at": "2026-04-10T19:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+    )
+
+    assert report["snapshots_evaluated"] == 1
+    assert report["rows_evaluated"] == 3
+    assert report["overall"]["bookmaker"]["count"] == 1
+    assert report["overall"]["base_model"]["count"] == 1
+    assert report["overall"]["current_fused"]["count"] == 1
