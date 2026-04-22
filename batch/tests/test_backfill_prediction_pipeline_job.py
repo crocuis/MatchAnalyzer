@@ -116,3 +116,149 @@ def test_backfill_prediction_pipeline_job_skips_known_empty_stage_errors(monkeyp
             "skip_reason": "T_MINUS_24H match_snapshots must exist before ingesting real markets",
         },
     ]
+
+
+def test_backfill_prediction_pipeline_job_skips_downstream_stages_when_fixtures_are_empty(
+    monkeypatch,
+    capsys,
+):
+    def fake_fixtures() -> None:
+        print(json.dumps({"fixture_rows": 0, "snapshot_rows": 0}))
+
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "fixtures",
+        ("REAL_FIXTURE_DATE", fake_fixtures),
+    )
+    monkeypatch.setattr(pipeline_job, "run_evaluation", lambda: {})
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-20")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-20")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "fixtures,markets,predictions,reviews")
+
+    pipeline_job.main()
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["stage_results"] == [
+        {
+            "stage": "fixtures",
+            "target_date": "2026-04-20",
+            "result": {"fixture_rows": 0, "snapshot_rows": 0},
+        },
+        {
+            "stage": "markets",
+            "target_date": "2026-04-20",
+            "result": None,
+            "skip_reason": "upstream_fixtures_empty",
+        },
+        {
+            "stage": "predictions",
+            "target_date": "2026-04-20",
+            "result": None,
+            "skip_reason": "upstream_fixtures_empty",
+        },
+        {
+            "stage": "reviews",
+            "target_date": "2026-04-20",
+            "result": None,
+            "skip_reason": "upstream_fixtures_empty",
+        },
+    ]
+
+
+def test_backfill_prediction_pipeline_job_runs_fixture_season_stage_once_before_daily_stages(
+    monkeypatch,
+    capsys,
+):
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_fixture_season_backfill(season_year: str) -> dict:
+        calls.append(("fixtures_season", season_year))
+        return {"season_year": season_year, "fixture_rows": 12}
+
+    def fake_fixtures() -> None:
+        calls.append(("fixtures", os.environ.get("REAL_FIXTURE_DATE")))
+        print(json.dumps({"fixture_rows": 1, "snapshot_rows": 1}))
+
+    monkeypatch.setattr(
+        pipeline_job,
+        "run_fixture_season_backfill",
+        fake_fixture_season_backfill,
+    )
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "fixtures",
+        ("REAL_FIXTURE_DATE", fake_fixtures),
+    )
+    monkeypatch.setattr(pipeline_job, "run_evaluation", lambda: {})
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-20")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-21")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "fixtures")
+    monkeypatch.setenv("PIPELINE_FIXTURE_SEASON_YEAR", "2025")
+
+    pipeline_job.main()
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["stage_results"][0] == {
+        "stage": "fixtures_season",
+        "target_date": None,
+        "result": {"season_year": "2025", "fixture_rows": 12},
+    }
+    assert calls == [
+        ("fixtures_season", "2025"),
+        ("fixtures", "2026-04-20"),
+        ("fixtures", "2026-04-21"),
+    ]
+
+
+def test_backfill_prediction_pipeline_job_uses_match_dates_for_non_fixture_stages(
+    monkeypatch,
+    capsys,
+):
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_markets() -> None:
+        calls.append(("markets", os.environ.get("REAL_MARKET_DATE")))
+        print(json.dumps({"stage": "markets"}))
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            pass
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            if table_name != "matches":
+                return []
+            return [
+                {"kickoff_at": "2026-04-20T19:00:00+00:00"},
+                {"kickoff_at": "2026-04-22T19:00:00+00:00"},
+                {"kickoff_at": "2026-04-22T21:00:00+00:00"},
+            ]
+
+    monkeypatch.setattr(
+        pipeline_job,
+        "load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {"supabase_url": "https://example.test", "supabase_key": "key"},
+        )(),
+    )
+    monkeypatch.setattr(pipeline_job, "SupabaseClient", FakeClient)
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "markets",
+        ("REAL_MARKET_DATE", fake_markets),
+    )
+    monkeypatch.setattr(pipeline_job, "run_evaluation", lambda: {})
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-19")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-22")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "markets")
+
+    pipeline_job.main()
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["date_source"] == "matches"
+    assert payload["date_count"] == 2
+    assert calls == [
+        ("markets", "2026-04-20"),
+        ("markets", "2026-04-22"),
+    ]
