@@ -38,20 +38,134 @@ from batch.src.storage.rollout_state import (
 from batch.src.storage.supabase_client import SupabaseClient
 
 
+OUTCOME_KEYS = ("home", "draw", "away")
+
+
+def read_prediction_payload(prediction: dict | None) -> dict:
+    if not isinstance(prediction, dict):
+        return {}
+    summary_payload = prediction.get("summary_payload")
+    explanation_payload = prediction.get("explanation_payload")
+    if isinstance(summary_payload, dict):
+        return summary_payload
+    if isinstance(explanation_payload, dict):
+        return explanation_payload
+    return {}
+
+
+def read_probability_map(value: object) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    probabilities: dict[str, float] = {}
+    for key in OUTCOME_KEYS:
+        probability = value.get(key)
+        if not isinstance(probability, (int, float)):
+            return None
+        probabilities[key] = float(probability)
+    return probabilities
+
+
+def read_prediction_source_probabilities(
+    prediction_payload: dict,
+    source_name: str,
+) -> dict[str, float] | None:
+    source_metadata = prediction_payload.get("source_metadata")
+    if not isinstance(source_metadata, dict):
+        return None
+    market_sources = source_metadata.get("market_sources")
+    if not isinstance(market_sources, dict):
+        return None
+    source = market_sources.get(source_name)
+    if not isinstance(source, dict):
+        return None
+    return read_probability_map(source.get("probabilities"))
+
+
+def read_prediction_fused_probabilities(
+    prediction: dict | None,
+) -> dict[str, float] | None:
+    if not isinstance(prediction, dict):
+        return None
+    return read_probability_map(
+        {
+            "home": prediction.get("home_prob"),
+            "draw": prediction.get("draw_prob"),
+            "away": prediction.get("away_prob"),
+        }
+    )
+
+
 def build_evaluation_report(
     *,
     snapshot_rows: list[dict],
+    prediction_rows: list[dict],
     market_rows: list[dict],
     match_rows: list[dict],
 ) -> dict:
     match_by_id = {row["id"]: row for row in match_rows}
     market_by_snapshot = index_market_rows_by_snapshot(market_rows)
+    prediction_by_snapshot_id: dict[str, dict] = {}
     rows: list[dict] = []
     evaluated_snapshot_ids: set[str] = set()
+
+    for prediction in prediction_rows:
+        snapshot_id = prediction.get("snapshot_id")
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            continue
+        current = prediction_by_snapshot_id.get(snapshot_id)
+        if current is None or str(prediction.get("created_at") or "") > str(
+            current.get("created_at") or ""
+        ):
+            prediction_by_snapshot_id[snapshot_id] = prediction
 
     for snapshot in snapshot_rows:
         match = match_by_id.get(snapshot["match_id"])
         if not match or not match.get("final_result"):
+            continue
+
+        prediction = prediction_by_snapshot_id.get(snapshot["id"])
+        prediction_payload = read_prediction_payload(prediction)
+        bookmaker_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "bookmaker",
+        )
+        prediction_market_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "prediction_market",
+        )
+        base_probs = read_probability_map(prediction_payload.get("base_model_probs"))
+        if base_probs is None:
+            base_probs = read_prediction_source_probabilities(
+                prediction_payload,
+                "base_model",
+            )
+        fused_probs = read_prediction_fused_probabilities(prediction)
+        use_prediction_payload = (
+            bookmaker_probs is not None
+            and base_probs is not None
+            and fused_probs is not None
+        )
+        if use_prediction_payload:
+            prediction_market_available = bool(
+                prediction_payload.get("prediction_market_available")
+            ) and prediction_market_probs is not None
+            rows.extend(
+                build_variant_evaluation_rows(
+                    match_id=snapshot["match_id"],
+                    snapshot_id=snapshot["id"],
+                    checkpoint=snapshot["checkpoint_type"],
+                    competition_id=str(match.get("competition_id") or "unknown"),
+                    actual_outcome=str(match["final_result"]),
+                    prediction_market_available=prediction_market_available,
+                    bookmaker_probs=bookmaker_probs,
+                    prediction_market_probs=(
+                        prediction_market_probs if prediction_market_available else bookmaker_probs
+                    ),
+                    base_model_probs=base_probs,
+                    fused_probs=fused_probs,
+                )
+            )
+            evaluated_snapshot_ids.add(snapshot["id"])
             continue
 
         book_probs, prediction_market = build_market_probabilities(
@@ -268,11 +382,13 @@ def main() -> None:
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
     snapshot_rows = client.read_rows("match_snapshots")
+    prediction_rows = read_optional_rows(client, "predictions")
     market_rows = client.read_rows("market_probabilities")
     match_rows = client.read_rows("matches")
 
     report = build_evaluation_report(
         snapshot_rows=snapshot_rows,
+        prediction_rows=prediction_rows,
         market_rows=market_rows,
         match_rows=match_rows,
     )
