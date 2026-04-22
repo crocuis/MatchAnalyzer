@@ -976,7 +976,9 @@ def test_build_sync_snapshot_rows_backfills_recent_historical_metrics_from_team_
         season_year: str | None = None,
     ):
         assert competition_id == "premier-league"
-        assert season_year == "2026"
+        assert season_year in {"2026", "2025"}
+        if season_year == "2025":
+            return {"events": []}
         if team_id == "arsenal":
             return {
                 "events": [
@@ -1064,6 +1066,122 @@ def test_build_sync_snapshot_rows_backfills_recent_historical_metrics_from_team_
     assert snapshot["away_rest_days"] == 4
     assert snapshot["home_matches_last_7d"] == 1
     assert snapshot["away_matches_last_7d"] == 1
+
+
+def test_build_sync_snapshot_rows_backfills_from_previous_season_when_current_season_has_no_history(
+    monkeypatch,
+):
+    def make_closed_event(
+        *,
+        event_id: str,
+        kickoff_at: str,
+        home_team_id: str,
+        away_team_id: str,
+        home_team_name: str,
+        away_team_name: str,
+        home_score: int,
+        away_score: int,
+    ) -> dict:
+        return {
+            "id": event_id,
+            "status": "closed",
+            "start_time": kickoff_at,
+            "competition": {"id": "premier-league", "name": "Premier League"},
+            "season": {"id": "premier-league-2025"},
+            "competitors": [
+                {
+                    "team": {"id": home_team_id, "name": home_team_name},
+                    "qualifier": "home",
+                    "score": home_score,
+                },
+                {
+                    "team": {"id": away_team_id, "name": away_team_name},
+                    "qualifier": "away",
+                    "score": away_score,
+                },
+            ],
+            "scores": {"home": home_score, "away": away_score},
+        }
+
+    seen_calls: list[tuple[str, str | None]] = []
+
+    def fake_fetch_team_schedule(
+        team_id: str,
+        *,
+        competition_id: str,
+        season_year: str | None = None,
+    ):
+        seen_calls.append((team_id, season_year))
+        assert competition_id == "premier-league"
+        if season_year == "2026":
+            return {"events": []}
+        if season_year != "2025":
+            raise AssertionError(f"unexpected season_year: {season_year}")
+        if team_id == "arsenal":
+            return {
+                "events": [
+                    make_closed_event(
+                        event_id="hist_arsenal_prev_1",
+                        kickoff_at="2025-12-10T15:00:00Z",
+                        home_team_id="arsenal",
+                        away_team_id="everton",
+                        home_team_name="Arsenal",
+                        away_team_name="Everton",
+                        home_score=2,
+                        away_score=1,
+                    ),
+                ]
+            }
+        if team_id == "chelsea":
+            return {
+                "events": [
+                    make_closed_event(
+                        event_id="hist_chelsea_prev_1",
+                        kickoff_at="2025-12-11T15:00:00Z",
+                        home_team_id="chelsea",
+                        away_team_id="liverpool",
+                        home_team_name="Chelsea",
+                        away_team_name="Liverpool",
+                        home_score=0,
+                        away_score=0,
+                    ),
+                ]
+            }
+        raise AssertionError(f"unexpected team_id: {team_id}")
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.fetch_team_schedule",
+        fake_fetch_team_schedule,
+    )
+
+    rows = build_sync_snapshot_rows(
+        match_rows=[
+            {
+                "id": "match_prev_season",
+                "competition_id": "premier-league",
+                "season": "premier-league-2026",
+                "kickoff_at": "2026-01-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-01-14T15:00:00+00:00",
+        historical_matches=[],
+        lineup_context_by_match={},
+        hydrate_historical_matches=True,
+    )
+
+    [snapshot] = rows
+
+    assert ("arsenal", "2026") in seen_calls
+    assert ("arsenal", "2025") in seen_calls
+    assert ("chelsea", "2026") in seen_calls
+    assert ("chelsea", "2025") in seen_calls
+    assert snapshot["home_elo"] is not None
+    assert snapshot["away_elo"] is not None
+    assert snapshot["home_points_last_5"] == 3
+    assert snapshot["away_points_last_5"] == 1
 
 
 def test_build_lineup_context_by_match_uses_lineups_and_missing_players(monkeypatch):
