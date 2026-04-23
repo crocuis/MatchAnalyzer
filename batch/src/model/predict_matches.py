@@ -13,14 +13,16 @@ def build_source_agreement_ratio(
     base_probs: dict,
     book_probs: dict,
     market_probs: dict,
+    bookmaker_available: bool,
     prediction_market_available: bool,
 ) -> float:
-    source_votes = [
-        max(base_probs, key=base_probs.get),
-        max(book_probs, key=book_probs.get),
-    ]
+    source_votes = [max(base_probs, key=base_probs.get)]
+    if bookmaker_available:
+        source_votes.append(max(book_probs, key=book_probs.get))
     if prediction_market_available:
         source_votes.append(max(market_probs, key=market_probs.get))
+    if len(source_votes) == 1:
+        return 0.5
     return max(source_votes.count(vote) for vote in set(source_votes)) / len(source_votes)
 
 
@@ -33,10 +35,20 @@ def build_prediction_row(
     context: dict,
     source_weights: dict | None = None,
 ) -> dict:
+    bookmaker_available = bool(context.get("bookmaker_available", 1))
+    prediction_market_available = context.get("prediction_market_available", True)
     allowed_variants = (
-        ("base_model", "bookmaker", "prediction_market")
-        if context.get("prediction_market_available", True)
-        else ("base_model", "bookmaker")
+        (
+            ("base_model", "bookmaker", "prediction_market")
+            if bookmaker_available
+            else ("base_model", "prediction_market")
+        )
+        if prediction_market_available
+        else (
+            ("base_model", "bookmaker")
+            if bookmaker_available
+            else ("base_model",)
+        )
     )
     fused = fuse_probabilities(
         base_probs,
@@ -45,11 +57,11 @@ def build_prediction_row(
         weights=source_weights,
         allowed_variants=allowed_variants,
     )
-    prediction_market_available = context.get("prediction_market_available", True)
     source_agreement_ratio = build_source_agreement_ratio(
         base_probs=base_probs,
         book_probs=book_probs,
         market_probs=market_probs,
+        bookmaker_available=bookmaker_available,
         prediction_market_available=prediction_market_available,
     )
     scored_context = {

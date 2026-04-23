@@ -546,6 +546,31 @@ def test_build_main_recommendation_blocks_extreme_confidence_bookmaker_fallback_
     }
 
 
+def test_build_main_recommendation_does_not_apply_bookmaker_rules_to_prior_fallback():
+    recommendation = build_main_recommendation(
+        pick="HOME",
+        confidence=0.852,
+        context={
+            "source_agreement_ratio": 1.0,
+            "prediction_market_available": False,
+            "base_model_source": "prior_fallback",
+            "xg_proxy_delta": 2.1,
+            "elo_delta": 0.38,
+            "lineup_confirmed": 0,
+        },
+    )
+
+    assert recommendation == {
+        "confidence": 0.852,
+        "empirical_hit_rate": None,
+        "no_bet_reason": None,
+        "pick": "HOME",
+        "recommended": True,
+        "source_agreement_ratio": 1.0,
+        "threshold": 0.62,
+    }
+
+
 def test_build_value_recommendation_uses_positive_market_edge():
     recommendation = build_value_recommendation(
         base_probs={"home": 0.34, "draw": 0.24, "away": 0.42},
