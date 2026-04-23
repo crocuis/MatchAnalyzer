@@ -103,6 +103,11 @@ export default function FullReportView({
     predictedOutcomeCode ? t(`matchOutcome.outcomes.${predictedOutcomeCode}`) : null;
   const actualOutcome = review?.actualOutcome ?? match.finalResult ?? null;
   const missType = review?.causeTags?.[0]?.replaceAll("_", " ") ?? null;
+  const comparisonVerdictLabel =
+    missType ??
+    (verdictState === "correct"
+      ? t("report.correctCall")
+      : t(`matchOutcome.verdict.${verdictState}`));
   const marketVerdict = review?.marketComparison?.comparison_available
     ? review.marketComparison.market_outperformed_model
       ? t("report.marketOutperformed")
@@ -221,7 +226,7 @@ export default function FullReportView({
                   </div>
                   <div className="comparisonItem">
                     <span className="metricLabel">{t("report.missType")}</span>
-                    <strong>{missType ?? t("report.correctCall")}</strong>
+                    <strong>{comparisonVerdictLabel}</strong>
                   </div>
                   <div className="comparisonItem">
                     <span className="metricLabel">{t("report.marketVerdict")}</span>
