@@ -3439,6 +3439,43 @@ def test_recalibrate_predictions_rewrites_bookmaker_fallback_rows() -> None:
     )
 
 
+def test_recalibrate_predictions_rewrites_prior_fallback_rows_without_bookmaker() -> None:
+    predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
+    for prediction in predictions:
+        payload = prediction["explanation_payload"]
+        payload["base_model_source"] = "prior_fallback"
+        payload["source_metadata"]["market_sources"]["bookmaker"] = {
+            "available": False,
+            "source_name": None,
+            "probabilities": None,
+        }
+
+    updated_predictions, summary = recalibrate_predictions(
+        predictions=predictions,
+        matches=matches,
+        snapshot_rows=snapshot_rows,
+    )
+
+    assert summary["applied"] is True
+    assert summary["training_rows"] == 9
+    assert summary["changed_rows"] == 9
+    assert [row["recommended_pick"] for row in updated_predictions[:3]] == [
+        "HOME",
+        "HOME",
+        "HOME",
+    ]
+    assert [row["recommended_pick"] for row in updated_predictions[3:6]] == [
+        "DRAW",
+        "DRAW",
+        "DRAW",
+    ]
+    assert [row["recommended_pick"] for row in updated_predictions[6:]] == [
+        "AWAY",
+        "AWAY",
+        "AWAY",
+    ]
+
+
 def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_sets() -> None:
     predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
     expanded_predictions: list[dict] = []

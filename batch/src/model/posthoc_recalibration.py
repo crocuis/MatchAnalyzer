@@ -33,6 +33,7 @@ RECALIBRATION_TREE_MAX_DEPTH = 6
 RECALIBRATION_MIN_HIST_GRADIENT_ROWS = 100
 RECALIBRATION_MIN_CLASS_COUNT = 3
 RECALIBRATION_MIN_CONFIDENCE_UPLIFT = 0.05
+RECALIBRATION_ELIGIBLE_BASE_SOURCES = {"bookmaker_fallback", "prior_fallback"}
 
 
 def _normalize_probability_map(probability_by_label: dict[str, float]) -> dict[str, float]:
@@ -64,9 +65,12 @@ def _bookmaker_probabilities(payload: dict) -> dict:
         return {}
     bookmaker = market_sources.get("bookmaker")
     if not isinstance(bookmaker, dict):
-        return {}
+        bookmaker = {}
     probabilities = bookmaker.get("probabilities")
-    return probabilities if isinstance(probabilities, dict) else {}
+    if isinstance(probabilities, dict):
+        return probabilities
+    base_model_probs = payload.get("base_model_probs")
+    return base_model_probs if isinstance(base_model_probs, dict) else {}
 
 
 def is_recalibration_candidate(prediction: dict) -> bool:
@@ -79,7 +83,7 @@ def is_recalibration_candidate(prediction: dict) -> bool:
         )
     )
     return (
-        payload.get("base_model_source") == "bookmaker_fallback"
+        payload.get("base_model_source") in RECALIBRATION_ELIGIBLE_BASE_SOURCES
         and not prediction_market_available
     )
 
