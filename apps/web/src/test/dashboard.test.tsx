@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import FullReportView from "../components/FullReportView";
 import MatchCard from "../components/MatchCard";
 import MatchDetailModal from "../components/MatchDetailModal";
 import i18n from "../i18n/config";
@@ -1727,6 +1728,60 @@ describe("dashboard redesign", () => {
       expect(screen.getAllByText("Prediction market segment").length).toBeGreaterThan(0);
       expect(screen.getAllByText("with prediction market").length).toBeGreaterThan(0);
     });
+  });
+
+  it("does not label report misses as correct calls when review tags are unavailable", () => {
+    const match: MatchCardRow = {
+      id: "report-miss-without-review",
+      leagueId: "premier-league",
+      homeTeam: "Chelsea",
+      awayTeam: "Manchester City",
+      kickoffAt: "2026-04-27 19:00 UTC",
+      status: "Review Ready",
+      finalResult: "AWAY",
+      homeScore: 1,
+      awayScore: 2,
+      recommendedPick: "HOME",
+      confidence: 0.7,
+      needsReview: true,
+    };
+    const prediction: PredictionSummary = {
+      matchId: match.id,
+      checkpointLabel: "LINEUP_CONFIRMED",
+      recommendedPick: "HOME",
+      confidence: 0.7,
+      homeWinProbability: 70,
+      drawProbability: 18,
+      awayWinProbability: 12,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.7,
+        recommended: true,
+        noBetReason: null,
+      },
+    };
+
+    render(
+      <FullReportView
+        match={match}
+        prediction={prediction}
+        evaluationReport={null}
+        evaluationHistoryView={null}
+        modelRegistryReport={null}
+        fusionPolicyReport={null}
+        fusionPolicyHistoryView={null}
+        reviewAggregationReport={null}
+        reviewAggregationHistoryView={null}
+        promotionDecisionReport={null}
+        checkpoints={[]}
+        review={null}
+        onBack={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Miss type")).toBeInTheDocument();
+    expect(screen.getByText("Miss")).toBeInTheDocument();
+    expect(screen.queryByText("Correct call")).toBeNull();
   });
 
   it("closes the detail modal on Escape", async () => {
