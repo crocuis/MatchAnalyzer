@@ -56,6 +56,7 @@ STARTER_WEIGHT = 1 / 11
 BENCH_PLAYER_WEIGHT = 0.02
 RECENT_EVENT_LIMIT = 3
 RECENCY_WEIGHTS = (1.0, 0.7, 0.4)
+LINEUP_CONTEXT_LOOKAHEAD_HOURS = 1
 
 
 def normalize_kickoff_at(value: str) -> str:
@@ -262,6 +263,23 @@ def _derived_absence_count(
     return sum(1 for player_name in ranked_recent_players if player_name not in starting_names)
 
 
+def _should_fetch_lineup_context(event: dict[str, Any]) -> bool:
+    start_time = event.get("start_time")
+    if not start_time:
+        return True
+    if event.get("status") == "closed":
+        return False
+    try:
+        kickoff_at = datetime.fromisoformat(str(start_time).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if kickoff_at.tzinfo is None:
+        return True
+    return kickoff_at.astimezone(timezone.utc) <= datetime.now(timezone.utc) + timedelta(
+        hours=LINEUP_CONTEXT_LOOKAHEAD_HOURS
+    )
+
+
 def competition_emblem_url(competition_id: str) -> str | None:
     code = FOOTBALL_DATA_COMPETITION_CODES.get(competition_id)
     if not code:
@@ -358,6 +376,28 @@ def build_team_rows_from_event(event: dict[str, Any]) -> list[dict[str, str]]:
     return rows
 
 
+def _event_has_stale_final_score(event: dict[str, Any]) -> bool:
+    scores = event.get("scores") or {}
+    home_score = scores.get("home")
+    away_score = scores.get("away")
+    if not isinstance(home_score, int) or not isinstance(away_score, int):
+        return False
+    if home_score == 0 and away_score == 0:
+        return False
+
+    try:
+        kickoff_at = datetime.fromisoformat(
+            str(event["start_time"]).replace("Z", "+00:00")
+        )
+    except (KeyError, ValueError):
+        return False
+
+    # ESPN occasionally leaves past completed cup matches as scheduled while scores are final.
+    return kickoff_at.astimezone(timezone.utc) < datetime.now(timezone.utc) - timedelta(
+        hours=3
+    )
+
+
 def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
     home_team = next(
         competitor["team"]
@@ -373,7 +413,7 @@ def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
     final_result = None
     home_score = None
     away_score = None
-    if status == "closed":
+    if status == "closed" or _event_has_stale_final_score(event):
         home_score = event["scores"]["home"]
         away_score = event["scores"]["away"]
         if home_score > away_score:
@@ -397,9 +437,10 @@ def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    target_events = [event for event in events if _should_fetch_lineup_context(event)]
     missing_by_season: dict[str, dict[str, dict[str, float | int]]] = {}
     recent_form_cache: dict[tuple[str, str, str], dict[str, float]] = {}
-    for event in events:
+    for event in target_events:
         season_id = event.get("season", {}).get("id", "")
         competition_id = event.get("competition", {}).get("id", "")
         if (
@@ -421,7 +462,7 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
             missing_by_season[season_id] = team_absences
 
     contexts: dict[str, dict[str, Any]] = {}
-    for event in events:
+    for event in target_events:
         event_id = event.get("id")
         if not event_id:
             continue

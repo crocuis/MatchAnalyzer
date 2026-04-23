@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
@@ -7,6 +7,7 @@ from urllib.error import HTTPError
 import pytest
 
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_match_row_from_event
 from batch.src.ingest.fetch_fixtures import build_lineup_context_by_match
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.fetch_fixtures import competition_emblem_url
@@ -26,6 +27,8 @@ from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
     prepare_sync_asset_rows,
+    should_backfill_real_fixture_team_assets,
+    should_hydrate_real_fixture_history,
 )
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
@@ -77,6 +80,64 @@ def test_build_fixture_row_rejects_naive_timestamp():
             },
             {"PSG": "Paris Saint-Germain"},
         )
+
+
+def test_build_match_row_uses_stale_scores_for_past_scheduled_events():
+    row = build_match_row_from_event(
+        {
+            "id": "match_stale_status",
+            "status": "not_started",
+            "start_time": "2000-02-26T20:00:00Z",
+            "competition": {"id": "champions-league"},
+            "season": {"id": "champions-league-1999"},
+            "competitors": [
+                {
+                    "team": {"id": "home", "name": "Home"},
+                    "qualifier": "home",
+                    "score": 3,
+                },
+                {
+                    "team": {"id": "away", "name": "Away"},
+                    "qualifier": "away",
+                    "score": 2,
+                },
+            ],
+            "scores": {"home": 3, "away": 2},
+        }
+    )
+
+    assert row["final_result"] == "HOME"
+    assert row["home_score"] == 3
+    assert row["away_score"] == 2
+
+
+def test_build_match_row_keeps_unplayed_zero_score_events_pending():
+    row = build_match_row_from_event(
+        {
+            "id": "match_pending",
+            "status": "not_started",
+            "start_time": "2000-02-26T20:00:00Z",
+            "competition": {"id": "champions-league"},
+            "season": {"id": "champions-league-1999"},
+            "competitors": [
+                {
+                    "team": {"id": "home", "name": "Home"},
+                    "qualifier": "home",
+                    "score": 0,
+                },
+                {
+                    "team": {"id": "away", "name": "Away"},
+                    "qualifier": "away",
+                    "score": 0,
+                },
+            ],
+            "scores": {"home": 0, "away": 0},
+        }
+    )
+
+    assert row["final_result"] is None
+    assert row["home_score"] is None
+    assert row["away_score"] is None
 
 
 def test_build_competition_and_team_rows_preserve_asset_urls():
@@ -257,6 +318,30 @@ def test_iter_dates_includes_both_bounds():
         date.fromisoformat("2026-04-10"),
         date.fromisoformat("2026-04-12"),
     ) == ["2026-04-10", "2026-04-11", "2026-04-12"]
+
+
+def test_should_hydrate_real_fixture_history_defaults_to_disabled(monkeypatch):
+    monkeypatch.delenv("REAL_FIXTURE_HYDRATE_HISTORY", raising=False)
+
+    assert should_hydrate_real_fixture_history() is False
+
+
+def test_should_hydrate_real_fixture_history_accepts_opt_in(monkeypatch):
+    monkeypatch.setenv("REAL_FIXTURE_HYDRATE_HISTORY", "1")
+
+    assert should_hydrate_real_fixture_history() is True
+
+
+def test_should_backfill_real_fixture_team_assets_defaults_to_disabled(monkeypatch):
+    monkeypatch.delenv("REAL_FIXTURE_BACKFILL_TEAM_ASSETS", raising=False)
+
+    assert should_backfill_real_fixture_team_assets() is False
+
+
+def test_should_backfill_real_fixture_team_assets_accepts_opt_in(monkeypatch):
+    monkeypatch.setenv("REAL_FIXTURE_BACKFILL_TEAM_ASSETS", "1")
+
+    assert should_backfill_real_fixture_team_assets() is True
 
 
 def test_backfill_assets_prefers_schedule_assets_and_search_fallback(monkeypatch):
@@ -620,6 +705,38 @@ def test_prepare_sync_asset_rows_preserves_existing_assets_and_backfills_missing
             "crest_url": "https://fallback.example/Chelsea.png",
         },
     ]
+
+
+def test_prepare_sync_asset_rows_can_skip_missing_team_asset_fallback(monkeypatch):
+    captured: dict[str, set[str] | None] = {}
+
+    def fake_backfill_assets(**kwargs):
+        captured["allowed_team_ids"] = kwargs["allowed_team_ids"]
+        return [], []
+
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.backfill_assets",
+        fake_backfill_assets,
+    )
+
+    prepare_sync_asset_rows(
+        competition_rows=[],
+        team_rows=[
+            {
+                "id": "arsenal",
+                "name": "Arsenal",
+                "team_type": "club",
+                "country": "England",
+            }
+        ],
+        match_rows=[],
+        schedules=[],
+        existing_competitions=[],
+        existing_teams=[],
+        fetch_missing_team_assets=False,
+    )
+
+    assert captured["allowed_team_ids"] == set()
 
 
 def test_build_cleanup_plan_counts_out_of_scope_graph():
@@ -1350,6 +1467,64 @@ def test_build_lineup_context_by_match_uses_lineups_and_missing_players(monkeypa
         "lineup_strength_delta": 1.9221,
         "lineup_source_summary": "espn_lineups+recent_starters+pl_missing_players",
     }
+
+
+def test_build_lineup_context_by_match_skips_distant_future_events(monkeypatch):
+    def fail_load_football():
+        raise AssertionError("future fixture lookahead should not fetch lineup feeds")
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.load_sports_skills_football",
+        fail_load_football,
+    )
+
+    contexts = build_lineup_context_by_match(
+        [
+            {
+                "id": "match_future",
+                "status": "not_started",
+                "start_time": "2099-04-24T20:00:00Z",
+                "competition": {"id": "premier-league"},
+                "season": {"id": "premier-league-2098"},
+                "competitors": [
+                    {"team": {"id": "arsenal", "name": "Arsenal"}, "qualifier": "home"},
+                    {"team": {"id": "chelsea", "name": "Chelsea"}, "qualifier": "away"},
+                ],
+            }
+        ]
+    )
+
+    assert contexts == {}
+
+
+def test_build_lineup_context_by_match_skips_events_more_than_one_hour_away(monkeypatch):
+    def fail_load_football():
+        raise AssertionError("lineup feeds should only be fetched inside the one-hour window")
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.load_sports_skills_football",
+        fail_load_football,
+    )
+
+    contexts = build_lineup_context_by_match(
+        [
+            {
+                "id": "match_two_hours_away",
+                "status": "not_started",
+                "start_time": (
+                    datetime.now(timezone.utc) + timedelta(hours=2)
+                ).isoformat(),
+                "competition": {"id": "premier-league"},
+                "season": {"id": "premier-league-2026"},
+                "competitors": [
+                    {"team": {"id": "arsenal", "name": "Arsenal"}, "qualifier": "home"},
+                    {"team": {"id": "chelsea", "name": "Chelsea"}, "qualifier": "away"},
+                ],
+            }
+        ]
+    )
+
+    assert contexts == {}
 
 
 def test_build_lineup_context_by_match_normalizes_missing_player_team_aliases(monkeypatch):

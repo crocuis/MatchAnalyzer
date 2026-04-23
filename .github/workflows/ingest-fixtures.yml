@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: "UTC date to sync in YYYY-MM-DD format. Defaults to current UTC date."
+        description: "Start UTC date for the fixture sync window in YYYY-MM-DD format. Defaults to current UTC date."
         required: false
         type: string
 
@@ -22,8 +22,10 @@ jobs:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       R2_BUCKET: workflow-artifacts
+      FIXTURE_FUTURE_START_DAYS: 7
+      FIXTURE_FUTURE_END_DAYS: 14
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,13 +35,35 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
           test -n "$R2_BUCKET"
-      - name: Resolve target date
+      - name: Resolve target dates
         shell: bash
         run: |
           TARGET_DATE="${{ github.event.inputs.target_date }}"
           if [ -z "$TARGET_DATE" ]; then
             TARGET_DATE="$(date -u +%F)"
           fi
-          echo "REAL_FIXTURE_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
+          TARGET_DATE_CANONICAL="$(date -u -d "$TARGET_DATE" +%F 2>/dev/null || true)"
+          if [ -z "$TARGET_DATE_CANONICAL" ] || [ "$TARGET_DATE_CANONICAL" != "$TARGET_DATE" ]; then
+            echo "target_date must be a valid YYYY-MM-DD UTC date" >&2
+            exit 1
+          fi
+          {
+            echo "FIXTURE_DATES<<EOF"
+            date -u -d "$TARGET_DATE_CANONICAL" +%F
+            for OFFSET in $(seq "$FIXTURE_FUTURE_START_DAYS" "$FIXTURE_FUTURE_END_DAYS"); do
+              date -u -d "$TARGET_DATE_CANONICAL +${OFFSET} days" +%F
+            done
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
-      - run: python3 -m batch.src.jobs.ingest_fixtures_job
+      - name: Ingest fixture window
+        shell: bash
+        run: |
+          while IFS= read -r TARGET_DATE; do
+            if [ -z "$TARGET_DATE" ]; then
+              continue
+            fi
+            echo "::group::REAL_FIXTURE_DATE=$TARGET_DATE"
+            REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job
+            echo "::endgroup::"
+          done <<< "$FIXTURE_DATES"

@@ -16,6 +16,18 @@ def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     assert "REAL_FIXTURE_DATE=" in workflow
 
 
+def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> None:
+    workflow = read_workflow("ingest-fixtures.yml")
+
+    assert "FIXTURE_FUTURE_START_DAYS: 7" in workflow
+    assert "FIXTURE_FUTURE_END_DAYS: 14" in workflow
+    assert 'date -u -d "$TARGET_DATE_CANONICAL" +%F' in workflow
+    assert "seq \"$FIXTURE_FUTURE_START_DAYS\" \"$FIXTURE_FUTURE_END_DAYS\"" in workflow
+    assert "FIXTURE_DATES<<EOF" in workflow
+    assert "while IFS= read -r TARGET_DATE; do" in workflow
+    assert 'REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job' in workflow
+
+
 def test_ingest_markets_workflow_sets_real_market_date() -> None:
     workflow = read_workflow("ingest-markets.yml")
 

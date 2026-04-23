@@ -62,6 +62,7 @@ def prepare_sync_asset_rows(
     schedules: list[dict],
     existing_competitions: list[dict],
     existing_teams: list[dict],
+    fetch_missing_team_assets: bool = True,
 ) -> tuple[list[dict], list[dict]]:
     prepared_competitions = merge_existing_asset_fields(
         dedupe_rows(competition_rows),
@@ -79,6 +80,7 @@ def prepare_sync_asset_rows(
         competitions=prepared_competitions,
         matches=match_rows,
         schedules=schedules,
+        allowed_team_ids=None if fetch_missing_team_assets else set(),
     )
     return (
         apply_asset_updates(prepared_competitions, competition_updates),
@@ -101,6 +103,26 @@ def build_hydration_season_years(season_id: str) -> tuple[str | None, ...]:
     except ValueError:
         return (season_year,)
     return (season_year, str(current_year - 1))
+
+
+def should_hydrate_real_fixture_history() -> bool:
+    return os.environ.get("REAL_FIXTURE_HYDRATE_HISTORY", "0") in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
+
+
+def should_backfill_real_fixture_team_assets() -> bool:
+    return os.environ.get("REAL_FIXTURE_BACKFILL_TEAM_ASSETS", "0") in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
 
 
 def hydrate_recent_historical_matches(
@@ -211,7 +233,7 @@ def main() -> None:
             captured_at=captured_at,
             historical_matches=historical_matches,
             lineup_context_by_match=lineup_context_by_match,
-            hydrate_historical_matches=True,
+            hydrate_historical_matches=should_hydrate_real_fixture_history(),
         )
         competition_rows, team_rows = prepare_sync_asset_rows(
             competition_rows=competition_rows,
@@ -220,6 +242,7 @@ def main() -> None:
             schedules=[archive_payload],
             existing_competitions=client.read_rows("competitions"),
             existing_teams=client.read_rows("teams"),
+            fetch_missing_team_assets=should_backfill_real_fixture_team_assets(),
         )
     else:
         normalized = build_fixture_row(SAMPLE_RAW_FIXTURE, {})
