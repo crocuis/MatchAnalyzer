@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import app from "../index";
+import { loadDailyPicksView } from "../routes/daily-picks";
 import {
   loadDashboardMatchCardsPageView,
   loadMatchItems,
@@ -132,6 +133,30 @@ describe("prediction API", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       report: null,
+    });
+  });
+
+  it("returns an empty daily picks payload when no supabase client is configured", async () => {
+    const response = await app.request("/daily-picks");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      generatedAt: null,
+      date: null,
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      coverage: {
+        moneyline: 0,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [],
+      heldItems: [],
     });
   });
 
