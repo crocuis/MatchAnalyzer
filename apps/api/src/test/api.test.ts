@@ -217,6 +217,9 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T00:00:00Z"));
+
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
@@ -1156,7 +1159,7 @@ describe("prediction API", () => {
         awayTeam: "Manchester City",
         awayTeamLogoUrl: null,
         kickoffAt: "2026-04-27T19:00:00Z",
-        status: "Scheduled",
+        status: "Result Pending",
         finalResult: null,
         homeScore: null,
         awayScore: null,
@@ -1169,6 +1172,8 @@ describe("prediction API", () => {
         needsReview: false,
       },
     ]);
+
+    vi.useRealTimers();
   });
 
   it("uses the latest checkpoint order rather than prediction created_at order for card pick/confidence", async () => {

@@ -2,7 +2,7 @@
   "header": {
     "eyebrow": "실시간 분석 시스템",
     "title": "매치 분석 허브",
-    "subtitle": "고도화된 축구 예측 모니터링. 시장 이상 징후 파악, 모델 신뢰도 추적 및 실시간 매치 리뷰 관리."
+    "subtitle": "데이터 기반의 정교한 확률 모델링으로 시장의 엣지(Edge)를 포착하여 최적의 베팅 방법을 제안하고, 분석 모델의 성과를 실시간으로 모니터링합니다."
   },
   "leagues": {
     "premier-league": "프리미어리그",
@@ -126,7 +126,7 @@
       "incorrect": "미적중",
       "successRate": "적중률",
       "successRateValue": "적중률 {{rate}}%",
-      "noData": "아직 집계할 확정 경기가 없습니다"
+      "noData": "—"
     }
   },
   "modal": {
@@ -169,7 +169,8 @@
       },
       "breakdownTitle": "신뢰도 분석",
       "noBetReasons": {
-        "low_confidence": "신뢰도 부족"
+        "low_confidence": "신뢰도 부족",
+        "unsupported_high_confidence_fallback": "분석 정합성 부족"
       },
       "breakdown": {
         "raw": "원시 점수",
@@ -287,6 +288,7 @@
   "status": {
     "Needs Review": "리뷰 필요",
     "Prediction Ready": "예측 완료",
+    "Result Pending": "결과 대기",
     "Review Ready": "리뷰 대기",
     "Scheduled": "예정됨",
     "loading": "매치 데이터를 불러오는 중...",

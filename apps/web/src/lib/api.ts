@@ -420,6 +420,7 @@ export function isDashboardRecentMatch(
   return (
     match.status === "Needs Review"
     || match.status === "Review Ready"
+    || match.status === "Result Pending"
     || Boolean(match.finalResult && match.finalResult !== "PENDING")
   );
 }

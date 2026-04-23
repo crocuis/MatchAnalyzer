@@ -495,6 +495,7 @@ async function loadDashboardMatchCardsPageView(
         finalResult: row.final_result,
         hasPrediction: row.has_prediction,
         needsReview: row.needs_review,
+        kickoffAt: row.kickoff_at,
       }),
       recommendedPick: mainRecommendation?.recommended
         ? mainRecommendation.pick
@@ -821,6 +822,7 @@ async function loadSelectedLeaguePageView(
         finalResult: match.final_result,
         hasPrediction: Boolean(prediction),
         needsReview: review?.needsReview ?? false,
+        kickoffAt: match.kickoff_at,
       }),
       recommendedPick: mainRecommendation?.recommended
         ? mainRecommendation.pick

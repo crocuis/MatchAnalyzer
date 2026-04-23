@@ -116,7 +116,7 @@ beforeEach(async () => {
             leagueEmblemUrl: "https://crests.football-data.org/PL.png",
             homeTeam: "Arsenal",
             awayTeam: "Fulham",
-            kickoffAt: "2026-04-29 19:00 UTC",
+            kickoffAt: "2026-04-20 19:00 UTC",
             status: "Scheduled",
             recommendedPick: null,
             confidence: null,
@@ -1085,7 +1085,7 @@ describe("dashboard redesign", () => {
     expect(card.getByLabelText("Predicted: Unavailable")).toBeInTheDocument();
     expect(card.getByLabelText("Actual: Pending")).toBeInTheDocument();
     expect(card.getByLabelText("Bet: Unavailable")).toBeInTheDocument();
-    expect(card.getByLabelText("Verdict: Scheduled")).toBeInTheDocument();
+    expect(card.getByLabelText("Verdict: Pending")).toBeInTheDocument();
   });
 
   it("renders a no-bet card with a separate value pick signal", async () => {

@@ -186,6 +186,7 @@ export function resolveActualOutcome(finalResult: string | null | undefined): Ou
 
 export function resolveVerdictState(args: {
   finalResult: string | null | undefined;
+  kickoffAt?: string | null | undefined;
   mainRecommendation: MainRecommendation | null;
   recommendedPick: string | null | undefined;
 }): VerdictState {
@@ -194,12 +195,17 @@ export function resolveVerdictState(args: {
     args.mainRecommendation,
     args.recommendedPick,
   );
+  const kickoffMillis =
+    typeof args.kickoffAt === "string" && args.kickoffAt.length > 0
+      ? Date.parse(args.kickoffAt)
+      : NaN;
+  const kickoffHasPassed = Number.isFinite(kickoffMillis) && kickoffMillis <= Date.now();
 
   if (!args.mainRecommendation && predictedOutcome === null && actualOutcome === null) {
-    return "scheduled";
+    return kickoffHasPassed ? "pending" : "scheduled";
   }
   if (predictedOutcome === null) {
-    return actualOutcome ? "unavailable" : "scheduled";
+    return actualOutcome ? "unavailable" : kickoffHasPassed ? "pending" : "scheduled";
   }
   if (!actualOutcome) {
     return "pending";

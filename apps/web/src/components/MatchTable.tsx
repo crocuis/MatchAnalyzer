@@ -101,7 +101,14 @@ export default function MatchTable({
             />
           </svg>
           <div className="gaugeInfo">
-            <span className="gaugePercent" style={{ color: gaugeColor }}>
+            <span
+              className="gaugePercent"
+              style={{
+                color: gaugeColor,
+                fontSize: typeof successRateLabel === "number" ? "1.8rem" : "1.4rem",
+                opacity: typeof successRateLabel === "number" ? 1 : 0.5
+              }}
+            >
               {typeof successRateLabel === "number" ? `${successRateLabel}%` : successRateLabel}
             </span>
             <span className="gaugeLabel">{t("matchTable.summary.successRate")}</span>

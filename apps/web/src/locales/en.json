@@ -2,7 +2,7 @@
   "header": {
     "eyebrow": "Live Intelligence System",
     "title": "Match Analysis Hub",
-    "subtitle": "Advanced football prediction monitoring. Identify market anomalies, track model confidence, and manage match reviews in real-time."
+    "subtitle": "Discover the edge in match predictions with advanced probability modeling. Get optimal betting insights and monitor model performance in real-time."
   },
   "leagues": {
     "premier-league": "Premier League",
@@ -126,7 +126,7 @@
       "incorrect": "Incorrect",
       "successRate": "Success rate",
       "successRateValue": "{{rate}}% success rate",
-      "noData": "No settled predictions yet"
+      "noData": "—"
     }
   },
   "modal": {
@@ -169,7 +169,8 @@
       },
       "breakdownTitle": "Confidence Breakdown",
       "noBetReasons": {
-        "low_confidence": "Low confidence"
+        "low_confidence": "Low confidence",
+        "unsupported_high_confidence_fallback": "Insufficient analysis integrity"
       },
       "breakdown": {
         "raw": "Raw score",
@@ -287,6 +288,7 @@
   "status": {
     "Needs Review": "Needs Review",
     "Prediction Ready": "Prediction Ready",
+    "Result Pending": "Result Pending",
     "Review Ready": "Review Ready",
     "Scheduled": "Scheduled",
     "loading": "Loading matches...",
