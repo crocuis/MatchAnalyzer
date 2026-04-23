@@ -197,6 +197,7 @@ def build_evaluation_report(
         book_probs, prediction_market = build_market_probabilities(
             snapshot["id"],
             market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
         )
         book_probs, bookmaker_available = resolve_bookmaker_context(
             book_probs,

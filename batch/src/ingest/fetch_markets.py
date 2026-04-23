@@ -194,6 +194,23 @@ def parse_utc_minute(value: str) -> datetime:
     ).replace(second=0, microsecond=0)
 
 
+def latest_market_observed_at(markets: list[dict[str, Any]]) -> datetime | None:
+    observed_values = [
+        market.get("updated_at") or market.get("start_date") or market.get("end_date")
+        for market in markets
+    ]
+    if not all(observed_values):
+        return None
+    return max(parse_utc_minute(str(value)) for value in observed_values)
+
+
+def format_market_observed_at(markets: list[dict[str, Any]]) -> str:
+    return max(
+        str(market.get("updated_at") or market.get("start_date") or market["end_date"])
+        for market in markets
+    )
+
+
 def market_competition_key(market: dict[str, Any]) -> str | None:
     competition_key = str(market.get("competition_key") or "").strip().lower()
     if competition_key:
@@ -452,6 +469,10 @@ def build_prediction_market_rows(
         home_market = classified["home"]
         draw_market = classified["draw"]
         away_market = classified["away"]
+        selected_markets = [home_market, draw_market, away_market]
+        observed_at_datetime = latest_market_observed_at(selected_markets)
+        if observed_at_datetime is None or observed_at_datetime > kickoff_minute:
+            continue
 
         home_price = extract_yes_price(home_market)
         draw_price = extract_yes_price(draw_market)
@@ -460,19 +481,7 @@ def build_prediction_market_rows(
             continue
 
         normalized = normalize_market_probabilities(home_price, draw_price, away_price)
-        observed_at = max(
-            [
-                home_market.get("updated_at")
-                or home_market.get("start_date")
-                or home_market["end_date"],
-                draw_market.get("updated_at")
-                or draw_market.get("start_date")
-                or draw_market["end_date"],
-                away_market.get("updated_at")
-                or away_market.get("start_date")
-                or away_market["end_date"],
-            ]
-        )
+        observed_at = format_market_observed_at(selected_markets)
         rows.append(
             {
                 "id": f"{context['snapshot_id']}_prediction_market",

@@ -39,6 +39,46 @@ def test_build_review_tags_large_home_miss():
     assert review["market_outperformed_model"] is True
 
 
+def test_build_market_probabilities_ignores_prediction_market_observed_after_kickoff():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "DraftKings",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.51,
+                "draw_prob": 0.25,
+                "away_prob": 0.24,
+            },
+            {
+                "id": "match_t_minus_24h_prediction_market",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "prediction_market",
+                "source_name": "polymarket_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.0005,
+                "draw_prob": 0.999,
+                "away_prob": 0.0005,
+                "home_price": 0.0005,
+                "draw_price": 0.9995,
+                "away_price": 0.0005,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {"home": 0.51, "draw": 0.25, "away": 0.24}
+    assert prediction_market is None
+
+
 def test_build_review_keeps_empty_tags_for_correct_prediction():
     review = build_review(
         prediction={

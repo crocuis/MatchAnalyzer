@@ -2156,6 +2156,45 @@ def test_build_prediction_market_rows_skips_incomplete_or_ambiguous_markets():
     assert rows == []
 
 
+def test_build_prediction_market_rows_skips_markets_updated_after_kickoff():
+    rows = build_prediction_market_rows(
+        markets=[
+            {
+                "question": "Will Chelsea FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-che",
+                "end_date": "2026-04-12T15:30:00Z",
+                "updated_at": "2026-04-12T19:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.0005}, {"name": "No", "price": 0.9995}],
+            },
+            {
+                "question": "Will Chelsea FC vs. Manchester City FC end in a draw?",
+                "slug": "epl-che-mci-2026-04-12-draw",
+                "end_date": "2026-04-12T15:30:00Z",
+                "updated_at": "2026-04-12T19:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.9995}, {"name": "No", "price": 0.0005}],
+            },
+            {
+                "question": "Will Manchester City FC win on 2026-04-12?",
+                "slug": "epl-che-mci-2026-04-12-mci",
+                "end_date": "2026-04-12T15:30:00Z",
+                "updated_at": "2026-04-12T19:30:00Z",
+                "outcomes": [{"name": "Yes", "price": 0.0005}, {"name": "No", "price": 0.9995}],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740909_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Manchester City",
+            }
+        ],
+    )
+
+    assert rows == []
+
+
 def test_build_prediction_market_rows_requires_competition_key_match():
     rows = build_prediction_market_rows(
         markets=[

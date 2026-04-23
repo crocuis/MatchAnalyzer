@@ -1,6 +1,7 @@
 import json
 import math
 import os
+from datetime import datetime
 
 from batch.src.features.feature_builder import (
     build_prediction_feature_snapshot_row,
@@ -111,7 +112,38 @@ def select_real_prediction_inputs(
     return selected_snapshots, selected_markets
 
 
-def build_market_probabilities(snapshot_id: str, market_by_snapshot: dict[str, dict[str, dict]]) -> tuple[dict, dict | None]:
+def parse_iso_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def is_market_observed_before_kickoff(
+    market: dict | None,
+    *,
+    kickoff_at: str | None,
+) -> bool:
+    if not market or not kickoff_at:
+        return True
+    observed_at = parse_iso_datetime(market.get("observed_at"))
+    kickoff = parse_iso_datetime(kickoff_at)
+    if observed_at is None or kickoff is None:
+        return True
+    return observed_at <= kickoff
+
+
+def build_market_probabilities(
+    snapshot_id: str,
+    market_by_snapshot: dict[str, dict[str, dict]],
+    *,
+    kickoff_at: str | None = None,
+) -> tuple[dict, dict | None]:
     bookmaker = select_market_row(
         market_by_snapshot,
         snapshot_id=snapshot_id,
@@ -124,6 +156,11 @@ def build_market_probabilities(snapshot_id: str, market_by_snapshot: dict[str, d
         source_type="prediction_market",
         market_family="moneyline_3way",
     )
+    if not is_market_observed_before_kickoff(
+        prediction_market,
+        kickoff_at=kickoff_at,
+    ):
+        prediction_market = None
     if not bookmaker:
         return {}, prediction_market
     return {
@@ -356,7 +393,9 @@ def build_historical_source_performance_summary(
             match_rows=match_rows,
         )
         book_probs, prediction_market = build_market_probabilities(
-            enriched_snapshot["id"], market_by_snapshot
+            enriched_snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
         )
         book_probs, bookmaker_available = resolve_bookmaker_context(
             book_probs,
@@ -462,12 +501,7 @@ def build_source_metadata(
         source_type="bookmaker",
         market_family="moneyline_3way",
     )
-    prediction_market_row = select_market_row(
-        market_by_snapshot,
-        snapshot_id=snapshot_id,
-        source_type="prediction_market",
-        market_family="moneyline_3way",
-    )
+    prediction_market_row = prediction_market
     return {
         "market_segment": (
             "with_prediction_market"
@@ -587,7 +621,9 @@ def build_training_dataset(
         if match.get("kickoff_at", "")[:10] >= target_date:
             continue
         book_probs, prediction_market = build_market_probabilities(
-            snapshot["id"], market_by_snapshot
+            snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
         )
         if not book_probs:
             continue
@@ -855,7 +891,9 @@ def build_confidence_bucket_summary(
     for snapshot in historical_snapshots:
         kickoff_date = match_by_id[snapshot["match_id"]]["kickoff_at"][:10]
         book_probs, prediction_market = build_market_probabilities(
-            snapshot["id"], market_by_snapshot
+            snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match_by_id[snapshot["match_id"]].get("kickoff_at") or ""),
         )
         book_probs, bookmaker_available = resolve_bookmaker_context(
             book_probs,
@@ -1035,14 +1073,18 @@ def main() -> None:
     artifact_payload = []
     model_selection_by_checkpoint: dict[str, dict] = {}
     skipped_snapshots = []
+    match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
     for snapshot in target_snapshots:
+        match = match_by_id.get(snapshot.get("match_id"), {})
         enriched_snapshot = (
             enrich_snapshot_with_match_history(snapshot, match_rows=match_rows)
             if use_real_predictions
             else snapshot
         )
         book_probs, prediction_market = build_market_probabilities(
-            enriched_snapshot["id"], market_by_snapshot
+            enriched_snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
         )
         bookmaker_available = bool(book_probs)
         if use_real_predictions:
