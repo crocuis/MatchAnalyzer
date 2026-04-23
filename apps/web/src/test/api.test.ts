@@ -169,3 +169,16 @@ describe("match pagination fetcher", () => {
     ]);
   });
 });
+
+describe("dashboard match recency", () => {
+  it("classifies result-pending matches as recent", async () => {
+    const { isDashboardRecentMatch } = await import("../lib/api");
+
+    expect(
+      isDashboardRecentMatch({
+        status: "Result Pending",
+        finalResult: null,
+      }),
+    ).toBe(true);
+  });
+});
