@@ -115,6 +115,7 @@ export default function MatchDetailModal({
   const actualOutcome = resolveActualOutcome(match.finalResult);
   const verdict = resolveVerdictState({
     finalResult: match.finalResult,
+    kickoffAt: match.kickoffAt,
     mainRecommendation: presentation.mainRecommendation,
     recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
   });

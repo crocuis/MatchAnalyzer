@@ -380,7 +380,9 @@ export default function PredictionCard({
   const confidenceLabel =
     presentation.displayConfidence === null
       ? t("matchCard.metrics.unavailable")
-      : `${(presentation.displayConfidence * 100).toFixed(0)}%`;
+      : presentation.displayConfidence >= 1.0
+        ? "99%+"
+        : `${(presentation.displayConfidence * 100).toFixed(0)}%`;
   const recommendedPickLabel =
     presentation.predictedOutcome
       ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
@@ -409,7 +411,7 @@ export default function PredictionCard({
           <span className="metricLabel">{t("modal.prediction.recommendedPick")}</span>
           <strong className="predictionPickValue-lg">{recommendedPickLabel}</strong>
           {isNoBet ? (
-            <p className="metricLabel" style={{ marginTop: "4px" }}>
+            <p className="predictionNoBetReason">
               {formatNoBetReason(t, mainRecommendation?.noBetReason)}
             </p>
           ) : null}

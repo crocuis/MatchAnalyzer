@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import * as contracts from "@match-analyzer/contracts";
 import {
   CHECKPOINTS,
@@ -86,11 +86,15 @@ describe("prediction contracts", () => {
   });
 
   it("derives canonical match status from prediction and review state", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T00:00:00Z"));
+
     expect(
       deriveMatchStatus({
         finalResult: null,
         hasPrediction: false,
         needsReview: false,
+        kickoffAt: "2026-04-27T19:00:00Z",
       }),
     ).toBe("Scheduled");
     expect(
@@ -98,6 +102,7 @@ describe("prediction contracts", () => {
         finalResult: null,
         hasPrediction: true,
         needsReview: false,
+        kickoffAt: "2026-04-27T19:00:00Z",
       }),
     ).toBe("Prediction Ready");
     expect(
@@ -105,6 +110,7 @@ describe("prediction contracts", () => {
         finalResult: "2-1",
         hasPrediction: false,
         needsReview: false,
+        kickoffAt: "2026-04-20T19:00:00Z",
       }),
     ).toBe("Scheduled");
     expect(
@@ -112,6 +118,7 @@ describe("prediction contracts", () => {
         finalResult: "2-1",
         hasPrediction: true,
         needsReview: false,
+        kickoffAt: "2026-04-20T19:00:00Z",
       }),
     ).toBe("Review Ready");
     expect(
@@ -119,13 +126,24 @@ describe("prediction contracts", () => {
         finalResult: "2-1",
         hasPrediction: true,
         needsReview: true,
+        kickoffAt: "2026-04-20T19:00:00Z",
       }),
     ).toBe("Needs Review");
+    expect(
+      deriveMatchStatus({
+        finalResult: null,
+        hasPrediction: false,
+        needsReview: false,
+        kickoffAt: "2026-04-20T19:00:00Z",
+      }),
+    ).toBe("Result Pending");
+
+    vi.useRealTimers();
   });
 
   it("exports match status as a constrained union", () => {
     expectTypeOf<MatchStatus>().toEqualTypeOf<
-      "Scheduled" | "Prediction Ready" | "Review Ready" | "Needs Review"
+      "Scheduled" | "Prediction Ready" | "Review Ready" | "Needs Review" | "Result Pending"
     >();
   });
 });

@@ -84,6 +84,7 @@ export default function FullReportView({
   const betState = presentation.betState;
   const verdictState = resolveVerdictState({
     finalResult: review?.actualOutcome ?? match.finalResult,
+    kickoffAt: match.kickoffAt,
     mainRecommendation,
     recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
   });

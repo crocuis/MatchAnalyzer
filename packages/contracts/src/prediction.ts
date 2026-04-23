@@ -10,6 +10,7 @@ export type PickSide = "HOME" | "DRAW" | "AWAY";
 export type SnapshotQuality = "complete" | "partial";
 export type MatchStatus =
   | "Scheduled"
+  | "Result Pending"
   | "Prediction Ready"
   | "Review Ready"
   | "Needs Review";
@@ -51,16 +52,25 @@ export function deriveMatchStatus({
   finalResult,
   hasPrediction,
   needsReview,
+  kickoffAt,
 }: {
   finalResult: string | null;
   hasPrediction: boolean;
   needsReview: boolean;
+  kickoffAt?: string | null;
 }): MatchStatus {
+  const kickoffMillis =
+    typeof kickoffAt === "string" && kickoffAt.length > 0 ? Date.parse(kickoffAt) : NaN;
+  const kickoffHasPassed = Number.isFinite(kickoffMillis) && kickoffMillis <= Date.now();
+
   if (needsReview) {
     return "Needs Review";
   }
   if (finalResult && hasPrediction) {
     return "Review Ready";
+  }
+  if (!finalResult && kickoffHasPassed) {
+    return "Result Pending";
   }
   if (hasPrediction) {
     return "Prediction Ready";

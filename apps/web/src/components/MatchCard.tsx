@@ -42,6 +42,7 @@ export default function MatchCard({
   const betLabel = t(`matchOutcome.bet.${predictionPresentation.betState}`);
   const verdictState = resolveVerdictState({
     finalResult: match.finalResult,
+    kickoffAt: match.kickoffAt,
     mainRecommendation: predictionPresentation.mainRecommendation,
     recommendedPick: match.recommendedPick,
   });
