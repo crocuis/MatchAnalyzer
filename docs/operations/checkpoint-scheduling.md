@@ -9,7 +9,7 @@
 
 # 현재 구현된 자동화 매핑 (샘플/스모크 전용)
 
-- fixtures ingestion: 매시 `00분`에 실행한다.
+- fixtures ingestion: 매시 `00분`에 실행하며, 기준 UTC 날짜 결과 갱신과 `+7일`부터 `+14일`까지의 예정 경기 선행 동기화를 함께 수행한다.
 - market ingestion: 매시 `15분`에 실행한다.
 - prediction batch: 매시 `30분`에 실행한다.
 - post-match review: 매시 `45분`에 실행한다.
