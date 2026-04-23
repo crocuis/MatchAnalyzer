@@ -3566,7 +3566,7 @@ def test_recalibrate_predictions_skips_low_uplift_changes(
 
         def predict_proba(self, rows):
             responses = (
-                [0.39, 0.31, 0.30],
+                [0.355, 0.345, 0.30],
                 [0.8, 0.1, 0.1],
             )
             response = responses[min(self._calls, len(responses) - 1)]
@@ -3599,7 +3599,7 @@ def test_recalibrate_predictions_skips_low_uplift_changes(
         "confidence_uplift"
     ] == 0.45
     assert summary["changed_rows"] == 1
-    assert summary["min_confidence_uplift"] == 0.05
+    assert summary["min_confidence_uplift"] == 0.01
 
 
 def test_plan_missing_snapshot_repairs_rebuilds_snapshot_rows_from_feature_snapshots() -> None:
