@@ -39,6 +39,46 @@ def test_build_review_tags_large_home_miss():
     assert review["market_outperformed_model"] is True
 
 
+def test_build_market_probabilities_ignores_prediction_market_observed_after_kickoff():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "DraftKings",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.51,
+                "draw_prob": 0.25,
+                "away_prob": 0.24,
+            },
+            {
+                "id": "match_t_minus_24h_prediction_market",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "prediction_market",
+                "source_name": "polymarket_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.0005,
+                "draw_prob": 0.999,
+                "away_prob": 0.0005,
+                "home_price": 0.0005,
+                "draw_price": 0.9995,
+                "away_price": 0.0005,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {"home": 0.51, "draw": 0.25, "away": 0.24}
+    assert prediction_market is None
+
+
 def test_build_review_keeps_empty_tags_for_correct_prediction():
     review = build_review(
         prediction={
@@ -3432,11 +3472,66 @@ def test_recalibrate_predictions_rewrites_bookmaker_fallback_rows() -> None:
         "AWAY",
         "AWAY",
     ]
+    assert [
+        row["main_recommendation_pick"] for row in updated_predictions
+    ] == [row["recommended_pick"] for row in updated_predictions]
+    assert [
+        row["main_recommendation_confidence"] for row in updated_predictions
+    ] == [row["confidence_score"] for row in updated_predictions]
+    assert [
+        row["main_recommendation_recommended"] for row in updated_predictions
+    ] == [
+        row["explanation_payload"]["main_recommendation"]["recommended"]
+        for row in updated_predictions
+    ]
+    assert [
+        row["main_recommendation_no_bet_reason"] for row in updated_predictions
+    ] == [
+        row["explanation_payload"]["main_recommendation"]["no_bet_reason"]
+        for row in updated_predictions
+    ]
     assert updated_predictions[0]["confidence_score"] >= predictions[0]["confidence_score"]
     assert summary["model_id"] == "decision_tree_depth6_v1"
     assert updated_predictions[0]["explanation_payload"]["posthoc_recalibration"]["model_id"] == (
         "decision_tree_depth6_v1"
     )
+
+
+def test_recalibrate_predictions_rewrites_prior_fallback_rows_without_bookmaker() -> None:
+    predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
+    for prediction in predictions:
+        payload = prediction["explanation_payload"]
+        payload["base_model_source"] = "prior_fallback"
+        payload["source_metadata"]["market_sources"]["bookmaker"] = {
+            "available": False,
+            "source_name": None,
+            "probabilities": None,
+        }
+
+    updated_predictions, summary = recalibrate_predictions(
+        predictions=predictions,
+        matches=matches,
+        snapshot_rows=snapshot_rows,
+    )
+
+    assert summary["applied"] is True
+    assert summary["training_rows"] == 9
+    assert summary["changed_rows"] == 9
+    assert [row["recommended_pick"] for row in updated_predictions[:3]] == [
+        "HOME",
+        "HOME",
+        "HOME",
+    ]
+    assert [row["recommended_pick"] for row in updated_predictions[3:6]] == [
+        "DRAW",
+        "DRAW",
+        "DRAW",
+    ]
+    assert [row["recommended_pick"] for row in updated_predictions[6:]] == [
+        "AWAY",
+        "AWAY",
+        "AWAY",
+    ]
 
 
 def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_sets() -> None:
@@ -3482,11 +3577,11 @@ def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_
 
     assert summary["applied"] is True
     assert summary["training_rows"] == len(expanded_predictions)
-    assert summary["model_id"] == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+    assert summary["model_id"] == "hist_gradient_boosting_depth9_leaf3_lr008_iter250_v1"
     assert summary["changed_rows"] > 0
     assert any(
         row["explanation_payload"]["posthoc_recalibration"]["model_id"]
-        == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+        == "hist_gradient_boosting_depth9_leaf3_lr008_iter250_v1"
         for row in updated_predictions
         if "posthoc_recalibration" in row.get("explanation_payload", {})
     )
@@ -3529,7 +3624,7 @@ def test_recalibrate_predictions_skips_low_uplift_changes(
 
         def predict_proba(self, rows):
             responses = (
-                [0.39, 0.31, 0.30],
+                [0.355, 0.345, 0.30],
                 [0.8, 0.1, 0.1],
             )
             response = responses[min(self._calls, len(responses) - 1)]
@@ -3562,7 +3657,7 @@ def test_recalibrate_predictions_skips_low_uplift_changes(
         "confidence_uplift"
     ] == 0.45
     assert summary["changed_rows"] == 1
-    assert summary["min_confidence_uplift"] == 0.05
+    assert summary["min_confidence_uplift"] == 0.01
 
 
 def test_plan_missing_snapshot_repairs_rebuilds_snapshot_rows_from_feature_snapshots() -> None:

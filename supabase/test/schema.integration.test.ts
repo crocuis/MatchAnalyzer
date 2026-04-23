@@ -269,6 +269,10 @@ describe("supabase schema integration", () => {
         away_prob,
         recommended_pick,
         confidence_score,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended,
+        main_recommendation_no_bet_reason,
         explanation_payload
       )
       values
@@ -282,6 +286,10 @@ describe("supabase schema integration", () => {
           0.25,
           'HOME',
           0.75,
+          'HOME',
+          0.75,
+          true,
+          null,
           '{"main_recommendation":{"pick":"HOME","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
         ),
         (
@@ -294,6 +302,10 @@ describe("supabase schema integration", () => {
           0.3,
           'DRAW',
           0.41,
+          'HOME',
+          0.41,
+          false,
+          'low_confidence',
           '{"main_recommendation":{"pick":"DRAW","confidence":0.41,"recommended":false,"no_bet_reason":"low_confidence"}}'::jsonb
         );
     `);
