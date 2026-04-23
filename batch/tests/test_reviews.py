@@ -3519,11 +3519,11 @@ def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_
 
     assert summary["applied"] is True
     assert summary["training_rows"] == len(expanded_predictions)
-    assert summary["model_id"] == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+    assert summary["model_id"] == "hist_gradient_boosting_depth6_leaf5_lr008_iter250_v1"
     assert summary["changed_rows"] > 0
     assert any(
         row["explanation_payload"]["posthoc_recalibration"]["model_id"]
-        == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+        == "hist_gradient_boosting_depth6_leaf5_lr008_iter250_v1"
         for row in updated_predictions
         if "posthoc_recalibration" in row.get("explanation_payload", {})
     )
