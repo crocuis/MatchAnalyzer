@@ -549,6 +549,9 @@ def build_prediction_market_variant_rows(
             market_type = str(market.get("sports_market_type") or "")
             if market_type not in {"spreads", "totals"}:
                 continue
+            observed_at_datetime = latest_market_observed_at([market])
+            if observed_at_datetime is None or observed_at_datetime > kickoff_minute:
+                continue
             outcomes = market.get("outcomes") or []
             if len(outcomes) < 2:
                 continue
