@@ -369,6 +369,10 @@ def recalibrate_predictions(
             "confidence_uplift": confidence_uplift,
             "predicted_probabilities": updated_probability_map,
         }
+        summary_payload = deepcopy(prediction.get("summary_payload") or {})
+        if isinstance(summary_payload, dict):
+            summary_payload["raw_confidence_score"] = updated_confidence
+            summary_payload["calibrated_confidence_score"] = updated_confidence
         updated_prediction = {
             **prediction,
             "home_prob": updated_probability_map["home"],
@@ -376,6 +380,11 @@ def recalibrate_predictions(
             "away_prob": updated_probability_map["away"],
             "recommended_pick": predicted_pick,
             "confidence_score": updated_confidence,
+            "summary_payload": summary_payload,
+            "main_recommendation_pick": updated_recommendation["pick"],
+            "main_recommendation_confidence": updated_recommendation["confidence"],
+            "main_recommendation_recommended": updated_recommendation["recommended"],
+            "main_recommendation_no_bet_reason": updated_recommendation["no_bet_reason"],
             "explanation_payload": payload,
         }
         if predicted_pick != original_pick:

@@ -3432,6 +3432,24 @@ def test_recalibrate_predictions_rewrites_bookmaker_fallback_rows() -> None:
         "AWAY",
         "AWAY",
     ]
+    assert [
+        row["main_recommendation_pick"] for row in updated_predictions
+    ] == [row["recommended_pick"] for row in updated_predictions]
+    assert [
+        row["main_recommendation_confidence"] for row in updated_predictions
+    ] == [row["confidence_score"] for row in updated_predictions]
+    assert [
+        row["main_recommendation_recommended"] for row in updated_predictions
+    ] == [
+        row["explanation_payload"]["main_recommendation"]["recommended"]
+        for row in updated_predictions
+    ]
+    assert [
+        row["main_recommendation_no_bet_reason"] for row in updated_predictions
+    ] == [
+        row["explanation_payload"]["main_recommendation"]["no_bet_reason"]
+        for row in updated_predictions
+    ]
     assert updated_predictions[0]["confidence_score"] >= predictions[0]["confidence_score"]
     assert summary["model_id"] == "decision_tree_depth6_v1"
     assert updated_predictions[0]["explanation_payload"]["posthoc_recalibration"]["model_id"] == (
