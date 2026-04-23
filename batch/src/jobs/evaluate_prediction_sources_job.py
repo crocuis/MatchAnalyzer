@@ -157,12 +157,22 @@ def build_evaluation_report(
             and fused_probs is not None
         )
         if use_prediction_payload:
+            _, current_prediction_market = build_market_probabilities(
+                snapshot["id"],
+                market_by_snapshot,
+                kickoff_at=str(match.get("kickoff_at") or ""),
+            )
             prediction_market_available = bool(
                 prediction_payload.get("prediction_market_available")
-            ) and prediction_market_probs is not None
+            ) and prediction_market_probs is not None and current_prediction_market is not None
             feature_context = prediction_payload.get("feature_context")
             if not isinstance(feature_context, dict):
                 feature_context = {}
+            if not prediction_market_available:
+                feature_context = {
+                    **feature_context,
+                    "prediction_market_available": False,
+                }
             selection_context = {
                 **feature_context,
                 "source_agreement_ratio": prediction_payload.get("source_agreement_ratio"),
