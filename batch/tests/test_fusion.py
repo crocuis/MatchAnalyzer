@@ -5,6 +5,7 @@ from batch.src.model.fusion import (
     build_fusion_policy_comparison,
     build_latest_fusion_policy,
     build_main_recommendation,
+    choose_current_fused_probabilities,
     choose_fusion_weights,
     build_value_recommendation,
     choose_recommended_pick,
@@ -374,6 +375,34 @@ def test_confidence_score_promotes_centroid_draw_without_market_when_away_signal
     )
 
     assert score > 0.67
+
+
+def test_choose_current_fused_probabilities_falls_back_to_bookmaker_when_raw_fused_is_weak():
+    selected = choose_current_fused_probabilities(
+        raw_fused_probs={"home": 0.61, "draw": 0.21, "away": 0.18},
+        bookmaker_probs={"home": 0.44, "draw": 0.27, "away": 0.29},
+        confidence=0.44,
+        context={
+            "source_agreement_ratio": 0.34,
+            "max_abs_divergence": 0.08,
+        },
+    )
+
+    assert selected == {"home": 0.44, "draw": 0.27, "away": 0.29}
+
+
+def test_choose_current_fused_probabilities_keeps_raw_fused_when_confident_and_aligned():
+    selected = choose_current_fused_probabilities(
+        raw_fused_probs={"home": 0.61, "draw": 0.21, "away": 0.18},
+        bookmaker_probs={"home": 0.44, "draw": 0.27, "away": 0.29},
+        confidence=0.46,
+        context={
+            "source_agreement_ratio": 0.5,
+            "max_abs_divergence": 0.05,
+        },
+    )
+
+    assert selected == {"home": 0.61, "draw": 0.21, "away": 0.18}
 
 
 def test_build_main_recommendation_returns_no_bet_below_threshold():

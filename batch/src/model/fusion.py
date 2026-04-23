@@ -7,6 +7,9 @@ MAIN_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.62
 MAIN_RECOMMENDATION_MIN_BUCKET_COUNT = 5
 MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP = 0.08
 VALUE_RECOMMENDATION_EV_THRESHOLD = 0.15
+CURRENT_FUSED_CONFIDENCE_MIN = 0.45
+CURRENT_FUSED_SOURCE_AGREEMENT_MIN = 0.34
+CURRENT_FUSED_MAX_DIVERGENCE = 0.05
 DECISIVE_MARKET_CONSENSUS_BOOK_GAP_MIN = 0.24
 DECISIVE_MARKET_CONSENSUS_MARKET_GAP_MIN = 0.25
 DECISIVE_MARKET_CONSENSUS_BONUS = 0.26
@@ -409,6 +412,26 @@ def fuse_probabilities(
 
 def choose_recommended_pick(fused_probs: dict) -> str:
     return max(fused_probs, key=fused_probs.get).upper()
+
+
+def choose_current_fused_probabilities(
+    *,
+    raw_fused_probs: dict[str, float],
+    bookmaker_probs: dict[str, float],
+    confidence: float | None,
+    context: dict | None = None,
+) -> dict[str, float]:
+    context = context or {}
+    confidence_value = float(confidence or 0.0)
+    source_agreement_ratio = float(context.get("source_agreement_ratio") or 0.0)
+    max_abs_divergence = float(context.get("max_abs_divergence") or 0.0)
+    if (
+        confidence_value < CURRENT_FUSED_CONFIDENCE_MIN
+        or source_agreement_ratio < CURRENT_FUSED_SOURCE_AGREEMENT_MIN
+        or max_abs_divergence > CURRENT_FUSED_MAX_DIVERGENCE
+    ):
+        return dict(bookmaker_probs)
+    return dict(raw_fused_probs)
 
 
 def confidence_score(
