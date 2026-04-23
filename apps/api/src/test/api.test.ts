@@ -684,10 +684,10 @@ describe("prediction API", () => {
     expect(page.nextCursor).toBe("1");
     expect(page.predictionSummary).toEqual({
       predictedCount: 4,
-      evaluatedCount: 3,
-      correctCount: 2,
+      evaluatedCount: 2,
+      correctCount: 1,
       incorrectCount: 1,
-      successRate: 2 / 3,
+      successRate: 1 / 2,
     });
   });
 

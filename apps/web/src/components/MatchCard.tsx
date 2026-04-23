@@ -54,10 +54,10 @@ export default function MatchCard({
       : isFinished
         ? "state-complete"
         : "state-no-bet";
-  const isHit =
-    match.finalResult &&
-    predictionPresentation.predictedOutcome &&
-    match.finalResult === predictionPresentation.predictedOutcome;
+  const verdictTone =
+    verdictState === "correct" ? "hit" : verdictState === "miss" ? "miss" : "pending";
+  const verdictGlyph =
+    verdictState === "correct" ? "✓" : verdictState === "miss" ? "×" : "-";
   const hasValuePick = Boolean(match.valueRecommendation?.recommended);
   const dateColor =
     predictionPresentation.betState === "recommended"
@@ -178,13 +178,13 @@ export default function MatchCard({
               <span className="metricLabel">{t("matchOutcome.verdictLabel")}</span>
               <div className="verdictStatus">
                 {match.finalResult ? (
-                  <span className={`verdictGlyph ${isHit ? "verdictGlyph-hit" : "verdictGlyph-miss"}`}>
-                    {isHit ? "✓" : "×"}
+                  <span className={`verdictGlyph verdictGlyph-${verdictTone}`}>
+                    {verdictGlyph}
                   </span>
                 ) : (
                   <span className="verdictGlyph-pending">…</span>
                 )}
-                <span className={`verdictText ${match.finalResult ? (isHit ? "verdictText-hit" : "verdictText-miss") : "verdictText-pending"}`}>
+                <span className={`verdictText ${match.finalResult ? `verdictText-${verdictTone}` : "verdictText-pending"}`}>
                   {verdictLabel}
                 </span>
               </div>

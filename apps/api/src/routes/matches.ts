@@ -284,6 +284,9 @@ function buildPredictionSummary(
     if (!mainRecommendation) {
       continue;
     }
+    if (!mainRecommendation.recommended) {
+      continue;
+    }
 
     evaluatedCount += 1;
     if (mainRecommendation.pick === match.final_result) {
