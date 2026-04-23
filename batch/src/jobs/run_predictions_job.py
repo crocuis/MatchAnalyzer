@@ -187,65 +187,6 @@ def read_prediction_fused_probabilities(prediction: dict | None) -> dict[str, fl
     )
 
 
-def build_augmented_market_rows(
-    *,
-    market_rows: list[dict],
-    prediction_rows: list[dict],
-) -> list[dict]:
-    latest_prediction_by_snapshot: dict[str, dict] = {}
-    for prediction in prediction_rows:
-        snapshot_id = prediction.get("snapshot_id")
-        if not isinstance(snapshot_id, str) or not snapshot_id:
-            continue
-        current = latest_prediction_by_snapshot.get(snapshot_id)
-        if current is None or str(prediction.get("created_at") or "") > str(
-            current.get("created_at") or ""
-        ):
-            latest_prediction_by_snapshot[snapshot_id] = prediction
-
-    augmented_rows = list(market_rows)
-    existing_keys = {
-        (
-            str(row.get("snapshot_id") or ""),
-            str(row.get("source_type") or ""),
-            str(row.get("market_family") or "moneyline_3way"),
-        )
-        for row in market_rows
-    }
-    for snapshot_id, prediction in latest_prediction_by_snapshot.items():
-        prediction_payload = read_prediction_payload(prediction)
-        source_metadata = prediction_payload.get("source_metadata")
-        if not isinstance(source_metadata, dict):
-            continue
-        market_sources = source_metadata.get("market_sources")
-        if not isinstance(market_sources, dict):
-            continue
-        for source_type in ("bookmaker", "prediction_market"):
-            key = (snapshot_id, source_type, "moneyline_3way")
-            if key in existing_keys:
-                continue
-            source_entry = market_sources.get(source_type)
-            if not isinstance(source_entry, dict):
-                continue
-            probabilities = read_probability_map(source_entry.get("probabilities"))
-            if probabilities is None:
-                continue
-            augmented_rows.append(
-                {
-                    "id": f"{snapshot_id}_{source_type}_payload_backfill",
-                    "snapshot_id": snapshot_id,
-                    "source_type": source_type,
-                    "market_family": "moneyline_3way",
-                    "source_name": source_entry.get("source_name"),
-                    "home_prob": probabilities["home"],
-                    "draw_prob": probabilities["draw"],
-                    "away_prob": probabilities["away"],
-                }
-            )
-            existing_keys.add(key)
-    return augmented_rows
-
-
 def build_historical_current_fused_candidates(
     *,
     prediction_rows: list[dict],
@@ -971,10 +912,6 @@ def main() -> None:
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     prediction_rows = read_optional_rows(client, "predictions")
-    market_rows = build_augmented_market_rows(
-        market_rows=market_rows,
-        prediction_rows=prediction_rows,
-    )
     variant_rows = read_optional_rows(client, "market_variants")
     use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
     if not snapshot_rows:

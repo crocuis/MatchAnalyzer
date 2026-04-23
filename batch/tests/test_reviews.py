@@ -11,10 +11,7 @@ import batch.src.jobs.repair_prediction_snapshot_graph_job as repair_prediction_
 import batch.src.jobs.run_predictions_job as run_predictions_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
-from batch.src.jobs.run_predictions_job import (
-    build_augmented_market_rows,
-    select_real_prediction_inputs,
-)
+from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.prediction_graph_integrity import (
     plan_missing_match_repairs,
@@ -422,61 +419,6 @@ def test_index_market_rows_by_snapshot_keeps_market_family_separate():
 
     assert indexed["snapshot-1"]["prediction_market"]["moneyline_3way"]["home_prob"] == 0.45
     assert indexed["snapshot-1"]["prediction_market"]["totals"]["home_prob"] == 0.51
-
-
-def test_build_augmented_market_rows_backfills_missing_moneyline_rows_from_prediction_payloads():
-    market_rows = [
-        {
-            "id": "target_snapshot_bookmaker",
-            "snapshot_id": "target_snapshot",
-            "source_type": "bookmaker",
-            "market_family": "moneyline_3way",
-            "source_name": "book",
-            "home_prob": 0.52,
-            "draw_prob": 0.24,
-            "away_prob": 0.24,
-        }
-    ]
-    prediction_rows = [
-        {
-            "id": "old_snapshot_prediction_v1",
-            "snapshot_id": "old_snapshot",
-            "created_at": "2026-04-01T18:30:00+00:00",
-            "summary_payload": {
-                "source_metadata": {
-                    "market_sources": {
-                        "bookmaker": {
-                            "available": False,
-                            "source_name": None,
-                            "probabilities": {
-                                "home": 0.40,
-                                "draw": 0.35,
-                                "away": 0.25,
-                            },
-                        }
-                    }
-                }
-            },
-        }
-    ]
-
-    augmented_rows = build_augmented_market_rows(
-        market_rows=market_rows,
-        prediction_rows=prediction_rows,
-    )
-    indexed = index_market_rows_by_snapshot(augmented_rows)
-
-    assert indexed["target_snapshot"]["bookmaker"]["moneyline_3way"]["home_prob"] == 0.52
-    assert indexed["old_snapshot"]["bookmaker"]["moneyline_3way"] == {
-        "id": "old_snapshot_bookmaker_payload_backfill",
-        "snapshot_id": "old_snapshot",
-        "source_type": "bookmaker",
-        "market_family": "moneyline_3way",
-        "source_name": None,
-        "home_prob": 0.40,
-        "draw_prob": 0.35,
-        "away_prob": 0.25,
-    }
 
 
 def test_build_review_payload_ignores_non_moneyline_prediction_market_rows():
