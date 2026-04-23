@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from copy import deepcopy
 
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.tree import DecisionTreeClassifier
 
 from batch.src.features.feature_builder import FEATURE_VECTOR_FIELDS
@@ -22,8 +23,14 @@ CHECKPOINT_PRIORITIES = {
     "T_MINUS_6H": 1,
     "T_MINUS_24H": 0,
 }
-RECALIBRATION_MODEL_ID = "decision_tree_depth6_v1"
-RECALIBRATION_MAX_DEPTH = 6
+RECALIBRATION_MODEL_ID = "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+RECALIBRATION_FALLBACK_MODEL_ID = "decision_tree_depth6_v1"
+RECALIBRATION_MAX_DEPTH = 3
+RECALIBRATION_MIN_SAMPLES_LEAF = 10
+RECALIBRATION_LEARNING_RATE = 0.08
+RECALIBRATION_MAX_ITER = 500
+RECALIBRATION_TREE_MAX_DEPTH = 6
+RECALIBRATION_MIN_HIST_GRADIENT_ROWS = 100
 RECALIBRATION_MIN_CLASS_COUNT = 3
 RECALIBRATION_MIN_CONFIDENCE_UPLIFT = 0.05
 
@@ -154,7 +161,7 @@ def train_recalibration_model(
     predictions: list[dict],
     matches: list[dict],
     snapshot_rows: list[dict],
-) -> tuple[DecisionTreeClassifier | None, dict]:
+) -> tuple[HistGradientBoostingClassifier | DecisionTreeClassifier | None, dict]:
     match_by_id = {
         row["id"]: row for row in matches if isinstance(row, dict) and row.get("id")
     }
@@ -207,10 +214,20 @@ def train_recalibration_model(
         summary["skip_reason"] = "insufficient_completed_representative_rows"
         return None, summary
 
-    model = DecisionTreeClassifier(
-        max_depth=RECALIBRATION_MAX_DEPTH,
-        random_state=7,
-    )
+    if len(features) < RECALIBRATION_MIN_HIST_GRADIENT_ROWS:
+        model = DecisionTreeClassifier(
+            max_depth=RECALIBRATION_TREE_MAX_DEPTH,
+            random_state=7,
+        )
+        summary["model_id"] = RECALIBRATION_FALLBACK_MODEL_ID
+    else:
+        model = HistGradientBoostingClassifier(
+            max_depth=RECALIBRATION_MAX_DEPTH,
+            min_samples_leaf=RECALIBRATION_MIN_SAMPLES_LEAF,
+            learning_rate=RECALIBRATION_LEARNING_RATE,
+            max_iter=RECALIBRATION_MAX_ITER,
+            random_state=7,
+        )
     model.fit(features, labels)
     summary["applied"] = True
     return model, summary
@@ -219,7 +236,7 @@ def train_recalibration_model(
 def _predict_recalibrated_result(
     *,
     prediction: dict,
-    model: DecisionTreeClassifier,
+    model: HistGradientBoostingClassifier | DecisionTreeClassifier,
     summary: dict,
     snapshot_rows_by_id: dict[str, dict],
 ) -> tuple[dict[str, float], str, float, dict] | None:
@@ -340,7 +357,7 @@ def recalibrate_predictions(
         payload["no_bet_reason"] = updated_recommendation["no_bet_reason"]
         payload["posthoc_recalibration"] = {
             "applied": True,
-            "model_id": RECALIBRATION_MODEL_ID,
+            "model_id": str(summary.get("model_id") or RECALIBRATION_MODEL_ID),
             "training_rows": summary["training_rows"],
             "class_counts": summary["class_counts"],
             "original_pick": original_pick,

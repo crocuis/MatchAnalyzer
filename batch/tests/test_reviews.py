@@ -3308,8 +3308,62 @@ def test_recalibrate_predictions_rewrites_bookmaker_fallback_rows() -> None:
         "AWAY",
     ]
     assert updated_predictions[0]["confidence_score"] >= predictions[0]["confidence_score"]
+    assert summary["model_id"] == "decision_tree_depth6_v1"
     assert updated_predictions[0]["explanation_payload"]["posthoc_recalibration"]["model_id"] == (
         "decision_tree_depth6_v1"
+    )
+
+
+def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_sets() -> None:
+    predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
+    expanded_predictions: list[dict] = []
+    expanded_matches: list[dict] = []
+    expanded_snapshots: list[dict] = []
+    for replica in range(12):
+        for prediction, match, snapshot in zip(
+            predictions,
+            matches,
+            snapshot_rows,
+            strict=True,
+        ):
+            suffix = f"_replica_{replica}"
+            expanded_predictions.append(
+                {
+                    **deepcopy(prediction),
+                    "id": f"{prediction['id']}{suffix}",
+                    "match_id": f"{prediction['match_id']}{suffix}",
+                    "snapshot_id": f"{prediction['snapshot_id']}{suffix}",
+                }
+            )
+            expanded_matches.append(
+                {
+                    **deepcopy(match),
+                    "id": f"{match['id']}{suffix}",
+                }
+            )
+            expanded_snapshots.append(
+                {
+                    **deepcopy(snapshot),
+                    "id": f"{snapshot['id']}{suffix}",
+                    "match_id": f"{prediction['match_id']}{suffix}",
+                }
+            )
+
+    updated_predictions, summary = recalibrate_predictions(
+        predictions=expanded_predictions,
+        matches=expanded_matches,
+        snapshot_rows=expanded_snapshots,
+    )
+
+    assert summary["applied"] is True
+    assert summary["training_rows"] == len(expanded_predictions)
+    assert summary["model_id"] == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+    assert summary["changed_rows"] > 0
+    assert any(
+        row["explanation_payload"]["posthoc_recalibration"]["model_id"]
+        == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+        for row in updated_predictions
+        if "posthoc_recalibration" in row.get("explanation_payload", {})
     )
 
 
