@@ -13,13 +13,17 @@ from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_markets import (
+    build_betman_market_rows,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_rows,
     build_prediction_market_variant_rows,
+    expand_betman_comp_schedules,
+    resolve_betman_competition_id,
     polymarket_sport_for_competition,
 )
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.jobs.ingest_markets_job import (
+    collect_changed_market_match_ids,
     main as run_ingest_markets_job,
     promote_market_snapshots,
     select_real_market_snapshots,
@@ -27,6 +31,7 @@ from batch.src.jobs.ingest_markets_job import (
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
+    collect_changed_fixture_match_ids,
     prepare_sync_asset_rows,
     should_backfill_real_fixture_team_assets,
     should_hydrate_real_fixture_history,
@@ -294,6 +299,7 @@ def test_competition_emblem_url_uses_official_football_data_codes():
     assert competition_emblem_url("premier-league") == "https://crests.football-data.org/PL.png"
     assert competition_emblem_url("champions-league") == "https://crests.football-data.org/CL.png"
     assert competition_emblem_url("europa-league") == "https://crests.football-data.org/EL.png"
+    assert competition_emblem_url("conference-league") == "https://crests.football-data.org/UCL.png"
     assert competition_emblem_url("world-cup") == "https://crests.football-data.org/WC.png"
     assert competition_emblem_url("international-friendly") is None
 
@@ -344,6 +350,7 @@ def test_build_competition_row_marks_conference_league_as_cup():
         "name": "UEFA Conference League",
         "competition_type": "cup",
         "region": "Europe",
+        "emblem_url": "https://crests.football-data.org/UCL.png",
     }
 
 
@@ -511,6 +518,111 @@ def test_backfill_assets_prefers_schedule_assets_and_search_fallback(monkeypatch
             "team_type": "club",
             "country": "England",
         },
+    ]
+
+
+def test_backfill_assets_uses_logo_aliases_for_conference_league_teams(monkeypatch):
+    teams = [
+        {
+            "id": "fiorentina",
+            "name": "Fiorentina",
+            "team_type": "club",
+            "country": "Italy",
+            "crest_url": None,
+        },
+    ]
+    competitions = [
+        {"id": "conference-league", "name": "UEFA Conference League", "emblem_url": None},
+    ]
+    matches = [
+        {
+            "id": "match_uecl_001",
+            "competition_id": "conference-league",
+            "home_team_id": "chelsea",
+            "away_team_id": "fiorentina",
+        }
+    ]
+    schedules = [
+        {
+            "data": {
+                "events": [
+                    {
+                        "competition": {
+                            "id": "conference-league",
+                            "name": "UEFA Conference League",
+                        },
+                        "venue": {"country": "Europe"},
+                        "competitors": [
+                            {
+                                "team": {
+                                    "id": "chelsea",
+                                    "name": "Chelsea",
+                                },
+                                "qualifier": "home",
+                            },
+                            {
+                                "team": {
+                                    "id": "fiorentina",
+                                    "name": "Fiorentina",
+                                },
+                                "qualifier": "away",
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    ]
+    metadata_queries: list[str] = []
+
+    class FakeFootball:
+        @staticmethod
+        def get_team_profile(*, team_id: str, league_slug: str):
+            assert team_id == "fiorentina"
+            assert league_slug == "conference-league"
+            return {"data": {"team": {"id": "fiorentina", "crest": ""}}}
+
+    class FakeMetadata:
+        @staticmethod
+        def get_team_logo(*, team_name: str, sport: str = "Soccer"):
+            assert sport == "Soccer"
+            metadata_queries.append(team_name)
+            if team_name == "ACF Fiorentina":
+                return {"data": {"logo_url": "https://fallback.example/ACF-Fiorentina.png"}}
+            return {"data": {"logo_url": None}}
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_football",
+        lambda: FakeFootball(),
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_assets_job.load_sports_skills_metadata",
+        lambda: FakeMetadata(),
+    )
+
+    competition_rows, team_rows = backfill_assets(
+        teams=teams,
+        competitions=competitions,
+        matches=matches,
+        schedules=schedules,
+    )
+
+    assert metadata_queries == ["Fiorentina", "ACF Fiorentina"]
+    assert competition_rows == [
+        {
+            "id": "conference-league",
+            "name": "UEFA Conference League",
+            "emblem_url": "https://crests.football-data.org/UCL.png",
+        }
+    ]
+    assert team_rows == [
+        {
+            "id": "fiorentina",
+            "name": "Fiorentina",
+            "team_type": "club",
+            "country": "Italy",
+            "crest_url": "https://fallback.example/ACF-Fiorentina.png",
+        }
     ]
 
 
@@ -1999,7 +2111,7 @@ def test_supabase_client_retries_through_multiple_schema_cache_column_misses(mon
     assert "away_price" not in captured_payloads[4][0]
 
 
-def test_supabase_client_preserves_sparse_bulk_upsert_rows(monkeypatch):
+def test_supabase_client_normalizes_sparse_bulk_upsert_rows(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
     captured_payloads: list[list[dict]] = []
 
@@ -2054,6 +2166,7 @@ def test_supabase_client_preserves_sparse_bulk_upsert_rows(monkeypatch):
             },
             {
                 "country": "England",
+                "crest_url": None,
                 "id": "forest",
                 "name": "Nottingham Forest",
                 "team_type": "club",
@@ -2136,6 +2249,119 @@ def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
     rows = client.read_rows("dashboard_league_summaries")
 
     assert rows == [{"league_id": "bundesliga", "match_count": 25}]
+
+
+def test_collect_changed_fixture_match_ids_tracks_match_and_snapshot_updates():
+    changed_match_ids = collect_changed_fixture_match_ids(
+        match_rows=[
+            {"id": "match_a", "status": "closed", "final_result": "HOME"},
+            {"id": "match_b", "status": "not_started", "final_result": None},
+        ],
+        existing_match_rows=[
+            {"id": "match_a", "status": "not_started", "final_result": None},
+            {"id": "match_b", "status": "not_started", "final_result": None},
+        ],
+        snapshot_rows=[
+            {"id": "match_a_t_minus_24h", "match_id": "match_a", "lineup_status": "unknown"},
+            {"id": "match_b_t_minus_24h", "match_id": "match_b", "lineup_status": "confirmed"},
+        ],
+        existing_snapshot_rows=[
+            {"id": "match_a_t_minus_24h", "match_id": "match_a", "lineup_status": "unknown"},
+            {"id": "match_b_t_minus_24h", "match_id": "match_b", "lineup_status": "unknown"},
+        ],
+    )
+
+    assert changed_match_ids == ["match_a", "match_b"]
+
+
+def test_collect_changed_fixture_match_ids_ignores_snapshot_capture_time_only_updates():
+    changed_match_ids = collect_changed_fixture_match_ids(
+        match_rows=[
+            {"id": "match_a", "status": "not_started", "final_result": None},
+        ],
+        existing_match_rows=[
+            {"id": "match_a", "status": "not_started", "final_result": None},
+        ],
+        snapshot_rows=[
+            {
+                "id": "match_a_t_minus_24h",
+                "match_id": "match_a",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-20T00:00:00+00:00",
+            },
+        ],
+        existing_snapshot_rows=[
+            {
+                "id": "match_a_t_minus_24h",
+                "match_id": "match_a",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-19T23:00:00+00:00",
+            },
+        ],
+    )
+
+    assert changed_match_ids == []
+
+
+def test_collect_changed_market_match_ids_tracks_market_variant_and_snapshot_updates():
+    changed_match_ids = collect_changed_market_match_ids(
+        market_rows=[
+            {"id": "snapshot_a_bookmaker", "snapshot_id": "snapshot_a", "home_prob": 0.6},
+            {"id": "snapshot_b_bookmaker", "snapshot_id": "snapshot_b", "home_prob": 0.55},
+        ],
+        existing_market_rows=[
+            {"id": "snapshot_a_bookmaker", "snapshot_id": "snapshot_a", "home_prob": 0.6},
+            {"id": "snapshot_b_bookmaker", "snapshot_id": "snapshot_b", "home_prob": 0.51},
+        ],
+        variant_rows=[
+            {"id": "snapshot_c_total", "snapshot_id": "snapshot_c", "selection_a_price": 0.57},
+        ],
+        existing_variant_rows=[],
+        promoted_snapshot_rows=[
+            {"id": "snapshot_d", "match_id": "match_d", "snapshot_quality": "complete"},
+        ],
+        existing_snapshot_rows=[
+            {"id": "snapshot_d", "match_id": "match_d", "snapshot_quality": "partial"},
+        ],
+        snapshot_rows=[
+            {"id": "snapshot_a", "match_id": "match_a"},
+            {"id": "snapshot_b", "match_id": "match_b"},
+            {"id": "snapshot_c", "match_id": "match_c"},
+            {"id": "snapshot_d", "match_id": "match_d"},
+        ],
+    )
+
+    assert changed_match_ids == ["match_b", "match_c", "match_d"]
+
+
+def test_collect_changed_market_match_ids_ignores_market_observed_at_only_updates():
+    changed_match_ids = collect_changed_market_match_ids(
+        market_rows=[
+            {
+                "id": "snapshot_a_bookmaker",
+                "snapshot_id": "snapshot_a",
+                "home_prob": 0.6,
+                "observed_at": "2026-04-20T00:15:00+00:00",
+            },
+        ],
+        existing_market_rows=[
+            {
+                "id": "snapshot_a_bookmaker",
+                "snapshot_id": "snapshot_a",
+                "home_prob": 0.6,
+                "observed_at": "2026-04-20T00:00:00+00:00",
+            },
+        ],
+        variant_rows=[],
+        existing_variant_rows=[],
+        promoted_snapshot_rows=[],
+        existing_snapshot_rows=[],
+        snapshot_rows=[
+            {"id": "snapshot_a", "match_id": "match_a"},
+        ],
+    )
+
+    assert changed_match_ids == []
 
 
 def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, capsys):
@@ -2858,6 +3084,241 @@ def test_build_prediction_market_rows_skips_when_multiple_fuzzy_candidates_exist
     )
 
     assert rows == []
+
+
+def test_expand_betman_comp_schedules_maps_keys_to_rows():
+    rows = expand_betman_comp_schedules(
+        {
+            "keys": ["leagueName", "gameDate", "gameKey", "winAllot"],
+            "datas": [
+                ["EPL", 1777123800000, "첼시:아스널", 1.75],
+            ],
+        }
+    )
+
+    assert rows == [
+        {
+            "leagueName": "EPL",
+            "gameDate": 1777123800000,
+            "gameKey": "첼시:아스널",
+            "winAllot": 1.75,
+        }
+    ]
+
+
+def test_resolve_betman_competition_id_uses_league_name_hints():
+    assert resolve_betman_competition_id("EPL") == "premier-league"
+    assert resolve_betman_competition_id("분데스리가") == "bundesliga"
+    assert resolve_betman_competition_id("UEFA 챔피언스리그") == "champions-league"
+    assert resolve_betman_competition_id("알수없음") is None
+
+
+def test_build_betman_market_rows_matches_unique_snapshot_and_extracts_variant_lines():
+    market_rows, variant_rows = build_betman_market_rows(
+        detail_payloads=[
+            {
+                "currentLottery": {
+                    "saleEndDate": 1777120200000,
+                },
+                "compSchedules": {
+                    "keys": [
+                        "itemCode",
+                        "gameDate",
+                        "leagueName",
+                        "matchSeq",
+                        "winTxt",
+                        "winAllot",
+                        "drawTxt",
+                        "drawAllot",
+                        "loseTxt",
+                        "loseAllot",
+                        "handi",
+                        "winHandi",
+                        "drawHandi",
+                        "loseHandi",
+                        "betTypNm",
+                        "gameKey",
+                    ],
+                    "datas": [
+                        [
+                            "SC",
+                            1777116600000,
+                            "EPL",
+                            11,
+                            "승",
+                            1.91,
+                            "무",
+                            3.55,
+                            "패",
+                            4.2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            "축구 승무패",
+                            "첼시:아스널",
+                        ],
+                        [
+                            "SC",
+                            1777116600000,
+                            "EPL",
+                            12,
+                            "승",
+                            2.15,
+                            "-",
+                            0,
+                            "패",
+                            1.66,
+                            23,
+                            -0.5,
+                            0,
+                            0.5,
+                            "축구 핸디캡",
+                            "첼시:아스널",
+                        ],
+                        [
+                            "SC",
+                            1777116600000,
+                            "EPL",
+                            13,
+                            "언더",
+                            1.82,
+                            "-",
+                            0,
+                            "오버",
+                            1.72,
+                            9,
+                            2.5,
+                            0,
+                            2.5,
+                            "축구 언더오버",
+                            "첼시:아스널",
+                        ],
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+    )
+
+    assert market_rows == [
+        {
+            "id": "snapshot_001_bookmaker",
+            "snapshot_id": "snapshot_001",
+            "source_type": "bookmaker",
+            "source_name": "betman_moneyline_3way",
+            "market_family": "moneyline_3way",
+            "home_prob": 0.5018090852019227,
+            "draw_prob": 0.26998739630707,
+            "away_prob": 0.22820351849100728,
+            "home_price": 0.52356,
+            "draw_price": 0.28169,
+            "away_price": 0.238095,
+            "raw_payload": {
+                "betTypNm": "축구 승무패",
+                "leagueName": "EPL",
+                "gameKey": "첼시:아스널",
+                "winAllot": 1.91,
+                "drawAllot": 3.55,
+                "loseAllot": 4.2,
+            },
+            "observed_at": "2026-04-25T12:30:00Z",
+        }
+    ]
+    assert variant_rows == [
+        {
+            "id": "snapshot_001_bookmaker_spreads_12",
+            "snapshot_id": "snapshot_001",
+            "source_type": "bookmaker",
+            "source_name": "betman_spreads",
+            "market_family": "spreads",
+            "selection_a_label": "Chelsea -0.5",
+            "selection_a_price": 0.465116,
+            "selection_b_label": "Arsenal +0.5",
+            "selection_b_price": 0.60241,
+            "line_value": -0.5,
+            "raw_payload": {
+                "betTypNm": "축구 핸디캡",
+                "leagueName": "EPL",
+                "gameKey": "첼시:아스널",
+            },
+            "observed_at": "2026-04-25T12:30:00Z",
+        },
+        {
+            "id": "snapshot_001_bookmaker_totals_13",
+            "snapshot_id": "snapshot_001",
+            "source_type": "bookmaker",
+            "source_name": "betman_totals",
+            "market_family": "totals",
+            "selection_a_label": "Under 2.5",
+            "selection_a_price": 0.549451,
+            "selection_b_label": "Over 2.5",
+            "selection_b_price": 0.581395,
+            "line_value": 2.5,
+            "raw_payload": {
+                "betTypNm": "축구 언더오버",
+                "leagueName": "EPL",
+                "gameKey": "첼시:아스널",
+            },
+            "observed_at": "2026-04-25T12:30:00Z",
+        },
+    ]
+
+
+def test_build_betman_market_rows_skips_ambiguous_same_kickoff_groups():
+    market_rows, variant_rows = build_betman_market_rows(
+        detail_payloads=[
+            {
+                "currentLottery": {"saleEndDate": 1777120200000},
+                "compSchedules": {
+                    "keys": [
+                        "itemCode",
+                        "gameDate",
+                        "leagueName",
+                        "matchSeq",
+                        "winTxt",
+                        "winAllot",
+                        "drawTxt",
+                        "drawAllot",
+                        "loseTxt",
+                        "loseAllot",
+                        "handi",
+                        "winHandi",
+                        "drawHandi",
+                        "loseHandi",
+                        "betTypNm",
+                        "gameKey",
+                    ],
+                    "datas": [
+                        ["SC", 1777116600000, "EPL", 11, "승", 1.91, "무", 3.55, "패", 4.2, 0, 0, 0, 0, "축구 승무패", "첼시:아스널"],
+                        ["SC", 1777116600000, "EPL", 21, "승", 2.1, "무", 3.2, "패", 3.4, 0, 0, 0, 0, "축구 승무패", "리버풀:토트넘"],
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+    )
+
+    assert market_rows == []
+    assert variant_rows == []
 
 
 def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():

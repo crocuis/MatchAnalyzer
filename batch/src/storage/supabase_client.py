@@ -21,7 +21,14 @@ class SupabaseClient:
         self.service_key = service_key
 
     def _normalize_bulk_upsert_rows(self, rows: list[dict]) -> list[dict]:
-        return [dict(row) for row in rows]
+        if len(rows) < 2:
+            return [dict(row) for row in rows]
+
+        all_keys = sorted({key for row in rows for key in row})
+        if all(row.keys() == rows[0].keys() for row in rows[1:]):
+            return [dict(row) for row in rows]
+
+        return [{key: row.get(key) for key in all_keys} for row in rows]
 
     def _use_file_backend(self) -> bool:
         hostname = urlparse(self.base_url).hostname or ""

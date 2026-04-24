@@ -79,6 +79,194 @@ def test_build_market_probabilities_ignores_prediction_market_observed_after_kic
     assert prediction_market is None
 
 
+def test_build_variant_markets_adds_recommendations_for_supported_half_lines():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-slug"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 2.5,
+                "selection_a_label": "Over 2.5",
+                "selection_a_price": 0.49,
+                "selection_b_label": "Under 2.5",
+                "selection_b_price": 0.51,
+                "raw_payload": {"market_slug": "totals-slug"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.5,
+            "selection_a_label": "Home -0.5",
+            "selection_a_price": 0.45,
+            "selection_b_label": "Away +0.5",
+            "selection_b_price": 0.55,
+            "market_slug": "spread-slug",
+            "recommended_pick": "Home -0.5",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.1557, abs=1e-4),
+            "expected_value": pytest.approx(0.346, abs=1e-4),
+            "market_price": 0.45,
+            "model_probability": pytest.approx(0.6057, abs=1e-4),
+            "market_probability": 0.45,
+        },
+        {
+            "market_family": "totals",
+            "source_name": "polymarket_totals",
+            "line_value": 2.5,
+            "selection_a_label": "Over 2.5",
+            "selection_a_price": 0.49,
+            "selection_b_label": "Under 2.5",
+            "selection_b_price": 0.51,
+            "market_slug": "totals-slug",
+            "recommended_pick": "Over 2.5",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.0868, abs=1e-4),
+            "expected_value": pytest.approx(0.1771, abs=1e-4),
+            "market_price": 0.49,
+            "model_probability": pytest.approx(0.5768, abs=1e-4),
+            "market_probability": 0.49,
+        },
+    ]
+
+
+def test_build_variant_markets_adds_recommendations_for_integer_and_quarter_lines():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.25,
+                "selection_a_label": "Home -0.25",
+                "selection_a_price": 0.47,
+                "selection_b_label": "Away +0.25",
+                "selection_b_price": 0.53,
+                "raw_payload": {"market_slug": "spread-quarter"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 3.0,
+                "selection_a_label": "Over 3.0",
+                "selection_a_price": 0.41,
+                "selection_b_label": "Under 3.0",
+                "selection_b_price": 0.59,
+                "raw_payload": {"market_slug": "totals-integer"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 2.25,
+                "selection_a_label": "Over 2.25",
+                "selection_a_price": 0.46,
+                "selection_b_label": "Under 2.25",
+                "selection_b_price": 0.54,
+                "raw_payload": {"market_slug": "totals-quarter"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.25,
+            "selection_a_label": "Home -0.25",
+            "selection_a_price": 0.47,
+            "selection_b_label": "Away +0.25",
+            "selection_b_price": 0.53,
+            "market_slug": "spread-quarter",
+            "recommended_pick": "Home -0.25",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.1854, abs=1e-4),
+            "expected_value": pytest.approx(0.3945, abs=1e-4),
+            "market_price": 0.47,
+            "model_probability": pytest.approx(0.6554, abs=1e-4),
+            "market_probability": 0.47,
+        },
+        {
+            "market_family": "totals",
+            "source_name": "polymarket_totals",
+            "line_value": 3.0,
+            "selection_a_label": "Over 3.0",
+            "selection_a_price": 0.41,
+            "selection_b_label": "Under 3.0",
+            "selection_b_price": 0.59,
+            "market_slug": "totals-integer",
+            "recommended_pick": "Over 3.0",
+            "recommended": False,
+            "no_bet_reason": "variant_ev_below_threshold",
+            "edge": pytest.approx(0.0346, abs=1e-4),
+            "expected_value": pytest.approx(0.0844, abs=1e-4),
+            "market_price": 0.41,
+            "model_probability": pytest.approx(0.4446, abs=1e-4),
+            "market_probability": 0.41,
+        },
+        {
+            "market_family": "totals",
+            "source_name": "polymarket_totals",
+            "line_value": 2.25,
+            "selection_a_label": "Over 2.25",
+            "selection_a_price": 0.46,
+            "selection_b_label": "Under 2.25",
+            "selection_b_price": 0.54,
+            "market_slug": "totals-quarter",
+            "recommended_pick": "Over 2.25",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.1683, abs=1e-4),
+            "expected_value": pytest.approx(0.3659, abs=1e-4),
+            "market_price": 0.46,
+            "model_probability": pytest.approx(0.6283, abs=1e-4),
+            "market_probability": 0.46,
+        },
+    ]
+
+
 def test_build_review_keeps_empty_tags_for_correct_prediction():
     review = build_review(
         prediction={
@@ -321,6 +509,46 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
 
     assert selected_snapshots == [snapshot_rows[0], snapshot_rows[1]]
     assert selected_markets == [market_rows[0], market_rows[1]]
+
+
+def test_select_real_prediction_inputs_prefers_explicit_match_ids_over_date():
+    snapshot_rows = [
+        {"id": "match_a_t_minus_24h", "match_id": "match_a", "checkpoint_type": "T_MINUS_24H"},
+        {"id": "match_b_t_minus_24h", "match_id": "match_b", "checkpoint_type": "T_MINUS_24H"},
+    ]
+    market_rows = [
+        {
+            "id": "match_a_t_minus_24h_bookmaker",
+            "snapshot_id": "match_a_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.4,
+            "draw_prob": 0.3,
+            "away_prob": 0.3,
+        },
+        {
+            "id": "match_b_t_minus_24h_bookmaker",
+            "snapshot_id": "match_b_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.45,
+            "draw_prob": 0.25,
+            "away_prob": 0.30,
+        },
+    ]
+    match_rows = [
+        {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
+        {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00"},
+    ]
+
+    selected_snapshots, selected_markets = select_real_prediction_inputs(
+        snapshot_rows=snapshot_rows,
+        market_rows=market_rows,
+        match_rows=match_rows,
+        target_date="2026-04-12",
+        target_match_ids={"match_b"},
+    )
+
+    assert selected_snapshots == [snapshot_rows[1]]
+    assert selected_markets == [market_rows[1]]
 
 
 def test_build_review_payload_keeps_completed_predictions_without_market_rows():
@@ -1018,6 +1246,74 @@ def test_run_predictions_job_generates_all_available_checkpoints_in_real_mode(
         "match_a_t_minus_24h",
         "match_a_t_minus_6h",
     ]
+
+
+def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 3,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "match_b_t_minus_24h",
+                        "match_id": "match_b",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 4,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.52,
+                        "draw_prob": 0.25,
+                        "away_prob": 0.23,
+                    },
+                    {
+                        "id": "match_b_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_b_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.55,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.21,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                    {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_MATCH_IDS", "match_b")
+
+    run_predictions_job.main()
+
+    assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
 
 
 def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):

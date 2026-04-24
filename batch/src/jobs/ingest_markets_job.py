@@ -2,11 +2,14 @@ import json
 import os
 
 from batch.src.ingest.fetch_markets import (
+    build_betman_market_rows,
     build_market_rows_from_schedule,
     build_market_snapshots,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_variant_rows,
     build_prediction_market_rows_for_snapshots,
+    fetch_betman_buyable_games,
+    fetch_betman_game_detail,
     fetch_daily_schedule,
 )
 from batch.src.jobs.sample_data import SAMPLE_MATCH_ID
@@ -36,6 +39,18 @@ MATCH_SNAPSHOT_PERSISTED_FIELDS = {
     "lineup_strength_delta",
     "lineup_source_summary",
 }
+
+
+def rows_differ(
+    previous_row: dict | None,
+    next_row: dict,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> bool:
+    if previous_row is None:
+        return True
+    keys = (set(previous_row) | set(next_row)) - (ignored_fields or set())
+    return any(previous_row.get(key) != next_row.get(key) for key in keys)
 
 
 def is_optional_missing_table_error(error: Exception, table_name: str) -> bool:
@@ -102,12 +117,104 @@ def promote_market_snapshots(
     return promoted
 
 
+def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
+    try:
+        return client.read_rows(table_name)
+    except ValueError as exc:
+        if is_optional_missing_table_error(exc, table_name):
+            return []
+        raise
+
+
+def collect_changed_market_match_ids(
+    *,
+    market_rows: list[dict],
+    existing_market_rows: list[dict],
+    variant_rows: list[dict],
+    existing_variant_rows: list[dict],
+    promoted_snapshot_rows: list[dict],
+    existing_snapshot_rows: list[dict],
+    snapshot_rows: list[dict],
+) -> list[str]:
+    changed_match_ids: set[str] = set()
+    snapshot_to_match_id = {
+        row["id"]: row["match_id"]
+        for row in snapshot_rows
+        if isinstance(row, dict) and row.get("id") and row.get("match_id")
+    }
+
+    existing_markets_by_id = {
+        row["id"]: row for row in existing_market_rows if isinstance(row, dict) and row.get("id")
+    }
+    for row in market_rows:
+        snapshot_id = row.get("snapshot_id")
+        match_id = snapshot_to_match_id.get(snapshot_id)
+        if match_id and rows_differ(
+            existing_markets_by_id.get(row.get("id")),
+            row,
+            ignored_fields={"observed_at", "raw_payload"},
+        ):
+            changed_match_ids.add(str(match_id))
+
+    existing_variants_by_id = {
+        row["id"]: row
+        for row in existing_variant_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    for row in variant_rows:
+        snapshot_id = row.get("snapshot_id")
+        match_id = snapshot_to_match_id.get(snapshot_id)
+        if match_id and rows_differ(
+            existing_variants_by_id.get(row.get("id")),
+            row,
+            ignored_fields={"observed_at", "raw_payload"},
+        ):
+            changed_match_ids.add(str(match_id))
+
+    existing_snapshots_by_id = {
+        row["id"]: row
+        for row in existing_snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    for row in promoted_snapshot_rows:
+        match_id = row.get("match_id")
+        snapshot_id = row.get("id")
+        if (
+            match_id
+            and snapshot_id
+            and rows_differ(existing_snapshots_by_id.get(snapshot_id), row)
+        ):
+            changed_match_ids.add(str(match_id))
+
+    return sorted(changed_match_ids)
+
+
+def overlay_market_rows(
+    base_rows: list[dict],
+    preferred_rows: list[dict],
+) -> list[dict]:
+    preferred_keys = {
+        (row["snapshot_id"], row.get("source_type"), row.get("market_family"))
+        for row in preferred_rows
+    }
+    merged = [
+        row
+        for row in base_rows
+        if (row["snapshot_id"], row.get("source_type"), row.get("market_family"))
+        not in preferred_keys
+    ]
+    merged.extend(preferred_rows)
+    return merged
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
-    snapshot_rows = client.read_rows("match_snapshots")
-    if not snapshot_rows:
+    all_snapshot_rows = client.read_rows("match_snapshots")
+    if not all_snapshot_rows:
         raise ValueError("match_snapshots must exist before ingesting markets")
+    existing_market_rows = client.read_rows("market_probabilities")
+    existing_variant_rows = read_optional_rows(client, "market_variants")
     use_real_schedule = os.environ.get("REAL_MARKET_DATE")
 
     if use_real_schedule:
@@ -115,7 +222,7 @@ def main() -> None:
         team_rows = client.read_rows("teams")
         competition_rows = client.read_rows("competitions")
         snapshot_rows = select_real_market_snapshots(
-            snapshot_rows=snapshot_rows,
+            snapshot_rows=all_snapshot_rows,
             match_rows=match_rows,
             team_rows=team_rows,
             target_date=use_real_schedule,
@@ -126,6 +233,21 @@ def main() -> None:
             )
         schedule = fetch_daily_schedule(use_real_schedule)
         payload = build_market_rows_from_schedule(schedule, snapshot_rows)
+        betman_buyable_games = fetch_betman_buyable_games()
+        betman_detail_payloads = [
+            fetch_betman_game_detail(
+                game["gmId"],
+                game["gmTs"],
+                game_year=game.get("gmOsidTsYear"),
+            )
+            for game in betman_buyable_games.get("protoGames", [])
+            if game.get("gmId") and game.get("gmTs")
+        ]
+        betman_market_rows, betman_variant_rows = build_betman_market_rows(
+            detail_payloads=betman_detail_payloads,
+            snapshot_rows=snapshot_rows,
+        )
+        payload = overlay_market_rows(payload, betman_market_rows)
         prediction_market_rows, prediction_market_raw = build_prediction_market_rows_for_snapshots(
             snapshot_rows=snapshot_rows,
             match_rows=match_rows,
@@ -143,14 +265,17 @@ def main() -> None:
             prediction_market_contexts,
         )
         payload.extend(prediction_market_rows)
+        prediction_market_variant_rows.extend(betman_variant_rows)
         archive_payload = {
             "bookmaker_schedule": schedule,
+            "betman_buyable_games": betman_buyable_games,
+            "betman_game_details": betman_detail_payloads,
             "prediction_market_search_results": prediction_market_raw,
         }
         archive_key = f"markets/{use_real_schedule}.json"
     else:
         snapshot_rows = [
-            row for row in snapshot_rows if row.get("match_id") == SAMPLE_MATCH_ID
+            row for row in all_snapshot_rows if row.get("match_id") == SAMPLE_MATCH_ID
         ]
         if not snapshot_rows:
             raise ValueError("sample match_snapshots must exist before ingesting markets")
@@ -217,6 +342,15 @@ def main() -> None:
         raise ValueError("no market payload was generated")
 
     promoted_snapshots = promote_market_snapshots(snapshot_rows, payload)
+    changed_match_ids = collect_changed_market_match_ids(
+        market_rows=payload,
+        existing_market_rows=existing_market_rows,
+        variant_rows=prediction_market_variant_rows,
+        existing_variant_rows=existing_variant_rows,
+        promoted_snapshot_rows=promoted_snapshots,
+        existing_snapshot_rows=all_snapshot_rows,
+        snapshot_rows=snapshot_rows,
+    )
 
     archive_uri = R2Client(
         settings.r2_bucket,
@@ -245,6 +379,7 @@ def main() -> None:
                 "promoted_snapshots": len(promoted_snapshots),
                 "inserted_rows": inserted,
                 "variant_rows": variant_inserted,
+                "changed_match_ids": changed_match_ids,
                 "payload": payload,
                 "variant_payload": prediction_market_variant_rows,
             },
