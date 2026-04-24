@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   fetchDailyPicks,
+  resolveDailyPicksDate,
   type DailyPickMarketFamily,
   type DailyPickItem,
   type DailyPicksResponse,
@@ -42,6 +43,7 @@ export default function DailyPicksView({
   onOpenMatch,
 }: DailyPicksViewProps) {
   const { t } = useTranslation();
+  const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
   const [marketFamily, setMarketFamily] = useState<MarketFilter>("all");
   const [leagueId, setLeagueId] = useState<string | null>(initialLeagueId);
   const [includeHeld, setIncludeHeld] = useState(false);
@@ -51,7 +53,7 @@ export default function DailyPicksView({
   useEffect(() => {
     let isMounted = true;
     setStatus("loading");
-    void fetchDailyPicks({ leagueId, marketFamily, includeHeld })
+    void fetchDailyPicks({ date: dailyPicksDate, leagueId, marketFamily, includeHeld })
       .then((response) => {
         if (!isMounted) {
           return;
@@ -69,7 +71,7 @@ export default function DailyPicksView({
     return () => {
       isMounted = false;
     };
-  }, [includeHeld, leagueId, marketFamily]);
+  }, [dailyPicksDate, includeHeld, leagueId, marketFamily]);
 
   const visibleItems = useMemo(() => {
     if (!payload) {

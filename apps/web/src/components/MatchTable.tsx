@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   fetchDailyPicks,
   isDashboardRecentMatch,
+  resolveDailyPicksDate,
   type DailyPicksResponse,
   type LeaguePredictionSummary,
   type MatchCardRow,
@@ -36,6 +37,7 @@ export default function MatchTable({
 }: MatchTableProps) {
   const { t } = useTranslation();
   const [dailyPicksSummary, setDailyPicksSummary] = useState<DailyPicksResponse | null>(null);
+  const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
   const isAllLoaded = matches.length >= totalMatches;
   const progressPercent = Math.min((matches.length / totalMatches) * 100, 100);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -83,7 +85,7 @@ export default function MatchTable({
   useEffect(() => {
     let isMounted = true;
 
-    void fetchDailyPicks({ leagueId: currentLeagueId })
+    void fetchDailyPicks({ date: dailyPicksDate, leagueId: currentLeagueId })
       .then((response) => {
         if (isMounted) {
           setDailyPicksSummary(response);
@@ -98,7 +100,7 @@ export default function MatchTable({
     return () => {
       isMounted = false;
     };
-  }, [currentLeagueId]);
+  }, [currentLeagueId, dailyPicksDate]);
 
   // SVG Gauge calculations
   const radius = 60;

@@ -63,6 +63,15 @@ const LEAGUE_ORDER = [
 const PAGE_SIZE = 4;
 
 function buildMatchFromDailyPick(item: DailyPickItem): MatchCardRow {
+  const heldMoneylineRecommendation = item.marketFamily === "moneyline" && item.status === "held"
+    ? {
+        pick: item.selectionLabel,
+        confidence: item.confidence,
+        recommended: false,
+        noBetReason: item.noBetReason,
+      }
+    : null;
+
   return {
     id: item.matchId,
     leagueId: item.leagueId,
@@ -71,8 +80,11 @@ function buildMatchFromDailyPick(item: DailyPickItem): MatchCardRow {
     awayTeam: item.awayTeam,
     kickoffAt: item.kickoffAt,
     status: "Prediction Ready",
-    recommendedPick: item.marketFamily === "moneyline" ? item.selectionLabel : null,
+    recommendedPick: item.marketFamily === "moneyline" && item.status !== "held"
+      ? item.selectionLabel
+      : null,
     confidence: item.confidence,
+    mainRecommendation: heldMoneylineRecommendation,
     noBetReason: item.noBetReason,
     needsReview: false,
   };
@@ -314,10 +326,13 @@ export default function App() {
 
   const fallbackSelectedMatchId = leagueMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
+  const dashboardActiveMatch =
+    leagueMatches.find((match) => match.id === activeMatchId) ?? null;
+  const dailyPickActiveMatch = activeMatchId ? dailyPickMatchesById[activeMatchId] : null;
   const activeMatch =
-    leagueMatches.find((match) => match.id === activeMatchId)
-    ?? (activeMatchId ? dailyPickMatchesById[activeMatchId] : null)
-    ?? null;
+    activeView === "dailyPicks"
+      ? dailyPickActiveMatch ?? dashboardActiveMatch
+      : dashboardActiveMatch ?? dailyPickActiveMatch;
   const reportMatch =
     loadedMatches.find((match) => match.id === reportMatchId)
     ?? (reportMatchId ? dailyPickMatchesById[reportMatchId] : null)

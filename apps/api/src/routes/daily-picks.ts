@@ -98,6 +98,17 @@ function normalizeDateFilter(value: string | null | undefined): string | null {
   return parsed.toISOString().slice(0, 10) === value ? value : null;
 }
 
+function resolveDefaultDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function resolveRequestedDate(value: string | null | undefined): string | null {
+  if (value === undefined) {
+    return resolveDefaultDate();
+  }
+  return normalizeDateFilter(value);
+}
+
 type PredictionCandidate = {
   predictionId: string | null;
   matchId: string;
@@ -228,7 +239,7 @@ export async function loadDailyPicksView(
 ): Promise<DailyPicksView> {
   const normalizedOptions = {
     ...options,
-    date: normalizeDateFilter(options.date),
+    date: resolveRequestedDate(options.date),
   };
   if (!supabase) {
     return { ...EMPTY_VIEW, date: normalizedOptions.date ?? null };
@@ -386,20 +397,22 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
   }
 
   const sortedItems = items.sort(compareDailyPicks);
+  const sortedHeldItems = heldItems.sort(compareDailyPicks);
   const visibleItems = sortedItems.slice(0, 10);
   const visibleHeldItems = args.options.includeHeld
-    ? heldItems.sort(compareDailyPicks).slice(0, 10)
+    ? sortedHeldItems.slice(0, 10)
     : [];
+  const allCandidates = [...sortedItems, ...sortedHeldItems];
 
   return {
     generatedAt: new Date().toISOString(),
     date: args.options.date ?? null,
     target: EMPTY_VIEW.target,
     coverage: {
-      moneyline: sortedItems.filter((item) => item.marketFamily === "moneyline").length,
-      spreads: sortedItems.filter((item) => item.marketFamily === "spreads").length,
-      totals: sortedItems.filter((item) => item.marketFamily === "totals").length,
-      held: heldItems.length,
+      moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
+      spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
+      totals: allCandidates.filter((item) => item.marketFamily === "totals").length,
+      held: sortedHeldItems.length,
     },
     items: visibleItems,
     heldItems: visibleHeldItems,
@@ -532,16 +545,16 @@ function buildVariantPick(
     id: `${base.matchId}:${rawFamily}:${selectionLabel ?? "selection"}`,
     marketFamily: rawFamily,
     selectionLabel: selectionLabel ?? "Unavailable",
-    confidence: normalizedMarketPrice,
+    confidence: null,
     edge: null,
     expectedValue: null,
     marketPrice: normalizedMarketPrice,
     modelProbability: null,
     marketProbability: normalizedMarketPrice,
     sourceAgreementRatio: base.sourceAgreementRatio,
-    status: "recommended",
-    noBetReason: null,
-    reasonLabels: [rawFamily],
+    status: "held",
+    noBetReason: "variant_market_price_only",
+    reasonLabels: [rawFamily, "heldByRecommendationGate"],
   };
 }
 
@@ -565,7 +578,7 @@ dailyPicks.get("/", async (c) => {
       : "all";
 
   const view = await loadDailyPicksView(supabase, {
-    date: c.req.query("date") ?? null,
+    date: c.req.query("date") ?? undefined,
     leagueId: c.req.query("leagueId") ?? null,
     marketFamily,
     includeHeld: c.req.query("includeHeld") === "true",

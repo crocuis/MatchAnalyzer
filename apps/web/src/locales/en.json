@@ -61,7 +61,8 @@
     },
     "noBetReasons": {
       "low_confidence": "Low confidence",
-      "heldByRecommendationGate": "Held by recommendation gate"
+      "heldByRecommendationGate": "Held by recommendation gate",
+      "variant_market_price_only": "Market price only"
     }
   },
   "leagues": {

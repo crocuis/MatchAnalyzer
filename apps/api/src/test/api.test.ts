@@ -207,12 +207,14 @@ describe("prediction API", () => {
   });
 
   it("returns an empty daily picks payload when no supabase client is configured", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-24T03:00:00Z"));
     const response = await app.request("/daily-picks");
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       generatedAt: null,
-      date: null,
+      date: "2026-04-24",
       target: {
         minDailyRecommendations: 5,
         maxDailyRecommendations: 10,
@@ -228,9 +230,10 @@ describe("prediction API", () => {
       items: [],
       heldItems: [],
     });
+    vi.useRealTimers();
   });
 
-  it("builds capped daily picks across moneyline spreads and totals", async () => {
+  it("builds capped moneyline picks and keeps price-only variants held", async () => {
     const tables = {
       matches: [
         {
@@ -480,9 +483,9 @@ describe("prediction API", () => {
     });
 
     expect(view.date).toBe("2026-04-24");
-    expect(view.items).toHaveLength(10);
+    expect(view.items).toHaveLength(4);
     expect(new Set(view.items.map((item) => item.marketFamily))).toEqual(
-      new Set(["moneyline", "spreads", "totals"]),
+      new Set(["moneyline"]),
     );
     expect(
       view.coverage.moneyline + view.coverage.spreads + view.coverage.totals,
@@ -499,6 +502,24 @@ describe("prediction API", () => {
       moneyline: 4,
       spreads: 4,
       totals: 4,
+      held: 8,
+    });
+
+    const heldView = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      marketFamily: "spreads",
+      includeHeld: true,
+    });
+
+    expect(heldView.items).toEqual([]);
+    expect(heldView.heldItems).toHaveLength(4);
+    expect(heldView.heldItems[0]).toMatchObject({
+      marketFamily: "spreads",
+      status: "held",
+      confidence: null,
+      expectedValue: null,
+      modelProbability: null,
+      noBetReason: "variant_market_price_only",
     });
   });
 
@@ -583,31 +604,39 @@ describe("prediction API", () => {
     expect(await response.json()).toMatchObject({
       date: "2026-04-24",
       coverage: {
-        held: 0,
+        held: 1,
       },
-      items: [
+      items: [],
+      heldItems: [
         {
           marketFamily: "spreads",
-          noBetReason: null,
-          status: "recommended",
+          confidence: null,
+          expectedValue: null,
+          modelProbability: null,
+          noBetReason: "variant_market_price_only",
+          status: "held",
         },
       ],
-      heldItems: [],
     });
     await expect(defaultResponse.json()).resolves.toMatchObject({
       heldItems: [],
     });
     await expect(heldToggleResponse.json()).resolves.toMatchObject({
       coverage: {
-        held: 1,
+        held: 2,
       },
-      heldItems: [
-        {
+      heldItems: expect.arrayContaining([
+        expect.objectContaining({
           marketFamily: "moneyline",
           noBetReason: "low_confidence",
           status: "held",
-        },
-      ],
+        }),
+        expect.objectContaining({
+          marketFamily: "spreads",
+          noBetReason: "variant_market_price_only",
+          status: "held",
+        }),
+      ]),
     });
 
     spy.mockRestore();

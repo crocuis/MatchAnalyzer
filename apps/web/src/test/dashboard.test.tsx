@@ -604,28 +604,6 @@ beforeEach(async () => {
                 reasonLabels: ["mainRecommendation"],
               },
               {
-                id: "pick-2",
-                matchId: "match-002",
-                predictionId: "prediction-2",
-                leagueId: "premier-league",
-                leagueLabel: "Premier League",
-                homeTeam: "Liverpool",
-                awayTeam: "Brentford",
-                kickoffAt: "2026-04-27 21:00 UTC",
-                marketFamily: "spreads",
-                selectionLabel: "Home -0.5",
-                confidence: 0.69,
-                edge: 0.08,
-                expectedValue: 0.18,
-                marketPrice: 0.58,
-                modelProbability: 0.66,
-                marketProbability: 0.58,
-                sourceAgreementRatio: 0.75,
-                status: "recommended",
-                noBetReason: null,
-                reasonLabels: ["spreads"],
-              },
-              {
                 id: "pick-3",
                 matchId: "match-003",
                 predictionId: "prediction-3",
@@ -634,8 +612,8 @@ beforeEach(async () => {
                 homeTeam: "Inter",
                 awayTeam: "Bayern Munich",
                 kickoffAt: "2026-04-28 19:00 UTC",
-                marketFamily: "totals",
-                selectionLabel: "Under 2.5",
+                marketFamily: "moneyline",
+                selectionLabel: "DRAW",
                 confidence: 0.71,
                 edge: 0.1,
                 expectedValue: 0.21,
@@ -645,10 +623,54 @@ beforeEach(async () => {
                 sourceAgreementRatio: 0.7,
                 status: "recommended",
                 noBetReason: null,
-                reasonLabels: ["totals"],
+                reasonLabels: ["mainRecommendation"],
               },
             ];
             const heldItems = [
+              {
+                id: "held-spread-1",
+                matchId: "match-002",
+                predictionId: "prediction-2",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Liverpool",
+                awayTeam: "Brentford",
+                kickoffAt: "2026-04-27 21:00 UTC",
+                marketFamily: "spreads",
+                selectionLabel: "Home -0.5",
+                confidence: null,
+                edge: null,
+                expectedValue: null,
+                marketPrice: 0.58,
+                modelProbability: null,
+                marketProbability: 0.58,
+                sourceAgreementRatio: 0.75,
+                status: "held",
+                noBetReason: "variant_market_price_only",
+                reasonLabels: ["spreads", "heldByRecommendationGate"],
+              },
+              {
+                id: "held-total-1",
+                matchId: "match-003",
+                predictionId: "prediction-3",
+                leagueId: "champions-league",
+                leagueLabel: "UEFA Champions League",
+                homeTeam: "Inter",
+                awayTeam: "Bayern Munich",
+                kickoffAt: "2026-04-28 19:00 UTC",
+                marketFamily: "totals",
+                selectionLabel: "Under 2.5",
+                confidence: null,
+                edge: null,
+                expectedValue: null,
+                marketPrice: 0.53,
+                modelProbability: null,
+                marketProbability: 0.53,
+                sourceAgreementRatio: 0.7,
+                status: "held",
+                noBetReason: "variant_market_price_only",
+                reasonLabels: ["totals", "heldByRecommendationGate"],
+              },
               {
                 id: "held-1",
                 matchId: "match-004",
@@ -676,7 +698,7 @@ beforeEach(async () => {
               generatedAt: "2026-04-24T08:00:00Z",
               date: "2026-04-24",
               target: { minDailyRecommendations: 5, maxDailyRecommendations: 10, hitRate: 0.7, roi: 0.2 },
-              coverage: { moneyline: 1, spreads: 1, totals: 1, held: 1 },
+              coverage: { moneyline: 3, spreads: 1, totals: 1, held: 3 },
               items,
               heldItems,
             };
@@ -1156,11 +1178,15 @@ describe("dashboard redesign", () => {
   it("shows daily picks header and board entry points", async () => {
     render(<App />);
 
+    const fetchMock = vi.mocked(fetch);
     expect(await screen.findByRole("button", { name: /^daily picks$/i })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /open daily picks/i })).toBeInTheDocument();
     expect(screen.getByText(/qualified recommendations/i)).toBeInTheDocument();
-    expect(await screen.findByText("3 picks")).toBeInTheDocument();
+    expect(await screen.findByText("2 picks")).toBeInTheDocument();
     expect(screen.getByText("70% hit / 20% ROI")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/daily-picks?date=2026-04-24&leagueId=premier-league",
+    );
   });
 
   it("opens the daily picks view from the dashboard CTA", async () => {
@@ -1186,8 +1212,9 @@ describe("dashboard redesign", () => {
 
     expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
     expect(screen.getByText("HOME")).toBeInTheDocument();
-    expect(screen.getByText("Home -0.5")).toBeInTheDocument();
-    expect(screen.getByText("Under 2.5")).toBeInTheDocument();
+    expect(screen.getByText("DRAW")).toBeInTheDocument();
+    expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
+    expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /over\/under/i })).toBeInTheDocument();
   });
@@ -1203,17 +1230,30 @@ describe("dashboard redesign", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps held moneyline picks as no-bet while detail data is loading", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+    fireEvent.click(screen.getByRole("switch", { name: /show held/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /arsenal vs fulham/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Arsenal vs Fulham" });
+    expect(within(dialog).getByLabelText("Bet: No bet")).toBeInTheDocument();
+  });
+
   it("filters daily picks by market family and can show held items", async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
     fireEvent.click(await screen.findByRole("button", { name: /handicap/i }));
 
-    expect(screen.getByText("Home -0.5")).toBeInTheDocument();
+    expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
     expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch", { name: /show held/i }));
 
+    expect(await screen.findByText("Home -0.5")).toBeInTheDocument();
+    expect(screen.getByText(/market price only/i)).toBeInTheDocument();
     expect(screen.queryByText(/low confidence/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /moneyline/i }));
