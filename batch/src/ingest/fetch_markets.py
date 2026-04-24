@@ -381,24 +381,41 @@ def resolve_variant_line_value(
     selection_b_label: str,
 ) -> float | None:
     raw_spread = _read_numeric(market.get("spread"))
-    if raw_spread is not None and abs(raw_spread) >= 0.1:
-        return raw_spread
-
     label_candidates = [
         _extract_first_signed_number(selection_a_label),
         _extract_first_signed_number(selection_b_label),
         _extract_first_signed_number(str(market.get("question") or "")),
         _extract_line_value_from_slug(str(market.get("slug") or "")),
     ]
+    best_label_candidate = next(
+        (candidate for candidate in label_candidates if candidate not in {None, 0.0}),
+        None,
+    )
     if market_type == "spreads":
-        for candidate in label_candidates:
-            if candidate not in {None, 0.0}:
-                return candidate
+        if (
+            raw_spread is not None
+            and abs(raw_spread) >= 0.1
+            and (
+                best_label_candidate is None
+                or abs(raw_spread) >= abs(best_label_candidate) * 0.5
+            )
+        ):
+            return raw_spread
+        if best_label_candidate not in {None, 0.0}:
+            return best_label_candidate
         return raw_spread
     if market_type == "totals":
-        for candidate in label_candidates:
-            if candidate is not None and candidate > 0:
-                return abs(candidate)
+        if (
+            raw_spread is not None
+            and raw_spread > 0.1
+            and (
+                best_label_candidate is None
+                or raw_spread >= abs(best_label_candidate) * 0.5
+            )
+        ):
+            return abs(raw_spread)
+        if best_label_candidate is not None and best_label_candidate > 0:
+            return abs(best_label_candidate)
         return raw_spread
     return raw_spread
 

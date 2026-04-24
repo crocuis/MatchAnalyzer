@@ -3501,6 +3501,68 @@ def test_build_prediction_market_variant_rows_recovers_line_value_from_slug_for_
     assert rows[1]["line_value"] == 4.5
 
 
+def test_build_prediction_market_variant_rows_prefers_slug_line_when_raw_spread_is_noisy():
+    rows = build_prediction_market_variant_rows(
+        markets=[
+            {
+                "question": "Will Crystal Palace FC win on 2026-04-20?",
+                "slug": "epl-cry-wes-2026-04-20-cry",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.4}, {"name": "No", "price": 0.6}],
+            },
+            {
+                "question": "Will Crystal Palace FC vs. West Ham United FC end in a draw?",
+                "slug": "epl-cry-wes-2026-04-20-draw",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.2}, {"name": "No", "price": 0.8}],
+            },
+            {
+                "question": "Will West Ham United FC win on 2026-04-20?",
+                "slug": "epl-cry-wes-2026-04-20-wes",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "moneyline",
+                "outcomes": [{"name": "Yes", "price": 0.4}, {"name": "No", "price": 0.6}],
+            },
+            {
+                "question": "Crystal Palace FC vs West Ham United FC handicap",
+                "slug": "epl-cry-wes-2026-04-20-spread-away-1pt5",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "spreads",
+                "spread": 0.11,
+                "outcomes": [
+                    {"name": "West Ham United FC", "price": 0.145},
+                    {"name": "Crystal Palace FC", "price": 0.855},
+                ],
+            },
+            {
+                "question": "Crystal Palace FC vs West Ham United FC total goals",
+                "slug": "epl-cry-wes-2026-04-20-total-4pt5",
+                "end_date": "2026-04-20T19:00:00Z",
+                "sports_market_type": "totals",
+                "spread": 0.15,
+                "outcomes": [
+                    {"name": "Over", "price": 0.14},
+                    {"name": "Under", "price": 0.86},
+                ],
+            },
+        ],
+        snapshot_contexts=[
+            {
+                "snapshot_id": "740923_t_minus_24h",
+                "competition_sport": "epl",
+                "kickoff_at": "2026-04-20T19:00:00+00:00",
+                "home_team_name": "Crystal Palace",
+                "away_team_name": "West Ham United",
+            }
+        ],
+    )
+
+    assert rows[0]["line_value"] == 1.5
+    assert rows[1]["line_value"] == 4.5
+
+
 def test_build_prediction_market_rows_skips_when_multiple_fuzzy_candidates_exist():
     rows = build_prediction_market_rows(
         markets=[
