@@ -114,6 +114,7 @@
     "upcomingMatches": "예정된 경기",
     "recentResults": "최근 경기 결과",
     "loadMore": "매치 더 보기",
+    "showLaterUpcoming": "이후 예정 경기 {{count}}개 더 보기",
     "showingStatus": "전체 {{total}}개 중 {{count}}개 매치 표시 중",
     "allLoaded": "모든 매치를 불러왔습니다",
     "summary": {

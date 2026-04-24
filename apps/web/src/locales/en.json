@@ -114,6 +114,7 @@
     "upcomingMatches": "Upcoming Matches",
     "recentResults": "Recent Results",
     "loadMore": "Load More Matches",
+    "showLaterUpcoming": "Show {{count}} later matches",
     "showingStatus": "Showing {{count}} of {{total}} matches",
     "allLoaded": "All matches loaded",
     "summary": {
