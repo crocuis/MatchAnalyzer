@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   isDashboardRecentMatch,
@@ -6,6 +6,15 @@ import {
   type MatchCardRow,
 } from "../lib/api";
 import MatchCard from "./MatchCard";
+
+const UPCOMING_PREVIEW_DAYS = 3;
+
+function getUpcomingPreviewCutoffMillis(nowMillis: number): number {
+  const cutoff = new Date(nowMillis);
+  cutoff.setUTCDate(cutoff.getUTCDate() + UPCOMING_PREVIEW_DAYS);
+  cutoff.setUTCHours(23, 59, 59, 999);
+  return cutoff.getTime();
+}
 
 interface MatchTableProps {
   matches: MatchCardRow[];
@@ -29,8 +38,11 @@ export default function MatchTable({
   isLoadingMore = false,
 }: MatchTableProps) {
   const { t } = useTranslation();
+  const [showAllUpcomingMatches, setShowAllUpcomingMatches] = useState(false);
   const isAllLoaded = matches.length >= totalMatches;
-  const progressPercent = Math.min((matches.length / totalMatches) * 100, 100);
+  const progressPercent = totalMatches > 0
+    ? Math.min((matches.length / totalMatches) * 100, 100)
+    : 0;
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const successRate = predictionSummary?.successRate ?? 0;
   const successRateLabel =
@@ -41,6 +53,24 @@ export default function MatchTable({
     upcoming: matches.filter((match) => !isDashboardRecentMatch(match)),
     past: matches.filter((match) => isDashboardRecentMatch(match)),
   }), [matches]);
+  const visibleUpcomingMatches = useMemo(() => {
+    if (showAllUpcomingMatches) {
+      return groupedMatches.upcoming;
+    }
+
+    const cutoffMillis = getUpcomingPreviewCutoffMillis(Date.now());
+    return groupedMatches.upcoming.filter((match) => {
+      const kickoffMillis = Date.parse(match.kickoffAt);
+      return !Number.isFinite(kickoffMillis) || kickoffMillis <= cutoffMillis;
+    });
+  }, [groupedMatches.upcoming, showAllUpcomingMatches]);
+  const hiddenUpcomingMatchCount = groupedMatches.upcoming.length - visibleUpcomingMatches.length;
+  const visibleMatchCount = visibleUpcomingMatches.length + groupedMatches.past.length;
+  const firstMatchId = matches[0]?.id ?? null;
+
+  useEffect(() => {
+    setShowAllUpcomingMatches(false);
+  }, [firstMatchId]);
 
   useEffect(() => {
     if (isAllLoaded || isLoadingMore || !loadMoreRef.current) {
@@ -82,7 +112,7 @@ export default function MatchTable({
           {t("modal.sections.timeline")}
         </h2>
         <span className="sectionInfo">
-          {t("matchTable.showingStatus", { count: matches.length, total: totalMatches })}
+          {t("matchTable.showingStatus", { count: visibleMatchCount, total: totalMatches })}
         </span>
       </div>
 
@@ -189,7 +219,7 @@ export default function MatchTable({
                 {t("matchTable.upcomingMatches")}
               </h3>
               <div className="matchGrid">
-                {groupedMatches.upcoming.map((match) => (
+                {visibleUpcomingMatches.map((match) => (
                   <MatchCard
                     key={match.id}
                     match={match}
@@ -198,6 +228,17 @@ export default function MatchTable({
                   />
                 ))}
               </div>
+              {hiddenUpcomingMatchCount > 0 ? (
+                <div style={{ display: "flex", justifyContent: "center", marginTop: "20px" }}>
+                  <button
+                    className="loadMoreBtn"
+                    type="button"
+                    onClick={() => setShowAllUpcomingMatches(true)}
+                  >
+                    {t("matchTable.showLaterUpcoming", { count: hiddenUpcomingMatchCount })}
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -229,7 +270,9 @@ export default function MatchTable({
                 <div className="progressBarFill" style={{ width: `${progressPercent}%` }} />
               </div>
               <p className="progressLabel">
-                {isAllLoaded ? t("matchTable.allLoaded") : t("matchTable.showingStatus", { count: matches.length, total: totalMatches })}
+                {isAllLoaded
+                  ? t("matchTable.allLoaded")
+                  : t("matchTable.showingStatus", { count: visibleMatchCount, total: totalMatches })}
               </p>
             </div>
 
