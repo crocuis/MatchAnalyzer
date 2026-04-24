@@ -98,6 +98,279 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   background: white; color: var(--accent-primary); box-shadow: var(--shadow-sm);
 }
 
+.dailyPicksHeaderButton,
+.dailyPicksPrimaryButton {
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: #fff;
+  font-weight: 800;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.dailyPicksTeaser {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) repeat(4, minmax(96px, auto)) auto;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-primary);
+  border-radius: 8px;
+}
+
+.dailyPicksTeaser h2 {
+  margin: 4px 0;
+}
+
+.dailyPicksTeaser p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.dailyPicksTeaserStats {
+  display: grid;
+  gap: 4px;
+  min-width: 112px;
+}
+
+.dailyPicksTeaserStats strong {
+  font-size: .9rem;
+  line-height: 1.25;
+}
+
+.dailyPicksSkeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.dailyPicksSkeleton {
+  display: block;
+  width: 100%;
+  min-width: 84px;
+  height: 18px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 50%, #e2e8f0 100%);
+  background-size: 200% 100%;
+  animation: dailyPicksSkeletonPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dailyPicksSkeletonPulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.dailyPicksView {
+  display: grid;
+  gap: 20px;
+}
+
+.dailyPicksBackButton {
+  justify-self: start;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-weight: 700;
+}
+
+.dailyPicksHero {
+  display: grid;
+  gap: 12px;
+}
+
+.dailyPicksHero h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.dailyPicksHero p {
+  margin: 0;
+  color: var(--text-secondary);
+  max-width: 720px;
+}
+
+.dailyPicksTargetGrid,
+.dailyPickMetrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 10px;
+}
+
+.dailyPicksTargetGrid span,
+.dailyPickMetrics span {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-primary);
+  padding: 10px;
+}
+
+.dailyPicksCoverage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dailyPicksCoverage span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-size: .82rem;
+  font-weight: 800;
+  padding: 6px 10px;
+}
+
+.dailyPicksFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.dailyPicksFilters button,
+.dailyPicksFilters select {
+  min-height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  padding: 0 12px;
+  font-weight: 700;
+}
+
+.dailyPicksFilter-active {
+  border-color: var(--accent-primary) !important;
+  color: var(--accent-primary) !important;
+}
+
+.dailyPicksHeldToggle {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.dailyPicksEmpty {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.dailyPicksEmpty button {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-primary);
+  color: var(--accent-primary);
+  cursor: pointer;
+  font-weight: 800;
+  padding: 9px 12px;
+}
+
+.dailyPicksList {
+  display: grid;
+  gap: 12px;
+}
+
+.dailyPickCard {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, .7fr) minmax(320px, 1.2fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-primary);
+  padding: 14px;
+}
+
+.dailyPickCard-recommended {
+  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--border-subtle));
+}
+
+.dailyPickCard-held {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, var(--border-subtle));
+  opacity: .72;
+}
+
+.dailyPickCard-pending {
+  border-color: color-mix(in srgb, var(--accent-warning) 35%, var(--border-subtle));
+}
+
+.dailyPickCard-hit {
+  border-color: color-mix(in srgb, var(--accent-success) 42%, var(--border-subtle));
+}
+
+.dailyPickCard-miss {
+  border-color: color-mix(in srgb, var(--accent-danger) 42%, var(--border-subtle));
+}
+
+.dailyPickCardButton {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.dailyPickLeague,
+.dailyPickKickoff,
+.dailyPickMetrics small,
+.dailyPickFamily {
+  color: var(--text-secondary);
+  font-size: .78rem;
+}
+
+.dailyPickMatch,
+.dailyPickDecision strong {
+  color: var(--text-primary);
+}
+
+.dailyPickDecision {
+  display: grid;
+  gap: 4px;
+}
+
+.dailyPickStatus {
+  color: var(--daily-pick-status-color, var(--accent-primary));
+  font-weight: 800;
+}
+
+.dailyPickCard-recommended .dailyPickStatus {
+  --daily-pick-status-color: var(--accent-primary);
+}
+
+.dailyPickCard-held .dailyPickStatus {
+  --daily-pick-status-color: var(--text-muted);
+}
+
+.dailyPickCard-pending .dailyPickStatus {
+  --daily-pick-status-color: var(--accent-warning);
+}
+
+.dailyPickCard-hit .dailyPickStatus {
+  --daily-pick-status-color: var(--accent-success);
+}
+
+.dailyPickCard-miss .dailyPickStatus {
+  --daily-pick-status-color: var(--accent-danger);
+}
+
+.dailyPickReason {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
 /* Tabs */
 .leagueTabs {
   margin-bottom: 32px;
@@ -1008,6 +1281,10 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   .predictionSummaryGrid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .dailyPicksTeaser {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Match Table Layout */
@@ -1328,5 +1605,13 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   }
   .predictionSummaryGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .dailyPickCard,
+  .dailyPicksTargetGrid,
+  .dailyPickMetrics {
+    grid-template-columns: 1fr;
   }
 }

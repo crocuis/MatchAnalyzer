@@ -576,6 +576,114 @@ beforeEach(async () => {
         };
       }
 
+      if (url.startsWith("/api/daily-picks")) {
+        return {
+          ok: true,
+          json: async () => {
+            const items = [
+              {
+                id: "pick-1",
+                matchId: "match-001",
+                predictionId: "prediction-1",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Chelsea",
+                awayTeam: "Manchester City",
+                kickoffAt: "2026-04-27 19:00 UTC",
+                marketFamily: "moneyline",
+                selectionLabel: "HOME",
+                confidence: 0.72,
+                edge: 0.12,
+                expectedValue: 0.28,
+                marketPrice: 0.54,
+                modelProbability: 0.69,
+                marketProbability: 0.57,
+                sourceAgreementRatio: 0.8,
+                status: "recommended",
+                noBetReason: null,
+                reasonLabels: ["mainRecommendation"],
+              },
+              {
+                id: "pick-2",
+                matchId: "match-002",
+                predictionId: "prediction-2",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Liverpool",
+                awayTeam: "Brentford",
+                kickoffAt: "2026-04-27 21:00 UTC",
+                marketFamily: "spreads",
+                selectionLabel: "Home -0.5",
+                confidence: 0.69,
+                edge: 0.08,
+                expectedValue: 0.18,
+                marketPrice: 0.58,
+                modelProbability: 0.66,
+                marketProbability: 0.58,
+                sourceAgreementRatio: 0.75,
+                status: "recommended",
+                noBetReason: null,
+                reasonLabels: ["spreads"],
+              },
+              {
+                id: "pick-3",
+                matchId: "match-003",
+                predictionId: "prediction-3",
+                leagueId: "champions-league",
+                leagueLabel: "UEFA Champions League",
+                homeTeam: "Inter",
+                awayTeam: "Bayern Munich",
+                kickoffAt: "2026-04-28 19:00 UTC",
+                marketFamily: "totals",
+                selectionLabel: "Under 2.5",
+                confidence: 0.71,
+                edge: 0.1,
+                expectedValue: 0.21,
+                marketPrice: 0.53,
+                modelProbability: 0.64,
+                marketProbability: 0.53,
+                sourceAgreementRatio: 0.7,
+                status: "recommended",
+                noBetReason: null,
+                reasonLabels: ["totals"],
+              },
+            ];
+            const heldItems = [
+              {
+                id: "held-1",
+                matchId: "match-004",
+                predictionId: "prediction-4",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Arsenal",
+                awayTeam: "Fulham",
+                kickoffAt: "2026-04-20 19:00 UTC",
+                marketFamily: "moneyline",
+                selectionLabel: "HOME",
+                confidence: 0.51,
+                edge: 0.02,
+                expectedValue: 0.04,
+                marketPrice: 0.61,
+                modelProbability: 0.63,
+                marketProbability: 0.61,
+                sourceAgreementRatio: 0.5,
+                status: "held",
+                noBetReason: "low_confidence",
+                reasonLabels: ["heldByRecommendationGate"],
+              },
+            ];
+            return {
+              generatedAt: "2026-04-24T08:00:00Z",
+              date: "2026-04-24",
+              target: { minDailyRecommendations: 5, maxDailyRecommendations: 10, hitRate: 0.7, roi: 0.2 },
+              coverage: { moneyline: 1, spreads: 1, totals: 1, held: 1 },
+              items,
+              heldItems,
+            };
+          },
+        };
+      }
+
       if (url.endsWith("/api/predictions/match-001")) {
         return {
           ok: true,
@@ -1043,6 +1151,92 @@ describe("dashboard redesign", () => {
     render(<App />);
 
     expect(screen.getByText("Match Analysis Hub")).toBeInTheDocument();
+  });
+
+  it("shows daily picks header and board entry points", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /^daily picks$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /open daily picks/i })).toBeInTheDocument();
+    expect(screen.getByText(/qualified recommendations/i)).toBeInTheDocument();
+    expect(await screen.findByText("3 picks")).toBeInTheDocument();
+    expect(screen.getByText("70% hit / 20% ROI")).toBeInTheDocument();
+  });
+
+  it("opens the daily picks view from the dashboard CTA", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /open daily picks/i }));
+
+    expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+  });
+
+  it("opens the daily picks view from the header button", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+
+    expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+  });
+
+  it("renders daily picks market filters and recommendation cards", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+
+    expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+    expect(screen.getByText("HOME")).toBeInTheDocument();
+    expect(screen.getByText("Home -0.5")).toBeInTheDocument();
+    expect(screen.getByText("Under 2.5")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /over\/under/i })).toBeInTheDocument();
+  });
+
+  it("opens match detail from a daily pick outside the dashboard league page", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /inter vs bayern munich/i }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "Inter vs Bayern Munich" }),
+    ).toBeInTheDocument();
+  });
+
+  it("filters daily picks by market family and can show held items", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /handicap/i }));
+
+    expect(screen.getByText("Home -0.5")).toBeInTheDocument();
+    expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: /show held/i }));
+
+    expect(screen.queryByText(/low confidence/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /moneyline/i }));
+
+    expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
+  });
+
+  it("passes the current league into the teaser CTA and updates cards when the league select changes", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /open daily picks/i }));
+
+    expect(await screen.findByText("Chelsea vs Manchester City")).toBeInTheDocument();
+    expect(screen.queryByText("Inter vs Bayern Munich")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Inter vs Bayern Munich")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Chelsea vs Manchester City")).not.toBeInTheDocument();
   });
 
   it("does not fetch evaluation reports when opening the match detail modal", async () => {

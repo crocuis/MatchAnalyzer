@@ -4,6 +4,66 @@
     "title": "Match Analysis Hub",
     "subtitle": "Discover the edge in match predictions with advanced probability modeling. Get optimal betting insights and monitor model performance in real-time."
   },
+  "dailyPicks": {
+    "entry": {
+      "header": "Daily Picks",
+      "eyebrow": "Betting board",
+      "boardTitle": "Today's qualified recommendations",
+      "boardCaption": "Moneyline, handicap, and over/under picks filtered by confidence and expected value.",
+      "volume": "Daily volume",
+      "volumeValue": "5-10 picks",
+      "open": "Open Daily Picks"
+    },
+    "title": "Daily Picks",
+    "subtitle": "A focused board of today's qualified recommendations. Historical targets are shown as model gates, not future profit guarantees.",
+    "back": "Back to dashboard",
+    "empty": "No recommendations passed today's filters.",
+    "error": "Daily Picks could not be loaded.",
+    "showHeldCandidates": "Show {{count}} held candidates",
+    "summary": {
+      "recommendations": "Recommendations",
+      "count": "{{count}} picks",
+      "updated": "Updated",
+      "markets": "Markets",
+      "coverage": "Market coverage",
+      "targets": "Backtest gates",
+      "targetValues": "{{hitRate}}% hit / {{roi}}% ROI",
+      "loading": "Loading Daily Picks summary"
+    },
+    "marketFamilies": {
+      "all": "All",
+      "moneyline": "Moneyline",
+      "spreads": "Handicap",
+      "totals": "Over/Under"
+    },
+    "filters": {
+      "league": "League",
+      "allLeagues": "All leagues",
+      "showHeld": "Show held"
+    },
+    "target": {
+      "hitRate": "Backtest hit rate",
+      "roi": "Backtest ROI",
+      "volume": "Daily picks"
+    },
+    "metrics": {
+      "confidence": "Confidence",
+      "expectedValue": "Expected value",
+      "marketPrice": "Market price",
+      "modelProbability": "Model probability"
+    },
+    "status": {
+      "recommended": "Recommended",
+      "held": "Held",
+      "pending": "Pending",
+      "hit": "Hit",
+      "miss": "Miss"
+    },
+    "noBetReasons": {
+      "low_confidence": "Low confidence",
+      "heldByRecommendationGate": "Held by recommendation gate"
+    }
+  },
   "leagues": {
     "premier-league": "Premier League",
     "laliga": "La Liga",
