@@ -242,6 +242,44 @@ def test_fetch_betman_json_falls_back_to_curl_when_urlopen_is_blocked(monkeypatc
     assert captured["check"] is True
 
 
+def test_fetch_betman_json_retries_transient_urlopen_errors_before_falling_back(monkeypatch):
+    attempts: list[int] = []
+    sleep_calls: list[float] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"rsMsg":{"statusCode":"S"}}'
+
+    def fake_urlopen(_request):
+        attempts.append(len(attempts) + 1)
+        if len(attempts) < 3:
+            raise URLError(ConnectionResetError("connection reset by peer"))
+        return FakeResponse()
+
+    monkeypatch.setattr(fetch_markets_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(fetch_markets_module.time, "sleep", sleep_calls.append)
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("curl fallback should not run after a successful retry")
+
+    monkeypatch.setattr(fetch_markets_module.subprocess, "run", fail_run)
+
+    payload = fetch_betman_json(
+        "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do",
+        {"gmId": "G011"},
+    )
+
+    assert payload == {"rsMsg": {"statusCode": "S"}}
+    assert attempts == [1, 2, 3]
+    assert sleep_calls == [1.0, 2.0]
+
+
 def test_build_match_row_uses_stale_scores_for_past_scheduled_events():
     row = build_match_row_from_event(
         {

@@ -1,6 +1,9 @@
 from io import BytesIO
 from urllib.error import HTTPError
 
+import pytest
+
+import batch.src.jobs.backfill_team_translations_job as backfill_team_translations_job
 from batch.src.ingest.fetch_team_translations import (
     build_primary_team_translation_row,
     build_primary_translation_rows_from_mapping,
@@ -276,3 +279,41 @@ def test_build_primary_translation_rows_from_mapping_uses_curated_names():
     assert misses == [
         {"id": "382", "name": "Manchester City", "reason": "mapped_name_not_found"}
     ]
+
+
+def test_backfill_team_translations_job_fails_fast_when_curated_map_is_missing(
+    monkeypatch,
+):
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            pass
+
+        def read_rows(self, table_name: str):
+            if table_name == "teams":
+                return [{"id": "363", "name": "Chelsea"}]
+            if table_name == "team_translations":
+                return []
+            raise AssertionError(f"unexpected table {table_name}")
+
+    monkeypatch.setattr(
+        backfill_team_translations_job,
+        "load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {"supabase_url": "https://example.test", "supabase_key": "key"},
+        )(),
+    )
+    monkeypatch.setattr(
+        backfill_team_translations_job,
+        "SupabaseClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        backfill_team_translations_job,
+        "load_curated_translation_map",
+        lambda locale: {},
+    )
+
+    with pytest.raises(ValueError, match="curated translation map missing or empty"):
+        backfill_team_translations_job.main()

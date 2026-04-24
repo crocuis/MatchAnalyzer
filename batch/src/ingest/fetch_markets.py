@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 from typing import Any
 from urllib.error import URLError
@@ -13,6 +14,7 @@ POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
 POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
 BETMAN_BUYABLE_GAMES_URL = "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do"
 BETMAN_GAME_INFO_URL = "https://m.betman.co.kr/buyPsblGame/gameInfoInq.do"
+BETMAN_URLOPEN_MAX_ATTEMPTS = 3
 BETMAN_COMPETITION_NAME_HINTS: dict[str, tuple[str, ...]] = {
     "premier-league": ("epl", "프리미어"),
     "la-liga": ("라리가", "laliga"),
@@ -65,27 +67,32 @@ def fetch_betman_json(
         headers={"Content-Type": "application/json; charset=UTF-8"},
         method="POST",
     )
-    try:
-        with urlopen(request) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except URLError:
-        completed = subprocess.run(
-            [
-                "curl",
-                "-s",
-                "-X",
-                "POST",
-                url,
-                "-H",
-                "Content-Type: application/json; charset=UTF-8",
-                "--data",
-                json.dumps(request_payload, ensure_ascii=False),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return json.loads(completed.stdout)
+    for attempt in range(1, BETMAN_URLOPEN_MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(request) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except URLError:
+            if attempt == BETMAN_URLOPEN_MAX_ATTEMPTS:
+                break
+            time.sleep(float(attempt))
+
+    completed = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-X",
+            "POST",
+            url,
+            "-H",
+            "Content-Type: application/json; charset=UTF-8",
+            "--data",
+            json.dumps(request_payload, ensure_ascii=False),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def fetch_betman_buyable_games() -> dict[str, Any]:

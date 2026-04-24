@@ -1467,11 +1467,16 @@ def build_variant_markets(
             match=match,
             teams_by_id=teams_by_id,
         )
-        if recommendation["model_probability"] is not None:
-            if recommendation["recommended_pick"] is not None:
-                market["recommended_pick"] = recommendation["recommended_pick"]
+        if recommendation["recommended_pick"] is not None:
+            market["recommended_pick"] = recommendation["recommended_pick"]
+        if (
+            recommendation["model_probability"] is not None
+            or recommendation["no_bet_reason"] is not None
+            or recommendation["recommended"]
+        ):
             market["recommended"] = recommendation["recommended"]
             market["no_bet_reason"] = recommendation["no_bet_reason"]
+        if recommendation["model_probability"] is not None:
             market["edge"] = recommendation["edge"]
             market["expected_value"] = recommendation["expected_value"]
             market["market_price"] = recommendation["market_price"]

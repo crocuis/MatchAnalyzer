@@ -319,6 +319,47 @@ def test_build_variant_markets_does_not_recommend_ultra_longshot_variant_prices(
     ]
 
 
+def test_build_variant_markets_preserves_no_bet_reason_without_model_probability():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-slug"},
+            }
+        ],
+        snapshot={},
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.5,
+            "selection_a_label": "Home -0.5",
+            "selection_a_price": 0.45,
+            "selection_b_label": "Away +0.5",
+            "selection_b_price": 0.55,
+            "market_slug": "spread-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
+        }
+    ]
+
+
 def test_build_review_keeps_empty_tags_for_correct_prediction():
     review = build_review(
         prediction={
@@ -2721,6 +2762,8 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "selection_b_label": "Away +0.5",
             "selection_b_price": 0.46,
             "market_slug": "spread-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
         },
         {
             "market_family": "totals",
@@ -2731,6 +2774,8 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "selection_b_label": "Under 2.5",
             "selection_b_price": 0.43,
             "market_slug": "total-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
         },
     ]
 

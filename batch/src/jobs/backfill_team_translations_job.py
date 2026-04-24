@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 from batch.src.ingest.fetch_team_translations import (
     build_primary_translation_rows_from_mapping,
@@ -44,6 +45,15 @@ def main() -> None:
         target_teams = target_teams[: int(limit_raw)]
     if provider == "curated":
         translation_map = load_curated_translation_map(locale)
+        if not translation_map and target_teams:
+            curated_path = (
+                Path(__file__).resolve().parents[1]
+                / "data"
+                / f"team_translations_{locale}.json"
+            )
+            raise ValueError(
+                f"curated translation map missing or empty: {curated_path}"
+            )
         translation_rows, misses = build_primary_translation_rows_from_mapping(
             teams=target_teams,
             translation_map=translation_map,
