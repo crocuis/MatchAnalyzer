@@ -21,6 +21,7 @@ CENTROID_DRAW_NO_MARKET_BONUS = 0.15
 DEFAULT_FUSION_POLICY_ID = "latest"
 DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
     "by_checkpoint_market_segment",
+    "by_competition",
     "by_checkpoint",
     "by_market_segment",
     "overall",
@@ -309,6 +310,7 @@ def choose_fusion_weights(
     checkpoint: str,
     market_segment: str,
     allowed_variants: tuple[str, ...],
+    competition_id: str | None = None,
 ) -> dict[str, str | dict[str, float]] | None:
     if not isinstance(policy_payload, dict):
         return None
@@ -319,6 +321,20 @@ def choose_fusion_weights(
     weights_payload = policy_payload.get("weights")
     if not isinstance(weights_payload, dict):
         return None
+    if "by_competition" not in selection_order and isinstance(
+        weights_payload.get("by_competition"),
+        dict,
+    ):
+        insertion_index = (
+            selection_order.index("by_checkpoint_market_segment") + 1
+            if "by_checkpoint_market_segment" in selection_order
+            else 0
+        )
+        selection_order = [
+            *selection_order[:insertion_index],
+            "by_competition",
+            *selection_order[insertion_index:],
+        ]
 
     selected_weights: dict[str, float] | None = None
     matched_on: str | None = None
@@ -338,6 +354,10 @@ def choose_fusion_weights(
             market_segments = weights_payload.get(selector)
             if isinstance(market_segments, dict):
                 candidate_weights = market_segments.get(market_segment)
+        elif selector == "by_competition":
+            competitions = weights_payload.get(selector)
+            if isinstance(competitions, dict) and competition_id:
+                candidate_weights = competitions.get(competition_id)
         elif selector == "overall":
             candidate_weights = weights_payload.get("overall")
 

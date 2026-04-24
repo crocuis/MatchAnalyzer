@@ -255,6 +255,7 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
     }
     assert state["prediction_fusion_policies"][0]["policy_payload"]["selection_order"] == [
         "by_checkpoint_market_segment",
+        "by_competition",
         "by_checkpoint",
         "by_market_segment",
         "overall",

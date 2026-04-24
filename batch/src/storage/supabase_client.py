@@ -20,6 +20,9 @@ class SupabaseClient:
         self.base_url = base_url
         self.service_key = service_key
 
+    def _normalize_bulk_upsert_rows(self, rows: list[dict]) -> list[dict]:
+        return [dict(row) for row in rows]
+
     def _use_file_backend(self) -> bool:
         hostname = urlparse(self.base_url).hostname or ""
         return hostname.endswith("placeholder.supabase.local") or hostname == "example.supabase.co"
@@ -117,10 +120,11 @@ class SupabaseClient:
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
+            normalized_rows = self._normalize_bulk_upsert_rows(rows)
             params = urlencode({"on_conflict": "id"})
             request = Request(
                 url=f"{self.base_url}/rest/v1/{table_name}?{params}",
-                data=json.dumps(rows).encode("utf-8"),
+                data=json.dumps(normalized_rows).encode("utf-8"),
                 headers={
                     **self._headers(),
                     "Prefer": "return=minimal,resolution=merge-duplicates",
@@ -138,7 +142,7 @@ class SupabaseClient:
                 body = exc.read().decode("utf-8")
                 retry_result = self._retry_without_missing_column(
                     table_name,
-                    rows,
+                    normalized_rows,
                     body,
                 )
                 if retry_result is not None:
@@ -155,7 +159,11 @@ class SupabaseClient:
             row["id"]: row for row in existing_rows if isinstance(row, dict) and "id" in row
         }
         for row in rows:
-            merged_rows[row["id"]] = row
+            existing_row = merged_rows.get(row["id"], {})
+            merged_rows[row["id"]] = {
+                **existing_row,
+                **row,
+            }
         target.write_text(json.dumps(list(merged_rows.values()), sort_keys=True))
         return len(rows)
 

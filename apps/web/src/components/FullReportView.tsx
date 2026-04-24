@@ -18,6 +18,7 @@ import MatchOutcomeBoard from "./MatchOutcomeBoard";
 import PostMatchReviewCard from "./PostMatchReviewCard";
 import PredictionCard from "./PredictionCard";
 import PredictionSourceEvaluationSection from "./PredictionSourceEvaluationSection";
+import TeamLogo from "./TeamLogo";
 import {
   resolveActualOutcome,
   resolvePredictionPresentation,
@@ -113,6 +114,14 @@ export default function FullReportView({
       ? t("report.marketOutperformed")
       : t("report.modelOutperformed")
     : t("report.marketUnavailable");
+  const isFinished =
+    match.status === "Needs Review" || match.status === "Review Ready" || !!match.finalResult;
+  const visiblePrediction = prediction
+    ? {
+        ...prediction,
+        valueRecommendation: isFinished ? null : prediction.valueRecommendation ?? null,
+      }
+    : null;
 
   return (
     <div className={`reportPage ${toneClass}`}>
@@ -141,7 +150,7 @@ export default function FullReportView({
                   {t("matchOutcome.bet.recommended")}
                 </span>
               )}
-              {Boolean(match.valueRecommendation?.recommended) && (
+              {!isFinished && Boolean(match.valueRecommendation?.recommended) && (
                 <span className="valueBadge">
                   {t("matchCard.valuePick")}
                 </span>
@@ -151,11 +160,11 @@ export default function FullReportView({
 
           <div className="reportScoreboard">
             <div className="reportTeam">
-              <div className="reportTeamLogo">
-                {match.homeTeamLogoUrl ? (
-                  <img src={match.homeTeamLogoUrl} alt="" />
-                ) : match.homeTeam[0]}
-              </div>
+              <TeamLogo
+                className="reportTeamLogo"
+                teamName={match.homeTeam}
+                logoUrl={match.homeTeamLogoUrl}
+              />
               <h1 className="reportTeamName">{match.homeTeam}</h1>
             </div>
 
@@ -172,11 +181,11 @@ export default function FullReportView({
             </div>
 
             <div className="reportTeam">
-              <div className="reportTeamLogo">
-                {match.awayTeamLogoUrl ? (
-                  <img src={match.awayTeamLogoUrl} alt="" />
-                ) : match.awayTeam[0]}
-              </div>
+              <TeamLogo
+                className="reportTeamLogo"
+                teamName={match.awayTeam}
+                logoUrl={match.awayTeamLogoUrl}
+              />
               <h1 className="reportTeamName">{match.awayTeam}</h1>
             </div>
           </div>
@@ -199,11 +208,11 @@ export default function FullReportView({
           <div className="reportMain">
             <section className="reportSection">
               <span className="panelTitle">{t("report.summary")}</span>
-              {prediction ? (
+              {visiblePrediction ? (
                 <PredictionCard
-                  confidence={prediction.confidence ?? match.confidence}
-                  prediction={prediction}
-                  recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
+                  confidence={visiblePrediction.confidence ?? match.confidence}
+                  prediction={visiblePrediction}
+                  recommendedPick={visiblePrediction.recommendedPick ?? match.recommendedPick}
                 />
               ) : (
                 <div className="contentPanel">

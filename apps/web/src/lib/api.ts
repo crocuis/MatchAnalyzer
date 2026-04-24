@@ -121,6 +121,24 @@ export interface PredictionFeatureMetadata {
   missing_signal_reasons?: PredictionMissingSignalReason[];
 }
 
+export interface PredictionMarketEnrichment {
+  status?: string;
+  currentPredictionMarketAvailable?: boolean;
+  current_prediction_market_available?: boolean;
+  predictionMarketRowId?: string | null;
+  prediction_market_row_id?: string | null;
+  predictionMarketSourceName?: string | null;
+  prediction_market_source_name?: string | null;
+  predictionMarketObservedAt?: string | null;
+  prediction_market_observed_at?: string | null;
+  variantMarketIds?: string[];
+  variant_market_ids?: string[];
+  variantMarketCount?: number;
+  variant_market_count?: number;
+  preservedFromPredictionId?: string | null;
+  preserved_from_prediction_id?: string | null;
+}
+
 export interface PredictionExplanationPayload {
   missingSignals?: string[];
   missing_signals?: string[];
@@ -152,6 +170,8 @@ export interface PredictionExplanationPayload {
   feature_context?: PredictionFeatureContext;
   featureMetadata?: PredictionFeatureMetadata;
   feature_metadata?: PredictionFeatureMetadata;
+  marketEnrichment?: PredictionMarketEnrichment;
+  market_enrichment?: PredictionMarketEnrichment;
   featureAttribution?: Array<{
     featureKey?: string;
     feature_key?: string;
@@ -344,7 +364,9 @@ export interface DailyPickItem {
   leagueId: string;
   leagueLabel: string;
   homeTeam: string;
+  homeTeamLogoUrl?: string | null;
   awayTeam: string;
+  awayTeamLogoUrl?: string | null;
   kickoffAt: string;
   marketFamily: DailyPickMarketFamily;
   selectionLabel: string;

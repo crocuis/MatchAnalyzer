@@ -14,6 +14,7 @@ CORE_SUPPORTED_COMPETITION_IDS = {
     "ligue-1",
     "champions-league",
     "europa-league",
+    "conference-league",
     "world-cup",
     "european-championship",
 }
@@ -332,7 +333,11 @@ def filter_supported_events(events: list[dict[str, Any]]) -> list[dict[str, Any]
 def infer_competition_type(competition_id: str) -> str:
     if is_international_competition_id(competition_id):
         return "international"
-    if competition_id in {"champions-league", "europa-league"}:
+    if competition_id in {
+        "champions-league",
+        "europa-league",
+        "conference-league",
+    }:
         return "cup"
     return "league"
 

@@ -28,6 +28,7 @@ const LEAGUE_ORDER = [
   "ligue-1",
   "champions-league",
   "europa-league",
+  "conference-league",
 ];
 
 const checkpointOrder: Record<string, number> = {
@@ -584,7 +585,13 @@ export async function loadDashboardMatchCardsPageView(
 
   const items = ((cardRows ?? []) as DashboardMatchCardRow[]).map((row) => {
     const mainRecommendation = normalizeDashboardMainRecommendation(row);
-    const valueRecommendation = row.has_prediction
+    const settledOutcome = resolveSettledOutcome({
+      finalResult: row.final_result,
+      kickoffAt: row.kickoff_at,
+      homeScore: row.home_score,
+      awayScore: row.away_score,
+    });
+    const valueRecommendation = row.has_prediction && settledOutcome === null
       ? normalizeValueRecommendationFromSummary(
           {
             valueRecommendationPick: row.value_recommendation_pick,
@@ -605,13 +612,6 @@ export async function loadDashboardMatchCardsPageView(
           null,
         )
       : [];
-    const settledOutcome = resolveSettledOutcome({
-      finalResult: row.final_result,
-      kickoffAt: row.kickoff_at,
-      homeScore: row.home_score,
-      awayScore: row.away_score,
-    });
-
     return {
       id: row.id,
       leagueId: row.league_id,
@@ -929,14 +929,15 @@ async function loadSelectedLeaguePageView(
     const prediction = predictionByMatchId.get(match.id);
     const review = reviewByMatchId.get(match.id);
     const mainRecommendation = prediction?.mainRecommendation ?? null;
-    const valueRecommendation = prediction?.valueRecommendation ?? null;
-    const variantMarkets = prediction?.variantMarkets ?? [];
     const settledOutcome = resolveSettledOutcome({
       finalResult: match.final_result,
       kickoffAt: match.kickoff_at,
       homeScore: match.home_score,
       awayScore: match.away_score,
     });
+    const valueRecommendation =
+      settledOutcome === null ? (prediction?.valueRecommendation ?? null) : null;
+    const variantMarkets = prediction?.variantMarkets ?? [];
     return {
       id: match.id,
       leagueId: match.competition_id,

@@ -118,6 +118,47 @@ function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function resolveSettledOutcome(args: {
+  finalResult: string | null | undefined;
+  kickoffAt: string | null | undefined;
+  homeScore: number | null | undefined;
+  awayScore: number | null | undefined;
+}) {
+  if (
+    args.finalResult === "HOME"
+    || args.finalResult === "DRAW"
+    || args.finalResult === "AWAY"
+  ) {
+    return args.finalResult;
+  }
+
+  if (
+    typeof args.homeScore !== "number"
+    || typeof args.awayScore !== "number"
+  ) {
+    return null;
+  }
+
+  const kickoffMillis =
+    typeof args.kickoffAt === "string" && args.kickoffAt.length > 0
+      ? Date.parse(args.kickoffAt)
+      : NaN;
+  const settledByTime =
+    Number.isFinite(kickoffMillis)
+    && kickoffMillis <= Date.now() - (3 * 60 * 60 * 1000);
+  if (!settledByTime) {
+    return null;
+  }
+
+  if (args.homeScore > args.awayScore) {
+    return "HOME";
+  }
+  if (args.homeScore < args.awayScore) {
+    return "AWAY";
+  }
+  return "DRAW";
+}
+
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -786,6 +827,7 @@ export async function loadPredictionView(
   const [
     { data: predictionRows, error: predictionsError },
     { data: snapshotRows, error: snapshotsError },
+    { data: matchRow, error: matchError },
   ] = await Promise.all([
     supabase
       .from("predictions")
@@ -798,9 +840,14 @@ export async function loadPredictionView(
       .from("match_snapshots")
       .select("id, checkpoint_type, captured_at, lineup_status, snapshot_quality")
       .eq("match_id", matchId),
+    supabase
+      .from("matches")
+      .select("kickoff_at, final_result, home_score, away_score")
+      .eq("id", matchId)
+      .maybeSingle(),
   ]);
 
-  if (predictionsError || snapshotsError) {
+  if (predictionsError || snapshotsError || matchError) {
     throw new Error("prediction queries failed");
   }
 
@@ -811,6 +858,12 @@ export async function loadPredictionView(
 
   const latestPrediction = sortedPredictions[0] ?? null;
   const marketEnrichedPrediction = pickMarketEnrichedPrediction(sortedPredictions);
+  const settledOutcome = resolveSettledOutcome({
+    finalResult: matchRow?.final_result ?? null,
+    kickoffAt: matchRow?.kickoff_at ?? null,
+    homeScore: readNumber(matchRow?.home_score),
+    awayScore: readNumber(matchRow?.away_score),
+  });
   const artifact = latestPrediction
     ? await loadArtifactById(supabase, latestPrediction.explanation_artifact_id)
     : null;
@@ -885,7 +938,7 @@ export async function loadPredictionView(
         latestPrediction.explanation_payload,
       )
     : null;
-  const valueRecommendation = latestPrediction
+  const valueRecommendation = latestPrediction && settledOutcome === null
     ? normalizeValueRecommendationFromSummary(
         {
           valueRecommendationPick:

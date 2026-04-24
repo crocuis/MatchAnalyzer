@@ -1,9 +1,11 @@
 import { useTranslation } from "react-i18next";
 import type { MatchCardRow } from "../lib/api";
 import {
+  resolveMarketEnrichmentStatus,
   resolvePredictionPresentation,
   resolveVerdictState,
 } from "../lib/predictionSummary";
+import TeamLogo from "./TeamLogo";
 
 interface MatchCardProps {
   match: MatchCardRow;
@@ -58,7 +60,9 @@ export default function MatchCard({
     verdictState === "correct" ? "hit" : verdictState === "miss" ? "miss" : "pending";
   const verdictGlyph =
     verdictState === "correct" ? "✓" : verdictState === "miss" ? "×" : "-";
-  const hasValuePick = Boolean(match.valueRecommendation?.recommended);
+  const hasValuePick = !isFinished && Boolean(match.valueRecommendation?.recommended);
+  const hasPreservedMarket =
+    resolveMarketEnrichmentStatus(match.explanationPayload) === "preserved";
   const dateColor =
     predictionPresentation.betState === "recommended"
       ? "var(--accent-primary)"
@@ -97,6 +101,11 @@ export default function MatchCard({
                   {t("matchCard.valuePick")}
                 </span>
               )}
+              {hasPreservedMarket && (
+                <span className="reviewBadge">
+                  {t("matchCard.summaryBadges.marketPreserved")}
+                </span>
+              )}
               {match.needsReview && (
                 <span
                   className="reviewBadge"
@@ -115,11 +124,7 @@ export default function MatchCard({
             <div className="matchTeams">
               <div className="teamRow" style={{ justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  <div className="teamLogo-sm">
-                    {match.homeTeamLogoUrl ? (
-                      <img src={match.homeTeamLogoUrl} alt={`${match.homeTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                    ) : match.homeTeam[0]}
-                  </div>
+                  <TeamLogo teamName={match.homeTeam} logoUrl={match.homeTeamLogoUrl} />
                   <span className="teamName">{match.homeTeam}</span>
                 </div>
                 {isFinished && (
@@ -133,11 +138,7 @@ export default function MatchCard({
 
               <div className="teamRow" style={{ justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  <div className="teamLogo-sm">
-                    {match.awayTeamLogoUrl ? (
-                      <img src={match.awayTeamLogoUrl} alt={`${match.awayTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                    ) : match.awayTeam[0]}
-                  </div>
+                  <TeamLogo teamName={match.awayTeam} logoUrl={match.awayTeamLogoUrl} />
                   <span className="teamName">{match.awayTeam}</span>
                 </div>
                 {isFinished && (

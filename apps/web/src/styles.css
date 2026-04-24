@@ -110,259 +110,375 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 
 .dailyPicksTeaser {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) repeat(4, minmax(96px, auto)) auto;
-  gap: 16px;
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding: 18px;
+  gap: 24px;
+  margin-bottom: 32px;
+  padding: 24px;
   border: 1px solid var(--border-subtle);
-  background: var(--surface-primary);
-  border-radius: 8px;
+  background: white;
+  border-radius: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+.dailyPicksTeaserMain {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .dailyPicksTeaser h2 {
-  margin: 4px 0;
-}
-
-.dailyPicksTeaser p {
   margin: 0;
-  color: var(--text-secondary);
-}
-
-.dailyPicksTeaserStats {
-  display: grid;
-  gap: 4px;
-  min-width: 112px;
-}
-
-.dailyPicksTeaserStats strong {
-  font-size: .9rem;
-  line-height: 1.25;
-}
-
-.dailyPicksSkeletonGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
-  gap: 10px;
-}
-
-.dailyPicksSkeleton {
-  display: block;
-  width: 100%;
-  min-width: 84px;
-  height: 18px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 50%, #e2e8f0 100%);
-  background-size: 200% 100%;
-  animation: dailyPicksSkeletonPulse 1.4s ease-in-out infinite;
-}
-
-@keyframes dailyPicksSkeletonPulse {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-.dailyPicksView {
-  display: grid;
-  gap: 20px;
-}
-
-.dailyPicksBackButton {
-  justify-self: start;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-primary);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 800;
   color: var(--text-primary);
-  padding: 8px 12px;
+  letter-spacing: -0.02em;
+}
+
+.dailyPicksTeaserMetrics {
+  display: flex;
+  gap: 24px;
+}
+
+.dailyPicksTeaserStat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dailyPicksTeaserStat strong {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.dailyPicksPrimaryButton {
+  padding: 12px 24px;
+  border-radius: 14px;
+  background: var(--accent-primary);
+  color: white;
   font-weight: 700;
+  font-size: 0.95rem;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+  transition: all 0.2s ease;
+}
+
+.dailyPicksPrimaryButton:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.25);
+  background: var(--accent-secondary);
 }
 
 .dailyPicksHero {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 40px;
+  margin-bottom: 24px;
+}
+
+.dailyPicksHeroMain {
+  flex: 1;
 }
 
 .dailyPicksHero h1 {
-  margin: 0;
-  font-size: 2rem;
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text-primary);
 }
 
 .dailyPicksHero p {
   margin: 0;
   color: var(--text-secondary);
-  max-width: 720px;
+  font-size: 0.95rem;
+  max-width: 600px;
+  line-height: 1.5;
+  opacity: 0.8;
 }
 
-.dailyPicksTargetGrid,
-.dailyPickMetrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  gap: 10px;
+.dailyPicksFiltersContainer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 0;
+  border-top: 1px solid rgba(0,0,0,0.05);
 }
 
-.dailyPicksTargetGrid span,
-.dailyPickMetrics span {
-  display: grid;
+.dailyPicksSegmentedControl {
+  display: flex;
   gap: 4px;
-  border: 1px solid var(--border-subtle);
+  padding: 4px;
+  background: #f1f5f9;
+  border-radius: 12px;
+}
+
+.dailyPicksSegment {
+  padding: 6px 14px;
   border-radius: 8px;
-  background: var(--surface-primary);
-  padding: 10px;
-}
-
-.dailyPicksCoverage {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.dailyPicksCoverage span {
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  font-size: .82rem;
-  font-weight: 800;
-  padding: 6px 10px;
-}
-
-.dailyPicksFilters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.dailyPicksFilters button,
-.dailyPicksFilters select {
-  min-height: 40px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  padding: 0 12px;
+  font-size: 0.85rem;
   font-weight: 700;
-}
-
-.dailyPicksFilter-active {
-  border-color: var(--accent-primary) !important;
-  color: var(--accent-primary) !important;
-}
-
-.dailyPicksHeldToggle {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
   color: var(--text-secondary);
-  font-weight: 700;
+  transition: all 0.2s ease;
 }
 
-.dailyPicksEmpty {
-  display: grid;
-  justify-items: start;
-  gap: 10px;
-}
-
-.dailyPicksEmpty button {
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-primary);
+.dailyPicksSegment-active {
+  background: white;
   color: var(--accent-primary);
-  cursor: pointer;
-  font-weight: 800;
-  padding: 9px 12px;
+  box-shadow: var(--shadow-sm);
 }
 
-.dailyPicksList {
-  display: grid;
+.dailyPicksFilterActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.dailyPicksSelectWrapper {
+  position: relative;
+  min-width: 160px;
+}
+
+.dailyPicksSelect {
+  width: 100%;
+  height: 38px;
+  padding: 0 36px 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: white;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  appearance: none;
+}
+
+.selectChevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.dailyPicksToggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.dailyPicksToggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggleSlider {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: #e2e8f0;
+  border-radius: 20px;
+  transition: 0.3s;
+}
+
+.toggleSlider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+.dailyPicksToggle input:checked + .toggleSlider {
+  background: var(--accent-primary);
+}
+
+.dailyPicksToggle input:checked + .toggleSlider::before {
+  transform: translateX(16px);
+}
+
+.toggleLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.dailyPicksTargetGrid {
+  display: flex;
   gap: 12px;
+}
+
+.dailyPicksTargetStat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 24px;
+  background: white;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  min-width: 120px;
+  box-shadow: var(--shadow-sm);
+}
+
+.dailyPicksTargetStat small {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dailyPicksTargetStat strong {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--accent-primary);
 }
 
 .dailyPickCard {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(160px, .7fr) minmax(320px, 1.2fr);
-  gap: 14px;
+  grid-template-columns: 1.2fr 1fr 1.5fr;
+  gap: 24px;
   align-items: center;
+  padding: 24px;
+  background: white;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-primary);
-  padding: 14px;
+  border-radius: 24px;
+  transition: all 0.3s cubic-bezier(0.2, 1, 0.3, 1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -1px rgba(0, 0, 0, 0.01);
+}
+
+.dailyPickCard:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--accent-secondary);
 }
 
 .dailyPickCard-recommended {
-  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--border-subtle));
+  background: radial-gradient(circle at top right, rgba(79, 70, 229, 0.04), transparent 40%), white;
+  border-color: rgba(79, 70, 229, 0.15);
 }
 
 .dailyPickCard-held {
-  border-color: color-mix(in srgb, var(--text-muted) 30%, var(--border-subtle));
-  opacity: .72;
-}
-
-.dailyPickCard-pending {
-  border-color: color-mix(in srgb, var(--accent-warning) 35%, var(--border-subtle));
+  background: #f8fafc;
+  opacity: 0.8;
 }
 
 .dailyPickCard-hit {
-  border-color: color-mix(in srgb, var(--accent-success) 42%, var(--border-subtle));
+  background: radial-gradient(circle at top right, rgba(16, 185, 129, 0.04), transparent 40%), white;
+  border-color: rgba(16, 185, 129, 0.15);
 }
 
 .dailyPickCard-miss {
-  border-color: color-mix(in srgb, var(--accent-danger) 42%, var(--border-subtle));
+  background: radial-gradient(circle at top right, rgba(244, 63, 94, 0.04), transparent 40%), white;
+  border-color: rgba(244, 63, 94, 0.15);
 }
 
 .dailyPickCardButton {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   text-align: left;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  cursor: pointer;
 }
 
-.dailyPickLeague,
-.dailyPickKickoff,
-.dailyPickMetrics small,
-.dailyPickFamily {
-  color: var(--text-secondary);
-  font-size: .78rem;
+.dailyPickLeague {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.dailyPickMatch,
-.dailyPickDecision strong {
+.dailyPickMatch {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 800;
   color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.dailyPickKickoff {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .dailyPickDecision {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
+  padding: 16px;
+  background: rgba(241, 245, 249, 0.5);
+  border-radius: 18px;
+  border: 1px solid rgba(0,0,0,0.02);
+}
+
+.dailyPickFamily {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.dailyPickDecision strong {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text-primary);
 }
 
 .dailyPickStatus {
-  color: var(--daily-pick-status-color, var(--accent-primary));
+  font-size: 0.8rem;
   font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
-.dailyPickCard-recommended .dailyPickStatus {
-  --daily-pick-status-color: var(--accent-primary);
+.dailyPickMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
 }
 
-.dailyPickCard-held .dailyPickStatus {
-  --daily-pick-status-color: var(--text-muted);
+.dailyPickMetrics span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px 12px;
+  background: white;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
 }
 
-.dailyPickCard-pending .dailyPickStatus {
-  --daily-pick-status-color: var(--accent-warning);
+.dailyPickMetrics small {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.dailyPickCard-hit .dailyPickStatus {
-  --daily-pick-status-color: var(--accent-success);
-}
-
-.dailyPickCard-miss .dailyPickStatus {
-  --daily-pick-status-color: var(--accent-danger);
+.dailyPickMetrics strong {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text-primary);
 }
 
 .dailyPickReason {
@@ -490,7 +606,7 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   border: 1px solid transparent;
 }
 .detailModal .modalHeader {
-  background: transparent !important;
+  background: var(--bg-surface) !important;
   border-bottom: 1px solid rgba(0,0,0,0.05);
 }
 
@@ -1354,20 +1470,24 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 /* Modal */
 .detailOverlay {
-  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px;
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 40px 20px;
   background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(12px); animation: fadeIn 0.3s ease-out;
+  overflow-y: auto;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .detailModal {
-  width: min(720px, 100%); max-height: 85vh; border-radius: 32px;
-  box-shadow: var(--shadow-float); overflow: hidden; display: flex; flex-direction: column;
+  width: min(720px, 100%); margin: auto; border-radius: 32px;
+  box-shadow: var(--shadow-float); background: var(--bg-surface);
+  display: flex; flex-direction: column; position: relative;
+  max-height: min(880px, calc(100vh - 80px)); overflow: hidden;
   animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes modalSlideUp { from { transform: translateY(15px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 .modalHeader {
   padding: 32px 40px; border-bottom: 1px solid rgba(0,0,0,0.05); position: relative;
+  background: inherit; border-radius: 32px 32px 0 0; z-index: 2;
 }
 .modalMeta {
   margin-bottom: 20px;
@@ -1382,7 +1502,14 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 .closeButton:hover { background: rgba(0,0,0,0.1); color: var(--text-primary); }
 
-.modalBody { padding: 32px 40px 40px; overflow-y: auto; display: flex; flex-direction: column; gap: 28px; }
+.modalScrollRegion {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modalBody { padding: 32px 40px 40px; display: flex; flex-direction: column; gap: 28px; }
 
 .missingSignalsPanel {
   background: rgba(244, 63, 94, 0.04); padding: 20px; border-radius: 20px;
@@ -1595,6 +1722,7 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 @media (max-width: 640px) {
   .dashboardApp { padding: 32px 16px; }
   .modalHeader, .modalBody { padding: 24px; }
+  .detailModal { max-height: calc(100vh - 32px); }
   .reportHero { padding: 40px 20px; }
   .reportScoreboard { flex-direction: column; gap: 20px; }
   .reportVs { display: none; }
@@ -1609,8 +1737,58 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 
 @media (max-width: 920px) {
-  .dailyPickCard,
-  .dailyPicksTargetGrid,
+  .dailyPicksFiltersContainer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .dailyPicksSegmentedControl {
+    overflow-x: auto;
+    scrollbar-width: none;
+    justify-content: flex-start;
+  }
+
+  .dailyPicksSegmentedControl::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dailyPicksFilterActions {
+    justify-content: space-between;
+  }
+
+  .dailyPicksSelectWrapper {
+    flex: 1;
+  }
+
+  .dailyPicksTeaser {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .dailyPicksHero {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  .dailyPicksTargetGrid {
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    display: flex;
+  }
+
+  .dailyPicksTargetStat {
+    flex-shrink: 0;
+  }
+
+  .dailyPickCard {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
   .dailyPickMetrics {
     grid-template-columns: 1fr;
   }

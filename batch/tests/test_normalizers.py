@@ -13,6 +13,7 @@ from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_markets import (
+    build_prediction_market_snapshot_contexts,
     build_prediction_market_rows,
     build_prediction_market_variant_rows,
     polymarket_sport_for_competition,
@@ -301,6 +302,7 @@ def test_filter_supported_events_keeps_only_supported_competitions():
     events = [
         {"competition": {"id": "premier-league"}},
         {"competition": {"id": "champions-league"}},
+        {"competition": {"id": "conference-league"}},
         {"competition": {"id": "liga-mx"}},
         {"competition": {"id": "mls"}},
         {"competition": {"id": "world-cup"}},
@@ -309,8 +311,40 @@ def test_filter_supported_events_keeps_only_supported_competitions():
     assert filter_supported_events(events) == [
         {"competition": {"id": "premier-league"}},
         {"competition": {"id": "champions-league"}},
+        {"competition": {"id": "conference-league"}},
         {"competition": {"id": "world-cup"}},
     ]
+
+
+def test_build_competition_row_marks_conference_league_as_cup():
+    from batch.src.ingest.fetch_fixtures import build_competition_row_from_event
+
+    row = build_competition_row_from_event(
+        {
+            "competition": {
+                "id": "conference-league",
+                "name": "UEFA Conference League",
+            },
+            "venue": {"country": "Europe"},
+            "competitors": [
+                {
+                    "team": {"id": "chelsea", "name": "Chelsea"},
+                    "qualifier": "home",
+                },
+                {
+                    "team": {"id": "fiorentina", "name": "Fiorentina"},
+                    "qualifier": "away",
+                },
+            ],
+        }
+    )
+
+    assert row == {
+        "id": "conference-league",
+        "name": "UEFA Conference League",
+        "competition_type": "cup",
+        "region": "Europe",
+    }
 
 
 def test_iter_dates_includes_both_bounds():
@@ -1800,6 +1834,44 @@ def test_supabase_client_persists_rows_locally(tmp_path, monkeypatch):
     assert json.loads(stored_files[0].read_text()) == [{"id": "match_001"}]
 
 
+def test_supabase_client_preserves_existing_local_fields_when_row_omits_them(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    client = SupabaseClient("https://example.supabase.co", "service-key")
+
+    client.upsert_rows(
+        "teams",
+        [
+            {
+                "id": "arsenal",
+                "name": "Arsenal",
+                "crest_url": "https://crests.football-data.org/57.png",
+            }
+        ],
+    )
+    client.upsert_rows(
+        "teams",
+        [
+            {
+                "id": "arsenal",
+                "name": "Arsenal FC",
+            }
+        ],
+    )
+
+    stored_files = list(Path(".tmp/supabase").rglob("teams.json"))
+    assert len(stored_files) == 1
+    assert json.loads(stored_files[0].read_text()) == [
+        {
+            "crest_url": "https://crests.football-data.org/57.png",
+            "id": "arsenal",
+            "name": "Arsenal FC",
+        }
+    ]
+
+
 def test_supabase_client_rejects_invalid_table_name(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     client = SupabaseClient("https://example.supabase.co", "service-key")
@@ -1925,6 +1997,69 @@ def test_supabase_client_retries_through_multiple_schema_cache_column_misses(mon
     assert "home_price" not in captured_payloads[2][0]
     assert "draw_price" not in captured_payloads[3][0]
     assert "away_price" not in captured_payloads[4][0]
+
+
+def test_supabase_client_preserves_sparse_bulk_upsert_rows(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    captured_payloads: list[list[dict]] = []
+
+    class FakeResponse:
+        def __init__(self, status: int = 201) -> None:
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b""
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        captured_payloads.append(json.loads(request.data.decode("utf-8")))
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    inserted = client.upsert_rows(
+        "teams",
+        [
+            {
+                "id": "arsenal",
+                "name": "Arsenal",
+                "team_type": "club",
+                "country": "England",
+                "crest_url": "https://crests.football-data.org/57.png",
+            },
+            {
+                "id": "forest",
+                "name": "Nottingham Forest",
+                "team_type": "club",
+                "country": "England",
+            },
+        ],
+    )
+
+    assert inserted == 2
+    assert captured_payloads == [
+        [
+            {
+                "country": "England",
+                "crest_url": "https://crests.football-data.org/57.png",
+                "id": "arsenal",
+                "name": "Arsenal",
+                "team_type": "club",
+            },
+            {
+                "country": "England",
+                "id": "forest",
+                "name": "Nottingham Forest",
+                "team_type": "club",
+            },
+        ]
+    ]
 
 
 def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
@@ -2060,8 +2195,56 @@ def test_polymarket_sport_for_competition_uses_supported_competitions_only():
     assert polymarket_sport_for_competition("epl", "Premier League") == "epl"
     assert polymarket_sport_for_competition("champions-league", "UEFA Champions League") == "ucl"
     assert polymarket_sport_for_competition("europa-league", "UEFA Europa League") == "uel"
+    assert (
+        polymarket_sport_for_competition(
+            "conference-league",
+            "UEFA Europa Conference League",
+        )
+        == "ucol"
+    )
+    assert polymarket_sport_for_competition("uecl", "UEFA Conference League") == "ucol"
     assert polymarket_sport_for_competition("k-league", "K League 1") == "kor"
     assert polymarket_sport_for_competition("mls", "MLS") is None
+
+
+def test_build_prediction_market_snapshot_contexts_includes_conference_league():
+    contexts = build_prediction_market_snapshot_contexts(
+        snapshot_rows=[
+            {
+                "id": "uecl_match_t_minus_24h",
+                "match_id": "uecl_match",
+            }
+        ],
+        match_rows=[
+            {
+                "id": "uecl_match",
+                "competition_id": "conference-league",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "kickoff_at": "2026-04-16T19:00:00+00:00",
+            }
+        ],
+        team_rows=[
+            {"id": "home", "name": "Crystal Palace"},
+            {"id": "away", "name": "Fiorentina"},
+        ],
+        competition_rows=[
+            {
+                "id": "conference-league",
+                "name": "UEFA Europa Conference League",
+            }
+        ],
+    )
+
+    assert contexts == [
+        {
+            "snapshot_id": "uecl_match_t_minus_24h",
+            "competition_sport": "ucol",
+            "kickoff_at": "2026-04-16T19:00:00+00:00",
+            "home_team_name": "Crystal Palace",
+            "away_team_name": "Fiorentina",
+        }
+    ]
 
 
 def test_build_prediction_market_rows_creates_one_three_way_row_per_snapshot():

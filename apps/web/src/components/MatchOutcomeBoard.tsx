@@ -124,6 +124,14 @@ function StatusFlagIcon({ flag }: { flag: string }) {
       </svg>
     );
   }
+  if (flag === "marketPreserved") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="statusFlagSvg">
+        <path d="M6 17l4-4 3 2.5 5-6.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M16.5 6.5v5M19 9h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
   if (flag === "lineupPending") {
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" className="statusFlagSvg">

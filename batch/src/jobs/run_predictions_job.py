@@ -1,6 +1,7 @@
 import json
 import math
 import os
+from copy import deepcopy
 from datetime import datetime
 
 from batch.src.features.feature_builder import (
@@ -180,6 +181,105 @@ def read_prediction_payload(prediction: dict | None) -> dict:
     if isinstance(explanation_payload, dict):
         return explanation_payload
     return {}
+
+
+def read_persisted_value_recommendation(prediction: dict | None) -> dict | None:
+    if not isinstance(prediction, dict):
+        return None
+    required_fields = (
+        "value_recommendation_pick",
+        "value_recommendation_recommended",
+        "value_recommendation_edge",
+        "value_recommendation_expected_value",
+        "value_recommendation_market_price",
+        "value_recommendation_model_probability",
+        "value_recommendation_market_probability",
+        "value_recommendation_market_source",
+    )
+    if any(prediction.get(field) is None for field in required_fields):
+        return None
+    return {
+        "pick": prediction["value_recommendation_pick"],
+        "recommended": prediction["value_recommendation_recommended"],
+        "edge": prediction["value_recommendation_edge"],
+        "expected_value": prediction["value_recommendation_expected_value"],
+        "market_price": prediction["value_recommendation_market_price"],
+        "model_probability": prediction["value_recommendation_model_probability"],
+        "market_probability": prediction["value_recommendation_market_probability"],
+        "market_source": prediction["value_recommendation_market_source"],
+    }
+
+
+def read_persisted_variant_markets(prediction: dict | None) -> list[dict]:
+    if not isinstance(prediction, dict):
+        return []
+    variant_markets = prediction.get("variant_markets_summary")
+    if not isinstance(variant_markets, list):
+        return []
+    return deepcopy(variant_markets)
+
+
+def read_persisted_market_enrichment(prediction_payload: dict) -> dict:
+    market_enrichment = prediction_payload.get("market_enrichment")
+    if not isinstance(market_enrichment, dict):
+        return {}
+    return deepcopy(market_enrichment)
+
+
+def build_market_enrichment_summary(
+    *,
+    prediction_market: dict | None,
+    variant_market_rows: list[dict],
+    existing_prediction: dict | None,
+    existing_prediction_payload: dict,
+    preserved_market_enrichment: bool,
+) -> dict:
+    variant_market_ids = [
+        str(row["id"]) for row in variant_market_rows if isinstance(row, dict) and row.get("id")
+    ]
+    if prediction_market is not None or variant_market_ids:
+        return {
+            "status": "current",
+            "current_prediction_market_available": prediction_market is not None,
+            "prediction_market_row_id": (
+                str(prediction_market.get("id")) if prediction_market and prediction_market.get("id") else None
+            ),
+            "prediction_market_source_name": (
+                str(prediction_market.get("source_name"))
+                if prediction_market and prediction_market.get("source_name")
+                else None
+            ),
+            "prediction_market_observed_at": (
+                str(prediction_market.get("observed_at"))
+                if prediction_market and prediction_market.get("observed_at")
+                else None
+            ),
+            "variant_market_ids": variant_market_ids,
+            "variant_market_count": len(variant_market_ids),
+            "preserved_from_prediction_id": None,
+        }
+    if preserved_market_enrichment and isinstance(existing_prediction, dict):
+        previous_market_enrichment = read_persisted_market_enrichment(existing_prediction_payload)
+        return {
+            "status": "preserved",
+            "current_prediction_market_available": False,
+            "prediction_market_row_id": previous_market_enrichment.get("prediction_market_row_id"),
+            "prediction_market_source_name": previous_market_enrichment.get("prediction_market_source_name"),
+            "prediction_market_observed_at": previous_market_enrichment.get("prediction_market_observed_at"),
+            "variant_market_ids": deepcopy(previous_market_enrichment.get("variant_market_ids") or []),
+            "variant_market_count": int(previous_market_enrichment.get("variant_market_count") or 0),
+            "preserved_from_prediction_id": str(existing_prediction.get("id") or ""),
+        }
+    return {
+        "status": "none",
+        "current_prediction_market_available": False,
+        "prediction_market_row_id": None,
+        "prediction_market_source_name": None,
+        "prediction_market_observed_at": None,
+        "variant_market_ids": [],
+        "variant_market_count": 0,
+        "preserved_from_prediction_id": None,
+    }
 
 
 def read_probability_map(value: object) -> dict[str, float] | None:
@@ -1006,6 +1106,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "feature_context",
         "feature_metadata",
         "source_metadata",
+        "market_enrichment",
     )
     return {
         key: explanation_payload[key]
@@ -1065,6 +1166,11 @@ def main() -> None:
             raise ValueError("sample pipeline expects exactly 4 snapshots")
     market_by_snapshot = index_market_rows_by_snapshot(market_rows)
     latest_fusion_policy = read_latest_fusion_policy(client)
+    existing_predictions_by_id = {
+        str(row["id"]): row
+        for row in prediction_rows
+        if isinstance(row, dict) and row.get("id")
+    }
     variant_rows_by_snapshot: dict[str, list[dict]] = {}
     for row in variant_rows:
         variant_rows_by_snapshot.setdefault(row["snapshot_id"], []).append(row)
@@ -1192,6 +1298,7 @@ def main() -> None:
             checkpoint=enriched_snapshot["checkpoint_type"],
             market_segment=market_segment,
             allowed_variants=available_variants,
+            competition_id=str(match.get("competition_id") or ""),
         )
         source_weights = (
             persisted_policy["weights"]
@@ -1316,6 +1423,18 @@ def main() -> None:
         variant_markets = build_variant_markets(
             variant_rows_by_snapshot.get(snapshot["id"], [])
         )
+        prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
+        existing_prediction = existing_predictions_by_id.get(prediction_id)
+        existing_prediction_payload = read_prediction_payload(existing_prediction)
+        preserved_market_enrichment = False
+        if value_recommendation is None:
+            value_recommendation = read_persisted_value_recommendation(existing_prediction)
+            preserved_market_enrichment = value_recommendation is not None
+        if not variant_markets:
+            preserved_variant_markets = read_persisted_variant_markets(existing_prediction)
+            if preserved_variant_markets:
+                variant_markets = preserved_variant_markets
+                preserved_market_enrichment = True
         feature_metadata = build_feature_metadata(
             enriched_snapshot,
             feature_context,
@@ -1372,6 +1491,13 @@ def main() -> None:
             "feature_context": feature_context,
             "feature_metadata": feature_metadata,
             "source_metadata": source_metadata,
+            "market_enrichment": build_market_enrichment_summary(
+                prediction_market=prediction_market,
+                variant_market_rows=variant_rows_by_snapshot.get(snapshot["id"], []),
+                existing_prediction=existing_prediction,
+                existing_prediction_payload=existing_prediction_payload,
+                preserved_market_enrichment=preserved_market_enrichment,
+            ),
         }
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[enriched_snapshot["checkpoint_type"]] = model_selection

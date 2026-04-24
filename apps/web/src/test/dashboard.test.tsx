@@ -610,7 +610,9 @@ beforeEach(async () => {
                 leagueId: "champions-league",
                 leagueLabel: "UEFA Champions League",
                 homeTeam: "Inter",
+                homeTeamLogoUrl: "https://crests.football-data.org/108.png",
                 awayTeam: "Bayern Munich",
+                awayTeamLogoUrl: "https://crests.football-data.org/5.png",
                 kickoffAt: "2026-04-28 19:00 UTC",
                 marketFamily: "moneyline",
                 selectionLabel: "DRAW",
@@ -656,7 +658,9 @@ beforeEach(async () => {
                 leagueId: "champions-league",
                 leagueLabel: "UEFA Champions League",
                 homeTeam: "Inter",
+                homeTeamLogoUrl: "https://crests.football-data.org/108.png",
                 awayTeam: "Bayern Munich",
+                awayTeamLogoUrl: "https://crests.football-data.org/5.png",
                 kickoffAt: "2026-04-28 19:00 UTC",
                 marketFamily: "totals",
                 selectionLabel: "Under 2.5",
@@ -1179,40 +1183,41 @@ describe("dashboard redesign", () => {
     render(<App />);
 
     const fetchMock = vi.mocked(fetch);
-    expect(await screen.findByRole("button", { name: /^daily picks$/i })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /open daily picks/i })).toBeInTheDocument();
-    expect(screen.getByText(/qualified recommendations/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^daily picks$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^view$/i })).toBeInTheDocument();
     expect(await screen.findByText("2 picks")).toBeInTheDocument();
-    expect(screen.getByText("70% hit / 20% ROI")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/daily-picks?date=2026-04-24&leagueId=premier-league",
+      "/api/daily-picks?date=2026-04-24",
     );
   });
 
   it("opens the daily picks view from the dashboard CTA", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /open daily picks/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
 
-    expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
   });
 
-  it("opens the daily picks view from the header button", async () => {
+  it("keeps the daily picks CTA available after matches load", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
 
-    expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
   });
 
   it("renders daily picks market filters and recommendation cards", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
 
-    expect(await screen.findByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
     expect(screen.getByText("HOME")).toBeInTheDocument();
-    expect(screen.getByText("DRAW")).toBeInTheDocument();
+    expect(screen.queryByText("DRAW")).not.toBeInTheDocument();
     expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
     expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
@@ -1222,35 +1227,79 @@ describe("dashboard redesign", () => {
   it("opens match detail from a daily pick outside the dashboard league page", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /inter vs bayern munich/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+    expect(await within(dailyPicksDialog).findByAltText("Inter crest")).toBeInTheDocument();
+    expect(within(dailyPicksDialog).getByAltText("Bayern Munich crest")).toBeInTheDocument();
+    fireEvent.click(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    );
 
     expect(
       await screen.findByRole("dialog", { name: "Inter vs Bayern Munich" }),
     ).toBeInTheDocument();
+    const matchDetailDialog = screen.getByRole("dialog", { name: "Inter vs Bayern Munich" });
+    expect(within(matchDetailDialog).getByAltText("Inter crest")).toBeInTheDocument();
+    expect(within(matchDetailDialog).getByAltText("Bayern Munich crest")).toBeInTheDocument();
+  });
+
+  it("keeps the daily picks modal open when closing a detail opened from it", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+    fireEvent.click(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Inter vs Bayern Munich" }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Inter vs Bayern Munich" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: /daily picks/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.body.style.overflow).toBe("hidden");
+    });
   });
 
   it("keeps held moneyline picks as no-bet while detail data is loading", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
-    fireEvent.click(screen.getByRole("switch", { name: /show held/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /show held/i }));
     fireEvent.click(await screen.findByRole("button", { name: /arsenal vs fulham/i }));
 
     const dialog = await screen.findByRole("dialog", { name: "Arsenal vs Fulham" });
-    expect(within(dialog).getByLabelText("Bet: No bet")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Bet: Unavailable")).toBeInTheDocument();
   });
 
   it("filters daily picks by market family and can show held items", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /^daily picks$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
     fireEvent.click(await screen.findByRole("button", { name: /handicap/i }));
 
     expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
     expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("switch", { name: /show held/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /show held/i }));
 
     expect(await screen.findByText("Home -0.5")).toBeInTheDocument();
     expect(screen.getByText(/market price only/i)).toBeInTheDocument();
@@ -1261,22 +1310,76 @@ describe("dashboard redesign", () => {
     expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
   });
 
-  it("passes the current league into the teaser CTA and updates cards when the league select changes", async () => {
+  it("opens the teaser CTA with the current league daily picks and updates cards when the league select changes", async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /open daily picks/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
 
-    expect(await screen.findByText("Chelsea vs Manchester City")).toBeInTheDocument();
-    expect(screen.queryByText("Inter vs Bayern Munich")).not.toBeInTheDocument();
+    expect(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(dailyPicksDialog).queryByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: /league/i }), {
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
       target: { value: "champions-league" },
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Inter vs Bayern Munich")).toBeInTheDocument();
+      expect(
+        within(dailyPicksDialog).getByRole("button", {
+          name: /inter.*bayern munich/i,
+        }),
+      ).toBeInTheDocument();
     });
-    expect(screen.queryByText("Chelsea vs Manchester City")).not.toBeInTheDocument();
+    expect(
+      within(dailyPicksDialog).queryByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resets daily picks filters to the requested league context on reopen", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    let dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(dailyPicksDialog).getByRole("button", { name: /handicap/i }));
+    fireEvent.click(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /daily picks/i })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByRole("tab", { name: "UEFA Champions League" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue(
+      "champions-league",
+    );
+    expect(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i })).not.toBeChecked();
+    expect(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(dailyPicksDialog).queryByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not fetch evaluation reports when opening the match detail modal", async () => {
@@ -1317,6 +1420,82 @@ describe("dashboard redesign", () => {
     expect(screen.getByText(/1 need review/i)).toBeInTheDocument();
     expect(screen.getByRole("tabpanel", { name: "Match Timeline" })).toBeInTheDocument();
     expect(screen.getByText("Showing 3 of 3 matches")).toBeInTheDocument();
+  });
+
+  it("derives a translated conference league tab when the bootstrap response omits league summaries", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith("/api/matches")) {
+          return {
+            ok: true,
+            json: async () => ({
+              items: [
+                {
+                  id: "uecl-match-001",
+                  leagueId: "conference-league",
+                  leagueLabel: "UEFA Conference League",
+                  leagueEmblemUrl: "https://crests.football-data.org/UECL.png",
+                  homeTeam: "Chelsea",
+                  awayTeam: "Fiorentina",
+                  kickoffAt: "2026-04-28 19:00 UTC",
+                  status: "Scheduled",
+                  recommendedPick: null,
+                  confidence: null,
+                  needsReview: false,
+                },
+              ],
+              leagues: [],
+              predictionSummary: null,
+              selectedLeagueId: "conference-league",
+              nextCursor: null,
+              totalMatches: 1,
+            }),
+          };
+        }
+
+        if (url.startsWith("/api/daily-picks")) {
+          return {
+            ok: true,
+            json: async () => ({
+              generatedAt: null,
+              date: "2026-04-28",
+              target: {
+                minDailyRecommendations: 5,
+                maxDailyRecommendations: 10,
+                hitRate: 0.7,
+                roi: 0.2,
+              },
+              coverage: { moneyline: 0, spreads: 0, totals: 0, held: 0 },
+              items: [],
+              heldItems: [],
+            }),
+          };
+        }
+
+        return {
+          ok: true,
+          json: async () => ({
+            report: null,
+            history: [],
+            latest: null,
+            previous: null,
+            reviewAggregation: null,
+            rollout: null,
+            decision: null,
+          }),
+        };
+      }),
+    );
+
+    render(<App />);
+
+    const tablist = await screen.findByRole("tablist", { name: "Leagues" });
+    expect(
+      within(tablist).getByRole("tab", { name: "UEFA Conference League" }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("renders a card-grid style match list with operator metadata", async () => {
@@ -1432,8 +1611,8 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("Calibration evidence")).toBeInTheDocument();
     expect(screen.getByText("0.7-0.8")).toBeInTheDocument();
     expect(screen.getByText("67% hit rate · 6 matches")).toBeInTheDocument();
-    expect(screen.getByText("Market price")).toBeInTheDocument();
-    expect(screen.getAllByText("30%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Market price")).toBeNull();
+    expect(screen.queryByText("+40%")).toBeNull();
     expect(modal.getAllByText("Additional markets").length).toBeGreaterThan(0);
     expect(modal.getByText("Handicap 0.5")).toBeInTheDocument();
     expect(modal.getByText("Home -0.5 lead · 54% vs 46%")).toBeInTheDocument();
@@ -1459,7 +1638,7 @@ describe("dashboard redesign", () => {
     expect(modal.getByLabelText("Bet: Recommended")).toBeInTheDocument();
     expect(modal.getByText("Signal summary")).toBeInTheDocument();
     expect(modal.getByText("HOME lean with the strongest available support.")).toBeInTheDocument();
-    expect(modal.getAllByText("Value Pick").length).toBeGreaterThan(0);
+    expect(modal.queryByText("Value Pick")).toBeNull();
     expect(modal.getAllByText("Additional markets").length).toBeGreaterThan(0);
     expect(modal.getByRole("button", { name: /View Full Intelligence Report/ })).toBeInTheDocument();
   });

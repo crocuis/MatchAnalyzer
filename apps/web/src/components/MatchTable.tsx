@@ -12,11 +12,26 @@ import MatchCard from "./MatchCard";
 
 const UPCOMING_PREVIEW_DAYS = 3;
 
-function getUpcomingPreviewCutoffMillis(nowMillis: number): number {
-  const cutoff = new Date(nowMillis);
+function getUpcomingPreviewCutoffMillis(anchorMillis: number): number {
+  const cutoff = new Date(anchorMillis);
   cutoff.setUTCDate(cutoff.getUTCDate() + UPCOMING_PREVIEW_DAYS);
   cutoff.setUTCHours(23, 59, 59, 999);
   return cutoff.getTime();
+}
+
+function getUpcomingPreviewAnchorMillis(
+  upcomingMatches: MatchCardRow[],
+  fallbackMillis: number,
+): number {
+  const finiteKickoffMillis = upcomingMatches
+    .map((match) => Date.parse(match.kickoffAt))
+    .filter((kickoffMillis) => Number.isFinite(kickoffMillis) && kickoffMillis >= fallbackMillis);
+
+  if (finiteKickoffMillis.length === 0) {
+    return fallbackMillis;
+  }
+
+  return Math.min(...finiteKickoffMillis);
 }
 
 interface MatchTableProps {
@@ -67,13 +82,26 @@ export default function MatchTable({
       return groupedMatches.upcoming;
     }
 
-    const cutoffMillis = getUpcomingPreviewCutoffMillis(Date.now());
+    const previewAnchorMillis = getUpcomingPreviewAnchorMillis(
+      groupedMatches.upcoming,
+      Date.now(),
+    );
+    const cutoffMillis = getUpcomingPreviewCutoffMillis(previewAnchorMillis);
     return groupedMatches.upcoming.filter((match) => {
       const kickoffMillis = Date.parse(match.kickoffAt);
       return !Number.isFinite(kickoffMillis) || kickoffMillis <= cutoffMillis;
     });
   }, [groupedMatches.upcoming, showAllUpcomingMatches]);
   const hiddenUpcomingMatchCount = groupedMatches.upcoming.length - visibleUpcomingMatches.length;
+  const shouldPausePagination = hiddenUpcomingMatchCount > 0 && !showAllUpcomingMatches;
+  const hasVisibleRecentResults = groupedMatches.past.length > 0;
+  const canLoadMoreMatches =
+    !isAllLoaded
+    && (!shouldPausePagination || hasVisibleRecentResults);
+  const needsRecentResultsPrefetch =
+    shouldPausePagination
+    && groupedMatches.past.length === 0
+    && !isAllLoaded;
   const visibleMatchCount = visibleUpcomingMatches.length + groupedMatches.past.length;
   const firstMatchId = matches[0]?.id ?? null;
   const dailyPicksCount = dailyPicksSummary?.items.length ?? 0;
@@ -98,7 +126,15 @@ export default function MatchTable({
   }, [firstMatchId]);
 
   useEffect(() => {
-    if (isAllLoaded || isLoadingMore || !loadMoreRef.current) {
+    if (!needsRecentResultsPrefetch || isLoadingMore) {
+      return;
+    }
+
+    onLoadMore();
+  }, [isLoadingMore, needsRecentResultsPrefetch, onLoadMore]);
+
+  useEffect(() => {
+    if (!canLoadMoreMatches || isLoadingMore || !loadMoreRef.current) {
       return;
     }
 
@@ -110,12 +146,13 @@ export default function MatchTable({
 
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
-  }, [isAllLoaded, isLoadingMore, onLoadMore]);
+  }, [canLoadMoreMatches, isLoadingMore, onLoadMore]);
 
   useEffect(() => {
     let isMounted = true;
 
-    void fetchDailyPicks({ date: dailyPicksDate, leagueId: currentLeagueId })
+    // Fetch daily picks for ALL leagues to show total count in teaser
+    void fetchDailyPicks({ date: dailyPicksDate })
       .then((response) => {
         if (isMounted) {
           setDailyPicksSummary(response);
@@ -130,7 +167,7 @@ export default function MatchTable({
     return () => {
       isMounted = false;
     };
-  }, [currentLeagueId, dailyPicksDate]);
+  }, [dailyPicksDate]);
 
   // SVG Gauge calculations
   const radius = 60;
@@ -160,52 +197,6 @@ export default function MatchTable({
           {t("matchTable.showingStatus", { count: visibleMatchCount, total: totalMatches })}
         </span>
       </div>
-
-      <section className="dailyPicksTeaser" aria-label={t("dailyPicks.entry.boardTitle")}>
-        <div>
-          <span className="metricLabel">{t("dailyPicks.entry.eyebrow")}</span>
-          <h2>{t("dailyPicks.entry.boardTitle")}</h2>
-          <p>{t("dailyPicks.entry.boardCaption")}</p>
-        </div>
-        <div className="dailyPicksTeaserStats">
-          <span>{t("dailyPicks.summary.recommendations")}</span>
-          {dailyPicksSummary ? (
-            <strong>{t("dailyPicks.summary.count", { count: dailyPicksCount })}</strong>
-          ) : (
-            <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
-          )}
-        </div>
-        {dailyPicksGeneratedAt ? (
-          <div className="dailyPicksTeaserStats">
-            <span>{t("dailyPicks.summary.updated")}</span>
-            <strong>{dailyPicksGeneratedAt}</strong>
-          </div>
-        ) : null}
-        {dailyPicksMarkets ? (
-          <div className="dailyPicksTeaserStats">
-            <span>{t("dailyPicks.summary.markets")}</span>
-            <strong>{dailyPicksMarkets}</strong>
-          </div>
-        ) : null}
-        {dailyPicksSummary ? (
-          <div className="dailyPicksTeaserStats">
-            <span>{t("dailyPicks.summary.targets")}</span>
-            <strong>
-              {t("dailyPicks.summary.targetValues", {
-                hitRate: Math.round(dailyPicksSummary.target.hitRate * 100),
-                roi: Math.round(dailyPicksSummary.target.roi * 100),
-              })}
-            </strong>
-          </div>
-        ) : null}
-        <button
-          className="dailyPicksPrimaryButton"
-          type="button"
-          onClick={() => onOpenDailyPicks?.(currentLeagueId)}
-        >
-          {t("dailyPicks.entry.open")}
-        </button>
-      </section>
 
       <section className="predictionSummaryBanner" aria-label={t("matchTable.summary.title")}>
         <div className="predictionSummaryGauge">
@@ -295,6 +286,29 @@ export default function MatchTable({
         </div>
       </section>
 
+      <section className="dailyPicksTeaser" aria-label={t("dailyPicks.entry.header")}>
+        <div className="dailyPicksTeaserMain">
+          <h2>{t("dailyPicks.entry.header")}</h2>
+          <div className="dailyPicksTeaserMetrics">
+            <div className="dailyPicksTeaserStat">
+              <span className="metricLabel">{t("dailyPicks.summary.recommendations")}</span>
+              {dailyPicksSummary ? (
+                <strong>{t("dailyPicks.summary.count", { count: dailyPicksCount })}</strong>
+              ) : (
+                <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
+              )}
+            </div>
+          </div>
+        </div>
+        <button
+          className="dailyPicksPrimaryButton"
+          type="button"
+          onClick={() => onOpenDailyPicks?.(currentLeagueId)}
+        >
+          {t("dailyPicks.entry.openShort")}
+        </button>
+      </section>
+
       {matches.length === 0 ? (
         <div className="contentPanel" style={{ textAlign: "center", padding: "48px" }}>
           <p className="timelineNote">{t("status.loading")}</p>
@@ -368,7 +382,7 @@ export default function MatchTable({
             </div>
 
             <div ref={loadMoreRef} style={{ height: 1 }} />
-            {!isAllLoaded && (
+            {canLoadMoreMatches && (
               <button
                 className="loadMoreBtn"
                 onClick={onLoadMore}

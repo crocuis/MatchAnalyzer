@@ -7,6 +7,7 @@ import type {
   VariantMarket,
 } from "../lib/api";
 import {
+  resolveMarketEnrichmentStatus,
   resolvePredictionPresentation,
   summarizeMissingSignals,
   summarizeSignalBadges,
@@ -389,6 +390,9 @@ export default function PredictionCard({
       : t("matchCard.metrics.unavailable");
   const featureContext = normalizeFeatureContext(prediction.explanationPayload);
   const headline = summarizeSignalHeadline(mainRecommendation, prediction.explanationPayload);
+  const marketEnrichmentStatus = resolveMarketEnrichmentStatus(
+    prediction.explanationPayload,
+  );
   const summaryBadges = summarizeSignalBadges(
     mainRecommendation,
     prediction.explanationPayload,
@@ -453,6 +457,11 @@ export default function PredictionCard({
             <span className="panelTitle" style={{ marginBottom: 0 }}>{t("modal.prediction.valuePickTitle")}</span>
             <span className="valueBadge">{t("matchCard.valuePick")}</span>
           </div>
+          {marketEnrichmentStatus === "preserved" ? (
+            <p className="timelineNote">
+              {t("modal.prediction.marketPreservedNote")}
+            </p>
+          ) : null}
           <div className="predictionHero" style={{ borderBottom: "none", paddingBottom: 0 }}>
             <div className="predictionPick">
               <span className="metricLabel">{t("matchCard.valuePick")}</span>
