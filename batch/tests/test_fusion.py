@@ -143,6 +143,100 @@ def test_choose_fusion_weights_prefers_checkpoint_market_segment_policy_and_filt
     }
 
 
+def test_choose_fusion_weights_uses_competition_policy_before_broad_segments():
+    policy_row = build_latest_fusion_policy(
+        report_id="latest",
+        recommended_weights={
+            "overall": {
+                "base_model": 0.34,
+                "bookmaker": 0.33,
+                "prediction_market": 0.33,
+            },
+            "by_checkpoint": {
+                "T_MINUS_24H": {
+                    "base_model": 0.2,
+                    "bookmaker": 0.7,
+                    "prediction_market": 0.1,
+                }
+            },
+            "by_competition": {
+                "champions-league": {
+                    "base_model": 0.7,
+                    "bookmaker": 0.2,
+                    "prediction_market": 0.1,
+                }
+            },
+        },
+    )
+
+    selected = choose_fusion_weights(
+        policy_payload=policy_row["policy_payload"],
+        checkpoint="T_MINUS_24H",
+        market_segment="with_prediction_market",
+        competition_id="champions-league",
+        allowed_variants=("base_model", "bookmaker", "prediction_market"),
+    )
+
+    assert selected == {
+        "matched_on": "by_competition",
+        "policy_id": "latest",
+        "weights": {
+            "base_model": 0.7,
+            "bookmaker": 0.2,
+            "prediction_market": 0.1,
+        },
+    }
+
+
+def test_choose_fusion_weights_uses_competition_policy_from_legacy_selection_order():
+    selected = choose_fusion_weights(
+        policy_payload={
+            "policy_id": "latest",
+            "selection_order": [
+                "by_checkpoint_market_segment",
+                "by_checkpoint",
+                "by_market_segment",
+                "overall",
+            ],
+            "weights": {
+                "overall": {
+                    "base_model": 0.34,
+                    "bookmaker": 0.33,
+                    "prediction_market": 0.33,
+                },
+                "by_checkpoint": {
+                    "T_MINUS_24H": {
+                        "base_model": 0.2,
+                        "bookmaker": 0.7,
+                        "prediction_market": 0.1,
+                    }
+                },
+                "by_competition": {
+                    "europa-league": {
+                        "base_model": 0.65,
+                        "bookmaker": 0.25,
+                        "prediction_market": 0.1,
+                    }
+                },
+            },
+        },
+        checkpoint="T_MINUS_24H",
+        market_segment="with_prediction_market",
+        competition_id="europa-league",
+        allowed_variants=("base_model", "bookmaker", "prediction_market"),
+    )
+
+    assert selected == {
+        "matched_on": "by_competition",
+        "policy_id": "latest",
+        "weights": {
+            "base_model": 0.65,
+            "bookmaker": 0.25,
+            "prediction_market": 0.1,
+        },
+    }
+
+
 def test_choose_fusion_weights_returns_none_for_invalid_policy_payload():
     assert (
         choose_fusion_weights(

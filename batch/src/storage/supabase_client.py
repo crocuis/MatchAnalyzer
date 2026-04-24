@@ -20,6 +20,14 @@ class SupabaseClient:
         self.base_url = base_url
         self.service_key = service_key
 
+    def _normalize_bulk_upsert_rows(self, rows: list[dict]) -> list[dict]:
+        if len(rows) < 2:
+            return rows
+        all_keys = sorted({key for row in rows for key in row})
+        if all(len(row) == len(all_keys) and all(key in row for key in all_keys) for row in rows):
+            return rows
+        return [{key: row.get(key) for key in all_keys} for row in rows]
+
     def _use_file_backend(self) -> bool:
         hostname = urlparse(self.base_url).hostname or ""
         return hostname.endswith("placeholder.supabase.local") or hostname == "example.supabase.co"
@@ -117,10 +125,11 @@ class SupabaseClient:
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
+            normalized_rows = self._normalize_bulk_upsert_rows(rows)
             params = urlencode({"on_conflict": "id"})
             request = Request(
                 url=f"{self.base_url}/rest/v1/{table_name}?{params}",
-                data=json.dumps(rows).encode("utf-8"),
+                data=json.dumps(normalized_rows).encode("utf-8"),
                 headers={
                     **self._headers(),
                     "Prefer": "return=minimal,resolution=merge-duplicates",
@@ -138,7 +147,7 @@ class SupabaseClient:
                 body = exc.read().decode("utf-8")
                 retry_result = self._retry_without_missing_column(
                     table_name,
-                    rows,
+                    normalized_rows,
                     body,
                 )
                 if retry_result is not None:

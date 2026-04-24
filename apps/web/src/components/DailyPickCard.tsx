@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import type { DailyPickItem } from "../lib/api";
+import TeamLogo from "./TeamLogo";
 
 type DailyPickCardProps = {
   item: DailyPickItem;
@@ -20,9 +21,19 @@ function formatSignedPercent(value: number | null): string {
 }
 
 export default function DailyPickCard({ item, onOpenMatch }: DailyPickCardProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const statusLabel = t(`dailyPicks.status.${item.status}`, {
     defaultValue: item.status,
+  });
+
+  const formattedDate = new Date(item.kickoffAt).toLocaleString(i18n.language, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   });
 
   return (
@@ -33,8 +44,24 @@ export default function DailyPickCard({ item, onOpenMatch }: DailyPickCardProps)
         onClick={() => onOpenMatch(item)}
       >
         <span className="dailyPickLeague">{item.leagueLabel}</span>
-        <strong className="dailyPickMatch">{item.homeTeam} vs {item.awayTeam}</strong>
-        <span className="dailyPickKickoff">{item.kickoffAt}</span>
+        <div className="teamRow" style={{ gap: "8px", marginTop: "4px" }}>
+          <TeamLogo
+            teamName={item.homeTeam}
+            logoUrl={item.homeTeamLogoUrl}
+            style={{ width: "20px", height: "20px", fontSize: "10px" }}
+          />
+          <strong className="dailyPickMatch" style={{ fontSize: "1rem" }}>{item.homeTeam}</strong>
+        </div>
+        <div className="vsDivider" style={{ margin: "2px 0", fontSize: "8px", justifyContent: "flex-start" }}>vs</div>
+        <div className="teamRow" style={{ gap: "8px" }}>
+          <TeamLogo
+            teamName={item.awayTeam}
+            logoUrl={item.awayTeamLogoUrl}
+            style={{ width: "20px", height: "20px", fontSize: "10px" }}
+          />
+          <strong className="dailyPickMatch" style={{ fontSize: "1rem" }}>{item.awayTeam}</strong>
+        </div>
+        <span className="dailyPickKickoff" style={{ marginTop: "4px", display: "block" }}>{formattedDate}</span>
       </button>
       <div className="dailyPickDecision">
         <span className="dailyPickFamily">{t(`dailyPicks.marketFamilies.${item.marketFamily}`)}</span>

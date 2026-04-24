@@ -357,7 +357,7 @@ def test_backfill_prediction_pipeline_job_emits_progress_and_compacts_large_payl
     assert stage_result == {"inserted_rows": 2, "payload_rows": 2}
     assert final_payload["prediction_read_cache"] == {
         "enabled": True,
-        "reason": "enabled_prediction_only",
+        "reason": "enabled_shared_pipeline_cache",
     }
 
 
@@ -426,7 +426,7 @@ def test_backfill_prediction_pipeline_job_reuses_prediction_table_reads_and_upda
     ]
 
 
-def test_backfill_prediction_pipeline_job_avoids_prediction_cache_when_markets_run(
+def test_backfill_prediction_pipeline_job_enables_shared_cache_when_markets_run(
     monkeypatch,
     capsys,
 ):
@@ -453,15 +453,15 @@ def test_backfill_prediction_pipeline_job_avoids_prediction_cache_when_markets_r
         ["2026-04-20"],
     )
 
-    assert calls == []
-    assert result.cache_enabled is False
-    assert result.cache_reason == "disabled_upstream_stage_present"
+    assert calls == ["cache_enabled"]
+    assert result.cache_enabled is True
+    assert result.cache_reason == "enabled_shared_pipeline_cache"
 
     lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
     assert lines[0] == {
         "event": "prediction_read_cache_configured",
-        "enabled": False,
-        "reason": "disabled_upstream_stage_present",
+        "enabled": True,
+        "reason": "enabled_shared_pipeline_cache",
     }
 
 
@@ -481,10 +481,10 @@ def test_backfill_prediction_pipeline_job_reports_enabled_prediction_cache(
     )
 
     assert result.cache_enabled is True
-    assert result.cache_reason == "enabled_prediction_only"
+    assert result.cache_reason == "enabled_shared_pipeline_cache"
     lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
     assert lines[0] == {
         "event": "prediction_read_cache_configured",
         "enabled": True,
-        "reason": "enabled_prediction_only",
+        "reason": "enabled_shared_pipeline_cache",
     }

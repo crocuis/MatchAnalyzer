@@ -11,11 +11,13 @@ import CheckpointTimeline from "./CheckpointTimeline";
 import MatchOutcomeBoard from "./MatchOutcomeBoard";
 import PredictionCard from "./PredictionCard";
 import {
+  resolveMarketEnrichmentStatus,
   resolveActualOutcome,
   resolvePredictionPresentation,
   resolveVerdictState,
   summarizeSignalBadges,
 } from "../lib/predictionSummary";
+import TeamLogo from "./TeamLogo";
 
 interface MatchDetailModalProps {
   match: MatchCardRow | null;
@@ -49,6 +51,17 @@ export default function MatchDetailModal({
         hour12: false,
       })
     : "";
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -128,8 +141,18 @@ export default function MatchDetailModal({
     presentation.predictedOutcome !== null ||
     presentation.displayConfidence !== null ||
     presentation.noBetReason !== null;
+  const hasPreservedMarket =
+    resolveMarketEnrichmentStatus(
+      prediction?.explanationPayload ?? match.explanationPayload,
+    ) === "preserved";
   const isFinished =
     match.status === "Needs Review" || match.status === "Review Ready" || !!match.finalResult;
+  const visiblePrediction = prediction
+    ? {
+        ...prediction,
+        valueRecommendation: isFinished ? null : prediction.valueRecommendation ?? null,
+      }
+    : null;
   const toneClass =
     presentation.betState === "recommended"
       ? "state-recommended"
@@ -171,9 +194,14 @@ export default function MatchDetailModal({
                   {t("matchOutcome.bet.recommended")}
                 </span>
               )}
-              {Boolean(match.valueRecommendation?.recommended) && (
+              {!isFinished && Boolean(match.valueRecommendation?.recommended) && (
                 <span className="valueBadge">
                   {t("matchCard.valuePick")}
+                </span>
+              )}
+              {hasPreservedMarket && (
+                <span className="reviewBadge">
+                  {t("matchCard.summaryBadges.marketPreserved")}
                 </span>
               )}
             </div>
@@ -181,22 +209,14 @@ export default function MatchDetailModal({
 
           <div className="matchTeams">
             <div className="teamRow">
-              <div className="teamLogo-sm">
-                {match.homeTeamLogoUrl ? (
-                  <img src={match.homeTeamLogoUrl} alt={`${match.homeTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                ) : match.homeTeam[0]}
-              </div>
+              <TeamLogo teamName={match.homeTeam} logoUrl={match.homeTeamLogoUrl} />
               <span className="teamName" style={{ fontSize: "1.25rem" }}>{match.homeTeam}</span>
               {(isFinished || match.finalResult) && (
                 <span className="teamScore" style={{ marginLeft: "auto", fontWeight: "800", fontSize: "1.25rem" }}>{match.homeScore ?? 0}</span>
               )}
             </div>
             <div className="teamRow">
-              <div className="teamLogo-sm">
-                {match.awayTeamLogoUrl ? (
-                  <img src={match.awayTeamLogoUrl} alt={`${match.awayTeam} crest`} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                ) : match.awayTeam[0]}
-              </div>
+              <TeamLogo teamName={match.awayTeam} logoUrl={match.awayTeamLogoUrl} />
               <span className="teamName" style={{ fontSize: "1.25rem" }}>{match.awayTeam}</span>
               {(isFinished || match.finalResult) && (
                 <span className="teamScore" style={{ marginLeft: "auto", fontWeight: "800", fontSize: "1.25rem" }}>{match.awayScore ?? 0}</span>
@@ -214,81 +234,83 @@ export default function MatchDetailModal({
           />
         </header>
 
-        <div className="modalBody">
-          {/* Missing Signals Details */}
-          {hasMissingSignals && (
-            <div className="missingSignalsPanel">
-              <div className="panelHeader">
-                <span className="warningIcon">⚠</span>
-                <span className="panelTitle">
-                  {t("modal.prediction.missingSignalsTitle")}
-                </span>
-              </div>
-              <div className="confidenceSignalList">
-                {missingSignals.map((sig, idx) => (
-                  <span key={idx} className="confidenceSignalChip">
-                    {t(`modal.prediction.breakdown.signalLabels.${sig}`, { defaultValue: sig })}
+        <div className="modalScrollRegion">
+          <div className="modalBody">
+            {/* Missing Signals Details */}
+            {hasMissingSignals && (
+              <div className="missingSignalsPanel">
+                <div className="panelHeader">
+                  <span className="warningIcon">⚠</span>
+                  <span className="panelTitle">
+                    {t("modal.prediction.missingSignalsTitle")}
                   </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {prediction ? (
-            <PredictionCard
-              confidence={prediction.confidence ?? match.confidence}
-              prediction={prediction}
-              recommendedPick={prediction.recommendedPick ?? match.recommendedPick}
-            />
-          ) : hasPredictionSummary ? (
-            <div className="contentPanel">
-              <div className="comparisonGrid">
-                <div
-                  className="comparisonItem"
-                  aria-label={`${t("matchOutcome.predicted")}: ${
-                    presentation.predictedOutcome
-                      ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
-                      : t("matchOutcome.outcomes.unavailable")
-                  }`}
-                >
-                  <span className="metricLabel">{t("modal.prediction.recommendedPick")}</span>
-                  <strong>
-                    {presentation.predictedOutcome
-                      ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
-                      : t("matchOutcome.outcomes.unavailable")}
-                  </strong>
                 </div>
-                <div className="comparisonItem">
-                  <span className="metricLabel">{t("matchCard.metrics.confidence")}</span>
-                  <strong>
-                    {presentation.displayConfidence === null
-                      ? t("matchCard.metrics.unavailable")
-                      : `${(presentation.displayConfidence * 100).toFixed(0)}%`}
-                  </strong>
+                <div className="confidenceSignalList">
+                  {missingSignals.map((sig, idx) => (
+                    <span key={idx} className="confidenceSignalChip">
+                      {t(`modal.prediction.breakdown.signalLabels.${sig}`, { defaultValue: sig })}
+                    </span>
+                  ))}
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="contentPanel">
-              <p className="timelineNote">{t("modal.prediction.unavailableDesc")}</p>
-            </div>
-          )}
+            )}
 
-          {/* Timeline Summary (Last 2) */}
-          {checkpoints.length > 0 && (
-            <div className="modalSection">
-              <span className="panelTitle">{t("modal.sections.timeline")}</span>
-              <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
-            </div>
-          )}
+            {visiblePrediction ? (
+              <PredictionCard
+                confidence={visiblePrediction.confidence ?? match.confidence}
+                prediction={visiblePrediction}
+                recommendedPick={visiblePrediction.recommendedPick ?? match.recommendedPick}
+              />
+            ) : hasPredictionSummary ? (
+              <div className="contentPanel">
+                <div className="comparisonGrid">
+                  <div
+                    className="comparisonItem"
+                    aria-label={`${t("matchOutcome.predicted")}: ${
+                      presentation.predictedOutcome
+                        ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
+                        : t("matchOutcome.outcomes.unavailable")
+                    }`}
+                  >
+                    <span className="metricLabel">{t("modal.prediction.recommendedPick")}</span>
+                    <strong>
+                      {presentation.predictedOutcome
+                        ? t(`matchOutcome.outcomes.${presentation.predictedOutcome}`)
+                        : t("matchOutcome.outcomes.unavailable")}
+                    </strong>
+                  </div>
+                  <div className="comparisonItem">
+                    <span className="metricLabel">{t("matchCard.metrics.confidence")}</span>
+                    <strong>
+                      {presentation.displayConfidence === null
+                        ? t("matchCard.metrics.unavailable")
+                        : `${(presentation.displayConfidence * 100).toFixed(0)}%`}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="contentPanel">
+                <p className="timelineNote">{t("modal.prediction.unavailableDesc")}</p>
+              </div>
+            )}
 
-          <button
-            className="primaryButton reportActionBtn"
-            type="button"
-            onClick={() => onOpenReport(match.id)}
-          >
-            {t("modal.fullReport")} <span>→</span>
-          </button>
+            {/* Timeline Summary (Last 2) */}
+            {checkpoints.length > 0 && (
+              <div className="modalSection">
+                <span className="panelTitle">{t("modal.sections.timeline")}</span>
+                <CheckpointTimeline checkpoints={checkpoints} variant="compact" />
+              </div>
+            )}
+
+            <button
+              className="primaryButton reportActionBtn"
+              type="button"
+              onClick={() => onOpenReport(match.id)}
+            >
+              {t("modal.fullReport")} <span>→</span>
+            </button>
+          </div>
         </div>
       </section>
     </div>

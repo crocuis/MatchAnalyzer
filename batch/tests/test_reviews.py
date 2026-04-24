@@ -2263,6 +2263,157 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
     ]
 
 
+def test_run_predictions_job_preserves_existing_market_enrichment_when_rerun_lacks_prediction_market(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    existing_prediction = {
+        "id": "target_match_t_minus_24h_model_v1",
+        "snapshot_id": "target_match_t_minus_24h",
+        "match_id": "target_match",
+        "model_version_id": "model_v1",
+        "home_prob": 0.62,
+        "draw_prob": 0.21,
+        "away_prob": 0.17,
+        "recommended_pick": "HOME",
+        "confidence_score": 0.74,
+        "summary_payload": {
+            "prediction_market_available": True,
+            "market_enrichment": {
+                "status": "current",
+                "current_prediction_market_available": True,
+                "prediction_market_row_id": "target_match_t_minus_24h_prediction_market",
+                "prediction_market_source_name": "polymarket_moneyline_3way",
+                "prediction_market_observed_at": "2026-04-12T15:30:00Z",
+                "variant_market_ids": [
+                    "target_match_t_minus_24h_prediction_market_spreads_sample"
+                ],
+                "variant_market_count": 1,
+                "preserved_from_prediction_id": None,
+            },
+            "feature_context": {
+                "prediction_market_available": True,
+                "market_gap_home": 0.08,
+                "market_gap_draw": -0.03,
+                "market_gap_away": -0.05,
+                "max_abs_divergence": 0.08,
+                "sources_agree": True,
+            },
+            "source_metadata": {
+                "market_segment": "with_prediction_market",
+                "market_sources": {
+                    "prediction_market": {
+                        "available": True,
+                        "source_name": "polymarket_moneyline_3way",
+                        "probabilities": {
+                            "home": 0.54,
+                            "draw": 0.24,
+                            "away": 0.22,
+                        },
+                    }
+                },
+            },
+        },
+        "value_recommendation_pick": "HOME",
+        "value_recommendation_recommended": True,
+        "value_recommendation_edge": 0.08,
+        "value_recommendation_expected_value": 0.1481,
+        "value_recommendation_market_price": 0.54,
+        "value_recommendation_model_probability": 0.62,
+        "value_recommendation_market_probability": 0.54,
+        "value_recommendation_market_source": "prediction_market",
+        "variant_markets_summary": [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.55,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.45,
+                "market_slug": "spread-slug",
+            }
+        ],
+    }
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 7,
+                        "rest_delta": 2,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "odds_api",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.56,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.20,
+                    },
+                ],
+                "market_variants": [],
+                "predictions": [deepcopy(existing_prediction)],
+                "matches": [
+                    {
+                        "id": "target_match",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return deepcopy(self.tables.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = deepcopy(rows)
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    assert prediction["value_recommendation_pick"] == "HOME"
+    assert prediction["value_recommendation_market_source"] == "prediction_market"
+    assert prediction["variant_markets_summary"] == existing_prediction["variant_markets_summary"]
+    assert prediction["explanation_payload"]["prediction_market_available"] is False
+    assert prediction["explanation_payload"]["feature_context"]["prediction_market_available"] is False
+    assert (
+        prediction["explanation_payload"]["source_metadata"]["market_sources"]["prediction_market"]["available"]
+        is False
+    )
+    assert prediction["explanation_payload"]["market_enrichment"] == {
+        "status": "preserved",
+        "current_prediction_market_available": False,
+        "prediction_market_row_id": "target_match_t_minus_24h_prediction_market",
+        "prediction_market_source_name": "polymarket_moneyline_3way",
+        "prediction_market_observed_at": "2026-04-12T15:30:00Z",
+        "variant_market_ids": [
+            "target_match_t_minus_24h_prediction_market_spreads_sample"
+        ],
+        "variant_market_count": 1,
+        "preserved_from_prediction_id": "target_match_t_minus_24h_model_v1",
+    }
+
+
 def test_run_predictions_job_derives_form_and_rest_from_match_history_when_snapshot_fields_are_missing(
     monkeypatch,
 ):

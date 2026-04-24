@@ -20,7 +20,9 @@ export type DailyPickItem = {
   leagueId: string;
   leagueLabel: string;
   homeTeam: string;
+  homeTeamLogoUrl: string | null;
   awayTeam: string;
+  awayTeamLogoUrl: string | null;
   kickoffAt: string;
   marketFamily: DailyPickMarketFamily;
   selectionLabel: string;
@@ -233,6 +235,11 @@ function pickRepresentativePrediction(
   return sorted[0] ?? null;
 }
 
+function hasKickoffPassed(kickoffAt: string): boolean {
+  const kickoffMillis = Date.parse(kickoffAt);
+  return Number.isFinite(kickoffMillis) && kickoffMillis <= Date.now();
+}
+
 export async function loadDailyPicksView(
   supabase: ApiSupabaseClient | null,
   options: LoadDailyPicksOptions = {},
@@ -360,6 +367,9 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     if (!kickoffAt || (args.options.date && !kickoffAt.startsWith(args.options.date))) {
       continue;
     }
+    if (hasKickoffPassed(kickoffAt) || readString(match.final_result) !== null) {
+      continue;
+    }
     const leagueId = readString(match.competition_id) ?? "unknown";
     if (args.options.leagueId && args.options.leagueId !== leagueId) {
       continue;
@@ -440,7 +450,9 @@ function buildBasePickContext(
     leagueId,
     leagueLabel: readString(competition?.name) ?? leagueId,
     homeTeam: readString(homeTeam?.name) ?? String(match.home_team_id),
+    homeTeamLogoUrl: readString(homeTeam?.crest_url) ?? readString(homeTeam?.logo_url),
     awayTeam: readString(awayTeam?.name) ?? String(match.away_team_id),
+    awayTeamLogoUrl: readString(awayTeam?.crest_url) ?? readString(awayTeam?.logo_url),
     kickoffAt: readString(match.kickoff_at) ?? "",
     sourceAgreementRatio: readNumber(summaryPayload?.source_agreement_ratio),
   };

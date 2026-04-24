@@ -101,14 +101,25 @@ def build_cached_supabase_client_class(base_client_class):
 
 @contextlib.contextmanager
 def prediction_stage_read_cache():
-    original_client_class = run_predictions_job.SupabaseClient
-    run_predictions_job.SupabaseClient = build_cached_supabase_client_class(
-        original_client_class
+    cached_client_class = build_cached_supabase_client_class(SupabaseClient)
+    target_modules = (
+        backfill_fixture_season_job,
+        ingest_fixtures_job,
+        ingest_markets_job,
+        run_predictions_job,
+        run_post_match_review_job,
+        evaluate_prediction_sources_job,
     )
+    original_client_classes = {
+        module: module.SupabaseClient for module in target_modules
+    }
+    for module in target_modules:
+        module.SupabaseClient = cached_client_class
     try:
         yield
     finally:
-        run_predictions_job.SupabaseClient = original_client_class
+        for module, original_client_class in original_client_classes.items():
+            module.SupabaseClient = original_client_class
 
 
 def run_stage_for_date(stage: str, target_date: str) -> dict:
@@ -149,16 +160,22 @@ def run_stage_for_date(stage: str, target_date: str) -> dict:
 
 
 def resolve_prediction_cache_config(stage_names: list[str]) -> tuple[bool, str]:
-    if "predictions" not in stage_names:
-        return False, "disabled_no_prediction_stage"
-    if any(stage in stage_names for stage in {"fixtures", "markets"}):
-        return False, "disabled_upstream_stage_present"
-    return True, "enabled_prediction_only"
+    if not stage_names:
+        return False, "disabled_no_stages"
+    return True, "enabled_shared_pipeline_cache"
 
 
-def run_stage_results_for_dates(stage_names: list[str], dates: list[str]) -> StageRunResults:
+def run_stage_results_for_dates(
+    stage_names: list[str],
+    dates: list[str],
+    *,
+    use_cache: bool = True,
+    cache_enabled: bool | None = None,
+    cache_reason: str | None = None,
+) -> StageRunResults:
     stage_results: list[dict] = []
-    cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
+    if cache_enabled is None or cache_reason is None:
+        cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
     emit_pipeline_event(
         {
             "event": "prediction_read_cache_configured",
@@ -168,7 +185,7 @@ def run_stage_results_for_dates(stage_names: list[str], dates: list[str]) -> Sta
     )
     cache_context = (
         prediction_stage_read_cache()
-        if cache_enabled
+        if cache_enabled and use_cache
         else contextlib.nullcontext()
     )
     with cache_context:
@@ -344,42 +361,55 @@ def main() -> None:
         date_source=date_source,
         explicit_dates=explicit_dates,
     )
+    cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
     stage_results: list[dict] = []
-    if fixture_season_year:
-        emit_pipeline_event(
-            {
-                "event": "stage_started",
-                "stage": "fixtures_season",
-                "target_date": None,
-            }
-        )
-        fixture_season_result = run_fixture_season_backfill(fixture_season_year)
-        emit_pipeline_event(
-            {
-                "event": "stage_completed",
-                "stage": "fixtures_season",
-                "target_date": None,
-                "result": fixture_season_result,
-            }
-        )
-        stage_results.append(
-            {
-                "stage": "fixtures_season",
-                "target_date": None,
-                "result": fixture_season_result,
-            }
-        )
-    stage_run_results = run_stage_results_for_dates(stage_names, dates)
-    stage_results.extend(stage_run_results.stage_results)
-
-    emit_pipeline_event({"event": "evaluation_started"})
-    evaluation_result = run_evaluation()
-    emit_pipeline_event(
-        {
-            "event": "evaluation_completed",
-            "result": compact_stage_result(evaluation_result),
-        }
+    cache_context = (
+        prediction_stage_read_cache()
+        if cache_enabled
+        else contextlib.nullcontext()
     )
+    with cache_context:
+        if fixture_season_year:
+            emit_pipeline_event(
+                {
+                    "event": "stage_started",
+                    "stage": "fixtures_season",
+                    "target_date": None,
+                }
+            )
+            fixture_season_result = run_fixture_season_backfill(fixture_season_year)
+            emit_pipeline_event(
+                {
+                    "event": "stage_completed",
+                    "stage": "fixtures_season",
+                    "target_date": None,
+                    "result": fixture_season_result,
+                }
+            )
+            stage_results.append(
+                {
+                    "stage": "fixtures_season",
+                    "target_date": None,
+                    "result": fixture_season_result,
+                }
+            )
+        stage_run_results = run_stage_results_for_dates(
+            stage_names,
+            dates,
+            use_cache=False,
+            cache_enabled=cache_enabled,
+            cache_reason=cache_reason,
+        )
+        stage_results.extend(stage_run_results.stage_results)
+
+        emit_pipeline_event({"event": "evaluation_started"})
+        evaluation_result = run_evaluation()
+        emit_pipeline_event(
+            {
+                "event": "evaluation_completed",
+                "result": compact_stage_result(evaluation_result),
+            }
+        )
     emit_pipeline_event(
         {
             "date_start": start,

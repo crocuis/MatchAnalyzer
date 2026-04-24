@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from batch.src.ingest.fetch_fixtures import (
     build_competition_row_from_event,
+    build_lineup_context_by_match,
     build_match_row_from_event,
     build_team_rows_from_event,
     filter_supported_events,
@@ -25,6 +26,10 @@ SUPPORTED_COMPETITION_IDS = (
     "bundesliga",
     "serie-a",
     "ligue-1",
+    "champions-league",
+    "europa-league",
+    "conference-league",
+    "world-cup",
 )
 
 
@@ -36,16 +41,17 @@ def fetch_season_events(*, competition_id: str, season_id: str) -> list[dict]:
     return filter_supported_events(schedules)
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def main() -> None:
     season_year = os.environ.get("REAL_FIXTURE_SEASON_YEAR")
     if not season_year:
         raise KeyError("REAL_FIXTURE_SEASON_YEAR")
-    hydrate_historical_matches = os.environ.get(
-        "REAL_FIXTURE_SEASON_HYDRATE_HISTORY", "0"
-    ) in {"1", "true", "TRUE", "yes", "YES"}
-    backfill_assets_enabled = os.environ.get(
-        "REAL_FIXTURE_SEASON_BACKFILL_ASSETS", "0"
-    ) in {"1", "true", "TRUE", "yes", "YES"}
+    hydrate_historical_matches = _env_flag("REAL_FIXTURE_SEASON_HYDRATE_HISTORY")
+    backfill_assets_enabled = _env_flag("REAL_FIXTURE_SEASON_BACKFILL_ASSETS")
+    lineup_context_enabled = _env_flag("REAL_FIXTURE_SEASON_LINEUP_CONTEXT")
     competitions_raw = os.environ.get("REAL_FIXTURE_SEASON_COMPETITIONS")
     competition_ids = (
         tuple(
@@ -81,11 +87,14 @@ def main() -> None:
 
     captured_at = datetime.now(timezone.utc).isoformat()
     historical_matches = client.read_rows("matches")
+    lineup_context_by_match = (
+        build_lineup_context_by_match(all_events) if lineup_context_enabled else {}
+    )
     snapshot_rows_payload = build_sync_snapshot_rows(
         match_rows=payload,
         captured_at=captured_at,
         historical_matches=historical_matches,
-        lineup_context_by_match={},
+        lineup_context_by_match=lineup_context_by_match,
         hydrate_historical_matches=hydrate_historical_matches,
     )
     if backfill_assets_enabled:
@@ -135,6 +144,8 @@ def main() -> None:
                 "competition_ids": list(competition_ids),
                 "hydrate_historical_matches": hydrate_historical_matches,
                 "backfill_assets_enabled": backfill_assets_enabled,
+                "lineup_context_enabled": lineup_context_enabled,
+                "lineup_context_count": len(lineup_context_by_match),
                 "archive_uri": archive_uri,
             },
             sort_keys=True,

@@ -7,12 +7,13 @@
   "dailyPicks": {
     "entry": {
       "header": "Daily Picks",
-      "eyebrow": "Betting board",
-      "boardTitle": "Today's qualified recommendations",
-      "boardCaption": "Moneyline, handicap, and over/under picks filtered by confidence and expected value.",
+      "eyebrow": "Pick",
+      "boardTitle": "Daily Picks",
+      "boardCaption": "Today's top filtered insights.",
       "volume": "Daily volume",
       "volumeValue": "5-10 picks",
-      "open": "Open Daily Picks"
+      "open": "View Daily Picks",
+      "openShort": "View"
     },
     "title": "Daily Picks",
     "subtitle": "A focused board of today's qualified recommendations. Historical targets are shown as model gates, not future profit guarantees.",
@@ -77,6 +78,7 @@
     "chapions-league": "UEFA Champions League",
     "uel": "UEFA Europa League",
     "europa-league": "UEFA Europa League",
+    "conference-league": "UEFA Conference League",
     "uecl": "UEFA Conference League",
     "kleague": "K League",
     "eredivisie": "Eredivisie",
@@ -102,6 +104,7 @@
     "summaryBadges": {
       "reviewRequired": "Review required",
       "marketMissing": "Market missing",
+      "marketPreserved": "Stale Market",
       "lineupPending": "Lineup pending",
       "highConsensus": "High consensus",
       "signalConflict": "Signal conflict",
@@ -208,6 +211,7 @@
       "missingSignalsReasons": "Why signals are missing",
       "syncActionsTitle": "Sync actions",
       "valuePickTitle": "Value Pick",
+      "marketPreservedNote": "Using the last synced market context while live market refresh is unavailable.",
       "expectedValue": "Expected value",
       "marketPrice": "Market price",
       "modelProbability": "Model probability",
