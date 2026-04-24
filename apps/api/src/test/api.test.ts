@@ -2485,6 +2485,107 @@ describe("prediction API", () => {
     ]);
   });
 
+  it("uses english primary team translations when locale=en is requested", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "bayern",
+            away_team_id: "inter",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "bayern", name: "FC Bayern München", crest_url: null },
+          { id: "inter", name: "FC Internazionale Milano", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const teamTranslations = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "bayern:en:primary",
+            team_id: "bayern",
+            locale: "en",
+            display_name: "Bayern Munich",
+            source_name: null,
+            is_primary: true,
+          },
+          {
+            id: "inter:en:primary",
+            team_id: "inter",
+            locale: "en",
+            display_name: "Inter",
+            source_name: null,
+            is_primary: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "teams") return teams;
+      if (tableName === "team_translations") return teamTranslations;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      if (tableName === "post_match_reviews") return reviews;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+      locale: "en",
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        homeTeam: "Bayern Munich",
+        awayTeam: "Inter",
+      }),
+    ]);
+  });
+
   it("falls back to english team translations when the requested locale is missing", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),

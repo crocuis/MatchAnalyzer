@@ -474,6 +474,116 @@ def score_betman_group_match(
     return int(home_name in home_aliases) + int(away_name in away_aliases)
 
 
+def build_betman_group_moneyline_probabilities(
+    rows: list[dict[str, Any]],
+) -> dict[str, float] | None:
+    moneyline_row = next(
+        (
+            row for row in rows
+            if _read_numeric(row.get("drawAllot")) not in {None, 0.0}
+            and _read_numeric(row.get("winAllot")) not in {None, 0.0}
+            and _read_numeric(row.get("loseAllot")) not in {None, 0.0}
+        ),
+        None,
+    )
+    if moneyline_row is None:
+        return None
+    home_price = decimal_odds_to_probability(moneyline_row.get("winAllot"))
+    draw_price = decimal_odds_to_probability(moneyline_row.get("drawAllot"))
+    away_price = decimal_odds_to_probability(moneyline_row.get("loseAllot"))
+    if None in (home_price, draw_price, away_price):
+        return None
+    return normalize_market_probabilities(
+        float(home_price),
+        float(draw_price),
+        float(away_price),
+    )
+
+
+def build_snapshot_bookmaker_probabilities(
+    bookmaker_rows: list[dict[str, Any]] | None,
+) -> dict[str, dict[str, float]]:
+    if not bookmaker_rows:
+        return {}
+    indexed: dict[str, dict[str, float]] = {}
+    for row in bookmaker_rows:
+        snapshot_id = str(row.get("snapshot_id") or "")
+        if not snapshot_id or str(row.get("market_family") or "") != "moneyline_3way":
+            continue
+        home_prob = _read_numeric(row.get("home_prob"))
+        draw_prob = _read_numeric(row.get("draw_prob"))
+        away_prob = _read_numeric(row.get("away_prob"))
+        if None in (home_prob, draw_prob, away_prob):
+            continue
+        indexed[snapshot_id] = {
+            "home": float(home_prob),
+            "draw": float(draw_prob),
+            "away": float(away_prob),
+        }
+    return indexed
+
+
+def score_betman_group_probability_distance(
+    snapshot_probabilities: dict[str, float] | None,
+    rows: list[dict[str, Any]],
+) -> float | None:
+    if not snapshot_probabilities:
+        return None
+    candidate_probabilities = build_betman_group_moneyline_probabilities(rows)
+    if candidate_probabilities is None:
+        return None
+    return round(
+        sum(
+            abs(
+                float(snapshot_probabilities[key]) - float(candidate_probabilities[f"{key}_prob"])
+            )
+            for key in ("home", "draw", "away")
+        ),
+        6,
+    )
+
+
+def select_betman_group_rows_for_snapshot(
+    snapshot: dict[str, Any],
+    candidates: list[tuple[str, list[dict[str, Any]]]],
+    *,
+    bookmaker_probabilities: dict[str, float] | None = None,
+) -> list[dict[str, Any]] | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0][1]
+
+    alias_scored = [
+        (score_betman_group_match(snapshot, game_key), rows)
+        for game_key, rows in candidates
+    ]
+    best_alias_score = max(score for score, _rows in alias_scored)
+    if best_alias_score > 0:
+        best_alias_matches = [rows for score, rows in alias_scored if score == best_alias_score]
+        if len(best_alias_matches) == 1:
+            return best_alias_matches[0]
+
+    probability_scored = [
+        (score_betman_group_probability_distance(bookmaker_probabilities, rows), rows)
+        for _game_key, rows in candidates
+    ]
+    valid_distances = [
+        (distance, rows)
+        for distance, rows in probability_scored
+        if distance is not None
+    ]
+    if not valid_distances:
+        return None
+    valid_distances.sort(key=lambda item: item[0])
+    best_distance, best_rows = valid_distances[0]
+    if best_distance > 0.18:
+        return None
+    if len(valid_distances) > 1 and abs(valid_distances[1][0] - best_distance) < 0.03:
+        return None
+    return best_rows
+
+
 def build_betman_match_market_groups(
     detail_payloads: list[dict[str, Any]],
 ) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
@@ -516,9 +626,11 @@ def format_betman_signed_line(value: Any) -> str | None:
 def build_betman_market_rows(
     detail_payloads: list[dict[str, Any]],
     snapshot_rows: list[dict[str, Any]],
+    bookmaker_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     groups_by_snapshot: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     grouped = build_betman_match_market_groups(detail_payloads)
+    snapshot_bookmaker_probabilities = build_snapshot_bookmaker_probabilities(bookmaker_rows)
     grouped_by_competition_and_kickoff: dict[
         tuple[str, str],
         list[tuple[str, list[dict[str, Any]]]],
@@ -536,22 +648,14 @@ def build_betman_market_rows(
             continue
         kickoff_key = parse_utc_minute(kickoff_at).isoformat().replace("+00:00", "Z")
         candidates = grouped_by_competition_and_kickoff.get((competition_id, kickoff_key), [])
-        if len(candidates) == 1:
-            groups_by_snapshot.append((snapshot, candidates[0][1]))
+        selected_rows = select_betman_group_rows_for_snapshot(
+            snapshot,
+            candidates,
+            bookmaker_probabilities=snapshot_bookmaker_probabilities.get(str(snapshot.get("id") or "")),
+        )
+        if selected_rows is None:
             continue
-        if not candidates:
-            continue
-        scored_candidates = [
-            (score_betman_group_match(snapshot, game_key), rows)
-            for game_key, rows in candidates
-        ]
-        best_score = max(score for score, _rows in scored_candidates)
-        if best_score <= 0:
-            continue
-        best_matches = [rows for score, rows in scored_candidates if score == best_score]
-        if len(best_matches) != 1:
-            continue
-        groups_by_snapshot.append((snapshot, best_matches[0]))
+        groups_by_snapshot.append((snapshot, selected_rows))
 
     market_rows: list[dict[str, Any]] = []
     variant_rows: list[dict[str, Any]] = []
@@ -675,8 +779,10 @@ def build_betman_market_rows(
 def build_betman_team_translation_rows(
     detail_payloads: list[dict[str, Any]],
     snapshot_rows: list[dict[str, Any]],
+    bookmaker_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     grouped = build_betman_match_market_groups(detail_payloads)
+    snapshot_bookmaker_probabilities = build_snapshot_bookmaker_probabilities(bookmaker_rows)
     grouped_by_competition_and_kickoff: dict[
         tuple[str, str],
         list[tuple[str, list[dict[str, Any]]]],
@@ -696,23 +802,14 @@ def build_betman_team_translation_rows(
             continue
         kickoff_key = parse_utc_minute(kickoff_at).isoformat().replace("+00:00", "Z")
         candidates = grouped_by_competition_and_kickoff.get((competition_id, kickoff_key), [])
-        if not candidates:
+        selected_rows = select_betman_group_rows_for_snapshot(
+            snapshot,
+            candidates,
+            bookmaker_probabilities=snapshot_bookmaker_probabilities.get(str(snapshot.get("id") or "")),
+        )
+        if selected_rows is None:
             continue
-        if len(candidates) == 1:
-            matched_game_key = candidates[0][0]
-        else:
-            scored = [
-                (score_betman_group_match(snapshot, game_key), game_key)
-                for game_key, _rows in candidates
-            ]
-            best_score = max(score for score, _game_key in scored)
-            if best_score <= 0:
-                continue
-            matched_keys = [game_key for score, game_key in scored if score == best_score]
-            if len(matched_keys) != 1:
-                continue
-            matched_game_key = matched_keys[0]
-
+        matched_game_key = str(selected_rows[0].get("gameKey") or "").strip()
         parsed = split_betman_game_key(matched_game_key)
         if parsed is None:
             continue

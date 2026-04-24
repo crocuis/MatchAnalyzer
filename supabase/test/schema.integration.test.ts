@@ -244,6 +244,17 @@ describe("supabase schema integration", () => {
     ]);
   });
 
+  it("enforces one primary team translation per locale", async () => {
+    const db = await createDb();
+
+    await expect(
+      db.exec(`
+        insert into team_translations (id, team_id, locale, display_name, is_primary)
+        values ('arsenal:en:duplicate', 'arsenal', 'en', 'Arsenal FC', true);
+      `),
+    ).rejects.toThrow();
+  });
+
   it("excludes no-bet predictions from evaluated and hit totals for the summary view", async () => {
     const db = await createDb();
 

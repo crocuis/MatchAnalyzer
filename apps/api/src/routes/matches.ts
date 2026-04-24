@@ -1065,7 +1065,7 @@ matches.get("/", async (c) => {
     });
   }
   try {
-    if (locale && locale !== "en") {
+    if (locale) {
       return c.json(
         await loadMatchPageView(supabase, {
           leagueId,

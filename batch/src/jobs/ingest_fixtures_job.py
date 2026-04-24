@@ -118,7 +118,11 @@ def build_team_translation_rows(
         display_name = str(team.get("name") or "").strip()
         if not team_id or not display_name:
             continue
-        translation_id = f"{team_id}:{locale}:{source_name or 'default'}:{display_name}"
+        translation_id = (
+            f"{team_id}:{locale}:primary"
+            if is_primary
+            else f"{team_id}:{locale}:{source_name or 'default'}:{display_name}"
+        )
         if translation_id in seen_ids:
             continue
         seen_ids.add(translation_id)
@@ -353,7 +357,7 @@ def main() -> None:
         team_rows = []
         team_translation_rows = [
             {
-                "id": "arsenal:en:default:Arsenal",
+                "id": "arsenal:en:primary",
                 "team_id": "arsenal",
                 "locale": "en",
                 "display_name": "Arsenal",
@@ -361,7 +365,7 @@ def main() -> None:
                 "is_primary": True,
             },
             {
-                "id": "chelsea:en:default:Chelsea",
+                "id": "chelsea:en:primary",
                 "team_id": "chelsea",
                 "locale": "en",
                 "display_name": "Chelsea",

@@ -329,10 +329,12 @@ def main() -> None:
         betman_market_rows, betman_variant_rows = build_betman_market_rows(
             detail_payloads=betman_detail_payloads,
             snapshot_rows=snapshot_rows,
+            bookmaker_rows=payload,
         )
         betman_team_translation_rows = build_betman_team_translation_rows(
             detail_payloads=betman_detail_payloads,
             snapshot_rows=snapshot_rows,
+            bookmaker_rows=payload,
         )
         payload = overlay_market_rows(payload, betman_market_rows)
         prediction_market_rows, prediction_market_raw = build_prediction_market_rows_for_snapshots(

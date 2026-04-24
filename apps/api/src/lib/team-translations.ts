@@ -43,6 +43,18 @@ function compareTranslationPriority(
   return left.display_name.localeCompare(right.display_name);
 }
 
+function compareStableRows(
+  left: TeamTranslationRow,
+  right: TeamTranslationRow,
+) {
+  if (left.display_name === right.display_name) {
+    return 0;
+  }
+  const leftId = `${left.source_name ?? ""}:${left.display_name}`;
+  const rightId = `${right.source_name ?? ""}:${right.display_name}`;
+  return leftId.localeCompare(rightId);
+}
+
 export async function loadPreferredTeamTranslations(
   supabase: ApiSupabaseClient,
   teamIds: string[],
@@ -86,7 +98,11 @@ export async function loadPreferredTeamTranslations(
         if (leftLocaleRank !== rightLocaleRank) {
           return leftLocaleRank - rightLocaleRank;
         }
-        return compareTranslationPriority(left, right);
+        const priority = compareTranslationPriority(left, right);
+        if (priority !== 0) {
+          return priority;
+        }
+        return compareStableRows(left, right);
       });
       const preferred = sorted[0];
       return preferred ? [[teamId, preferred.display_name] as const] : [];

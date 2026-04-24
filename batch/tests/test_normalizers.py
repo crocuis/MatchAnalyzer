@@ -3478,6 +3478,63 @@ def test_build_betman_market_rows_uses_team_aliases_to_resolve_same_kickoff_ambi
     assert variant_rows == []
 
 
+def test_build_betman_market_rows_falls_back_to_bookmaker_probability_signature_without_aliases():
+    market_rows, variant_rows = build_betman_market_rows(
+        detail_payloads=[
+            {
+                "currentLottery": {"saleEndDate": 1777120200000},
+                "compSchedules": {
+                    "keys": [
+                        "itemCode",
+                        "gameDate",
+                        "leagueName",
+                        "matchSeq",
+                        "winTxt",
+                        "winAllot",
+                        "drawTxt",
+                        "drawAllot",
+                        "loseTxt",
+                        "loseAllot",
+                        "handi",
+                        "winHandi",
+                        "drawHandi",
+                        "loseHandi",
+                        "betTypNm",
+                        "gameKey",
+                    ],
+                    "datas": [
+                        ["SC", 1777116600000, "EPL", 11, "승", 1.91, "무", 3.55, "패", 4.2, 0, 0, 0, 0, "축구 승무패", "첼시:아스널"],
+                        ["SC", 1777116600000, "EPL", 21, "승", 1.33, "무", 4.8, "패", 9.2, 0, 0, 0, 0, "축구 승무패", "리버풀:토트넘"],
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+        bookmaker_rows=[
+            {
+                "id": "snapshot_001_bookmaker_schedule",
+                "snapshot_id": "snapshot_001",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.27,
+                "away_prob": 0.23,
+            }
+        ],
+    )
+
+    assert market_rows[0]["raw_payload"]["gameKey"] == "첼시:아스널"
+    assert variant_rows == []
+
+
 def test_attach_team_translation_aliases_adds_korean_names_for_matching():
     rows = attach_team_translation_aliases(
         snapshot_rows=[
@@ -3542,7 +3599,7 @@ def test_build_team_translation_rows_creates_primary_english_rows():
 
     assert rows == [
         {
-            "id": "chelsea:en:default:Chelsea",
+            "id": "chelsea:en:primary",
             "team_id": "chelsea",
             "locale": "en",
             "display_name": "Chelsea",
@@ -3550,7 +3607,7 @@ def test_build_team_translation_rows_creates_primary_english_rows():
             "is_primary": True,
         },
         {
-            "id": "arsenal:en:default:Arsenal",
+            "id": "arsenal:en:primary",
             "team_id": "arsenal",
             "locale": "en",
             "display_name": "Arsenal",
