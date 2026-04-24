@@ -27,6 +27,7 @@ FOOTBALL_DATA_COMPETITION_CODES = {
     "ligue-1": "FL1",
     "champions-league": "CL",
     "europa-league": "EL",
+    "conference-league": "UCL",
     "world-cup": "WC",
     "european-championship": "EC",
 }

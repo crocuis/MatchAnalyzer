@@ -63,7 +63,9 @@
     "noBetReasons": {
       "low_confidence": "신뢰도 부족",
       "heldByRecommendationGate": "추천 게이트 보류",
-      "variant_market_price_only": "시장 가격만 있음"
+      "variant_market_price_only": "시장 가격만 있음",
+      "variant_model_inputs_missing": "모델 입력 부족",
+      "variant_ev_below_threshold": "기대값 기준 미달"
     }
   },
   "leagues": {

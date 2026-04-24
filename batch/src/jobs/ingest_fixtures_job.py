@@ -31,6 +31,56 @@ def dedupe_rows(rows: list[dict]) -> list[dict]:
     return list(deduped.values())
 
 
+def rows_differ(
+    previous_row: dict | None,
+    next_row: dict,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> bool:
+    if previous_row is None:
+        return True
+    keys = (set(previous_row) | set(next_row)) - (ignored_fields or set())
+    return any(previous_row.get(key) != next_row.get(key) for key in keys)
+
+
+def collect_changed_fixture_match_ids(
+    *,
+    match_rows: list[dict],
+    existing_match_rows: list[dict],
+    snapshot_rows: list[dict],
+    existing_snapshot_rows: list[dict],
+) -> list[str]:
+    changed_match_ids: set[str] = set()
+    existing_matches_by_id = {
+        row["id"]: row for row in existing_match_rows if isinstance(row, dict) and row.get("id")
+    }
+    for row in match_rows:
+        match_id = row.get("id")
+        if match_id and rows_differ(existing_matches_by_id.get(match_id), row):
+            changed_match_ids.add(str(match_id))
+
+    existing_snapshots_by_id = {
+        row["id"]: row
+        for row in existing_snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    for row in snapshot_rows:
+        match_id = row.get("match_id")
+        snapshot_id = row.get("id")
+        if (
+            match_id
+            and snapshot_id
+            and rows_differ(
+                existing_snapshots_by_id.get(snapshot_id),
+                row,
+                ignored_fields={"captured_at"},
+            )
+        ):
+            changed_match_ids.add(str(match_id))
+
+    return sorted(changed_match_ids)
+
+
 def merge_existing_asset_fields(
     rows: list[dict],
     existing_rows: list[dict],
@@ -52,6 +102,41 @@ def merge_existing_asset_fields(
 def apply_asset_updates(rows: list[dict], updates: list[dict]) -> list[dict]:
     updates_by_id = {row["id"]: row for row in updates if row.get("id")}
     return [{**row, **updates_by_id.get(row["id"], {})} for row in rows]
+
+
+def build_team_translation_rows(
+    team_rows: list[dict],
+    *,
+    locale: str,
+    source_name: str | None = None,
+    is_primary: bool = False,
+) -> list[dict]:
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for team in team_rows:
+        team_id = str(team.get("id") or "").strip()
+        display_name = str(team.get("name") or "").strip()
+        if not team_id or not display_name:
+            continue
+        translation_id = (
+            f"{team_id}:{locale}:primary"
+            if is_primary
+            else f"{team_id}:{locale}:{source_name or 'default'}:{display_name}"
+        )
+        if translation_id in seen_ids:
+            continue
+        seen_ids.add(translation_id)
+        rows.append(
+            {
+                "id": translation_id,
+                "team_id": team_id,
+                "locale": locale,
+                "display_name": display_name,
+                "source_name": source_name,
+                "is_primary": is_primary,
+            }
+        )
+    return rows
 
 
 def prepare_sync_asset_rows(
@@ -228,6 +313,7 @@ def main() -> None:
         lineup_context_by_match = build_lineup_context_by_match(events)
         captured_at = datetime.now(timezone.utc).isoformat()
         historical_matches = client.read_rows("matches")
+        existing_snapshot_rows = client.read_rows("match_snapshots")
         snapshot_rows_payload = build_sync_snapshot_rows(
             match_rows=payload,
             captured_at=captured_at,
@@ -244,6 +330,17 @@ def main() -> None:
             existing_teams=client.read_rows("teams"),
             fetch_missing_team_assets=should_backfill_real_fixture_team_assets(),
         )
+        team_translation_rows = build_team_translation_rows(
+            team_rows,
+            locale="en",
+            is_primary=True,
+        )
+        changed_match_ids = collect_changed_fixture_match_ids(
+            match_rows=payload,
+            existing_match_rows=historical_matches,
+            snapshot_rows=snapshot_rows_payload,
+            existing_snapshot_rows=existing_snapshot_rows,
+        )
     else:
         normalized = build_fixture_row(SAMPLE_RAW_FIXTURE, {})
         payload = [
@@ -258,7 +355,26 @@ def main() -> None:
         archive_key = "fixtures/match_001.json"
         competition_rows = []
         team_rows = []
+        team_translation_rows = [
+            {
+                "id": "arsenal:en:primary",
+                "team_id": "arsenal",
+                "locale": "en",
+                "display_name": "Arsenal",
+                "source_name": None,
+                "is_primary": True,
+            },
+            {
+                "id": "chelsea:en:primary",
+                "team_id": "chelsea",
+                "locale": "en",
+                "display_name": "Chelsea",
+                "source_name": None,
+                "is_primary": True,
+            },
+        ]
         snapshot_rows_payload = SAMPLE_SNAPSHOT_ROWS
+        changed_match_ids = [payload[0]["id"]]
 
     archive_uri = R2Client(
         settings.r2_bucket,
@@ -274,6 +390,11 @@ def main() -> None:
     team_count = (
         client.upsert_rows("teams", team_rows) if team_rows else 0
     )
+    team_translation_count = (
+        client.upsert_rows("team_translations", team_translation_rows)
+        if team_translation_rows
+        else 0
+    )
     fixture_rows = client.upsert_rows("matches", payload)
     snapshot_rows = (
         client.upsert_rows("match_snapshots", snapshot_rows_payload)
@@ -287,8 +408,10 @@ def main() -> None:
                 "archive_uri": archive_uri,
                 "competition_rows": competition_count,
                 "team_rows": team_count,
+                "team_translation_rows": team_translation_count,
                 "fixture_rows": fixture_rows,
                 "snapshot_rows": snapshot_rows,
+                "changed_match_ids": changed_match_ids,
                 "payload": payload,
             },
             sort_keys=True,

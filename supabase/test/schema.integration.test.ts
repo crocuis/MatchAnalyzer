@@ -30,6 +30,11 @@ describe("supabase schema integration", () => {
     const teams = await db.query<{ count: number }>(
       "select count(*)::int as count from teams",
     );
+    const teamTranslationsTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'team_translations'`,
+    );
     const matches = await db.query<{ count: number }>(
       "select count(*)::int as count from matches",
     );
@@ -144,6 +149,7 @@ describe("supabase schema integration", () => {
 
     expect(competitions.rows[0]?.count).toBe(1);
     expect(teams.rows[0]?.count).toBe(2);
+    expect(teamTranslationsTables.rows[0]?.count).toBe(1);
     expect(matches.rows[0]?.count).toBe(1);
     expect(crestColumns.rows[0]?.count).toBe(1);
     expect(emblemColumns.rows[0]?.count).toBe(1);
@@ -236,6 +242,17 @@ describe("supabase schema integration", () => {
         review_count: 1,
       },
     ]);
+  });
+
+  it("enforces one primary team translation per locale", async () => {
+    const db = await createDb();
+
+    await expect(
+      db.exec(`
+        insert into team_translations (id, team_id, locale, display_name, is_primary)
+        values ('arsenal:en:duplicate', 'arsenal', 'en', 'Arsenal FC', true);
+      `),
+    ).rejects.toThrow();
   });
 
   it("excludes no-bet predictions from evaluated and hit totals for the summary view", async () => {

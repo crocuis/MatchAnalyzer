@@ -8,6 +8,10 @@ import {
   type PredictionLaneSummaryFields,
 } from "../lib/prediction-lanes";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import {
+  loadPreferredTeamTranslations,
+  normalizeLocale,
+} from "../lib/team-translations";
 
 const dailyPicks = new Hono<AppBindings>();
 
@@ -76,6 +80,7 @@ export type LoadDailyPicksOptions = {
   leagueId?: string | null;
   marketFamily?: DailyPickMarketFamily | "all" | null;
   includeHeld?: boolean;
+  locale?: string | null;
 };
 
 type DailyPickRow = Record<string, unknown>;
@@ -83,6 +88,7 @@ type DailyPickRow = Record<string, unknown>;
 type BuildDailyPicksArgs = {
   matches: DailyPickRow[];
   teams: DailyPickRow[];
+  teamTranslations: Map<string, string>;
   competitions: DailyPickRow[];
   snapshots: DailyPickRow[];
   predictions: DailyPickRow[];
@@ -273,6 +279,11 @@ export async function loadDailyPicksView(
     readRowsByIds(supabase, "competitions", competitionIds),
     readRowsByIds(supabase, "predictions", matchIds, "match_id"),
   ]);
+  const teamTranslations = await loadPreferredTeamTranslations(
+    supabase,
+    teamIds,
+    normalizedOptions.locale,
+  );
   const snapshotIds = [...new Set(predictions.flatMap((row) => {
     const id = readString(row.snapshot_id);
     return id ? [id] : [];
@@ -282,6 +293,7 @@ export async function loadDailyPicksView(
   return buildDailyPicksView({
     matches,
     teams,
+    teamTranslations,
     competitions,
     snapshots,
     predictions,
@@ -387,6 +399,7 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
       match,
       representative,
       teamsById,
+      args.teamTranslations,
       competitionsById,
       leagueId,
     );
@@ -433,6 +446,7 @@ function buildBasePickContext(
   match: DailyPickRow,
   representative: PredictionCandidate,
   teamsById: Map<string, DailyPickRow>,
+  teamTranslations: Map<string, string>,
   competitionsById: Map<string, DailyPickRow>,
   leagueId: string,
 ) {
@@ -449,9 +463,15 @@ function buildBasePickContext(
     predictionId: representative.predictionId,
     leagueId,
     leagueLabel: readString(competition?.name) ?? leagueId,
-    homeTeam: readString(homeTeam?.name) ?? String(match.home_team_id),
+    homeTeam:
+      teamTranslations.get(String(match.home_team_id))
+      ?? readString(homeTeam?.name)
+      ?? String(match.home_team_id),
     homeTeamLogoUrl: readString(homeTeam?.crest_url) ?? readString(homeTeam?.logo_url),
-    awayTeam: readString(awayTeam?.name) ?? String(match.away_team_id),
+    awayTeam:
+      teamTranslations.get(String(match.away_team_id))
+      ?? readString(awayTeam?.name)
+      ?? String(match.away_team_id),
     awayTeamLogoUrl: readString(awayTeam?.crest_url) ?? readString(awayTeam?.logo_url),
     kickoffAt: readString(match.kickoff_at) ?? "",
     sourceAgreementRatio: readNumber(summaryPayload?.source_agreement_ratio),
@@ -536,11 +556,42 @@ function buildVariantPick(
     selectionAPrice: number | null;
     selectionBLabel: string;
     selectionBPrice: number | null;
+    recommendedPick?: string;
+    recommended?: boolean;
+    noBetReason?: string | null;
+    edge?: number | null;
+    expectedValue?: number | null;
+    marketPrice?: number | null;
+    modelProbability?: number | null;
+    marketProbability?: number | null;
   },
 ): DailyPickItem | null {
   const rawFamily = variant.marketFamily;
   if (rawFamily !== "spreads" && rawFamily !== "totals") {
     return null;
+  }
+
+  if (
+    variant.recommended === true
+    && typeof variant.recommendedPick === "string"
+    && variant.recommendedPick.length > 0
+  ) {
+    return {
+      ...base,
+      id: `${base.matchId}:${rawFamily}:${variant.recommendedPick}`,
+      marketFamily: rawFamily,
+      selectionLabel: variant.recommendedPick,
+      confidence: null,
+      edge: variant.edge ?? null,
+      expectedValue: variant.expectedValue ?? null,
+      marketPrice: variant.marketPrice ?? null,
+      modelProbability: variant.modelProbability ?? null,
+      marketProbability: variant.marketProbability ?? null,
+      sourceAgreementRatio: base.sourceAgreementRatio,
+      status: "recommended",
+      noBetReason: null,
+      reasonLabels: [rawFamily, "variantRecommendation"],
+    };
   }
 
   const aPrice = variant.selectionAPrice;
@@ -561,11 +612,11 @@ function buildVariantPick(
     edge: null,
     expectedValue: null,
     marketPrice: normalizedMarketPrice,
-    modelProbability: null,
-    marketProbability: normalizedMarketPrice,
+    modelProbability: variant.modelProbability ?? null,
+    marketProbability: variant.marketProbability ?? normalizedMarketPrice,
     sourceAgreementRatio: base.sourceAgreementRatio,
     status: "held",
-    noBetReason: "variant_market_price_only",
+    noBetReason: variant.noBetReason ?? "variant_market_price_only",
     reasonLabels: [rawFamily, "heldByRecommendationGate"],
   };
 }
@@ -594,6 +645,7 @@ dailyPicks.get("/", async (c) => {
     leagueId: c.req.query("leagueId") ?? null,
     marketFamily,
     includeHeld: c.req.query("includeHeld") === "true",
+    locale: normalizeLocale(c.req.query("locale")),
   });
 
   return c.json(view, 200, {

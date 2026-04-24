@@ -43,6 +43,14 @@ export interface VariantMarket {
   selectionBLabel: string;
   selectionBPrice: number | null;
   marketSlug: string | null;
+  recommendedPick?: string;
+  recommended?: boolean;
+  noBetReason?: string | null;
+  edge?: number | null;
+  expectedValue?: number | null;
+  marketPrice?: number | null;
+  modelProbability?: number | null;
+  marketProbability?: number | null;
 }
 
 export interface PredictionLaneSummaryFields {
@@ -155,18 +163,33 @@ export function normalizeVariantMarkets(
       return [];
     }
 
-    return [
-      {
-        marketFamily,
-        sourceName,
-        lineValue: readNumber(entry.line_value),
-        selectionALabel,
-        selectionAPrice: readNumber(entry.selection_a_price),
-        selectionBLabel,
-        selectionBPrice: readNumber(entry.selection_b_price),
-        marketSlug: readString(entry.market_slug),
-      },
-    ];
+    const recommendedPick = readString(entry.recommended_pick);
+    const recommended = readBoolean(entry.recommended);
+    const noBetReason = readString(entry.no_bet_reason);
+    const edge = readNumber(entry.edge);
+    const expectedValue = readNumber(entry.expected_value);
+    const marketPrice = readNumber(entry.market_price);
+    const modelProbability = readNumber(entry.model_probability);
+    const marketProbability = readNumber(entry.market_probability);
+
+    return [{
+      marketFamily,
+      sourceName,
+      lineValue: readNumber(entry.line_value),
+      selectionALabel,
+      selectionAPrice: readNumber(entry.selection_a_price),
+      selectionBLabel,
+      selectionBPrice: readNumber(entry.selection_b_price),
+      marketSlug: readString(entry.market_slug),
+      ...(recommendedPick !== null ? { recommendedPick } : {}),
+      ...(recommended !== null ? { recommended } : {}),
+      ...(noBetReason !== null ? { noBetReason } : {}),
+      ...(edge !== null ? { edge } : {}),
+      ...(expectedValue !== null ? { expectedValue } : {}),
+      ...(marketPrice !== null ? { marketPrice } : {}),
+      ...(modelProbability !== null ? { modelProbability } : {}),
+      ...(marketProbability !== null ? { marketProbability } : {}),
+    }];
   });
 }
 
