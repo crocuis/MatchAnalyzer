@@ -1183,12 +1183,14 @@ describe("dashboard redesign", () => {
     render(<App />);
 
     const fetchMock = vi.mocked(fetch);
+    const dailyPicksCalls = () =>
+      fetchMock.mock.calls
+        .map(([url]) => url)
+        .filter((url): url is string => typeof url === "string" && url.startsWith("/api/daily-picks"));
     expect(await screen.findByRole("heading", { name: /^daily picks$/i })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /^view$/i })).toBeInTheDocument();
     expect(await screen.findByText("2 picks")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/daily-picks?date=2026-04-24",
-    );
+    expect(dailyPicksCalls()).toContainEqual(expect.stringMatching(/^\/api\/daily-picks\?date=\d{4}-\d{2}-\d{2}&locale=en$/));
   });
 
   it("opens the daily picks view from the dashboard CTA", async () => {
@@ -1217,7 +1219,7 @@ describe("dashboard redesign", () => {
     const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
     expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
     expect(screen.getByText("HOME")).toBeInTheDocument();
-    expect(screen.queryByText("DRAW")).not.toBeInTheDocument();
+    expect(screen.getByText("DRAW")).toBeInTheDocument();
     expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
     expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
@@ -1310,7 +1312,7 @@ describe("dashboard redesign", () => {
     expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
   });
 
-  it("opens the teaser CTA with the current league daily picks and updates cards when the league select changes", async () => {
+  it("opens the teaser CTA with all league daily picks and updates cards when the league select changes", async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
@@ -1322,10 +1324,11 @@ describe("dashboard redesign", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      within(dailyPicksDialog).queryByRole("button", {
+      await within(dailyPicksDialog).findByRole("button", {
         name: /inter.*bayern munich/i,
       }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
+    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue("");
 
     fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
       target: { value: "champions-league" },
@@ -1345,7 +1348,7 @@ describe("dashboard redesign", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("resets daily picks filters to the requested league context on reopen", async () => {
+  it("resets daily picks filters to the all-leagues context on reopen", async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
@@ -1366,9 +1369,7 @@ describe("dashboard redesign", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
     dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
 
-    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue(
-      "champions-league",
-    );
+    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue("");
     expect(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i })).not.toBeChecked();
     expect(
       await within(dailyPicksDialog).findByRole("button", {
@@ -1376,10 +1377,10 @@ describe("dashboard redesign", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      within(dailyPicksDialog).queryByRole("button", {
+      within(dailyPicksDialog).getByRole("button", {
         name: /chelsea.*manchester city/i,
       }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
   });
 
   it("does not fetch evaluation reports when opening the match detail modal", async () => {

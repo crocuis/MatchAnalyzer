@@ -14,6 +14,7 @@ from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
+    build_betman_team_translation_rows,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_rows,
     build_prediction_market_variant_rows,
@@ -23,6 +24,7 @@ from batch.src.ingest.fetch_markets import (
 )
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.jobs.ingest_markets_job import (
+    attach_team_translation_aliases,
     collect_changed_market_match_ids,
     main as run_ingest_markets_job,
     promote_market_snapshots,
@@ -31,6 +33,7 @@ from batch.src.jobs.ingest_markets_job import (
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
+    build_team_translation_rows,
     collect_changed_fixture_match_ids,
     prepare_sync_asset_rows,
     should_backfill_real_fixture_team_assets,
@@ -2364,6 +2367,35 @@ def test_collect_changed_market_match_ids_ignores_market_observed_at_only_update
     assert changed_match_ids == []
 
 
+def test_collect_changed_market_match_ids_tracks_deleted_rows_for_target_snapshots():
+    changed_match_ids = collect_changed_market_match_ids(
+        market_rows=[],
+        existing_market_rows=[
+            {
+                "id": "snapshot_a_bookmaker",
+                "snapshot_id": "snapshot_a",
+                "home_prob": 0.6,
+            }
+        ],
+        variant_rows=[],
+        existing_variant_rows=[
+            {
+                "id": "snapshot_b_total",
+                "snapshot_id": "snapshot_b",
+                "selection_a_price": 0.57,
+            }
+        ],
+        promoted_snapshot_rows=[],
+        existing_snapshot_rows=[],
+        snapshot_rows=[
+            {"id": "snapshot_a", "match_id": "match_a"},
+            {"id": "snapshot_b", "match_id": "match_b"},
+        ],
+    )
+
+    assert changed_match_ids == ["match_a", "match_b"]
+
+
 def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, capsys):
     class FakeClient:
         def __init__(self, _base_url: str, _service_key: str) -> None:
@@ -2414,6 +2446,82 @@ def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, ca
 
     assert payload["inserted_rows"] == 2
     assert payload["variant_rows"] == 0
+
+
+def test_ingest_markets_job_deletes_withdrawn_rows_and_reports_changed_matches(
+    monkeypatch,
+    capsys,
+):
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            self.state = {
+                "match_snapshots": [
+                    {
+                        "id": "snapshot_001",
+                        "match_id": "match_001",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "partial",
+                    }
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "snapshot_001_bookmaker",
+                        "snapshot_id": "snapshot_001",
+                        "source_type": "bookmaker",
+                    },
+                    {
+                        "id": "snapshot_001_withdrawn",
+                        "snapshot_id": "snapshot_001",
+                        "source_type": "prediction_market",
+                    },
+                ],
+                "market_variants": [
+                    {
+                        "id": "snapshot_001_withdrawn_variant",
+                        "snapshot_id": "snapshot_001",
+                    }
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.state.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            self.state[table_name] = list(rows)
+            return len(rows)
+
+        def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
+            value_set = set(values)
+            self.state[table_name] = [
+                row for row in self.state.get(table_name, []) if row.get(column) not in value_set
+            ]
+            return len(values)
+
+    monkeypatch.delenv("REAL_MARKET_DATE", raising=False)
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+                "r2_bucket": "ma-bucket",
+                "r2_access_key_id": None,
+                "r2_secret_access_key": None,
+                "r2_s3_endpoint": None,
+            },
+        )(),
+    )
+
+    run_ingest_markets_job()
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["changed_match_ids"] == ["match_001"]
+    assert payload["deleted_market_rows"] == 1
+    assert payload["deleted_variant_rows"] == 1
 
 
 def test_polymarket_sport_for_competition_uses_supported_competitions_only():
@@ -3321,6 +3429,203 @@ def test_build_betman_market_rows_skips_ambiguous_same_kickoff_groups():
     assert variant_rows == []
 
 
+def test_build_betman_market_rows_uses_team_aliases_to_resolve_same_kickoff_ambiguity():
+    market_rows, variant_rows = build_betman_market_rows(
+        detail_payloads=[
+            {
+                "currentLottery": {"saleEndDate": 1777120200000},
+                "compSchedules": {
+                    "keys": [
+                        "itemCode",
+                        "gameDate",
+                        "leagueName",
+                        "matchSeq",
+                        "winTxt",
+                        "winAllot",
+                        "drawTxt",
+                        "drawAllot",
+                        "loseTxt",
+                        "loseAllot",
+                        "handi",
+                        "winHandi",
+                        "drawHandi",
+                        "loseHandi",
+                        "betTypNm",
+                        "gameKey",
+                    ],
+                    "datas": [
+                        ["SC", 1777116600000, "EPL", 11, "승", 1.91, "무", 3.55, "패", 4.2, 0, 0, 0, 0, "축구 승무패", "첼시:아스널"],
+                        ["SC", 1777116600000, "EPL", 21, "승", 2.1, "무", 3.2, "패", 3.4, 0, 0, 0, 0, "축구 승무패", "리버풀:토트넘"],
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+                "home_team_aliases": ["Chelsea", "첼시"],
+                "away_team_aliases": ["Arsenal", "아스널"],
+            }
+        ],
+    )
+
+    assert market_rows[0]["raw_payload"]["gameKey"] == "첼시:아스널"
+    assert variant_rows == []
+
+
+def test_attach_team_translation_aliases_adds_korean_names_for_matching():
+    rows = attach_team_translation_aliases(
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+        match_rows=[
+            {
+                "id": "match_001",
+                "home_team_id": "chelsea",
+                "away_team_id": "arsenal",
+            }
+        ],
+        translation_rows=[
+            {
+                "id": "chelsea:ko:official",
+                "team_id": "chelsea",
+                "locale": "ko",
+                "display_name": "첼시",
+                "is_primary": True,
+            },
+            {
+                "id": "arsenal:ko:betman",
+                "team_id": "arsenal",
+                "locale": "ko",
+                "display_name": "아스널",
+                "source_name": "betman",
+                "is_primary": False,
+            },
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "competition_id": "premier-league",
+            "kickoff_at": "2026-04-25T11:30:00+00:00",
+            "home_team_name": "Chelsea",
+            "away_team_name": "Arsenal",
+            "home_team_aliases": ["Chelsea", "첼시"],
+            "away_team_aliases": ["Arsenal", "아스널"],
+        }
+    ]
+
+
+def test_build_team_translation_rows_creates_primary_english_rows():
+    rows = build_team_translation_rows(
+        [
+            {"id": "chelsea", "name": "Chelsea"},
+            {"id": "arsenal", "name": "Arsenal"},
+        ],
+        locale="en",
+        is_primary=True,
+    )
+
+    assert rows == [
+        {
+            "id": "chelsea:en:default:Chelsea",
+            "team_id": "chelsea",
+            "locale": "en",
+            "display_name": "Chelsea",
+            "source_name": None,
+            "is_primary": True,
+        },
+        {
+            "id": "arsenal:en:default:Arsenal",
+            "team_id": "arsenal",
+            "locale": "en",
+            "display_name": "Arsenal",
+            "source_name": None,
+            "is_primary": True,
+        },
+    ]
+
+
+def test_build_betman_team_translation_rows_persists_korean_aliases_for_matched_snapshot():
+    rows = build_betman_team_translation_rows(
+        detail_payloads=[
+            {
+                "currentLottery": {"saleEndDate": 1777120200000},
+                "compSchedules": {
+                    "keys": [
+                        "itemCode",
+                        "gameDate",
+                        "leagueName",
+                        "matchSeq",
+                        "winTxt",
+                        "winAllot",
+                        "drawTxt",
+                        "drawAllot",
+                        "loseTxt",
+                        "loseAllot",
+                        "handi",
+                        "winHandi",
+                        "drawHandi",
+                        "loseHandi",
+                        "betTypNm",
+                        "gameKey",
+                    ],
+                    "datas": [
+                        ["SC", 1777116600000, "EPL", 11, "승", 1.91, "무", 3.55, "패", 4.2, 0, 0, 0, 0, "축구 승무패", "첼시:아스널"],
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "arsenal",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+                "home_team_aliases": ["Chelsea", "첼시"],
+                "away_team_aliases": ["Arsenal", "아스널"],
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "chelsea:ko:betman:첼시",
+            "team_id": "chelsea",
+            "locale": "ko",
+            "display_name": "첼시",
+            "source_name": "betman",
+            "is_primary": False,
+        },
+        {
+            "id": "arsenal:ko:betman:아스널",
+            "team_id": "arsenal",
+            "locale": "ko",
+            "display_name": "아스널",
+            "source_name": "betman",
+            "is_primary": False,
+        },
+    ]
+
+
 def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
     rows = select_real_market_snapshots(
         snapshot_rows=[
@@ -3358,6 +3663,8 @@ def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
             "checkpoint_type": "T_MINUS_24H",
             "competition_id": "epl",
             "kickoff_at": "2026-04-12T15:30:00+00:00",
+            "home_team_id": "chelsea",
+            "away_team_id": "man-city",
             "home_team_name": "Chelsea FC",
             "away_team_name": "Manchester City FC",
         }

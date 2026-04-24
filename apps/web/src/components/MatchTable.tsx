@@ -59,7 +59,7 @@ export default function MatchTable({
   onLoadMore,
   isLoadingMore = false,
 }: MatchTableProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [dailyPicksSummary, setDailyPicksSummary] = useState<DailyPicksResponse | null>(null);
   const [showAllUpcomingMatches, setShowAllUpcomingMatches] = useState(false);
   const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
@@ -152,7 +152,7 @@ export default function MatchTable({
     let isMounted = true;
 
     // Fetch daily picks for ALL leagues to show total count in teaser
-    void fetchDailyPicks({ date: dailyPicksDate })
+    void fetchDailyPicks({ date: dailyPicksDate, locale: i18n.language })
       .then((response) => {
         if (isMounted) {
           setDailyPicksSummary(response);
@@ -167,7 +167,7 @@ export default function MatchTable({
     return () => {
       isMounted = false;
     };
-  }, [dailyPicksDate]);
+  }, [dailyPicksDate, i18n.language]);
 
   // SVG Gauge calculations
   const radius = 60;

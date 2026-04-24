@@ -1,12 +1,27 @@
 from pathlib import Path
 from datetime import datetime, timezone
+import json
 import re
 import sys
 import unicodedata
 from typing import Any
+from urllib.request import Request, urlopen
 
 POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
 POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
+BETMAN_BUYABLE_GAMES_URL = "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do"
+BETMAN_GAME_INFO_URL = "https://m.betman.co.kr/buyPsblGame/gameInfoInq.do"
+BETMAN_COMPETITION_NAME_HINTS: dict[str, tuple[str, ...]] = {
+    "premier-league": ("epl", "프리미어"),
+    "la-liga": ("라리가", "laliga"),
+    "bundesliga": ("분데스",),
+    "serie-a": ("세리에",),
+    "ligue-1": ("리그1", "리그 1", "ligue 1"),
+    "champions-league": ("챔피언", "ucl"),
+    "europa-league": ("유로파", "uel"),
+    "conference-league": ("컨퍼런스", "uecl", "ucol"),
+    "k-league": ("k리그", "kleague"),
+}
 
 
 def load_sports_skills_football():
@@ -32,6 +47,43 @@ def load_sports_skills_polymarket():
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return football.get_daily_schedule(date=date)
+
+
+def fetch_betman_json(
+    url: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    request_payload = {
+        **(payload or {}),
+        "_sbmInfo": {"debugMode": "false"},
+    }
+    request = Request(
+        url=url,
+        data=json.dumps(request_payload).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=UTF-8"},
+        method="POST",
+    )
+    with urlopen(request) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_betman_buyable_games() -> dict[str, Any]:
+    return fetch_betman_json(BETMAN_BUYABLE_GAMES_URL)
+
+
+def fetch_betman_game_detail(
+    gm_id: str,
+    gm_ts: int | str,
+    *,
+    game_year: int | str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "gmId": gm_id,
+        "gmTs": gm_ts,
+    }
+    if game_year is not None:
+        payload["gameYear"] = game_year
+    return fetch_betman_json(BETMAN_GAME_INFO_URL, payload)
 
 
 def fetch_polymarket_markets(
@@ -328,6 +380,365 @@ def resolve_variant_line_value(
                 return abs(candidate)
         return raw_spread
     return raw_spread
+
+
+def normalize_betman_league_name(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = re.sub(r"[^a-z0-9가-힣]+", "", normalized)
+    return normalized
+
+
+def resolve_betman_competition_id(
+    league_name: str | None,
+) -> str | None:
+    normalized = normalize_betman_league_name(league_name or "")
+    if not normalized:
+        return None
+    for competition_id, hints in BETMAN_COMPETITION_NAME_HINTS.items():
+        if any(normalize_betman_league_name(hint) in normalized for hint in hints):
+            return competition_id
+    return None
+
+
+def decimal_odds_to_probability(odds: Any) -> float | None:
+    value = _read_numeric(odds)
+    if value is None or value <= 1.0:
+        return None
+    return round(1.0 / value, 6)
+
+
+def expand_betman_comp_schedules(comp_schedules: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(comp_schedules, dict):
+        return []
+    keys = comp_schedules.get("keys")
+    datas = comp_schedules.get("datas")
+    if not isinstance(keys, list) or not isinstance(datas, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for entry in datas:
+        if not isinstance(entry, list):
+            continue
+        row = {
+            str(key): value
+            for key, value in zip(keys, entry)
+        }
+        rows.append(row)
+    return rows
+
+
+def format_betman_observed_at(value: Any) -> str | None:
+    timestamp = _read_numeric(value)
+    if timestamp is None:
+        return None
+    return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).replace(
+        second=0,
+        microsecond=0,
+    ).isoformat().replace("+00:00", "Z")
+
+
+def split_betman_game_key(value: Any) -> tuple[str, str] | None:
+    if not isinstance(value, str) or ":" not in value:
+        return None
+    home_name, away_name = value.split(":", 1)
+    normalized_home = normalize_betman_league_name(home_name)
+    normalized_away = normalize_betman_league_name(away_name)
+    if not normalized_home or not normalized_away:
+        return None
+    return normalized_home, normalized_away
+
+
+def normalize_betman_snapshot_aliases(snapshot: dict[str, Any], key: str) -> set[str]:
+    values = snapshot.get(key)
+    aliases = values if isinstance(values, list) else [values]
+    return {
+        normalize_betman_league_name(alias)
+        for alias in aliases
+        if normalize_betman_league_name(str(alias or ""))
+    }
+
+
+def score_betman_group_match(
+    snapshot: dict[str, Any],
+    game_key: str,
+) -> int:
+    parsed = split_betman_game_key(game_key)
+    if parsed is None:
+        return 0
+    home_name, away_name = parsed
+    home_aliases = normalize_betman_snapshot_aliases(snapshot, "home_team_aliases")
+    away_aliases = normalize_betman_snapshot_aliases(snapshot, "away_team_aliases")
+    if not home_aliases:
+        home_aliases = {normalize_betman_league_name(str(snapshot.get("home_team_name") or ""))}
+    if not away_aliases:
+        away_aliases = {normalize_betman_league_name(str(snapshot.get("away_team_name") or ""))}
+    return int(home_name in home_aliases) + int(away_name in away_aliases)
+
+
+def build_betman_match_market_groups(
+    detail_payloads: list[dict[str, Any]],
+) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for payload in detail_payloads:
+        current_lottery = payload.get("currentLottery") if isinstance(payload, dict) else None
+        observed_at = (
+            format_betman_observed_at((current_lottery or {}).get("saleEndDate"))
+            if isinstance(current_lottery, dict)
+            else None
+        )
+        for row in expand_betman_comp_schedules(payload.get("compSchedules")):
+            if str(row.get("itemCode") or "") != "SC":
+                continue
+            competition_id = resolve_betman_competition_id(row.get("leagueName"))
+            game_date = _read_numeric(row.get("gameDate"))
+            game_key = str(row.get("gameKey") or "").strip()
+            if competition_id is None or game_date is None or not game_key:
+                continue
+            kickoff_at = datetime.fromtimestamp(
+                game_date / 1000,
+                tz=timezone.utc,
+            ).replace(second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+            grouped.setdefault((competition_id, kickoff_at, game_key), []).append(
+                {
+                    **row,
+                    "_betman_observed_at": observed_at,
+                }
+            )
+    return grouped
+
+
+def format_betman_signed_line(value: Any) -> str | None:
+    line = _read_numeric(value)
+    if line is None:
+        return None
+    return f"{line:+g}"
+
+
+def build_betman_market_rows(
+    detail_payloads: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups_by_snapshot: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    grouped = build_betman_match_market_groups(detail_payloads)
+    grouped_by_competition_and_kickoff: dict[
+        tuple[str, str],
+        list[tuple[str, list[dict[str, Any]]]],
+    ] = {}
+    for (competition_id, kickoff_at, game_key), rows in grouped.items():
+        grouped_by_competition_and_kickoff.setdefault(
+            (competition_id, kickoff_at),
+            [],
+        ).append((game_key, rows))
+
+    for snapshot in snapshot_rows:
+        competition_id = str(snapshot.get("competition_id") or "").strip().lower()
+        kickoff_at = str(snapshot.get("kickoff_at") or "")
+        if not competition_id or not kickoff_at:
+            continue
+        kickoff_key = parse_utc_minute(kickoff_at).isoformat().replace("+00:00", "Z")
+        candidates = grouped_by_competition_and_kickoff.get((competition_id, kickoff_key), [])
+        if len(candidates) == 1:
+            groups_by_snapshot.append((snapshot, candidates[0][1]))
+            continue
+        if not candidates:
+            continue
+        scored_candidates = [
+            (score_betman_group_match(snapshot, game_key), rows)
+            for game_key, rows in candidates
+        ]
+        best_score = max(score for score, _rows in scored_candidates)
+        if best_score <= 0:
+            continue
+        best_matches = [rows for score, rows in scored_candidates if score == best_score]
+        if len(best_matches) != 1:
+            continue
+        groups_by_snapshot.append((snapshot, best_matches[0]))
+
+    market_rows: list[dict[str, Any]] = []
+    variant_rows: list[dict[str, Any]] = []
+    for snapshot, rows in groups_by_snapshot:
+        moneyline_row = next(
+            (
+                row for row in rows
+                if _read_numeric(row.get("drawAllot")) not in {None, 0.0}
+                and _read_numeric(row.get("winAllot")) not in {None, 0.0}
+                and _read_numeric(row.get("loseAllot")) not in {None, 0.0}
+            ),
+            None,
+        )
+        if moneyline_row is not None:
+            home_price = decimal_odds_to_probability(moneyline_row.get("winAllot"))
+            draw_price = decimal_odds_to_probability(moneyline_row.get("drawAllot"))
+            away_price = decimal_odds_to_probability(moneyline_row.get("loseAllot"))
+            if None not in (home_price, draw_price, away_price):
+                normalized = normalize_market_probabilities(
+                    float(home_price),
+                    float(draw_price),
+                    float(away_price),
+                )
+                market_rows.append(
+                    {
+                        "id": f"{snapshot['id']}_bookmaker",
+                        "snapshot_id": snapshot["id"],
+                        "source_type": "bookmaker",
+                        "source_name": "betman_moneyline_3way",
+                        "market_family": "moneyline_3way",
+                        "home_prob": normalized["home_prob"],
+                        "draw_prob": normalized["draw_prob"],
+                        "away_prob": normalized["away_prob"],
+                        "home_price": home_price,
+                        "draw_price": draw_price,
+                        "away_price": away_price,
+                        "raw_payload": {
+                            "betTypNm": moneyline_row.get("betTypNm"),
+                            "leagueName": moneyline_row.get("leagueName"),
+                            "gameKey": moneyline_row.get("gameKey"),
+                            "winAllot": moneyline_row.get("winAllot"),
+                            "drawAllot": moneyline_row.get("drawAllot"),
+                            "loseAllot": moneyline_row.get("loseAllot"),
+                        },
+                        "observed_at": moneyline_row.get("_betman_observed_at") or kickoff_at,
+                    }
+                )
+
+        for row in rows:
+            bet_type = str(row.get("betTypNm") or "")
+            home_team = str(snapshot.get("home_team_name") or "")
+            away_team = str(snapshot.get("away_team_name") or "")
+            if "핸디캡" in bet_type:
+                selection_a_price = decimal_odds_to_probability(row.get("winAllot"))
+                selection_b_price = decimal_odds_to_probability(row.get("loseAllot"))
+                home_line = _read_numeric(row.get("winHandi"))
+                away_line = _read_numeric(row.get("loseHandi"))
+                if (
+                    selection_a_price is None
+                    or selection_b_price is None
+                    or home_line is None
+                    or away_line is None
+                ):
+                    continue
+                variant_rows.append(
+                    {
+                        "id": f"{snapshot['id']}_bookmaker_spreads_{row.get('matchSeq')}",
+                        "snapshot_id": snapshot["id"],
+                        "source_type": "bookmaker",
+                        "source_name": "betman_spreads",
+                        "market_family": "spreads",
+                        "selection_a_label": f"{home_team} {format_betman_signed_line(home_line)}",
+                        "selection_a_price": selection_a_price,
+                        "selection_b_label": f"{away_team} {format_betman_signed_line(away_line)}",
+                        "selection_b_price": selection_b_price,
+                        "line_value": home_line,
+                        "raw_payload": {
+                            "betTypNm": bet_type,
+                            "leagueName": row.get("leagueName"),
+                            "gameKey": row.get("gameKey"),
+                        },
+                        "observed_at": row.get("_betman_observed_at") or kickoff_at,
+                    }
+                )
+            elif "언더오버" in bet_type:
+                selection_a_price = decimal_odds_to_probability(row.get("winAllot"))
+                selection_b_price = decimal_odds_to_probability(row.get("loseAllot"))
+                line_value = _read_numeric(row.get("winHandi")) or _read_numeric(row.get("loseHandi"))
+                if (
+                    selection_a_price is None
+                    or selection_b_price is None
+                    or line_value is None
+                ):
+                    continue
+                selection_a_name = "Under" if "언더" in str(row.get("winTxt") or "") else "Over"
+                selection_b_name = "Under" if "언더" in str(row.get("loseTxt") or "") else "Over"
+                variant_rows.append(
+                    {
+                        "id": f"{snapshot['id']}_bookmaker_totals_{row.get('matchSeq')}",
+                        "snapshot_id": snapshot["id"],
+                        "source_type": "bookmaker",
+                        "source_name": "betman_totals",
+                        "market_family": "totals",
+                        "selection_a_label": f"{selection_a_name} {abs(line_value):g}",
+                        "selection_a_price": selection_a_price,
+                        "selection_b_label": f"{selection_b_name} {abs(line_value):g}",
+                        "selection_b_price": selection_b_price,
+                        "line_value": abs(line_value),
+                        "raw_payload": {
+                            "betTypNm": bet_type,
+                            "leagueName": row.get("leagueName"),
+                            "gameKey": row.get("gameKey"),
+                        },
+                        "observed_at": row.get("_betman_observed_at") or kickoff_at,
+                    }
+                )
+
+    return market_rows, variant_rows
+
+
+def build_betman_team_translation_rows(
+    detail_payloads: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    grouped = build_betman_match_market_groups(detail_payloads)
+    grouped_by_competition_and_kickoff: dict[
+        tuple[str, str],
+        list[tuple[str, list[dict[str, Any]]]],
+    ] = {}
+    for (competition_id, kickoff_at, game_key), rows in grouped.items():
+        grouped_by_competition_and_kickoff.setdefault(
+            (competition_id, kickoff_at),
+            [],
+        ).append((game_key, rows))
+
+    translation_rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for snapshot in snapshot_rows:
+        competition_id = str(snapshot.get("competition_id") or "").strip().lower()
+        kickoff_at = str(snapshot.get("kickoff_at") or "")
+        if not competition_id or not kickoff_at:
+            continue
+        kickoff_key = parse_utc_minute(kickoff_at).isoformat().replace("+00:00", "Z")
+        candidates = grouped_by_competition_and_kickoff.get((competition_id, kickoff_key), [])
+        if not candidates:
+            continue
+        if len(candidates) == 1:
+            matched_game_key = candidates[0][0]
+        else:
+            scored = [
+                (score_betman_group_match(snapshot, game_key), game_key)
+                for game_key, _rows in candidates
+            ]
+            best_score = max(score for score, _game_key in scored)
+            if best_score <= 0:
+                continue
+            matched_keys = [game_key for score, game_key in scored if score == best_score]
+            if len(matched_keys) != 1:
+                continue
+            matched_game_key = matched_keys[0]
+
+        parsed = split_betman_game_key(matched_game_key)
+        if parsed is None:
+            continue
+        home_alias, away_alias = matched_game_key.split(":", 1)
+        for team_id, display_name in (
+            (str(snapshot.get("home_team_id") or ""), home_alias.strip()),
+            (str(snapshot.get("away_team_id") or ""), away_alias.strip()),
+        ):
+            if not team_id or not display_name:
+                continue
+            translation_id = f"{team_id}:ko:betman:{display_name}"
+            if translation_id in seen_ids:
+                continue
+            seen_ids.add(translation_id)
+            translation_rows.append(
+                {
+                    "id": translation_id,
+                    "team_id": team_id,
+                    "locale": "ko",
+                    "display_name": display_name,
+                    "source_name": "betman",
+                    "is_primary": False,
+                }
+            )
+
+    return translation_rows
 
 
 def overlap_score(left: str, right: str) -> float:

@@ -3,6 +3,7 @@ import os
 
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
+    build_betman_team_translation_rows,
     build_market_rows_from_schedule,
     build_market_snapshots,
     build_prediction_market_snapshot_contexts,
@@ -88,11 +89,62 @@ def select_real_market_snapshots(
                 **snapshot,
                 "competition_id": match["competition_id"],
                 "kickoff_at": match["kickoff_at"],
+                "home_team_id": match["home_team_id"],
+                "away_team_id": match["away_team_id"],
                 "home_team_name": home_team["name"],
                 "away_team_name": away_team["name"],
             }
         )
     return selected
+
+
+def attach_team_translation_aliases(
+    snapshot_rows: list[dict],
+    match_rows: list[dict],
+    translation_rows: list[dict],
+) -> list[dict]:
+    if not snapshot_rows:
+        return []
+
+    matches_by_id = {row["id"]: row for row in match_rows if row.get("id")}
+    translations_by_team_id: dict[str, list[dict]] = {}
+    for row in translation_rows:
+        team_id = row.get("team_id")
+        if not team_id:
+            continue
+        translations_by_team_id.setdefault(str(team_id), []).append(row)
+
+    enriched: list[dict] = []
+    for snapshot in snapshot_rows:
+        match = matches_by_id.get(snapshot.get("match_id"))
+        if not match:
+            enriched.append(dict(snapshot))
+            continue
+
+        def build_aliases(team_id: object, fallback_name: object) -> list[str]:
+            aliases = [str(fallback_name or "").strip()]
+            for row in translations_by_team_id.get(str(team_id or ""), []):
+                if str(row.get("locale") or "").strip().lower() != "ko":
+                    continue
+                display_name = str(row.get("display_name") or "").strip()
+                if display_name and display_name not in aliases:
+                    aliases.append(display_name)
+            return aliases
+
+        enriched.append(
+            {
+                **snapshot,
+                "home_team_aliases": build_aliases(
+                    match.get("home_team_id"),
+                    snapshot.get("home_team_name"),
+                ),
+                "away_team_aliases": build_aliases(
+                    match.get("away_team_id"),
+                    snapshot.get("away_team_name"),
+                ),
+            }
+        )
+    return enriched
 
 
 def promote_market_snapshots(
@@ -142,9 +194,13 @@ def collect_changed_market_match_ids(
         for row in snapshot_rows
         if isinstance(row, dict) and row.get("id") and row.get("match_id")
     }
+    scoped_snapshot_ids = set(snapshot_to_match_id)
 
     existing_markets_by_id = {
         row["id"]: row for row in existing_market_rows if isinstance(row, dict) and row.get("id")
+    }
+    current_market_ids = {
+        str(row["id"]) for row in market_rows if isinstance(row, dict) and row.get("id")
     }
     for row in market_rows:
         snapshot_id = row.get("snapshot_id")
@@ -155,11 +211,23 @@ def collect_changed_market_match_ids(
             ignored_fields={"observed_at", "raw_payload"},
         ):
             changed_match_ids.add(str(match_id))
+    for row in existing_market_rows:
+        snapshot_id = row.get("snapshot_id")
+        match_id = snapshot_to_match_id.get(snapshot_id)
+        if (
+            match_id
+            and snapshot_id in scoped_snapshot_ids
+            and str(row.get("id") or "") not in current_market_ids
+        ):
+            changed_match_ids.add(str(match_id))
 
     existing_variants_by_id = {
         row["id"]: row
         for row in existing_variant_rows
         if isinstance(row, dict) and row.get("id")
+    }
+    current_variant_ids = {
+        str(row["id"]) for row in variant_rows if isinstance(row, dict) and row.get("id")
     }
     for row in variant_rows:
         snapshot_id = row.get("snapshot_id")
@@ -168,6 +236,15 @@ def collect_changed_market_match_ids(
             existing_variants_by_id.get(row.get("id")),
             row,
             ignored_fields={"observed_at", "raw_payload"},
+        ):
+            changed_match_ids.add(str(match_id))
+    for row in existing_variant_rows:
+        snapshot_id = row.get("snapshot_id")
+        match_id = snapshot_to_match_id.get(snapshot_id)
+        if (
+            match_id
+            and snapshot_id in scoped_snapshot_ids
+            and str(row.get("id") or "") not in current_variant_ids
         ):
             changed_match_ids.add(str(match_id))
 
@@ -221,11 +298,17 @@ def main() -> None:
         match_rows = client.read_rows("matches")
         team_rows = client.read_rows("teams")
         competition_rows = client.read_rows("competitions")
+        team_translation_rows = read_optional_rows(client, "team_translations")
         snapshot_rows = select_real_market_snapshots(
             snapshot_rows=all_snapshot_rows,
             match_rows=match_rows,
             team_rows=team_rows,
             target_date=use_real_schedule,
+        )
+        snapshot_rows = attach_team_translation_aliases(
+            snapshot_rows,
+            match_rows,
+            team_translation_rows,
         )
         if not snapshot_rows:
             raise ValueError(
@@ -244,6 +327,10 @@ def main() -> None:
             if game.get("gmId") and game.get("gmTs")
         ]
         betman_market_rows, betman_variant_rows = build_betman_market_rows(
+            detail_payloads=betman_detail_payloads,
+            snapshot_rows=snapshot_rows,
+        )
+        betman_team_translation_rows = build_betman_team_translation_rows(
             detail_payloads=betman_detail_payloads,
             snapshot_rows=snapshot_rows,
         )
@@ -270,6 +357,7 @@ def main() -> None:
             "bookmaker_schedule": schedule,
             "betman_buyable_games": betman_buyable_games,
             "betman_game_details": betman_detail_payloads,
+            "betman_team_translations": betman_team_translation_rows,
             "prediction_market_search_results": prediction_market_raw,
         }
         archive_key = f"markets/{use_real_schedule}.json"
@@ -337,11 +425,35 @@ def main() -> None:
         archive_payload = payload
         archive_key = "markets/match_001.json"
         prediction_market_variant_rows = variant_payload
+        betman_team_translation_rows = []
 
     if not payload:
         raise ValueError("no market payload was generated")
 
     promoted_snapshots = promote_market_snapshots(snapshot_rows, payload)
+    scoped_snapshot_ids = {
+        str(row["id"]) for row in snapshot_rows if isinstance(row, dict) and row.get("id")
+    }
+    current_market_ids = {
+        str(row["id"]) for row in payload if isinstance(row, dict) and row.get("id")
+    }
+    deleted_market_ids = sorted(
+        str(row["id"])
+        for row in existing_market_rows
+        if row.get("snapshot_id") in scoped_snapshot_ids
+        and str(row.get("id") or "") not in current_market_ids
+    )
+    current_variant_ids = {
+        str(row["id"])
+        for row in prediction_market_variant_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    deleted_variant_ids = sorted(
+        str(row["id"])
+        for row in existing_variant_rows
+        if row.get("snapshot_id") in scoped_snapshot_ids
+        and str(row.get("id") or "") not in current_variant_ids
+    )
     changed_match_ids = collect_changed_market_match_ids(
         market_rows=payload,
         existing_market_rows=existing_market_rows,
@@ -358,6 +470,16 @@ def main() -> None:
         secret_access_key=settings.r2_secret_access_key,
         s3_endpoint=settings.r2_s3_endpoint,
     ).archive_json(archive_key, archive_payload)
+    deleted_market_rows = (
+        client.delete_rows("market_probabilities", "id", deleted_market_ids)
+        if deleted_market_ids
+        else 0
+    )
+    deleted_variant_rows = (
+        client.delete_rows("market_variants", "id", deleted_variant_ids)
+        if deleted_variant_ids
+        else 0
+    )
     if promoted_snapshots:
         client.upsert_rows("match_snapshots", promoted_snapshots)
     inserted = client.upsert_rows("market_probabilities", payload)
@@ -371,14 +493,22 @@ def main() -> None:
             variant_inserted = 0
         else:
             raise
+    team_translation_inserted = (
+        client.upsert_rows("team_translations", betman_team_translation_rows)
+        if betman_team_translation_rows
+        else 0
+    )
     print(
         json.dumps(
             {
                 "archive_uri": archive_uri,
                 "snapshot_rows": len(snapshot_rows),
                 "promoted_snapshots": len(promoted_snapshots),
+                "deleted_market_rows": deleted_market_rows,
+                "deleted_variant_rows": deleted_variant_rows,
                 "inserted_rows": inserted,
                 "variant_rows": variant_inserted,
+                "team_translation_rows": team_translation_inserted,
                 "changed_match_ids": changed_match_ids,
                 "payload": payload,
                 "variant_payload": prediction_market_variant_rows,

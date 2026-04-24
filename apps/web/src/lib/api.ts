@@ -78,6 +78,14 @@ export interface VariantMarket {
   selectionBLabel: string;
   selectionBPrice: number | null;
   marketSlug: string | null;
+  recommendedPick?: string;
+  recommended?: boolean;
+  noBetReason?: string | null;
+  edge?: number | null;
+  expectedValue?: number | null;
+  marketPrice?: number | null;
+  modelProbability?: number | null;
+  marketProbability?: number | null;
 }
 
 export interface PredictionFeatureContext {
@@ -500,6 +508,7 @@ export function fetchMatches(params?: {
   leagueId?: string | null;
   cursor?: string | null;
   limit?: number;
+  locale?: string | null;
 }): Promise<MatchListResponse> {
   const search = new URLSearchParams();
   if (params?.leagueId) {
@@ -510,6 +519,9 @@ export function fetchMatches(params?: {
   }
   if (params?.limit) {
     search.set("limit", String(params.limit));
+  }
+  if (params?.locale) {
+    search.set("locale", params.locale);
   }
   const query = search.toString();
   return fetchJson<MatchListResponse>(query ? `/matches?${query}` : "/matches");
@@ -527,6 +539,7 @@ export function fetchDailyPicks(params?: {
   leagueId?: string | null;
   marketFamily?: DailyPickMarketFamily | "all" | null;
   includeHeld?: boolean;
+  locale?: string | null;
 }): Promise<DailyPicksResponse> {
   const search = new URLSearchParams();
   if (params?.date) {
@@ -540,6 +553,9 @@ export function fetchDailyPicks(params?: {
   }
   if (params?.includeHeld) {
     search.set("includeHeld", "true");
+  }
+  if (params?.locale) {
+    search.set("locale", params.locale);
   }
   const query = search.toString();
   return fetchJson<DailyPicksResponse>(query ? `/daily-picks?${query}` : "/daily-picks");

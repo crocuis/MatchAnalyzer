@@ -51,7 +51,7 @@ export default function DailyPicksModal({
   onClose,
   onOpenMatch,
 }: DailyPicksModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
   const [marketFamily, setMarketFamily] = useState<MarketFilter>("all");
   const [leagueId, setLeagueId] = useState<string | null>(initialLeagueId);
@@ -79,7 +79,13 @@ export default function DailyPicksModal({
 
     let isMounted = true;
     setStatus("loading");
-    void fetchDailyPicks({ date: dailyPicksDate, leagueId, marketFamily, includeHeld })
+    void fetchDailyPicks({
+      date: dailyPicksDate,
+      leagueId,
+      marketFamily,
+      includeHeld,
+      locale: i18n.language,
+    })
       .then((response) => {
         if (!isMounted) return;
         setPayload(response);
@@ -93,7 +99,7 @@ export default function DailyPicksModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, dailyPicksDate, includeHeld, leagueId, marketFamily]);
+  }, [isOpen, dailyPicksDate, i18n.language, includeHeld, leagueId, marketFamily]);
 
   useEffect(() => {
     if (!isOpen || !isActive) return;

@@ -644,6 +644,206 @@ describe("prediction API", () => {
     spy.mockRestore();
   });
 
+  it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: false,
+          main_recommendation_no_bet_reason: "low_confidence",
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.45,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.55,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+              recommended_pick: "Chelsea -0.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.18,
+              expected_value: 0.4,
+              market_price: 0.45,
+              model_probability: 0.63,
+              market_probability: 0.45,
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.49,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.51,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+              recommended_pick: "Over 2.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.17,
+              expected_value: 0.3469,
+              market_price: 0.49,
+              model_probability: 0.66,
+              market_probability: 0.49,
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([
+      expect.objectContaining({
+        marketFamily: "spreads",
+        selectionLabel: "Chelsea -0.5",
+        status: "recommended",
+        expectedValue: 0.4,
+        marketPrice: 0.45,
+        modelProbability: 0.63,
+        marketProbability: 0.45,
+        noBetReason: null,
+      }),
+      expect.objectContaining({
+        marketFamily: "totals",
+        selectionLabel: "Over 2.5",
+        status: "recommended",
+        expectedValue: 0.3469,
+        marketPrice: 0.49,
+        modelProbability: 0.66,
+        marketProbability: 0.49,
+        noBetReason: null,
+      }),
+    ]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        status: "held",
+        noBetReason: "low_confidence",
+      }),
+    ]);
+  });
+
+  it("localizes team labels in daily picks when locale-specific translations exist", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      team_translations: [
+        {
+          id: "chelsea:ko:official",
+          team_id: "chelsea",
+          locale: "ko",
+          display_name: "첼시",
+          source_name: null,
+          is_primary: true,
+        },
+        {
+          id: "man-city:ko:official",
+          team_id: "man-city",
+          locale: "ko",
+          display_name: "맨체스터 시티",
+          source_name: null,
+          is_primary: true,
+        },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      locale: "ko",
+    });
+
+    expect(view.items[0]).toMatchObject({
+      homeTeam: "첼시",
+      awayTeam: "맨체스터 시티",
+    });
+  });
+
   it("excludes matches whose kickoff window has already passed from daily picks", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-24T20:30:00Z"));
@@ -2181,6 +2381,209 @@ describe("prediction API", () => {
     ]);
 
     vi.useRealTimers();
+  });
+
+  it("localizes match card team labels when team translations exist for the requested locale", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "chelsea", name: "Chelsea", crest_url: null },
+          { id: "man-city", name: "Manchester City", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const teamTranslations = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "chelsea:ko:official",
+            team_id: "chelsea",
+            locale: "ko",
+            display_name: "첼시",
+            source_name: null,
+            is_primary: true,
+          },
+          {
+            id: "man-city:ko:official",
+            team_id: "man-city",
+            locale: "ko",
+            display_name: "맨체스터 시티",
+            source_name: null,
+            is_primary: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "teams") return teams;
+      if (tableName === "team_translations") return teamTranslations;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      if (tableName === "post_match_reviews") return reviews;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+      locale: "ko",
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        homeTeam: "첼시",
+        awayTeam: "맨체스터 시티",
+      }),
+    ]);
+  });
+
+  it("falls back to english team translations when the requested locale is missing", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "bayern",
+            away_team_id: "inter",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "bayern", name: "FC Bayern München", crest_url: null },
+          { id: "inter", name: "FC Internazionale Milano", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const teamTranslations = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "bayern:en:official",
+            team_id: "bayern",
+            locale: "en",
+            display_name: "Bayern Munich",
+            source_name: null,
+            is_primary: true,
+          },
+          {
+            id: "inter:en:official",
+            team_id: "inter",
+            locale: "en",
+            display_name: "Inter",
+            source_name: null,
+            is_primary: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "teams") return teams;
+      if (tableName === "team_translations") return teamTranslations;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      if (tableName === "post_match_reviews") return reviews;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+      locale: "fr",
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        homeTeam: "Bayern Munich",
+        awayTeam: "Inter",
+      }),
+    ]);
   });
 
   it("uses the latest checkpoint order rather than prediction created_at order for card pick/confidence", async () => {

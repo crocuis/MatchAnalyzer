@@ -3,7 +3,7 @@ import re
 from hashlib import sha256
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REMOTE_READ_PAGE_SIZE = 1000
@@ -173,6 +173,45 @@ class SupabaseClient:
             }
         target.write_text(json.dumps(list(merged_rows.values()), sort_keys=True))
         return len(rows)
+
+    def delete_rows(self, table: str, column: str, values: list[str], batch_size: int = 20) -> int:
+        table_name = validate_table_name(table)
+        if not values:
+            return 0
+
+        if not self._use_file_backend():
+            deleted = 0
+            headers = {
+                **self._headers(),
+                "Prefer": "return=minimal",
+            }
+            for index in range(0, len(values), batch_size):
+                batch = values[index : index + batch_size]
+                in_filter = ",".join(batch)
+                url = (
+                    f"{self.base_url}/rest/v1/{table_name}"
+                    f"?{column}=in.({quote(in_filter, safe=',()-_')})"
+                )
+                request = Request(url=url, headers=headers, method="DELETE")
+                with urlopen(request, timeout=30) as response:
+                    if response.status >= 400:
+                        raise ValueError(
+                            f"Supabase delete failed for table={table_name}"
+                        )
+                deleted += len(batch)
+            return deleted
+
+        base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
+        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        if not target.exists():
+            return 0
+        value_set = set(values)
+        rows = json.loads(target.read_text())
+        retained_rows = [
+            row for row in rows if not isinstance(row, dict) or row.get(column) not in value_set
+        ]
+        target.write_text(json.dumps(retained_rows, sort_keys=True))
+        return len(rows) - len(retained_rows)
 
     def read_rows(self, table: str) -> list[dict]:
         table_name = validate_table_name(table)

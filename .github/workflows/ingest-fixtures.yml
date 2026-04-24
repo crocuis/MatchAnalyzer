@@ -54,6 +54,7 @@ jobs:
               date -u -d "$TARGET_DATE_CANONICAL +${OFFSET} days" +%F
             done
             echo "EOF"
+            echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"
           } >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
       - name: Ingest fixture window
@@ -67,6 +68,10 @@ jobs:
             echo "::group::REAL_FIXTURE_DATE=$TARGET_DATE"
             FIXTURE_LOG="$(mktemp)"
             REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job | tee "$FIXTURE_LOG"
+            if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then
+              echo "::endgroup::"
+              continue
+            fi
             python3 - "$FIXTURE_LOG" >> "$CHANGED_MATCH_IDS_FILE" <<'PY'
 import json
 import sys

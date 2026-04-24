@@ -102,7 +102,11 @@ def build_cached_supabase_client_class(base_client_class):
                 }
                 for row in rows:
                     if isinstance(row, dict) and "id" in row:
-                        rows_by_id[row["id"]] = deepcopy(row)
+                        existing_row = rows_by_id.get(row["id"], {})
+                        rows_by_id[row["id"]] = {
+                            **deepcopy(existing_row),
+                            **deepcopy(row),
+                        }
                 cached_rows_by_table[table_name] = list(rows_by_id.values())
             return updated_count
 

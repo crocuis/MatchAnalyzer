@@ -184,7 +184,10 @@ export default function App() {
       setMatchesStatus("loading");
 
       try {
-        const response = await fetchMatches({ limit: PAGE_SIZE });
+        const response = await fetchMatches({
+          limit: PAGE_SIZE,
+          locale: i18n.language,
+        });
         if (!isMounted) {
           return;
         }
@@ -220,7 +223,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [i18n.language, t]);
 
   const derivedLeagues = useMemo(
     () => leagues.length > 0 ? leagues : deriveLeagueSummaries([], t),
@@ -268,6 +271,7 @@ export default function App() {
         const response = await fetchMatches({
           leagueId,
           limit: PAGE_SIZE,
+          locale: i18n.language,
         });
         if (!isMounted) {
           return;
@@ -296,7 +300,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [leaguePages, leagues, selectedLeagueId]);
+  }, [i18n.language, leaguePages, leagues, selectedLeagueId, t]);
 
   const fallbackSelectedMatchId = leagueMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
@@ -433,6 +437,7 @@ export default function App() {
           leagueId,
           cursor: nextCursor,
           limit: PAGE_SIZE,
+          locale: i18n.language,
         });
         const resolved = resolveLeaguePayload(response, t, leagues);
         setLeagues(resolved.leagues);
@@ -542,8 +547,8 @@ export default function App() {
             predictionSummary={predictionSummary}
             totalMatches={totalMatches}
             onOpen={handleOpenMatch}
-            onOpenDailyPicks={(leagueId) => {
-              setDailyPicksLeagueId(leagueId ?? selectedLeagueId ?? derivedLeagues[0]?.id ?? null);
+            onOpenDailyPicks={() => {
+              setDailyPicksLeagueId(null);
               setReportMatchId(null);
               setIsModalOpen(false);
               setIsDailyPicksModalOpen(true);

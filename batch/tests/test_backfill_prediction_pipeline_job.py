@@ -478,6 +478,63 @@ def test_backfill_prediction_pipeline_job_reuses_prediction_table_reads_and_upda
     ]
 
 
+def test_backfill_prediction_pipeline_job_cache_preserves_existing_fields_on_sparse_upsert():
+    class FakeBaseClient:
+        def __init__(self, _url: str, _key: str):
+            pass
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            if table_name != "match_snapshots":
+                return []
+            return [
+                {
+                    "id": "snapshot_a",
+                    "match_id": "match_a",
+                    "home_points_last_5": 10,
+                    "away_rest_days": 4,
+                    "snapshot_quality": "partial",
+                }
+            ]
+
+        def upsert_rows(self, _table_name: str, rows: list[dict]) -> int:
+            return len(rows)
+
+    cached_client_class = pipeline_job.build_cached_supabase_client_class(FakeBaseClient)
+    first_client = cached_client_class("https://example.test", "key")
+    second_client = cached_client_class("https://example.test", "key")
+
+    assert first_client.read_rows("match_snapshots") == [
+        {
+            "id": "snapshot_a",
+            "match_id": "match_a",
+            "home_points_last_5": 10,
+            "away_rest_days": 4,
+            "snapshot_quality": "partial",
+        }
+    ]
+
+    first_client.upsert_rows(
+        "match_snapshots",
+        [
+            {
+                "id": "snapshot_a",
+                "match_id": "match_a",
+                "snapshot_quality": "complete",
+            }
+        ],
+    )
+
+    assert second_client.read_rows("match_snapshots") == [
+        {
+            "id": "snapshot_a",
+            "match_id": "match_a",
+            "home_points_last_5": 10,
+            "away_rest_days": 4,
+            "snapshot_quality": "complete",
+        }
+    ]
+
+
 def test_backfill_prediction_pipeline_job_enables_shared_cache_when_markets_run(
     monkeypatch,
     capsys,

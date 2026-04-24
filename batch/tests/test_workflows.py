@@ -28,6 +28,8 @@ def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> 
     assert 'REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job' in workflow
     assert "REAL_PREDICTION_MATCH_IDS" in workflow
     assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
+    assert 'echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"' in workflow
+    assert 'if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then' in workflow
 
 
 def test_ingest_markets_workflow_sets_real_market_date() -> None:

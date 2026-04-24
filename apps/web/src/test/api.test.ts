@@ -57,6 +57,37 @@ describe("daily picks fetcher", () => {
       `/api/daily-picks?date=${expectedDate}&leagueId=premier-league`,
     );
   });
+
+  it("passes locale through to the daily picks endpoint when provided", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        generatedAt: null,
+        date: "2026-04-24",
+        target: {
+          minDailyRecommendations: 5,
+          maxDailyRecommendations: 10,
+          hitRate: 0.7,
+          roi: 0.2,
+        },
+        coverage: { moneyline: 0, spreads: 0, totals: 0, held: 0 },
+        items: [],
+        heldItems: [],
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchDailyPicks } = await import("../lib/api");
+
+    await fetchDailyPicks({
+      date: "2026-04-24",
+      locale: "ko",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/daily-picks?date=2026-04-24&locale=ko",
+    );
+  });
 });
 
 describe("phase 6 history fetchers", () => {
@@ -121,6 +152,31 @@ describe("match pagination fetcher", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/matches?leagueId=premier-league&cursor=4&limit=4",
+    );
+  });
+
+  it("passes locale through to the matches endpoint when provided", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        items: [],
+        leagues: [],
+        selectedLeagueId: "premier-league",
+        nextCursor: null,
+        totalMatches: 0,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchMatches } = await import("../lib/api");
+
+    await fetchMatches({
+      leagueId: "premier-league",
+      locale: "ko",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/matches?leagueId=premier-league&locale=ko",
     );
   });
 

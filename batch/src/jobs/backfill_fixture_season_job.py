@@ -12,6 +12,7 @@ from batch.src.ingest.fetch_fixtures import (
 )
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
+    build_team_translation_rows,
     dedupe_rows,
     prepare_sync_asset_rows,
 )
@@ -113,6 +114,11 @@ def main() -> None:
             existing_competitions=client.read_rows("competitions"),
             existing_teams=client.read_rows("teams"),
         )
+    team_translation_rows = build_team_translation_rows(
+        team_rows,
+        locale="en",
+        is_primary=True,
+    )
 
     archive_uri = R2Client(
         settings.r2_bucket,
@@ -126,6 +132,11 @@ def main() -> None:
         else 0
     )
     team_count = client.upsert_rows("teams", team_rows) if team_rows else 0
+    team_translation_count = (
+        client.upsert_rows("team_translations", team_translation_rows)
+        if team_translation_rows
+        else 0
+    )
     fixture_rows = client.upsert_rows("matches", payload) if payload else 0
     snapshot_rows = (
         client.upsert_rows("match_snapshots", snapshot_rows_payload)
@@ -138,6 +149,7 @@ def main() -> None:
                 "season_year": season_year,
                 "competition_rows": competition_count,
                 "team_rows": team_count,
+                "team_translation_rows": team_translation_count,
                 "fixture_rows": fixture_rows,
                 "snapshot_rows": snapshot_rows,
                 "event_count": len(all_events),

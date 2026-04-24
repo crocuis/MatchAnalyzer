@@ -15,6 +15,10 @@ import {
   type VariantMarket,
 } from "../lib/prediction-lanes";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import {
+  loadPreferredTeamTranslations,
+  normalizeLocale,
+} from "../lib/team-translations";
 
 const matches = new Hono<AppBindings>();
 const DEFAULT_MATCH_PAGE_SIZE = 4;
@@ -125,6 +129,7 @@ type LoadMatchItemsOptions = {
   leagueId?: string;
   cursor?: string;
   limit?: string | number;
+  locale?: string | null;
 };
 
 type MatchListItem = {
@@ -669,6 +674,7 @@ export async function loadDashboardMatchCardsPageView(
 async function loadTeamLabels(
   supabase: ApiSupabaseClient,
   teamIds: string[],
+  locale?: string | null,
 ) {
   if (teamIds.length === 0) {
     return new Map<string, { label: string; crestUrl: string | null }>();
@@ -694,10 +700,16 @@ async function loadTeamLabels(
     throw new Error("related match queries failed");
   }
 
+  const translatedNames = await loadPreferredTeamTranslations(
+    supabase,
+    teamIds,
+    locale,
+  );
+
   return new Map(
     (teams ?? []).map((row) => [
       row.id,
-      { label: row.name, crestUrl: row.crest_url },
+      { label: translatedNames.get(row.id) ?? row.name, crestUrl: row.crest_url },
     ]),
   );
 }
@@ -793,7 +805,7 @@ async function loadSelectedLeaguePageView(
           .in("match_id", pagedMatchIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    loadTeamLabels(supabase, pagedTeamIds),
+    loadTeamLabels(supabase, pagedTeamIds, options.locale),
     supabase
       .from("predictions")
       .select(
@@ -1036,6 +1048,7 @@ matches.get("/", async (c) => {
   const leagueId = c.req.query("leagueId") ?? undefined;
   const cursor = c.req.query("cursor") ?? undefined;
   const limit = c.req.query("limit") ?? undefined;
+  const locale = normalizeLocale(c.req.query("locale"));
   c.header(
     "Cache-Control",
     "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
@@ -1052,6 +1065,16 @@ matches.get("/", async (c) => {
     });
   }
   try {
+    if (locale && locale !== "en") {
+      return c.json(
+        await loadMatchPageView(supabase, {
+          leagueId,
+          cursor,
+          limit,
+          locale,
+        }),
+      );
+    }
     return c.json(
       await loadDashboardMatchCardsPageView(supabase, {
         leagueId,
@@ -1069,6 +1092,7 @@ matches.get("/", async (c) => {
           leagueId,
           cursor,
           limit,
+          locale,
         }),
       );
     }
