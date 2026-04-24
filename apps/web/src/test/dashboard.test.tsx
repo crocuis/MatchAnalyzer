@@ -7,6 +7,7 @@ import FullReportView from "../components/FullReportView";
 import MatchCard from "../components/MatchCard";
 import MatchDetailModal from "../components/MatchDetailModal";
 import i18n from "../i18n/config";
+import { fetchDailyPicks } from "../lib/api";
 import type { MatchCardRow, PredictionSummary } from "../lib/api";
 
 afterEach(() => {
@@ -1005,6 +1006,37 @@ function hasTextContent(text: string) {
   return (_content: string, node: Element | null) =>
     node?.textContent?.replace(/\s+/g, " ").trim() === text;
 }
+
+it("fetches daily picks with filters", async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({
+      generatedAt: "2026-04-24T08:00:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      coverage: { moneyline: 1, spreads: 1, totals: 1, held: 1 },
+      items: [],
+      heldItems: [],
+    }),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await fetchDailyPicks({
+    date: "2026-04-24",
+    leagueId: "premier-league",
+    marketFamily: "spreads",
+    includeHeld: true,
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/daily-picks?date=2026-04-24&leagueId=premier-league&marketFamily=spreads&includeHeld=true",
+  );
+});
 
 describe("dashboard redesign", () => {
   it("preserves the prediction workspace heading", () => {
