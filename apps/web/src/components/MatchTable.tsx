@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  fetchDailyPicks,
   isDashboardRecentMatch,
+  resolveDailyPicksDate,
+  type DailyPicksResponse,
   type LeaguePredictionSummary,
   type MatchCardRow,
 } from "../lib/api";
@@ -18,27 +21,33 @@ function getUpcomingPreviewCutoffMillis(nowMillis: number): number {
 
 interface MatchTableProps {
   matches: MatchCardRow[];
+  currentLeagueId: string | null;
   predictionSummary: LeaguePredictionSummary | null;
   totalMatches: number;
   panelId: string;
   selectedMatchId: string | null;
   onOpen: (matchId: string) => void;
+  onOpenDailyPicks?: (leagueId: string | null) => void;
   onLoadMore: () => void;
   isLoadingMore?: boolean;
 }
 
 export default function MatchTable({
   matches,
+  currentLeagueId,
   predictionSummary,
   totalMatches,
   panelId,
   selectedMatchId,
   onOpen,
+  onOpenDailyPicks,
   onLoadMore,
   isLoadingMore = false,
 }: MatchTableProps) {
   const { t } = useTranslation();
+  const [dailyPicksSummary, setDailyPicksSummary] = useState<DailyPicksResponse | null>(null);
   const [showAllUpcomingMatches, setShowAllUpcomingMatches] = useState(false);
+  const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
   const isAllLoaded = matches.length >= totalMatches;
   const progressPercent = totalMatches > 0
     ? Math.min((matches.length / totalMatches) * 100, 100)
@@ -67,6 +76,22 @@ export default function MatchTable({
   const hiddenUpcomingMatchCount = groupedMatches.upcoming.length - visibleUpcomingMatches.length;
   const visibleMatchCount = visibleUpcomingMatches.length + groupedMatches.past.length;
   const firstMatchId = matches[0]?.id ?? null;
+  const dailyPicksCount = dailyPicksSummary?.items.length ?? 0;
+  const dailyPicksGeneratedAt = dailyPicksSummary?.generatedAt
+    ? new Date(dailyPicksSummary.generatedAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+  const dailyPicksMarkets = dailyPicksSummary
+    ? [
+        t("dailyPicks.marketFamilies.moneyline"),
+        t("dailyPicks.marketFamilies.spreads"),
+        t("dailyPicks.marketFamilies.totals"),
+      ].join(" / ")
+    : null;
 
   useEffect(() => {
     setShowAllUpcomingMatches(false);
@@ -86,6 +111,26 @@ export default function MatchTable({
     observer.observe(loadMoreRef.current);
     return () => observer.disconnect();
   }, [isAllLoaded, isLoadingMore, onLoadMore]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    void fetchDailyPicks({ date: dailyPicksDate, leagueId: currentLeagueId })
+      .then((response) => {
+        if (isMounted) {
+          setDailyPicksSummary(response);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setDailyPicksSummary(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentLeagueId, dailyPicksDate]);
 
   // SVG Gauge calculations
   const radius = 60;
@@ -115,6 +160,52 @@ export default function MatchTable({
           {t("matchTable.showingStatus", { count: visibleMatchCount, total: totalMatches })}
         </span>
       </div>
+
+      <section className="dailyPicksTeaser" aria-label={t("dailyPicks.entry.boardTitle")}>
+        <div>
+          <span className="metricLabel">{t("dailyPicks.entry.eyebrow")}</span>
+          <h2>{t("dailyPicks.entry.boardTitle")}</h2>
+          <p>{t("dailyPicks.entry.boardCaption")}</p>
+        </div>
+        <div className="dailyPicksTeaserStats">
+          <span>{t("dailyPicks.summary.recommendations")}</span>
+          {dailyPicksSummary ? (
+            <strong>{t("dailyPicks.summary.count", { count: dailyPicksCount })}</strong>
+          ) : (
+            <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
+          )}
+        </div>
+        {dailyPicksGeneratedAt ? (
+          <div className="dailyPicksTeaserStats">
+            <span>{t("dailyPicks.summary.updated")}</span>
+            <strong>{dailyPicksGeneratedAt}</strong>
+          </div>
+        ) : null}
+        {dailyPicksMarkets ? (
+          <div className="dailyPicksTeaserStats">
+            <span>{t("dailyPicks.summary.markets")}</span>
+            <strong>{dailyPicksMarkets}</strong>
+          </div>
+        ) : null}
+        {dailyPicksSummary ? (
+          <div className="dailyPicksTeaserStats">
+            <span>{t("dailyPicks.summary.targets")}</span>
+            <strong>
+              {t("dailyPicks.summary.targetValues", {
+                hitRate: Math.round(dailyPicksSummary.target.hitRate * 100),
+                roi: Math.round(dailyPicksSummary.target.roi * 100),
+              })}
+            </strong>
+          </div>
+        ) : null}
+        <button
+          className="dailyPicksPrimaryButton"
+          type="button"
+          onClick={() => onOpenDailyPicks?.(currentLeagueId)}
+        >
+          {t("dailyPicks.entry.open")}
+        </button>
+      </section>
 
       <section className="predictionSummaryBanner" aria-label={t("matchTable.summary.title")}>
         <div className="predictionSummaryGauge">

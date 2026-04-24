@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import app from "../index";
+import * as supabaseModule from "../lib/supabase";
+import { loadDailyPicksView } from "../routes/daily-picks";
 import {
   loadDashboardMatchCardsPageView,
   loadMatchItems,
@@ -19,6 +21,75 @@ import {
   loadReviewAggregationHistoryView,
   loadReviewView,
 } from "../routes/reviews";
+
+type FakeTables = Record<string, Record<string, unknown>[]>;
+
+function buildTableSupabase(tables: FakeTables) {
+  return {
+    from(tableName: string) {
+      const allRows = [...(tables[tableName] ?? [])];
+      const applySort = (
+        value: Record<string, unknown>[],
+        column: string,
+        options?: { ascending?: boolean },
+      ) => {
+        const ascending = options?.ascending ?? true;
+        return [...value].sort((left, right) => {
+          const leftValue = left[column];
+          const rightValue = right[column];
+          if (leftValue === rightValue) {
+            return 0;
+          }
+          if (leftValue == null) {
+            return 1;
+          }
+          if (rightValue == null) {
+            return -1;
+          }
+          if (leftValue < rightValue) {
+            return ascending ? -1 : 1;
+          }
+          return ascending ? 1 : -1;
+        });
+      };
+      const buildResult = (value: Record<string, unknown>[]) =>
+        Promise.resolve({ data: value, error: null });
+
+      const buildQuery = (rows: Record<string, unknown>[]) => ({
+        eq(column: string, matchValue: unknown) {
+          return buildQuery(rows.filter((row) => row[column] === matchValue));
+        },
+        gte(column: string, matchValue: unknown) {
+          const comparable = matchValue as string | number;
+          return buildQuery(
+            rows.filter((row) => row[column] != null && (row[column] as string | number) >= comparable),
+          );
+        },
+        lt(column: string, matchValue: unknown) {
+          const comparable = matchValue as string | number;
+          return buildQuery(
+            rows.filter((row) => row[column] != null && (row[column] as string | number) < comparable),
+          );
+        },
+        in(column: string, values: unknown[]) {
+          return buildResult(rows.filter((row) => values.includes(row[column])));
+        },
+        order(column: string, options?: { ascending?: boolean }) {
+          return buildResult(applySort(rows, column, options));
+        },
+        limit(count: number) {
+          return buildResult(rows.slice(0, count));
+        },
+      });
+
+      return {
+        select() {
+          return buildQuery(allRows);
+        },
+      };
+    },
+  } as never;
+}
 
 describe("prediction API", () => {
   it("returns a health payload", async () => {
@@ -132,6 +203,720 @@ describe("prediction API", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       report: null,
+    });
+  });
+
+  it("returns an empty daily picks payload when no supabase client is configured", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-24T03:00:00Z"));
+    const response = await app.request("/daily-picks");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      generatedAt: null,
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      coverage: {
+        moneyline: 0,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [],
+      heldItems: [],
+    });
+    vi.useRealTimers();
+  });
+
+  it("builds capped moneyline picks and keeps price-only variants held", async () => {
+    const tables = {
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-2",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T20:00:00Z",
+          home_team_id: "arsenal",
+          away_team_id: "fulham",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-3",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T21:00:00Z",
+          home_team_id: "liverpool",
+          away_team_id: "brentford",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-4",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T22:00:00Z",
+          home_team_id: "newcastle",
+          away_team_id: "villa",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea", logo_url: null },
+        { id: "man-city", name: "Manchester City", logo_url: null },
+        { id: "arsenal", name: "Arsenal", logo_url: null },
+        { id: "fulham", name: "Fulham", logo_url: null },
+        { id: "liverpool", name: "Liverpool", logo_url: null },
+        { id: "brentford", name: "Brentford", logo_url: null },
+        { id: "newcastle", name: "Newcastle", logo_url: null },
+        { id: "villa", name: "Aston Villa", logo_url: null },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League", emblem_url: null },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-2", match_id: "match-2", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-3", match_id: "match-3", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-4", match_id: "match-4", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.58,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.42,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.47,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.53,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-2",
+          match_id: "match-2",
+          snapshot_id: "snapshot-2",
+          recommended_pick: "HOME",
+          confidence_score: 0.7,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.7,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.1,
+          value_recommendation_expected_value: 0.22,
+          value_recommendation_market_price: 0.52,
+          value_recommendation_model_probability: 0.62,
+          value_recommendation_market_probability: 0.52,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Arsenal -0.5",
+              selection_a_price: 0.57,
+              selection_b_label: "Fulham +0.5",
+              selection_b_price: 0.43,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.51,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.49,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.75,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:05:00Z",
+        },
+        {
+          id: "prediction-3",
+          match_id: "match-3",
+          snapshot_id: "snapshot-3",
+          recommended_pick: "HOME",
+          confidence_score: 0.68,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.68,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.08,
+          value_recommendation_expected_value: 0.18,
+          value_recommendation_market_price: 0.5,
+          value_recommendation_model_probability: 0.58,
+          value_recommendation_market_probability: 0.5,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Liverpool -0.5",
+              selection_a_price: 0.56,
+              selection_b_label: "Brentford +0.5",
+              selection_b_price: 0.44,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 3.5",
+              selection_a_price: 0.46,
+              selection_b_label: "Under 3.5",
+              selection_b_price: 0.54,
+              line_value: 3.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.72,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:10:00Z",
+        },
+        {
+          id: "prediction-4",
+          match_id: "match-4",
+          snapshot_id: "snapshot-4",
+          recommended_pick: "HOME",
+          confidence_score: 0.66,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.66,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.06,
+          value_recommendation_expected_value: 0.14,
+          value_recommendation_market_price: 0.49,
+          value_recommendation_model_probability: 0.55,
+          value_recommendation_market_probability: 0.49,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Newcastle -0.5",
+              selection_a_price: 0.55,
+              selection_b_label: "Aston Villa +0.5",
+              selection_b_price: 0.45,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.48,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.52,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.7,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:15:00Z",
+        },
+      ],
+    };
+    const supabase = buildTableSupabase(tables);
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: false,
+    });
+
+    expect(view.date).toBe("2026-04-24");
+    expect(view.items).toHaveLength(4);
+    expect(new Set(view.items.map((item) => item.marketFamily))).toEqual(
+      new Set(["moneyline"]),
+    );
+    expect(
+      view.coverage.moneyline + view.coverage.spreads + view.coverage.totals,
+    ).toBe(12);
+    expect(view.items[0]).toMatchObject({
+      matchId: "match-1",
+      leagueId: "premier-league",
+      homeTeam: "Chelsea",
+      awayTeam: "Manchester City",
+      marketFamily: "moneyline",
+      status: "recommended",
+    });
+    expect(view.coverage).toMatchObject({
+      moneyline: 4,
+      spreads: 4,
+      totals: 4,
+      held: 8,
+    });
+
+    const heldView = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      marketFamily: "spreads",
+      includeHeld: true,
+    });
+
+    expect(heldView.items).toEqual([]);
+    expect(heldView.heldItems).toHaveLength(4);
+    expect(heldView.heldItems[0]).toMatchObject({
+      marketFamily: "spreads",
+      status: "held",
+      confidence: null,
+      expectedValue: null,
+      modelProbability: null,
+      noBetReason: "variant_market_price_only",
+    });
+  });
+
+  it("filters daily picks by market family and includeHeld at the route level", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: false,
+          main_recommendation_no_bet_reason: "low_confidence",
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.58,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.42,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+
+    const response = await app.request(
+      "/daily-picks?date=2026-04-24&marketFamily=spreads&includeHeld=true",
+      { headers: { host: "localhost" } },
+    );
+    const heldToggleResponse = await app.request(
+      "/daily-picks?date=2026-04-24&includeHeld=true",
+      { headers: { host: "localhost" } },
+    );
+    const defaultResponse = await app.request(
+      "/daily-picks?date=2026-04-24",
+      { headers: { host: "localhost" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+    );
+    expect(await response.json()).toMatchObject({
+      date: "2026-04-24",
+      coverage: {
+        held: 1,
+      },
+      items: [],
+      heldItems: [
+        {
+          marketFamily: "spreads",
+          confidence: null,
+          expectedValue: null,
+          modelProbability: null,
+          noBetReason: "variant_market_price_only",
+          status: "held",
+        },
+      ],
+    });
+    await expect(defaultResponse.json()).resolves.toMatchObject({
+      heldItems: [],
+    });
+    await expect(heldToggleResponse.json()).resolves.toMatchObject({
+      coverage: {
+        held: 2,
+      },
+      heldItems: expect.arrayContaining([
+        expect.objectContaining({
+          marketFamily: "moneyline",
+          noBetReason: "low_confidence",
+          status: "held",
+        }),
+        expect.objectContaining({
+          marketFamily: "spreads",
+          noBetReason: "variant_market_price_only",
+          status: "held",
+        }),
+      ]),
+    });
+
+    spy.mockRestore();
+  });
+
+  it("ignores predictions whose snapshot points at a different match", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "different-match", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.coverage).toEqual({
+      moneyline: 0,
+      spreads: 0,
+      totals: 0,
+      held: 0,
+    });
+  });
+
+  it("ignores an impossible date filter instead of crashing", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+
+    const response = await app.request(
+      "/daily-picks?date=2026-99-99",
+      { headers: { host: "localhost" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      date: null,
+      items: [
+        {
+          matchId: "match-1",
+          marketFamily: "moneyline",
+        },
+      ],
+    });
+
+    spy.mockRestore();
+  });
+
+  it("prefers the latest enriched prediction row when multiple checkpoints exist", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-2", match_id: "match-1", checkpoint_type: "LINEUP_CONFIRMED" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.61,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.61,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.7,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-2",
+          match_id: "match-1",
+          snapshot_id: "snapshot-2",
+          recommended_pick: "DRAW",
+          confidence_score: 0.75,
+          main_recommendation_pick: "DRAW",
+          main_recommendation_confidence: 0.75,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "DRAW",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.2,
+          value_recommendation_expected_value: 0.36,
+          value_recommendation_market_price: 0.41,
+          value_recommendation_model_probability: 0.61,
+          value_recommendation_market_probability: 0.41,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.84,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T09:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "DRAW",
+      expectedValue: 0.36,
+      marketPrice: 0.41,
+      modelProbability: 0.61,
+      marketProbability: 0.41,
+    });
+  });
+
+  it("does not graft older enrichment onto a newer representative row", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-2", match_id: "match-1", checkpoint_type: "LINEUP_CONFIRMED" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.61,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.61,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-2",
+          match_id: "match-1",
+          snapshot_id: "snapshot-2",
+          recommended_pick: "DRAW",
+          confidence_score: 0.75,
+          main_recommendation_pick: "DRAW",
+          main_recommendation_confidence: 0.75,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: null,
+          value_recommendation_recommended: null,
+          value_recommendation_edge: null,
+          value_recommendation_expected_value: null,
+          value_recommendation_market_price: null,
+          value_recommendation_model_probability: null,
+          value_recommendation_market_probability: null,
+          value_recommendation_market_source: null,
+          variant_markets_summary: [],
+          created_at: "2026-04-24T09:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items[0]).toMatchObject({
+      selectionLabel: "DRAW",
+      expectedValue: null,
+      marketPrice: null,
+      modelProbability: null,
+      marketProbability: null,
     });
   });
 

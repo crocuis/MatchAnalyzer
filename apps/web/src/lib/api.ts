@@ -333,6 +333,47 @@ export interface LeaguePredictionSummary {
   successRate: number | null;
 }
 
+export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
+
+export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss";
+
+export interface DailyPickItem {
+  id: string;
+  matchId: string;
+  predictionId: string | null;
+  leagueId: string;
+  leagueLabel: string;
+  homeTeam: string;
+  awayTeam: string;
+  kickoffAt: string;
+  marketFamily: DailyPickMarketFamily;
+  selectionLabel: string;
+  confidence: number | null;
+  edge: number | null;
+  expectedValue: number | null;
+  marketPrice: number | null;
+  modelProbability: number | null;
+  marketProbability: number | null;
+  sourceAgreementRatio: number | null;
+  status: DailyPickStatus;
+  noBetReason: string | null;
+  reasonLabels: string[];
+}
+
+export interface DailyPicksResponse {
+  generatedAt: string | null;
+  date: string | null;
+  target: {
+    minDailyRecommendations: number;
+    maxDailyRecommendations: number;
+    hitRate: number;
+    roi: number;
+  };
+  coverage: Record<DailyPickMarketFamily | "held", number>;
+  items: DailyPickItem[];
+  heldItems: DailyPickItem[];
+}
+
 export interface PredictionResponse {
   matchId: string;
   prediction: PredictionSummary | null;
@@ -450,6 +491,36 @@ export function fetchMatches(params?: {
   }
   const query = search.toString();
   return fetchJson<MatchListResponse>(query ? `/matches?${query}` : "/matches");
+}
+
+export function resolveDailyPicksDate(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function fetchDailyPicks(params?: {
+  date?: string | null;
+  leagueId?: string | null;
+  marketFamily?: DailyPickMarketFamily | "all" | null;
+  includeHeld?: boolean;
+}): Promise<DailyPicksResponse> {
+  const search = new URLSearchParams();
+  if (params?.date) {
+    search.set("date", params.date);
+  }
+  if (params?.leagueId) {
+    search.set("leagueId", params.leagueId);
+  }
+  if (params?.marketFamily) {
+    search.set("marketFamily", params.marketFamily);
+  }
+  if (params?.includeHeld) {
+    search.set("includeHeld", "true");
+  }
+  const query = search.toString();
+  return fetchJson<DailyPicksResponse>(query ? `/daily-picks?${query}` : "/daily-picks");
 }
 
 export function fetchPrediction(matchId: string): Promise<PredictionResponse> {

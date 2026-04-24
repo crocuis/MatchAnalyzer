@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.resetModules();
@@ -19,6 +20,42 @@ describe("buildApiUrl", () => {
     const { buildApiUrl } = await import("../lib/api");
 
     expect(buildApiUrl("/matches")).toBe("https://match-analyzer-api.workers.dev/matches");
+  });
+});
+
+describe("daily picks fetcher", () => {
+  it("formats today's local date for daily picks calls", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-24T15:30:00Z"));
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        generatedAt: null,
+        date: "2026-04-24",
+        target: {
+          minDailyRecommendations: 5,
+          maxDailyRecommendations: 10,
+          hitRate: 0.7,
+          roi: 0.2,
+        },
+        coverage: { moneyline: 0, spreads: 0, totals: 0, held: 0 },
+        items: [],
+        heldItems: [],
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchDailyPicks, resolveDailyPicksDate } = await import("../lib/api");
+    const expectedDate = resolveDailyPicksDate();
+
+    await fetchDailyPicks({
+      date: expectedDate,
+      leagueId: "premier-league",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/daily-picks?date=${expectedDate}&leagueId=premier-league`,
+    );
   });
 });
 

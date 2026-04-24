@@ -8,10 +8,29 @@ import type { LeaguePredictionSummary, MatchCardRow } from "../lib/api";
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        items: [],
+        heldItems: [],
+        coverage: {
+          candidates: 0,
+          recommended: 0,
+          held: 0,
+          marketFamilies: { moneyline: 0, spreads: 0, totals: 0 },
+        },
+        target: { hitRate: 0.7, roi: 0.2 },
+        generatedAt: "2026-04-24T00:00:00.000Z",
+      }),
+    })),
+  );
 });
 
 describe("MatchTable", () => {
@@ -75,11 +94,13 @@ describe("MatchTable", () => {
       render(
         <MatchTable
           matches={matches}
+          currentLeagueId={null}
           predictionSummary={predictionSummary}
           totalMatches={matches.length}
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
+          onOpenDailyPicks={() => {}}
           onLoadMore={() => {}}
         />,
       );

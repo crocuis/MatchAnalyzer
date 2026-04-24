@@ -4,6 +4,67 @@
     "title": "매치 분석 허브",
     "subtitle": "데이터 기반의 정교한 확률 모델링으로 시장의 엣지(Edge)를 포착하여 최적의 베팅 방법을 제안하고, 분석 모델의 성과를 실시간으로 모니터링합니다."
   },
+  "dailyPicks": {
+    "entry": {
+      "header": "Daily Picks",
+      "eyebrow": "추천 보드",
+      "boardTitle": "오늘의 조건 통과 추천",
+      "boardCaption": "승무패, 핸디캡, 언더/오버를 신뢰도와 기대값 기준으로 선별합니다.",
+      "volume": "하루 추천 수",
+      "volumeValue": "5-10건",
+      "open": "Daily Picks 열기"
+    },
+    "title": "Daily Picks",
+    "subtitle": "오늘 조건을 통과한 추천만 모아 봅니다. 성과 기준은 백테스트 목표이며 미래 수익 보장이 아닙니다.",
+    "back": "대시보드로 돌아가기",
+    "empty": "오늘 조건을 통과한 추천이 없습니다.",
+    "error": "Daily Picks를 불러오지 못했습니다.",
+    "showHeldCandidates": "보류 후보 {{count}}건 보기",
+    "summary": {
+      "recommendations": "추천 수",
+      "count": "{{count}}건",
+      "updated": "업데이트",
+      "markets": "시장",
+      "coverage": "시장 커버리지",
+      "targets": "백테스트 기준",
+      "targetValues": "적중 {{hitRate}}% / ROI {{roi}}%",
+      "loading": "Daily Picks 요약 불러오는 중"
+    },
+    "marketFamilies": {
+      "all": "전체",
+      "moneyline": "승무패",
+      "spreads": "핸디캡",
+      "totals": "언더/오버"
+    },
+    "filters": {
+      "league": "리그",
+      "allLeagues": "전체 리그",
+      "showHeld": "보류 항목 표시"
+    },
+    "target": {
+      "hitRate": "백테스트 적중률",
+      "roi": "백테스트 ROI",
+      "volume": "하루 추천 수"
+    },
+    "metrics": {
+      "confidence": "신뢰도",
+      "expectedValue": "기대값",
+      "marketPrice": "시장 가격",
+      "modelProbability": "모델 확률"
+    },
+    "status": {
+      "recommended": "추천",
+      "held": "보류",
+      "pending": "대기",
+      "hit": "적중",
+      "miss": "미적중"
+    },
+    "noBetReasons": {
+      "low_confidence": "신뢰도 부족",
+      "heldByRecommendationGate": "추천 게이트 보류",
+      "variant_market_price_only": "시장 가격만 있음"
+    }
+  },
   "leagues": {
     "premier-league": "프리미어리그",
     "laliga": "라리가",

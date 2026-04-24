@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ClientValidationPanel } from "./components/ClientValidationPanel";
+import DailyPicksView from "./components/DailyPicksView";
 import FullReportView from "./components/FullReportView";
 import LeagueTabs from "./components/LeagueTabs";
 import MatchDetailModal from "./components/MatchDetailModal";
@@ -18,6 +19,7 @@ import {
   fetchPredictionSourceEvaluationHistory,
   fetchReview,
   fetchReviewAggregationHistory,
+  type DailyPickItem,
   type PostMatchReviewAggregationReport,
   type PredictionFusionPolicyHistoryResponse,
   type PredictionFusionPolicyReport,
@@ -59,6 +61,34 @@ const LEAGUE_ORDER = [
 ];
 
 const PAGE_SIZE = 4;
+
+function buildMatchFromDailyPick(item: DailyPickItem): MatchCardRow {
+  const heldMoneylineRecommendation = item.marketFamily === "moneyline" && item.status === "held"
+    ? {
+        pick: item.selectionLabel,
+        confidence: item.confidence,
+        recommended: false,
+        noBetReason: item.noBetReason,
+      }
+    : null;
+
+  return {
+    id: item.matchId,
+    leagueId: item.leagueId,
+    leagueLabel: item.leagueLabel,
+    homeTeam: item.homeTeam,
+    awayTeam: item.awayTeam,
+    kickoffAt: item.kickoffAt,
+    status: "Prediction Ready",
+    recommendedPick: item.marketFamily === "moneyline" && item.status !== "held"
+      ? item.selectionLabel
+      : null,
+    confidence: item.confidence,
+    mainRecommendation: heldMoneylineRecommendation,
+    noBetReason: item.noBetReason,
+    needsReview: false,
+  };
+}
 
 function resolveLeaguePayload(
   response: {
@@ -150,8 +180,11 @@ export default function App() {
   const [matchesStatus, setMatchesStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
+  const [activeView, setActiveView] = useState<"dashboard" | "dailyPicks">("dashboard");
+  const [dailyPicksLeagueId, setDailyPicksLeagueId] = useState<string | null>(null);
   const [selectedLeagueId, setSelectedLeagueId] = useState<string | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
+  const [dailyPickMatchesById, setDailyPickMatchesById] = useState<Record<string, MatchCardRow>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [reportMatchId, setReportMatchId] = useState<string | null>(null);
   const [detailsByMatchId, setDetailsByMatchId] = useState<Record<string, MatchDetailState>>(
@@ -293,9 +326,17 @@ export default function App() {
 
   const fallbackSelectedMatchId = leagueMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
-  const activeMatch =
+  const dashboardActiveMatch =
     leagueMatches.find((match) => match.id === activeMatchId) ?? null;
-  const reportMatch = loadedMatches.find((match) => match.id === reportMatchId) ?? null;
+  const dailyPickActiveMatch = activeMatchId ? dailyPickMatchesById[activeMatchId] : null;
+  const activeMatch =
+    activeView === "dailyPicks"
+      ? dailyPickActiveMatch ?? dashboardActiveMatch
+      : dashboardActiveMatch ?? dailyPickActiveMatch;
+  const reportMatch =
+    loadedMatches.find((match) => match.id === reportMatchId)
+    ?? (reportMatchId ? dailyPickMatchesById[reportMatchId] : null)
+    ?? null;
 
   async function ensureMatchDetail(matchId: string) {
     if (detailsByMatchId[matchId] || detailLoadingId === matchId) {
@@ -388,6 +429,15 @@ export default function App() {
     setReportMatchId(null);
   }
 
+  function handleOpenDailyPickMatch(item: DailyPickItem) {
+    const match = buildMatchFromDailyPick(item);
+    setDailyPickMatchesById((current) => ({
+      ...current,
+      [match.id]: match,
+    }));
+    handleOpenMatch(match.id);
+  }
+
   function handleCloseModal() {
     setIsModalOpen(false);
   }
@@ -469,6 +519,30 @@ export default function App() {
     );
   }
 
+  if (activeView === "dailyPicks") {
+    return (
+      <main className="dashboardApp">
+        <div className="dashboardShell">
+          <DailyPicksView
+            initialLeagueId={dailyPicksLeagueId}
+            leagues={derivedLeagues}
+            onBack={() => setActiveView("dashboard")}
+            onOpenMatch={handleOpenDailyPickMatch}
+          />
+          <MatchDetailModal
+            match={activeMatch}
+            isOpen={isModalOpen}
+            onClose={handleCloseModal}
+            onOpenReport={handleOpenReport}
+            prediction={activeDetail?.prediction ?? null}
+            checkpoints={activeDetail?.checkpoints ?? []}
+            review={activeDetail?.review ?? null}
+          />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="dashboardApp">
       <div className="dashboardShell">
@@ -487,6 +561,18 @@ export default function App() {
               KO
             </button>
           </div>
+          <button
+            className="dailyPicksHeaderButton"
+            type="button"
+            onClick={() => {
+              setDailyPicksLeagueId(null);
+              setReportMatchId(null);
+              setIsModalOpen(false);
+              setActiveView("dailyPicks");
+            }}
+          >
+            {t("dailyPicks.entry.header")}
+          </button>
           <p className="dashboardEyebrow">{t("header.eyebrow")}</p>
           <h1 className="dashboardTitle">{t("header.title")}</h1>
           <p className="dashboardSubtitle">{t("header.subtitle")}</p>
@@ -516,9 +602,16 @@ export default function App() {
         {matchesStatus !== "loading" && matchesStatus !== "error" ? (
           <MatchTable
             matches={leagueMatches}
+            currentLeagueId={selectedLeagueId}
             predictionSummary={predictionSummary}
             totalMatches={totalMatches}
             onOpen={handleOpenMatch}
+            onOpenDailyPicks={(leagueId) => {
+              setDailyPicksLeagueId(leagueId ?? selectedLeagueId ?? derivedLeagues[0]?.id ?? null);
+              setReportMatchId(null);
+              setIsModalOpen(false);
+              setActiveView("dailyPicks");
+            }}
             onLoadMore={handleLoadMore}
             panelId="league-matches-panel"
             selectedMatchId={isModalOpen ? activeMatchId : null}
