@@ -557,6 +557,7 @@ export default function App() {
 
         <DailyPicksModal
           isOpen={isDailyPicksModalOpen}
+          isActive={!isModalOpen}
           initialLeagueId={dailyPicksLeagueId}
           leagues={derivedLeagues}
           allMatches={loadedMatches}

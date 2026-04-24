@@ -11,10 +11,12 @@ import {
   type MatchCardRow,
 } from "../lib/api";
 import { enrichDailyPickWithMatchLogos } from "../lib/dailyPicks";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import DailyPickCard from "./DailyPickCard";
 
 type DailyPicksModalProps = {
   isOpen: boolean;
+  isActive?: boolean;
   initialLeagueId: string | null;
   leagues: LeagueSummary[];
   allMatches?: MatchCardRow[];
@@ -42,6 +44,7 @@ function matchesActiveFilters(
 
 export default function DailyPicksModal({
   isOpen,
+  isActive = true,
   initialLeagueId,
   leagues,
   allMatches = [],
@@ -55,24 +58,25 @@ export default function DailyPicksModal({
   const [includeHeld, setIncludeHeld] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [payload, setPayload] = useState<DailyPicksResponse | null>(null);
-  
+
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
+  useBodyScrollLock(isOpen && isActive);
+
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
+    if (!isOpen) {
+      return;
     }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isOpen]);
+
+    setMarketFamily("all");
+    setLeagueId(initialLeagueId);
+    setIncludeHeld(false);
+  }, [initialLeagueId, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
-    
+
     let isMounted = true;
     setStatus("loading");
     void fetchDailyPicks({ date: dailyPicksDate, leagueId, marketFamily, includeHeld })
@@ -92,7 +96,7 @@ export default function DailyPicksModal({
   }, [isOpen, dailyPicksDate, includeHeld, leagueId, marketFamily]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !isActive) return;
 
     closeButtonRef.current?.focus();
 
@@ -101,7 +105,7 @@ export default function DailyPicksModal({
         onClose();
         return;
       }
-      
+
       if (event.key !== "Tab" || !dialogRef.current) return;
 
       const focusableElements = Array.from(
@@ -126,7 +130,7 @@ export default function DailyPicksModal({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isActive, isOpen, onClose]);
 
   const visibleItems = useMemo(() => {
     if (!payload) return [];
@@ -163,7 +167,8 @@ export default function DailyPicksModal({
   return (
     <div className="detailOverlay" onClick={onClose}>
       <section
-        aria-modal="true"
+        aria-hidden={isActive ? undefined : true}
+        aria-modal={isActive ? "true" : undefined}
         aria-labelledby="daily-picks-heading"
         className="detailModal state-recommended"
         ref={dialogRef}
@@ -180,7 +185,7 @@ export default function DailyPicksModal({
           >
             ✕
           </button>
-          
+
           <div className="dailyPicksHero">
             <div className="dailyPicksHeroMain">
               <h1 id="daily-picks-heading">{t("dailyPicks.title")}</h1>

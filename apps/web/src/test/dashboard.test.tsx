@@ -1217,7 +1217,7 @@ describe("dashboard redesign", () => {
     const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
     expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
     expect(screen.getByText("HOME")).toBeInTheDocument();
-    expect(screen.getByText("DRAW")).toBeInTheDocument();
+    expect(screen.queryByText("DRAW")).not.toBeInTheDocument();
     expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
     expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
@@ -1246,6 +1246,37 @@ describe("dashboard redesign", () => {
     const matchDetailDialog = screen.getByRole("dialog", { name: "Inter vs Bayern Munich" });
     expect(within(matchDetailDialog).getByAltText("Inter crest")).toBeInTheDocument();
     expect(within(matchDetailDialog).getByAltText("Bayern Munich crest")).toBeInTheDocument();
+  });
+
+  it("keeps the daily picks modal open when closing a detail opened from it", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+    fireEvent.click(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Inter vs Bayern Munich" }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Inter vs Bayern Munich" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: /daily picks/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.body.style.overflow).toBe("hidden");
+    });
   });
 
   it("keeps held moneyline picks as no-bet while detail data is loading", async () => {
@@ -1279,7 +1310,7 @@ describe("dashboard redesign", () => {
     expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
   });
 
-  it("opens the teaser CTA with all daily picks and updates cards when the league select changes", async () => {
+  it("opens the teaser CTA with the current league daily picks and updates cards when the league select changes", async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
@@ -1294,7 +1325,7 @@ describe("dashboard redesign", () => {
       within(dailyPicksDialog).queryByRole("button", {
         name: /inter.*bayern munich/i,
       }),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
 
     fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
       target: { value: "champions-league" },
@@ -1307,6 +1338,43 @@ describe("dashboard redesign", () => {
         }),
       ).toBeInTheDocument();
     });
+    expect(
+      within(dailyPicksDialog).queryByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resets daily picks filters to the requested league context on reopen", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    let dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(dailyPicksDialog).getByRole("button", { name: /handicap/i }));
+    fireEvent.click(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /daily picks/i })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByRole("tab", { name: "UEFA Champions League" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue(
+      "champions-league",
+    );
+    expect(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i })).not.toBeChecked();
+    expect(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    ).toBeInTheDocument();
     expect(
       within(dailyPicksDialog).queryByRole("button", {
         name: /chelsea.*manchester city/i,

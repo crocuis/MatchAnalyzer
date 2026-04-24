@@ -17,6 +17,7 @@ import {
   resolveVerdictState,
   summarizeSignalBadges,
 } from "../lib/predictionSummary";
+import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import TeamLogo from "./TeamLogo";
 
 interface MatchDetailModalProps {
@@ -52,16 +53,7 @@ export default function MatchDetailModal({
       })
     : "";
 
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isOpen]);
+  useBodyScrollLock(isOpen);
 
   useEffect(() => {
     if (!isOpen) {

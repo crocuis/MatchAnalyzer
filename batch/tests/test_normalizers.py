@@ -1834,6 +1834,44 @@ def test_supabase_client_persists_rows_locally(tmp_path, monkeypatch):
     assert json.loads(stored_files[0].read_text()) == [{"id": "match_001"}]
 
 
+def test_supabase_client_preserves_existing_local_fields_when_row_omits_them(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    client = SupabaseClient("https://example.supabase.co", "service-key")
+
+    client.upsert_rows(
+        "teams",
+        [
+            {
+                "id": "arsenal",
+                "name": "Arsenal",
+                "crest_url": "https://crests.football-data.org/57.png",
+            }
+        ],
+    )
+    client.upsert_rows(
+        "teams",
+        [
+            {
+                "id": "arsenal",
+                "name": "Arsenal FC",
+            }
+        ],
+    )
+
+    stored_files = list(Path(".tmp/supabase").rglob("teams.json"))
+    assert len(stored_files) == 1
+    assert json.loads(stored_files[0].read_text()) == [
+        {
+            "crest_url": "https://crests.football-data.org/57.png",
+            "id": "arsenal",
+            "name": "Arsenal FC",
+        }
+    ]
+
+
 def test_supabase_client_rejects_invalid_table_name(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     client = SupabaseClient("https://example.supabase.co", "service-key")
@@ -1961,7 +1999,7 @@ def test_supabase_client_retries_through_multiple_schema_cache_column_misses(mon
     assert "away_price" not in captured_payloads[4][0]
 
 
-def test_supabase_client_normalizes_bulk_upsert_rows_with_mixed_keys(monkeypatch):
+def test_supabase_client_preserves_sparse_bulk_upsert_rows(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
     captured_payloads: list[list[dict]] = []
 
@@ -2016,7 +2054,6 @@ def test_supabase_client_normalizes_bulk_upsert_rows_with_mixed_keys(monkeypatch
             },
             {
                 "country": "England",
-                "crest_url": None,
                 "id": "forest",
                 "name": "Nottingham Forest",
                 "team_type": "club",

@@ -21,12 +21,7 @@ class SupabaseClient:
         self.service_key = service_key
 
     def _normalize_bulk_upsert_rows(self, rows: list[dict]) -> list[dict]:
-        if len(rows) < 2:
-            return rows
-        all_keys = sorted({key for row in rows for key in row})
-        if all(len(row) == len(all_keys) and all(key in row for key in all_keys) for row in rows):
-            return rows
-        return [{key: row.get(key) for key in all_keys} for row in rows]
+        return [dict(row) for row in rows]
 
     def _use_file_backend(self) -> bool:
         hostname = urlparse(self.base_url).hostname or ""
@@ -164,7 +159,11 @@ class SupabaseClient:
             row["id"]: row for row in existing_rows if isinstance(row, dict) and "id" in row
         }
         for row in rows:
-            merged_rows[row["id"]] = row
+            existing_row = merged_rows.get(row["id"], {})
+            merged_rows[row["id"]] = {
+                **existing_row,
+                **row,
+            }
         target.write_text(json.dumps(list(merged_rows.values()), sort_keys=True))
         return len(rows)
 
