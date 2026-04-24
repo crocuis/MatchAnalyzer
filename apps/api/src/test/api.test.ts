@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "../index";
 import * as supabaseModule from "../lib/supabase";
 import { loadDailyPicksView } from "../routes/daily-picks";
@@ -91,7 +91,16 @@ function buildTableSupabase(tables: FakeTables) {
   } as never;
 }
 
+function setDailyPicksClock() {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-04-24T03:00:00Z"));
+}
+
 describe("prediction API", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns a health payload", async () => {
     const response = await app.request("/health");
     expect(response.status).toBe(200);
@@ -207,8 +216,7 @@ describe("prediction API", () => {
   });
 
   it("returns an empty daily picks payload when no supabase client is configured", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-24T03:00:00Z"));
+    setDailyPicksClock();
     const response = await app.request("/daily-picks");
 
     expect(response.status).toBe(200);
@@ -234,6 +242,7 @@ describe("prediction API", () => {
   });
 
   it("builds capped moneyline picks and keeps price-only variants held", async () => {
+    setDailyPicksClock();
     const tables = {
       matches: [
         {
@@ -526,6 +535,7 @@ describe("prediction API", () => {
   });
 
   it("filters daily picks by market family and includeHeld at the route level", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -645,6 +655,7 @@ describe("prediction API", () => {
   });
 
   it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -766,6 +777,7 @@ describe("prediction API", () => {
   });
 
   it("keeps recommended moneyline picks ahead of recommended variant picks in the default daily picks view", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -851,6 +863,7 @@ describe("prediction API", () => {
   });
 
   it("localizes team labels in daily picks when locale-specific translations exist", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -1031,6 +1044,7 @@ describe("prediction API", () => {
   });
 
   it("ignores predictions whose snapshot points at a different match", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -1081,6 +1095,7 @@ describe("prediction API", () => {
   });
 
   it("ignores an impossible date filter instead of crashing", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -1138,6 +1153,7 @@ describe("prediction API", () => {
   });
 
   it("prefers the latest enriched prediction row when multiple checkpoints exist", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -1228,6 +1244,7 @@ describe("prediction API", () => {
   });
 
   it("does not graft older enrichment onto a newer representative row", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -2352,6 +2369,9 @@ describe("prediction API", () => {
   });
 
   it("falls back when crest/emblem columns are not present yet", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T00:00:00Z"));
+
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
