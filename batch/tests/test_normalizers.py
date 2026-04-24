@@ -19,6 +19,7 @@ from batch.src.ingest.fetch_markets import (
 )
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.jobs.ingest_markets_job import (
+    collect_changed_market_match_ids,
     main as run_ingest_markets_job,
     promote_market_snapshots,
     select_real_market_snapshots,
@@ -26,6 +27,7 @@ from batch.src.jobs.ingest_markets_job import (
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
+    collect_changed_fixture_match_ids,
     prepare_sync_asset_rows,
     should_backfill_real_fixture_team_assets,
     should_hydrate_real_fixture_history,
@@ -2001,6 +2003,183 @@ def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
     rows = client.read_rows("dashboard_league_summaries")
 
     assert rows == [{"league_id": "bundesliga", "match_count": 25}]
+
+
+def test_supabase_client_normalizes_sparse_bulk_upsert_rows(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    captured_payloads: list[list[dict]] = []
+
+    class FakeResponse:
+        def __init__(self, status: int = 201) -> None:
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b""
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        captured_payloads.append(json.loads(request.data.decode("utf-8")))
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    inserted = client.upsert_rows(
+        "teams",
+        [
+            {
+                "id": "arsenal",
+                "name": "Arsenal",
+                "team_type": "club",
+                "country": "England",
+                "crest_url": "https://crests.football-data.org/57.png",
+            },
+            {
+                "id": "forest",
+                "name": "Nottingham Forest",
+                "team_type": "club",
+                "country": "England",
+            },
+        ],
+    )
+
+    assert inserted == 2
+    assert captured_payloads == [
+        [
+            {
+                "country": "England",
+                "crest_url": "https://crests.football-data.org/57.png",
+                "id": "arsenal",
+                "name": "Arsenal",
+                "team_type": "club",
+            },
+            {
+                "country": "England",
+                "crest_url": None,
+                "id": "forest",
+                "name": "Nottingham Forest",
+                "team_type": "club",
+            },
+        ]
+    ]
+
+
+def test_collect_changed_fixture_match_ids_tracks_match_and_snapshot_updates():
+    changed_match_ids = collect_changed_fixture_match_ids(
+        match_rows=[
+            {"id": "match_a", "status": "closed", "final_result": "HOME"},
+            {"id": "match_b", "status": "not_started", "final_result": None},
+        ],
+        existing_match_rows=[
+            {"id": "match_a", "status": "not_started", "final_result": None},
+            {"id": "match_b", "status": "not_started", "final_result": None},
+        ],
+        snapshot_rows=[
+            {"id": "match_a_t_minus_24h", "match_id": "match_a", "lineup_status": "unknown"},
+            {"id": "match_b_t_minus_24h", "match_id": "match_b", "lineup_status": "confirmed"},
+        ],
+        existing_snapshot_rows=[
+            {"id": "match_a_t_minus_24h", "match_id": "match_a", "lineup_status": "unknown"},
+            {"id": "match_b_t_minus_24h", "match_id": "match_b", "lineup_status": "unknown"},
+        ],
+    )
+
+    assert changed_match_ids == ["match_a", "match_b"]
+
+
+def test_collect_changed_fixture_match_ids_ignores_snapshot_capture_time_only_updates():
+    changed_match_ids = collect_changed_fixture_match_ids(
+        match_rows=[
+            {"id": "match_a", "status": "not_started", "final_result": None},
+        ],
+        existing_match_rows=[
+            {"id": "match_a", "status": "not_started", "final_result": None},
+        ],
+        snapshot_rows=[
+            {
+                "id": "match_a_t_minus_24h",
+                "match_id": "match_a",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-20T00:00:00+00:00",
+            },
+        ],
+        existing_snapshot_rows=[
+            {
+                "id": "match_a_t_minus_24h",
+                "match_id": "match_a",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-19T23:00:00+00:00",
+            },
+        ],
+    )
+
+    assert changed_match_ids == []
+
+
+def test_collect_changed_market_match_ids_tracks_market_variant_and_snapshot_updates():
+    changed_match_ids = collect_changed_market_match_ids(
+        market_rows=[
+            {"id": "snapshot_a_bookmaker", "snapshot_id": "snapshot_a", "home_prob": 0.6},
+            {"id": "snapshot_b_bookmaker", "snapshot_id": "snapshot_b", "home_prob": 0.55},
+        ],
+        existing_market_rows=[
+            {"id": "snapshot_a_bookmaker", "snapshot_id": "snapshot_a", "home_prob": 0.6},
+            {"id": "snapshot_b_bookmaker", "snapshot_id": "snapshot_b", "home_prob": 0.51},
+        ],
+        variant_rows=[
+            {"id": "snapshot_c_total", "snapshot_id": "snapshot_c", "selection_a_price": 0.57},
+        ],
+        existing_variant_rows=[],
+        promoted_snapshot_rows=[
+            {"id": "snapshot_d", "match_id": "match_d", "snapshot_quality": "complete"},
+        ],
+        existing_snapshot_rows=[
+            {"id": "snapshot_d", "match_id": "match_d", "snapshot_quality": "partial"},
+        ],
+        snapshot_rows=[
+            {"id": "snapshot_a", "match_id": "match_a"},
+            {"id": "snapshot_b", "match_id": "match_b"},
+            {"id": "snapshot_c", "match_id": "match_c"},
+            {"id": "snapshot_d", "match_id": "match_d"},
+        ],
+    )
+
+    assert changed_match_ids == ["match_b", "match_c", "match_d"]
+
+
+def test_collect_changed_market_match_ids_ignores_market_observed_at_only_updates():
+    changed_match_ids = collect_changed_market_match_ids(
+        market_rows=[
+            {
+                "id": "snapshot_a_bookmaker",
+                "snapshot_id": "snapshot_a",
+                "home_prob": 0.6,
+                "observed_at": "2026-04-20T00:15:00+00:00",
+            },
+        ],
+        existing_market_rows=[
+            {
+                "id": "snapshot_a_bookmaker",
+                "snapshot_id": "snapshot_a",
+                "home_prob": 0.6,
+                "observed_at": "2026-04-20T00:00:00+00:00",
+            },
+        ],
+        variant_rows=[],
+        existing_variant_rows=[],
+        promoted_snapshot_rows=[],
+        existing_snapshot_rows=[],
+        snapshot_rows=[
+            {"id": "snapshot_a", "match_id": "match_a"},
+        ],
+    )
+
+    assert changed_match_ids == []
 
 
 def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, capsys):

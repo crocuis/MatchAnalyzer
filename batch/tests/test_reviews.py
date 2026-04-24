@@ -323,6 +323,46 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
     assert selected_markets == [market_rows[0], market_rows[1]]
 
 
+def test_select_real_prediction_inputs_prefers_explicit_match_ids_over_date():
+    snapshot_rows = [
+        {"id": "match_a_t_minus_24h", "match_id": "match_a", "checkpoint_type": "T_MINUS_24H"},
+        {"id": "match_b_t_minus_24h", "match_id": "match_b", "checkpoint_type": "T_MINUS_24H"},
+    ]
+    market_rows = [
+        {
+            "id": "match_a_t_minus_24h_bookmaker",
+            "snapshot_id": "match_a_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.4,
+            "draw_prob": 0.3,
+            "away_prob": 0.3,
+        },
+        {
+            "id": "match_b_t_minus_24h_bookmaker",
+            "snapshot_id": "match_b_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.45,
+            "draw_prob": 0.25,
+            "away_prob": 0.30,
+        },
+    ]
+    match_rows = [
+        {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
+        {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00"},
+    ]
+
+    selected_snapshots, selected_markets = select_real_prediction_inputs(
+        snapshot_rows=snapshot_rows,
+        market_rows=market_rows,
+        match_rows=match_rows,
+        target_date="2026-04-12",
+        target_match_ids={"match_b"},
+    )
+
+    assert selected_snapshots == [snapshot_rows[1]]
+    assert selected_markets == [market_rows[1]]
+
+
 def test_build_review_payload_keeps_completed_predictions_without_market_rows():
     predictions = [
         {
@@ -1018,6 +1058,74 @@ def test_run_predictions_job_generates_all_available_checkpoints_in_real_mode(
         "match_a_t_minus_24h",
         "match_a_t_minus_6h",
     ]
+
+
+def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 3,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "match_b_t_minus_24h",
+                        "match_id": "match_b",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 4,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.52,
+                        "draw_prob": 0.25,
+                        "away_prob": 0.23,
+                    },
+                    {
+                        "id": "match_b_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_b_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.55,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.21,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                    {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_MATCH_IDS", "match_b")
+
+    run_predictions_job.main()
+
+    assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
 
 
 def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):

@@ -11,7 +11,8 @@
 
 - fixtures ingestion: 매시 `00분`에 실행하며, 기준 UTC 날짜 결과 갱신과 `+7일`부터 `+14일`까지의 예정 경기 선행 동기화를 함께 수행한다.
 - market ingestion: 매시 `15분`에 실행한다.
-- prediction batch: 매시 `30분`에 실행한다.
+- prediction refresh: fixtures/markets ingest 결과에서 실제로 변경된 `match_id` 가 있을 때만 즉시 후속 실행한다.
+- 수동 prediction workflow: 필요할 때 `target_date` 또는 `target_match_ids` 로 직접 실행한다.
 - post-match review: 매시 `45분`에 실행한다.
 
 세부 checkpoint 분기와 `LINEUP_CONFIRMED` 전용 감지 로직은 현재 별도 워크플로로 분리하지 않았고, prediction batch 내부 분기 또는 후속 전용 작업으로 확장할 계획이다.

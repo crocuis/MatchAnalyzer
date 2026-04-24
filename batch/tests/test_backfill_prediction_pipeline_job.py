@@ -314,6 +314,58 @@ def test_backfill_prediction_pipeline_job_uses_explicit_dates_without_reading_ma
     ]
 
 
+def test_backfill_prediction_pipeline_job_uses_explicit_match_ids_for_predictions(
+    monkeypatch,
+    capsys,
+):
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    def fake_predictions() -> None:
+        calls.append(
+            (
+                "predictions",
+                os.environ.get("REAL_PREDICTION_DATE"),
+                os.environ.get("REAL_PREDICTION_MATCH_IDS"),
+            )
+        )
+        print(json.dumps({"inserted_rows": 2}))
+
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "predictions",
+        ("REAL_PREDICTION_DATE", fake_predictions),
+    )
+    monkeypatch.setattr(pipeline_job, "run_evaluation", lambda: {})
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-01")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-30")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "predictions")
+    monkeypatch.setenv("PIPELINE_BACKFILL_MATCH_IDS", "match_a,match_b")
+
+    pipeline_job.main()
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["date_source"] == "match_ids"
+    assert payload["date_count"] == 0
+    assert payload["match_id_count"] == 2
+    assert calls == [("predictions", None, "match_a,match_b")]
+
+
+def test_backfill_prediction_pipeline_job_rejects_match_ids_with_non_prediction_stages(
+    monkeypatch,
+):
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-01")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-30")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "fixtures,predictions")
+    monkeypatch.setenv("PIPELINE_BACKFILL_MATCH_IDS", "match_a")
+
+    try:
+        pipeline_job.main()
+    except ValueError as exc:
+        assert "PIPELINE_BACKFILL_MATCH_IDS only supports predictions stage" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for unsupported match-id stage mix")
+
+
 def test_backfill_prediction_pipeline_job_emits_progress_and_compacts_large_payloads(
     monkeypatch,
     capsys,

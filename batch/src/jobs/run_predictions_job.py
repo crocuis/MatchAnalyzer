@@ -63,6 +63,16 @@ BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
 
 
+def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
+    if not raw_match_ids:
+        return set()
+    return {
+        match_id.strip()
+        for match_id in raw_match_ids.split(",")
+        if match_id.strip()
+    }
+
+
 def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
     try:
         return client.read_rows(table_name)
@@ -90,13 +100,19 @@ def select_real_prediction_inputs(
     snapshot_rows: list[dict],
     market_rows: list[dict],
     match_rows: list[dict],
-    target_date: str,
+    target_date: str | None,
+    target_match_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    eligible_match_ids = {
-        row["id"]
-        for row in match_rows
-        if row.get("kickoff_at", "").startswith(target_date)
-    }
+    explicit_match_ids = target_match_ids or set()
+    eligible_match_ids = (
+        explicit_match_ids
+        if explicit_match_ids
+        else {
+            row["id"]
+            for row in match_rows
+            if target_date and row.get("kickoff_at", "").startswith(target_date)
+        }
+    )
     selected_snapshots = [
         row
         for row in snapshot_rows
@@ -374,9 +390,11 @@ def build_historical_source_performance_summary(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     checkpoint_type: str,
-    target_date: str,
+    target_date: str | None,
     market_segment: str,
 ) -> dict[str, dict[str, float | int]]:
+    if not target_date:
+        return {}
     match_by_id = {row["id"]: row for row in match_rows}
     rows: list[dict] = []
     historical_snapshots = [
@@ -874,8 +892,10 @@ def build_confidence_bucket_summary(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     checkpoint_type: str,
-    target_date: str,
+    target_date: str | None,
 ) -> dict[str, dict[str, float | int]]:
+    if not target_date:
+        return {}
     match_by_id = {row["id"]: row for row in match_rows}
     historical_snapshots = sorted(
         [
@@ -1028,19 +1048,22 @@ def main() -> None:
     prediction_rows = read_optional_rows(client, "predictions")
     variant_rows = read_optional_rows(client, "market_variants")
     use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
+    target_match_ids = parse_match_id_targets(os.environ.get("REAL_PREDICTION_MATCH_IDS"))
+    use_real_prediction_targets = bool(use_real_predictions or target_match_ids)
     if not snapshot_rows:
         raise ValueError("match_snapshots must exist before running predictions")
-    if not market_rows and not use_real_predictions:
+    if not market_rows and not use_real_prediction_targets:
         raise ValueError("market_probabilities must exist before running predictions")
 
     match_rows: list[dict] = []
-    if use_real_predictions:
+    if use_real_prediction_targets:
         match_rows = client.read_rows("matches")
         target_snapshots, target_market_rows = select_real_prediction_inputs(
             snapshot_rows=snapshot_rows,
             market_rows=market_rows,
             match_rows=match_rows,
             target_date=use_real_predictions,
+            target_match_ids=target_match_ids,
         )
         if not target_snapshots:
             raise ValueError(
@@ -1076,9 +1099,12 @@ def main() -> None:
     match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
+        snapshot_target_date = (
+            use_real_predictions or str(match.get("kickoff_at") or "")[:10] or None
+        )
         enriched_snapshot = (
             enrich_snapshot_with_match_history(snapshot, match_rows=match_rows)
-            if use_real_predictions
+            if use_real_prediction_targets
             else snapshot
         )
         book_probs, prediction_market = build_market_probabilities(
@@ -1087,7 +1113,7 @@ def main() -> None:
             kickoff_at=str(match.get("kickoff_at") or ""),
         )
         bookmaker_available = bool(book_probs)
-        if use_real_predictions:
+        if use_real_prediction_targets:
             if not bookmaker_available:
                 book_probs = dict(DEFAULT_NO_BOOKMAKER_PRIOR_PROBS)
         elif not book_probs:
@@ -1106,7 +1132,7 @@ def main() -> None:
             snapshot_rows=snapshot_rows,
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
-            target_date=use_real_predictions,
+            target_date=snapshot_target_date,
         )
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
@@ -1153,19 +1179,19 @@ def main() -> None:
                 market_by_snapshot=market_by_snapshot,
                 match_rows=match_rows,
                 checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
+                target_date=snapshot_target_date,
                 market_segment=market_segment,
             )
-            if use_real_predictions
+            if use_real_prediction_targets
             else {}
         )
-        if use_real_predictions and not historical_performance:
+        if use_real_prediction_targets and not historical_performance:
             historical_performance = build_historical_source_performance_summary(
                 snapshot_rows=snapshot_rows,
                 market_by_snapshot=market_by_snapshot,
                 match_rows=match_rows,
                 checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
+                target_date=snapshot_target_date,
                 market_segment="without_prediction_market"
                 if market_segment == "with_prediction_market"
                 else "with_prediction_market",
@@ -1232,13 +1258,13 @@ def main() -> None:
             "selected_source": "raw_fused",
             "historical_candidate_count": 0,
         }
-        if use_real_predictions:
+        if use_real_prediction_targets:
             historical_current_fused_candidates = build_historical_current_fused_candidates(
                 prediction_rows=prediction_rows,
                 snapshot_rows=snapshot_rows,
                 match_rows=match_rows,
                 checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
+                target_date=snapshot_target_date,
                 prediction_market_available=bool(
                     feature_context["prediction_market_available"]
                 ),
@@ -1292,9 +1318,9 @@ def main() -> None:
                 market_by_snapshot=market_by_snapshot,
                 match_rows=match_rows,
                 checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
+                target_date=snapshot_target_date,
             )
-            if use_real_predictions
+            if use_real_prediction_targets
             else {}
         )
         row["confidence_score"] = calibrate_confidence_from_buckets(

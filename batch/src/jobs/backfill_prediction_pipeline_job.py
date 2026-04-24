@@ -47,6 +47,16 @@ class StageRunResults:
     cache_reason: str
 
 
+def parse_match_id_targets(raw_match_ids: str | None) -> list[str]:
+    if not raw_match_ids:
+        return []
+    return [
+        match_id.strip()
+        for match_id in raw_match_ids.split(",")
+        if match_id.strip()
+    ]
+
+
 def emit_pipeline_event(payload: dict) -> None:
     print(json.dumps(payload, sort_keys=True), flush=True)
 
@@ -101,14 +111,25 @@ def build_cached_supabase_client_class(base_client_class):
 
 @contextlib.contextmanager
 def prediction_stage_read_cache():
-    original_client_class = run_predictions_job.SupabaseClient
-    run_predictions_job.SupabaseClient = build_cached_supabase_client_class(
-        original_client_class
+    cached_client_class = build_cached_supabase_client_class(SupabaseClient)
+    target_modules = (
+        backfill_fixture_season_job,
+        ingest_fixtures_job,
+        ingest_markets_job,
+        run_predictions_job,
+        run_post_match_review_job,
+        evaluate_prediction_sources_job,
     )
+    original_client_classes = {
+        module: module.SupabaseClient for module in target_modules
+    }
+    for module in target_modules:
+        module.SupabaseClient = cached_client_class
     try:
         yield
     finally:
-        run_predictions_job.SupabaseClient = original_client_class
+        for module, original_client_class in original_client_classes.items():
+            module.SupabaseClient = original_client_class
 
 
 def run_stage_for_date(stage: str, target_date: str) -> dict:
@@ -148,17 +169,78 @@ def run_stage_for_date(stage: str, target_date: str) -> dict:
     }
 
 
+def run_stage_for_match_ids(stage: str, target_match_ids: list[str]) -> dict:
+    if stage != "predictions":
+        raise ValueError("match-id pipeline execution only supports predictions stage")
+
+    _env_name, runner = PIPELINE_STAGE_CONFIG[stage]
+    previous_match_ids = os.environ.get("REAL_PREDICTION_MATCH_IDS")
+    previous_date = os.environ.get("REAL_PREDICTION_DATE")
+    os.environ["REAL_PREDICTION_MATCH_IDS"] = ",".join(target_match_ids)
+    os.environ.pop("REAL_PREDICTION_DATE", None)
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            runner()
+    except ValueError as exc:
+        message = str(exc)
+        if any(
+            known_message in message
+            for known_message in SKIPPABLE_STAGE_ERRORS.get(stage, ())
+        ):
+            return {
+                "stage": stage,
+                "target_date": None,
+                "target_match_ids": target_match_ids,
+                "result": None,
+                "skip_reason": message,
+            }
+        raise
+    finally:
+        if previous_match_ids is None:
+            os.environ.pop("REAL_PREDICTION_MATCH_IDS", None)
+        else:
+            os.environ["REAL_PREDICTION_MATCH_IDS"] = previous_match_ids
+        if previous_date is None:
+            os.environ.pop("REAL_PREDICTION_DATE", None)
+        else:
+            os.environ["REAL_PREDICTION_DATE"] = previous_date
+
+    lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
+    if not lines:
+        return {
+            "stage": stage,
+            "target_date": None,
+            "target_match_ids": target_match_ids,
+            "result": None,
+        }
+    return {
+        "stage": stage,
+        "target_date": None,
+        "target_match_ids": target_match_ids,
+        "result": compact_stage_result(json.loads(lines[-1])),
+    }
+
+
 def resolve_prediction_cache_config(stage_names: list[str]) -> tuple[bool, str]:
-    if "predictions" not in stage_names:
-        return False, "disabled_no_prediction_stage"
-    if any(stage in stage_names for stage in {"fixtures", "markets"}):
+    if not stage_names:
+        return False, "disabled_no_stages"
+    if any(stage in {"fixtures", "markets", "reviews"} for stage in stage_names):
         return False, "disabled_upstream_stage_present"
     return True, "enabled_prediction_only"
 
 
-def run_stage_results_for_dates(stage_names: list[str], dates: list[str]) -> StageRunResults:
+def run_stage_results_for_dates(
+    stage_names: list[str],
+    dates: list[str],
+    *,
+    use_cache: bool = True,
+    cache_enabled: bool | None = None,
+    cache_reason: str | None = None,
+) -> StageRunResults:
     stage_results: list[dict] = []
-    cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
+    if cache_enabled is None or cache_reason is None:
+        cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
     emit_pipeline_event(
         {
             "event": "prediction_read_cache_configured",
@@ -168,7 +250,7 @@ def run_stage_results_for_dates(stage_names: list[str], dates: list[str]) -> Sta
     )
     cache_context = (
         prediction_stage_read_cache()
-        if cache_enabled
+        if cache_enabled and use_cache
         else contextlib.nullcontext()
     )
     with cache_context:
@@ -230,6 +312,58 @@ def run_stage_results_for_dates(stage_names: list[str], dates: list[str]) -> Sta
                         and int(result_payload.get("snapshot_rows") or 0) == 0
                     ):
                         skip_remaining_stages_for_date = True
+    return StageRunResults(
+        stage_results=stage_results,
+        cache_enabled=cache_enabled,
+        cache_reason=cache_reason,
+    )
+
+
+def run_stage_results_for_match_ids(
+    stage_names: list[str],
+    target_match_ids: list[str],
+    *,
+    use_cache: bool = True,
+    cache_enabled: bool | None = None,
+    cache_reason: str | None = None,
+) -> StageRunResults:
+    stage_results: list[dict] = []
+    if cache_enabled is None or cache_reason is None:
+        cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
+    emit_pipeline_event(
+        {
+            "event": "prediction_read_cache_configured",
+            "enabled": cache_enabled,
+            "reason": cache_reason,
+        }
+    )
+    cache_context = (
+        prediction_stage_read_cache()
+        if cache_enabled and use_cache
+        else contextlib.nullcontext()
+    )
+    with cache_context:
+        for stage in stage_names:
+            emit_pipeline_event(
+                {
+                    "event": "stage_started",
+                    "stage": stage,
+                    "target_date": None,
+                    "target_match_ids": target_match_ids,
+                }
+            )
+            stage_result = run_stage_for_match_ids(stage, target_match_ids)
+            stage_results.append(stage_result)
+            emit_pipeline_event(
+                {
+                    "event": "stage_completed",
+                    "stage": stage,
+                    "target_date": None,
+                    "target_match_ids": target_match_ids,
+                    "result": stage_result.get("result"),
+                    "skip_reason": stage_result.get("skip_reason"),
+                }
+            )
     return StageRunResults(
         stage_results=stage_results,
         cache_enabled=cache_enabled,
@@ -332,59 +466,94 @@ def main() -> None:
 
     fixture_season_year = os.environ.get("PIPELINE_FIXTURE_SEASON_YEAR")
     explicit_dates = os.environ.get("PIPELINE_BACKFILL_DATES")
+    explicit_match_ids = parse_match_id_targets(os.environ.get("PIPELINE_BACKFILL_MATCH_IDS"))
+    if explicit_match_ids and stage_names != ["predictions"]:
+        raise ValueError(
+            "PIPELINE_BACKFILL_MATCH_IDS only supports predictions stage"
+        )
     date_source = os.environ.get(
         "PIPELINE_BACKFILL_DATE_SOURCE",
         "calendar" if "fixtures" in stage_names else "matches",
     )
     if explicit_dates:
         date_source = "explicit"
-    dates = resolve_pipeline_dates(
-        start=start,
-        end=end,
-        date_source=date_source,
-        explicit_dates=explicit_dates,
+    elif explicit_match_ids:
+        date_source = "match_ids"
+    dates = (
+        []
+        if explicit_match_ids
+        else resolve_pipeline_dates(
+            start=start,
+            end=end,
+            date_source=date_source,
+            explicit_dates=explicit_dates,
+        )
     )
+    cache_enabled, cache_reason = resolve_prediction_cache_config(stage_names)
     stage_results: list[dict] = []
-    if fixture_season_year:
-        emit_pipeline_event(
-            {
-                "event": "stage_started",
-                "stage": "fixtures_season",
-                "target_date": None,
-            }
-        )
-        fixture_season_result = run_fixture_season_backfill(fixture_season_year)
-        emit_pipeline_event(
-            {
-                "event": "stage_completed",
-                "stage": "fixtures_season",
-                "target_date": None,
-                "result": fixture_season_result,
-            }
-        )
-        stage_results.append(
-            {
-                "stage": "fixtures_season",
-                "target_date": None,
-                "result": fixture_season_result,
-            }
-        )
-    stage_run_results = run_stage_results_for_dates(stage_names, dates)
-    stage_results.extend(stage_run_results.stage_results)
-
-    emit_pipeline_event({"event": "evaluation_started"})
-    evaluation_result = run_evaluation()
-    emit_pipeline_event(
-        {
-            "event": "evaluation_completed",
-            "result": compact_stage_result(evaluation_result),
-        }
+    cache_context = (
+        prediction_stage_read_cache()
+        if cache_enabled
+        else contextlib.nullcontext()
     )
+    with cache_context:
+        if fixture_season_year:
+            emit_pipeline_event(
+                {
+                    "event": "stage_started",
+                    "stage": "fixtures_season",
+                    "target_date": None,
+                }
+            )
+            fixture_season_result = run_fixture_season_backfill(fixture_season_year)
+            emit_pipeline_event(
+                {
+                    "event": "stage_completed",
+                    "stage": "fixtures_season",
+                    "target_date": None,
+                    "result": fixture_season_result,
+                }
+            )
+            stage_results.append(
+                {
+                    "stage": "fixtures_season",
+                    "target_date": None,
+                    "result": fixture_season_result,
+                }
+            )
+        stage_run_results = (
+            run_stage_results_for_match_ids(
+                stage_names,
+                explicit_match_ids,
+                use_cache=False,
+                cache_enabled=cache_enabled,
+                cache_reason=cache_reason,
+            )
+            if explicit_match_ids
+            else run_stage_results_for_dates(
+                stage_names,
+                dates,
+                use_cache=False,
+                cache_enabled=cache_enabled,
+                cache_reason=cache_reason,
+            )
+        )
+        stage_results.extend(stage_run_results.stage_results)
+
+        emit_pipeline_event({"event": "evaluation_started"})
+        evaluation_result = run_evaluation()
+        emit_pipeline_event(
+            {
+                "event": "evaluation_completed",
+                "result": compact_stage_result(evaluation_result),
+            }
+        )
     emit_pipeline_event(
         {
             "date_start": start,
             "date_end": end,
             "date_count": len(dates),
+            "match_id_count": len(explicit_match_ids),
             "date_source": date_source,
             "stages": stage_names,
             "stage_results": stage_results,
