@@ -71,3 +71,5 @@ checkpoints/
 .vendor/
 package-lock.json
 skills-lock.json
+
+batch/src/data/

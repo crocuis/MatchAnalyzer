@@ -147,6 +147,32 @@ def attach_team_translation_aliases(
     return enriched
 
 
+def filter_existing_team_translation_rows(
+    *,
+    existing_rows: list[dict],
+    incoming_rows: list[dict],
+) -> list[dict]:
+    existing_keys = {
+        (
+            str(row.get("team_id") or ""),
+            str(row.get("locale") or "").strip().lower(),
+            str(row.get("display_name") or "").strip(),
+        )
+        for row in existing_rows
+        if row.get("team_id") and row.get("locale") and row.get("display_name")
+    }
+    return [
+        row
+        for row in incoming_rows
+        if (
+            str(row.get("team_id") or ""),
+            str(row.get("locale") or "").strip().lower(),
+            str(row.get("display_name") or "").strip(),
+        )
+        not in existing_keys
+    ]
+
+
 def promote_market_snapshots(
     snapshot_rows: list[dict],
     market_rows: list[dict],
@@ -335,6 +361,10 @@ def main() -> None:
             detail_payloads=betman_detail_payloads,
             snapshot_rows=snapshot_rows,
             bookmaker_rows=payload,
+        )
+        betman_team_translation_rows = filter_existing_team_translation_rows(
+            existing_rows=team_translation_rows,
+            incoming_rows=betman_team_translation_rows,
         )
         payload = overlay_market_rows(payload, betman_market_rows)
         prediction_market_rows, prediction_market_raw = build_prediction_market_rows_for_snapshots(

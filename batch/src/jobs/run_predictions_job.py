@@ -65,6 +65,7 @@ BOOKMAKER_FALLBACK_NEUTRAL_ELO_MAX_ABS = 0.05
 BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
+VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
 
 
 def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
@@ -1358,48 +1359,57 @@ def _build_variant_recommendation(
         teams_by_id=teams_by_id,
     )
     candidates = []
+    excluded_longshot_candidate = False
     if (
         selection_a_probability is not None
         and isinstance(selection_a_price, float)
         and selection_a_price > 0
     ):
-        candidates.append(
-            {
-                "label": row.get("selection_a_label"),
-                "price": round(selection_a_price, 4),
-                "model_probability": selection_a_probability,
-                "market_probability": round(selection_a_price, 4),
-                "edge": round(selection_a_probability - selection_a_price, 4),
-                "expected_value": round(
-                    (selection_a_probability / selection_a_price) - 1.0,
-                    4,
-                ),
-            }
-        )
+        candidate = {
+            "label": row.get("selection_a_label"),
+            "price": round(selection_a_price, 4),
+            "model_probability": selection_a_probability,
+            "market_probability": round(selection_a_price, 4),
+            "edge": round(selection_a_probability - selection_a_price, 4),
+            "expected_value": round(
+                (selection_a_probability / selection_a_price) - 1.0,
+                4,
+            ),
+        }
+        if selection_a_price >= VARIANT_RECOMMENDATION_MIN_MARKET_PRICE:
+            candidates.append(candidate)
+        else:
+            excluded_longshot_candidate = True
     if (
         selection_b_probability is not None
         and isinstance(selection_b_price, float)
         and selection_b_price > 0
     ):
-        candidates.append(
-            {
-                "label": row.get("selection_b_label"),
-                "price": round(selection_b_price, 4),
-                "model_probability": selection_b_probability,
-                "market_probability": round(selection_b_price, 4),
-                "edge": round(selection_b_probability - selection_b_price, 4),
-                "expected_value": round(
-                    (selection_b_probability / selection_b_price) - 1.0,
-                    4,
-                ),
-            }
-        )
+        candidate = {
+            "label": row.get("selection_b_label"),
+            "price": round(selection_b_price, 4),
+            "model_probability": selection_b_probability,
+            "market_probability": round(selection_b_price, 4),
+            "edge": round(selection_b_probability - selection_b_price, 4),
+            "expected_value": round(
+                (selection_b_probability / selection_b_price) - 1.0,
+                4,
+            ),
+        }
+        if selection_b_price >= VARIANT_RECOMMENDATION_MIN_MARKET_PRICE:
+            candidates.append(candidate)
+        else:
+            excluded_longshot_candidate = True
 
     if not candidates:
         return {
             "recommended_pick": None,
             "recommended": False,
-            "no_bet_reason": "variant_market_price_only",
+            "no_bet_reason": (
+                "variant_market_too_longshot"
+                if excluded_longshot_candidate
+                else "variant_market_price_only"
+            ),
             "edge": None,
             "expected_value": None,
             "market_price": None,
@@ -1412,7 +1422,15 @@ def _build_variant_recommendation(
     return {
         "recommended_pick": best_candidate["label"],
         "recommended": recommended,
-        "no_bet_reason": None if recommended else "variant_ev_below_threshold",
+        "no_bet_reason": (
+            None
+            if recommended
+            else (
+                "variant_market_too_longshot"
+                if excluded_longshot_candidate
+                else "variant_ev_below_threshold"
+            )
+        ),
         "edge": best_candidate["edge"],
         "expected_value": best_candidate["expected_value"],
         "market_price": best_candidate["price"],
@@ -1771,6 +1789,7 @@ def main() -> None:
                     base_probs=base_probs,
                     context=scoring_context,
                 )
+                raw_confidence_score = row["confidence_score"]
                 selected_source = "historical_selector"
                 if selected_fused_probs == raw_fused_probs:
                     selected_source = "raw_fused"

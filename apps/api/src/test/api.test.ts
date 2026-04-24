@@ -736,16 +736,6 @@ describe("prediction API", () => {
 
     expect(view.items).toEqual([
       expect.objectContaining({
-        marketFamily: "spreads",
-        selectionLabel: "Chelsea -0.5",
-        status: "recommended",
-        expectedValue: 0.4,
-        marketPrice: 0.45,
-        modelProbability: 0.63,
-        marketProbability: 0.45,
-        noBetReason: null,
-      }),
-      expect.objectContaining({
         marketFamily: "totals",
         selectionLabel: "Over 2.5",
         status: "recommended",
@@ -753,6 +743,16 @@ describe("prediction API", () => {
         marketPrice: 0.49,
         modelProbability: 0.66,
         marketProbability: 0.49,
+        noBetReason: null,
+      }),
+      expect.objectContaining({
+        marketFamily: "spreads",
+        selectionLabel: "Chelsea -0.5",
+        status: "recommended",
+        expectedValue: 0.4,
+        marketPrice: 0.45,
+        modelProbability: 0.63,
+        marketProbability: 0.45,
         noBetReason: null,
       }),
     ]);
@@ -763,6 +763,91 @@ describe("prediction API", () => {
         noBetReason: "low_confidence",
       }),
     ]);
+  });
+
+  it("keeps recommended moneyline picks ahead of recommended variant picks in the default daily picks view", async () => {
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.15,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.85,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+              recommended_pick: "Chelsea -0.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.45,
+              expected_value: 3.0,
+              market_price: 0.15,
+              model_probability: 0.6,
+              market_probability: 0.15,
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      status: "recommended",
+    });
+    expect(view.items[1]).toMatchObject({
+      marketFamily: "spreads",
+      selectionLabel: "Chelsea -0.5",
+      status: "recommended",
+    });
   });
 
   it("localizes team labels in daily picks when locale-specific translations exist", async () => {

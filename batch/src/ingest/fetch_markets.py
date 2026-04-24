@@ -2,9 +2,11 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 import re
+import subprocess
 import sys
 import unicodedata
 from typing import Any
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
@@ -63,8 +65,27 @@ def fetch_betman_json(
         headers={"Content-Type": "application/json; charset=UTF-8"},
         method="POST",
     )
-    with urlopen(request) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except URLError:
+        completed = subprocess.run(
+            [
+                "curl",
+                "-s",
+                "-X",
+                "POST",
+                url,
+                "-H",
+                "Content-Type: application/json; charset=UTF-8",
+                "--data",
+                json.dumps(request_payload, ensure_ascii=False),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(completed.stdout)
 
 
 def fetch_betman_buyable_games() -> dict[str, Any]:

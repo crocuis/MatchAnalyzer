@@ -705,6 +705,37 @@ def test_build_value_recommendation_allows_low_probability_pick_with_strong_ev()
     }
 
 
+def test_build_value_recommendation_ignores_extreme_low_market_prices():
+    recommendation = build_value_recommendation(
+        base_probs={"home": 0.54, "draw": 0.24, "away": 0.22},
+        market_probs={"home": 0.001, "draw": 0.48, "away": 0.519},
+        market_prices={"home": 0.001, "draw": 0.48, "away": 0.519},
+        prediction_market_available=True,
+    )
+
+    assert recommendation is None
+
+
+def test_build_value_recommendation_falls_back_to_valid_price_after_extreme_price():
+    recommendation = build_value_recommendation(
+        base_probs={"home": 0.54, "draw": 0.32, "away": 0.14},
+        market_probs={"home": 0.001, "draw": 0.24, "away": 0.759},
+        market_prices={"home": 0.001, "draw": 0.24, "away": 0.759},
+        prediction_market_available=True,
+    )
+
+    assert recommendation == {
+        "edge": 0.08,
+        "expected_value": 0.3333,
+        "market_probability": 0.24,
+        "market_price": 0.24,
+        "market_source": "prediction_market",
+        "model_probability": 0.32,
+        "pick": "DRAW",
+        "recommended": True,
+    }
+
+
 def test_build_value_recommendation_ignores_outcomes_with_missing_market_price():
     recommendation = build_value_recommendation(
         base_probs={"home": 0.34, "draw": 0.24, "away": 0.42},
