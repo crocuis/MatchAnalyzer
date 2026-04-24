@@ -260,8 +260,102 @@ type DashboardMatchCardRow = {
   needs_review: boolean;
 };
 
+type DashboardPredictionSummaryRow = {
+  id: string;
+  kickoff_at: string;
+  final_result: string | null;
+  home_score: number | null;
+  away_score: number | null;
+  representative_recommended_pick: string | null;
+  representative_confidence_score: number | null;
+  summary_payload: unknown;
+  main_recommendation_pick: string | null;
+  main_recommendation_confidence: number | null;
+  main_recommendation_recommended: boolean | null;
+  main_recommendation_no_bet_reason: string | null;
+  has_prediction: boolean;
+};
+
+function resolveSettledOutcome(args: {
+  finalResult: string | null | undefined;
+  kickoffAt: string | null | undefined;
+  homeScore: number | null | undefined;
+  awayScore: number | null | undefined;
+}) {
+  if (
+    args.finalResult === "HOME"
+    || args.finalResult === "DRAW"
+    || args.finalResult === "AWAY"
+  ) {
+    return args.finalResult;
+  }
+
+  if (
+    typeof args.homeScore !== "number"
+    || typeof args.awayScore !== "number"
+  ) {
+    return null;
+  }
+
+  const kickoffMillis =
+    typeof args.kickoffAt === "string" && args.kickoffAt.length > 0
+      ? Date.parse(args.kickoffAt)
+      : NaN;
+  const settledByTime =
+    Number.isFinite(kickoffMillis)
+    && kickoffMillis <= Date.now() - (3 * 60 * 60 * 1000);
+  if (!settledByTime) {
+    return null;
+  }
+
+  if (args.homeScore > args.awayScore) {
+    return "HOME";
+  }
+  if (args.homeScore < args.awayScore) {
+    return "AWAY";
+  }
+  return "DRAW";
+}
+
+function normalizeDashboardMainRecommendation(
+  row: DashboardPredictionSummaryRow,
+) {
+  if (!row.has_prediction) {
+    return null;
+  }
+
+  return normalizeMainRecommendationFromSummary(
+    {
+      summaryPayload: row.summary_payload,
+      mainRecommendationPick: row.main_recommendation_pick,
+      mainRecommendationConfidence: row.main_recommendation_confidence,
+      mainRecommendationRecommended: row.main_recommendation_recommended,
+      mainRecommendationNoBetReason: row.main_recommendation_no_bet_reason,
+    },
+    row.representative_recommended_pick ?? "UNKNOWN",
+    Number(row.representative_confidence_score ?? 0),
+    null,
+  );
+}
+
+function hasPredictedOutcome(
+  mainRecommendation: MainRecommendation | null | undefined,
+) {
+  return (
+    mainRecommendation?.pick === "HOME"
+    || mainRecommendation?.pick === "DRAW"
+    || mainRecommendation?.pick === "AWAY"
+  );
+}
+
 function buildPredictionSummary(
-  matches: Array<{ id: string; final_result: string | null }>,
+  matches: Array<{
+    id: string;
+    kickoff_at: string;
+    final_result: string | null;
+    home_score: number | null;
+    away_score: number | null;
+  }>,
   predictionByMatchId: Map<string, PredictionListSummary | null>,
 ): MatchPredictionSummary {
   let predictedCount = 0;
@@ -276,7 +370,13 @@ function buildPredictionSummary(
 
     predictedCount += 1;
 
-    if (!match.final_result) {
+    const settledOutcome = resolveSettledOutcome({
+      finalResult: match.final_result,
+      kickoffAt: match.kickoff_at,
+      homeScore: match.home_score,
+      awayScore: match.away_score,
+    });
+    if (!settledOutcome) {
       continue;
     }
 
@@ -284,12 +384,12 @@ function buildPredictionSummary(
     if (!mainRecommendation) {
       continue;
     }
-    if (!mainRecommendation.recommended) {
+    if (!hasPredictedOutcome(mainRecommendation)) {
       continue;
     }
 
     evaluatedCount += 1;
-    if (mainRecommendation.pick === match.final_result) {
+    if (mainRecommendation.pick === settledOutcome) {
       correctCount += 1;
     }
   }
@@ -398,7 +498,7 @@ function isMissingRelationError(error: { message?: string } | null | undefined) 
   );
 }
 
-async function loadDashboardMatchCardsPageView(
+export async function loadDashboardMatchCardsPageView(
   supabase: ApiSupabaseClient,
   options: LoadMatchItemsOptions = {},
 ): Promise<MatchListView> {
@@ -444,21 +544,46 @@ async function loadDashboardMatchCardsPageView(
     throw new Error(`dashboard card query failed: ${error.message}`);
   }
 
+  const summaryCardsQuery: any = supabase
+    .from("dashboard_match_cards")
+    .select(
+      "id, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, has_prediction",
+    );
+  const scopedSummaryCardsQuery =
+    typeof summaryCardsQuery.eq === "function"
+      ? summaryCardsQuery.eq("league_id", selectedLeagueId)
+      : summaryCardsQuery;
+  const { data: summaryCardRows, error: summaryError } = await scopedSummaryCardsQuery;
+
+  if (summaryError) {
+    throw new Error(`dashboard summary query failed: ${summaryError.message}`);
+  }
+
+  const predictionSummaryRows = (summaryCardRows ?? []) as DashboardPredictionSummaryRow[];
+  const predictionSummary = buildPredictionSummary(
+    predictionSummaryRows.map((row) => ({
+      id: row.id,
+      kickoff_at: row.kickoff_at,
+      final_result: row.final_result,
+      home_score: row.home_score,
+      away_score: row.away_score,
+    })),
+    new Map(
+      predictionSummaryRows.map((row) => [
+        row.id,
+        row.has_prediction
+          ? {
+              mainRecommendation: normalizeDashboardMainRecommendation(row)!,
+              valueRecommendation: null,
+              variantMarkets: [],
+            }
+          : null,
+      ]),
+    ),
+  );
+
   const items = ((cardRows ?? []) as DashboardMatchCardRow[]).map((row) => {
-    const mainRecommendation = row.has_prediction
-      ? normalizeMainRecommendationFromSummary(
-          {
-            summaryPayload: row.summary_payload,
-            mainRecommendationPick: row.main_recommendation_pick,
-            mainRecommendationConfidence: row.main_recommendation_confidence,
-            mainRecommendationRecommended: row.main_recommendation_recommended,
-            mainRecommendationNoBetReason: row.main_recommendation_no_bet_reason,
-          },
-          row.representative_recommended_pick ?? "UNKNOWN",
-          Number(row.representative_confidence_score ?? 0),
-          null,
-        )
-      : null;
+    const mainRecommendation = normalizeDashboardMainRecommendation(row);
     const valueRecommendation = row.has_prediction
       ? normalizeValueRecommendationFromSummary(
           {
@@ -480,6 +605,12 @@ async function loadDashboardMatchCardsPageView(
           null,
         )
       : [];
+    const settledOutcome = resolveSettledOutcome({
+      finalResult: row.final_result,
+      kickoffAt: row.kickoff_at,
+      homeScore: row.home_score,
+      awayScore: row.away_score,
+    });
 
     return {
       id: row.id,
@@ -491,11 +622,11 @@ async function loadDashboardMatchCardsPageView(
       awayTeam: row.away_team,
       awayTeamLogoUrl: row.away_team_logo_url,
       kickoffAt: row.kickoff_at,
-      finalResult: row.final_result,
+      finalResult: settledOutcome,
       homeScore: row.home_score,
       awayScore: row.away_score,
       status: deriveMatchStatus({
-        finalResult: row.final_result,
+        finalResult: settledOutcome,
         hasPrediction: row.has_prediction,
         needsReview: row.needs_review,
         kickoffAt: row.kickoff_at,
@@ -525,15 +656,7 @@ async function loadDashboardMatchCardsPageView(
       matchCount: league.matchCount,
       reviewCount: league.reviewCount,
     })),
-    predictionSummary: selectedLeague
-      ? {
-          predictedCount: (selectedLeague as typeof selectedLeague & { predictedCount: number }).predictedCount,
-          evaluatedCount: (selectedLeague as typeof selectedLeague & { evaluatedCount: number }).evaluatedCount,
-          correctCount: (selectedLeague as typeof selectedLeague & { correctCount: number }).correctCount,
-          incorrectCount: (selectedLeague as typeof selectedLeague & { incorrectCount: number }).incorrectCount,
-          successRate: (selectedLeague as typeof selectedLeague & { successRate: number | null }).successRate,
-        }
-      : null,
+    predictionSummary,
     selectedLeagueId,
     nextCursor:
       selectedLeague && offset + limit < selectedLeague.matchCount
@@ -808,6 +931,12 @@ async function loadSelectedLeaguePageView(
     const mainRecommendation = prediction?.mainRecommendation ?? null;
     const valueRecommendation = prediction?.valueRecommendation ?? null;
     const variantMarkets = prediction?.variantMarkets ?? [];
+    const settledOutcome = resolveSettledOutcome({
+      finalResult: match.final_result,
+      kickoffAt: match.kickoff_at,
+      homeScore: match.home_score,
+      awayScore: match.away_score,
+    });
     return {
       id: match.id,
       leagueId: match.competition_id,
@@ -818,11 +947,11 @@ async function loadSelectedLeaguePageView(
       awayTeam: teamById.get(match.away_team_id)?.label ?? match.away_team_id,
       awayTeamLogoUrl: teamById.get(match.away_team_id)?.crestUrl ?? null,
       kickoffAt: match.kickoff_at,
-      finalResult: match.final_result,
+      finalResult: settledOutcome,
       homeScore: match.home_score ?? null,
       awayScore: match.away_score ?? null,
       status: deriveMatchStatus({
-        finalResult: match.final_result,
+        finalResult: settledOutcome,
         hasPrediction: Boolean(prediction),
         needsReview: review?.needsReview ?? false,
         kickoffAt: match.kickoff_at,

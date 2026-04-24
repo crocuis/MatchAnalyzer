@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import app from "../index";
-import { loadMatchItems, loadMatchPageView } from "../routes/matches";
+import {
+  loadDashboardMatchCardsPageView,
+  loadMatchItems,
+  loadMatchPageView,
+} from "../routes/matches";
 import { loadLatestRolloutPromotionDecisionView } from "../routes/rollouts";
 import {
   loadLatestPredictionFusionPolicyView,
@@ -370,6 +374,121 @@ describe("prediction API", () => {
     });
   });
 
+  it("derives settled draw verdicts from scorelines in the dashboard card view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T00:00:00Z"));
+
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 1,
+            review_count: 0,
+            predicted_count: 1,
+            evaluated_count: 0,
+            correct_count: 0,
+            incorrect_count: 0,
+            success_rate: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-draw",
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            home_team: "Chelsea",
+            home_team_logo_url: null,
+            away_team: "Arsenal",
+            away_team_logo_url: null,
+            kickoff_at: "2026-04-20T19:00:00Z",
+            final_result: null,
+            home_score: 0,
+            away_score: 0,
+            representative_recommended_pick: "DRAW",
+            representative_confidence_score: 0.62,
+            summary_payload: null,
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.62,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
+            explanation_artifact_id: null,
+            explanation_artifact_uri: null,
+            has_prediction: true,
+            needs_review: false,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-draw",
+            kickoff_at: "2026-04-20T19:00:00Z",
+            final_result: null,
+            home_score: 0,
+            away_score: 0,
+            representative_recommended_pick: "DRAW",
+            representative_confidence_score: 0.62,
+            summary_payload: null,
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.62,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            has_prediction: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      limit: "1",
+      cursor: "0",
+    });
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.finalResult).toBe("DRAW");
+    expect(page.items[0]?.status).toBe("Review Ready");
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 1,
+      evaluatedCount: 1,
+      correctCount: 1,
+      incorrectCount: 0,
+      successRate: 1,
+    });
+  });
+
   it("uses a league-scoped query when the caller already knows the selected league", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
@@ -684,10 +803,10 @@ describe("prediction API", () => {
     expect(page.nextCursor).toBe("1");
     expect(page.predictionSummary).toEqual({
       predictedCount: 4,
-      evaluatedCount: 2,
-      correctCount: 1,
+      evaluatedCount: 3,
+      correctCount: 2,
       incorrectCount: 1,
-      successRate: 1 / 2,
+      successRate: 2 / 3,
     });
   });
 
