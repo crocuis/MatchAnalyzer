@@ -1359,7 +1359,7 @@ describe("dashboard redesign", () => {
     expect(document.querySelector(".matchCard.state-complete")).not.toBeNull();
   });
 
-  it("does not render settled no-bet leans as prediction hits", () => {
+  it("renders settled displayed predictions as hits even when the bet lane stayed on no-bet", () => {
     const settledNoBetMatch: MatchCardRow = {
       id: "settled-no-bet-hit",
       leagueId: "premier-league",
@@ -1389,9 +1389,9 @@ describe("dashboard redesign", () => {
       screen.getByRole("button", { name: "Liverpool vs Brentford" }),
     );
 
-    expect(card.getByLabelText("Verdict: No bet")).toBeInTheDocument();
-    expect(document.querySelector(".verdictGlyph-hit")).toBeNull();
-    expect(document.querySelector(".verdictText-hit")).toBeNull();
+    expect(card.getByLabelText("Verdict: Correct")).toBeInTheDocument();
+    expect(document.querySelector(".verdictGlyph-hit")).not.toBeNull();
+    expect(document.querySelector(".verdictText-hit")).not.toBeNull();
   });
 
   it("uses matching modal tones for pending and settled no-bet states", () => {

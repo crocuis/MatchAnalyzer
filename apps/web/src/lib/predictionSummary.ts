@@ -204,10 +204,10 @@ export function resolveVerdictState(args: {
   if (!args.mainRecommendation && predictedOutcome === null && actualOutcome === null) {
     return kickoffHasPassed ? "pending" : "scheduled";
   }
-  if (args.mainRecommendation?.recommended === false && actualOutcome) {
-    return "no_bet";
-  }
   if (predictedOutcome === null) {
+    if (args.mainRecommendation?.recommended === false && actualOutcome) {
+      return "no_bet";
+    }
     return actualOutcome ? "unavailable" : kickoffHasPassed ? "pending" : "scheduled";
   }
   if (!actualOutcome) {
