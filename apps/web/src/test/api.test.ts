@@ -46,14 +46,15 @@ describe("daily picks fetcher", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { fetchDailyPicks, resolveDailyPicksDate } = await import("../lib/api");
+    const expectedDate = resolveDailyPicksDate();
 
     await fetchDailyPicks({
-      date: resolveDailyPicksDate(),
+      date: expectedDate,
       leagueId: "premier-league",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/daily-picks?date=2026-04-25&leagueId=premier-league",
+      `/api/daily-picks?date=${expectedDate}&leagueId=premier-league`,
     );
   });
 });
