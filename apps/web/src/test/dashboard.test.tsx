@@ -1423,6 +1423,36 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("Showing 3 of 3 matches")).toBeInTheDocument();
   });
 
+  it("keeps match view pages cached when switching between upcoming and recent tabs", async () => {
+    render(<App />);
+
+    await screen.findByRole("tab", { name: "Upcoming Matches" });
+    const fetchMock = vi.mocked(fetch);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+        ),
+      ).toBe(true);
+    });
+    const recentRequestCount = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+    ).length;
+
+    fireEvent.click(screen.getByRole("tab", { name: "Upcoming Matches" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+        ),
+      ).toHaveLength(recentRequestCount);
+    });
+  });
+
   it("derives a translated conference league tab when the bootstrap response omits league summaries", async () => {
     vi.stubGlobal(
       "fetch",

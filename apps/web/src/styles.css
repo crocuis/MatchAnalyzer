@@ -1419,6 +1419,51 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   color: var(--text-muted);
 }
 
+.matchViewTabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--accent-primary) 12%);
+}
+
+.matchViewTab {
+  min-width: 128px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.matchViewTab-active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.matchViewTab:hover {
+  color: var(--text-primary);
+}
+
+@media (max-width: 560px) {
+  .matchViewTabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .matchViewTab {
+    min-width: 0;
+  }
+}
+
 .paginationContainer {
   margin-top: 48px;
   display: flex;
@@ -1449,6 +1494,11 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   text-transform: uppercase;
   letter-spacing: 0.02em;
   text-align: center;
+}
+
+.paginationSentinel {
+  width: 100%;
+  height: 1px;
 }
 
 .loadMoreBtn {

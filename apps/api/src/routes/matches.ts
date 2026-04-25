@@ -107,6 +107,12 @@ function parseCursorOffset(value: string | undefined): number {
   return parsed;
 }
 
+type MatchListViewKind = "upcoming" | "recent";
+
+function parseMatchListView(value: string | undefined): MatchListViewKind | undefined {
+  return value === "upcoming" || value === "recent" ? value : undefined;
+}
+
 function sortLeagueIds(leagueIds: string[]): string[] {
   return [...leagueIds].sort((left, right) => {
     const leftIndex = LEAGUE_ORDER.indexOf(left);
@@ -134,6 +140,7 @@ type LoadMatchItemsOptions = {
   cursor?: string;
   limit?: string | number;
   locale?: string | null;
+  view?: MatchListViewKind;
 };
 
 type MatchListItem = {
@@ -577,7 +584,7 @@ export async function loadDashboardMatchCardsPageView(
     typeof options.limit === "number" ? String(options.limit) : options.limit,
   );
   const offset = parseCursorOffset(options.cursor);
-  const upperBound = offset + limit - 1;
+  const upperBound = offset + limit;
   const cardsQuery: any = supabase
     .from("dashboard_match_cards")
     .select(
@@ -587,8 +594,12 @@ export async function loadDashboardMatchCardsPageView(
     typeof cardsQuery.eq === "function"
       ? cardsQuery.eq("league_id", selectedLeagueId)
       : cardsQuery;
+  const viewScopedCardsQuery =
+    options.view && typeof scopedCardsQuery.eq === "function"
+      ? scopedCardsQuery.eq("sort_bucket", options.view === "upcoming" ? 0 : 1)
+      : scopedCardsQuery;
   const orderedCardsQuery =
-    scopedCardsQuery
+    viewScopedCardsQuery
       .order("sort_bucket", { ascending: true })
       .order("sort_epoch", { ascending: true });
   const { data: cardRows, error } = await orderedCardsQuery.range(offset, upperBound);
@@ -599,7 +610,9 @@ export async function loadDashboardMatchCardsPageView(
 
   const predictionSummary = buildPredictionSummaryFromLeagueSummary(selectedLeague);
 
-  const items = ((cardRows ?? []) as DashboardMatchCardRow[]).map((row) => {
+  const rows = (cardRows ?? []) as DashboardMatchCardRow[];
+  const hasNextPage = rows.length > limit;
+  const items = rows.slice(0, limit).map((row) => {
     const mainRecommendation = normalizeDashboardMainRecommendation(row);
     const settledOutcome = resolveSettledOutcome({
       finalResult: row.final_result,
@@ -675,10 +688,12 @@ export async function loadDashboardMatchCardsPageView(
     predictionSummary,
     selectedLeagueId,
     nextCursor:
-      selectedLeague && offset + limit < selectedLeague.matchCount
+      selectedLeague && hasNextPage
         ? String(offset + limit)
         : null,
-    totalMatches: selectedLeague?.matchCount ?? 0,
+    totalMatches: options.view
+      ? offset + items.length + (hasNextPage ? 1 : 0)
+      : (selectedLeague?.matchCount ?? 0),
   };
 }
 
@@ -836,7 +851,14 @@ async function loadSelectedLeaguePageView(
   }
 
   const matchIds = matchesData.map((match) => match.id);
-  const sortedMatches = [...matchesData].sort((left, right) => {
+  const viewMatches = options.view
+    ? matchesData.filter((match) =>
+        options.view === "upcoming"
+          ? match.final_result === null
+          : match.final_result !== null,
+      )
+    : matchesData;
+  const sortedMatches = [...viewMatches].sort((left, right) => {
     const leftIsUpcoming = left.final_result === null;
     const rightIsUpcoming = right.final_result === null;
     if (leftIsUpcoming !== rightIsUpcoming) {
@@ -1062,7 +1084,7 @@ async function loadSelectedLeaguePageView(
     predictionSummary,
     selectedLeagueId: leagueId,
     nextCursor,
-    totalMatches: matchesData.length,
+    totalMatches: sortedMatches.length,
   };
 }
 
@@ -1121,6 +1143,7 @@ matches.get("/", async (c) => {
     const cursor = c.req.query("cursor") ?? undefined;
     const limit = c.req.query("limit") ?? undefined;
     const locale = normalizeLocale(c.req.query("locale"));
+    const view = parseMatchListView(c.req.query("view"));
 
     if (!supabase) {
       return c.json({
@@ -1142,6 +1165,7 @@ matches.get("/", async (c) => {
             cursor,
             limit,
             locale,
+            view,
           }),
           200,
           { "cache-control": API_EGRESS_CACHE_CONTROL },
@@ -1152,6 +1176,7 @@ matches.get("/", async (c) => {
           leagueId,
           cursor,
           limit,
+          view,
         }),
         200,
         { "cache-control": API_EGRESS_CACHE_CONTROL },
@@ -1167,6 +1192,7 @@ matches.get("/", async (c) => {
             cursor,
             limit,
             locale,
+            view,
           }),
           200,
           { "cache-control": API_EGRESS_CACHE_CONTROL },

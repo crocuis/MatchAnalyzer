@@ -179,6 +179,7 @@
   "matchTable": {
     "upcomingMatches": "예정된 경기",
     "recentResults": "최근 경기 결과",
+    "viewTabsLabel": "매치 보기",
     "loadMore": "매치 더 보기",
     "showLaterUpcoming": "이후 예정 경기 {{count}}개 더 보기",
     "showingStatus": "전체 {{total}}개 중 {{count}}개 매치 표시 중",

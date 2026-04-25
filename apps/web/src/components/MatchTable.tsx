@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   fetchDailyPicks,
-  isDashboardRecentMatch,
   resolveDailyPicksDate,
   type DailyPicksResponse,
   type LeaguePredictionSummary,
@@ -10,29 +9,7 @@ import {
 } from "../lib/api";
 import MatchCard from "./MatchCard";
 
-const UPCOMING_PREVIEW_DAYS = 3;
-
-function getUpcomingPreviewCutoffMillis(anchorMillis: number): number {
-  const cutoff = new Date(anchorMillis);
-  cutoff.setUTCDate(cutoff.getUTCDate() + UPCOMING_PREVIEW_DAYS);
-  cutoff.setUTCHours(23, 59, 59, 999);
-  return cutoff.getTime();
-}
-
-function getUpcomingPreviewAnchorMillis(
-  upcomingMatches: MatchCardRow[],
-  fallbackMillis: number,
-): number {
-  const finiteKickoffMillis = upcomingMatches
-    .map((match) => Date.parse(match.kickoffAt))
-    .filter((kickoffMillis) => Number.isFinite(kickoffMillis) && kickoffMillis >= fallbackMillis);
-
-  if (finiteKickoffMillis.length === 0) {
-    return fallbackMillis;
-  }
-
-  return Math.min(...finiteKickoffMillis);
-}
+type MatchListViewKind = "upcoming" | "recent";
 
 interface MatchTableProps {
   matches: MatchCardRow[];
@@ -44,6 +21,8 @@ interface MatchTableProps {
   onOpen: (matchId: string) => void;
   onOpenDailyPicks?: (leagueId: string | null) => void;
   onLoadMore: () => void;
+  activeView?: MatchListViewKind;
+  onSelectView?: (view: MatchListViewKind) => void;
   isLoadingMore?: boolean;
 }
 
@@ -57,11 +36,12 @@ export default function MatchTable({
   onOpen,
   onOpenDailyPicks,
   onLoadMore,
+  activeView = "upcoming",
+  onSelectView,
   isLoadingMore = false,
 }: MatchTableProps) {
   const { t, i18n } = useTranslation();
   const [dailyPicksSummary, setDailyPicksSummary] = useState<DailyPicksResponse | null>(null);
-  const [showAllUpcomingMatches, setShowAllUpcomingMatches] = useState(false);
   const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
   const isAllLoaded = matches.length >= totalMatches;
   const progressPercent = totalMatches > 0
@@ -73,37 +53,8 @@ export default function MatchTable({
     predictionSummary?.successRate === null || predictionSummary === null
       ? t("matchTable.summary.noData")
       : Math.round(successRate * 100);
-  const groupedMatches = useMemo(() => ({
-    upcoming: matches.filter((match) => !isDashboardRecentMatch(match)),
-    past: matches.filter((match) => isDashboardRecentMatch(match)),
-  }), [matches]);
-  const visibleUpcomingMatches = useMemo(() => {
-    if (showAllUpcomingMatches) {
-      return groupedMatches.upcoming;
-    }
-
-    const previewAnchorMillis = getUpcomingPreviewAnchorMillis(
-      groupedMatches.upcoming,
-      Date.now(),
-    );
-    const cutoffMillis = getUpcomingPreviewCutoffMillis(previewAnchorMillis);
-    return groupedMatches.upcoming.filter((match) => {
-      const kickoffMillis = Date.parse(match.kickoffAt);
-      return !Number.isFinite(kickoffMillis) || kickoffMillis <= cutoffMillis;
-    });
-  }, [groupedMatches.upcoming, showAllUpcomingMatches]);
-  const hiddenUpcomingMatchCount = groupedMatches.upcoming.length - visibleUpcomingMatches.length;
-  const shouldPausePagination = hiddenUpcomingMatchCount > 0 && !showAllUpcomingMatches;
-  const hasVisibleRecentResults = groupedMatches.past.length > 0;
-  const canLoadMoreMatches =
-    !isAllLoaded
-    && (!shouldPausePagination || hasVisibleRecentResults);
-  const needsRecentResultsPrefetch =
-    shouldPausePagination
-    && groupedMatches.past.length === 0
-    && !isAllLoaded;
-  const visibleMatchCount = visibleUpcomingMatches.length + groupedMatches.past.length;
-  const firstMatchId = matches[0]?.id ?? null;
+  const canLoadMoreMatches = !isAllLoaded;
+  const visibleMatchCount = matches.length;
   const dailyPicksCount = dailyPicksSummary?.items.length ?? 0;
   const dailyPicksGeneratedAt = dailyPicksSummary?.generatedAt
     ? new Date(dailyPicksSummary.generatedAt).toLocaleString(undefined, {
@@ -120,33 +71,6 @@ export default function MatchTable({
         t("dailyPicks.marketFamilies.totals"),
       ].join(" / ")
     : null;
-
-  useEffect(() => {
-    setShowAllUpcomingMatches(false);
-  }, [firstMatchId]);
-
-  useEffect(() => {
-    if (!needsRecentResultsPrefetch || isLoadingMore) {
-      return;
-    }
-
-    onLoadMore();
-  }, [isLoadingMore, needsRecentResultsPrefetch, onLoadMore]);
-
-  useEffect(() => {
-    if (!canLoadMoreMatches || isLoadingMore || !loadMoreRef.current) {
-      return;
-    }
-
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        onLoadMore();
-      }
-    }, { rootMargin: "160px 0px" });
-
-    observer.observe(loadMoreRef.current);
-    return () => observer.disconnect();
-  }, [canLoadMoreMatches, isLoadingMore, onLoadMore]);
 
   useEffect(() => {
     let isMounted = true;
@@ -168,6 +92,26 @@ export default function MatchTable({
       isMounted = false;
     };
   }, [dailyPicksDate, i18n.language]);
+
+  useEffect(() => {
+    if (
+      !canLoadMoreMatches
+      || isLoadingMore
+      || !loadMoreRef.current
+      || typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        onLoadMore();
+      }
+    }, { rootMargin: "160px 0px" });
+
+    observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [canLoadMoreMatches, isLoadingMore, onLoadMore]);
 
   // SVG Gauge calculations
   const radius = 60;
@@ -196,6 +140,23 @@ export default function MatchTable({
         <span className="sectionInfo">
           {t("matchTable.showingStatus", { count: visibleMatchCount, total: totalMatches })}
         </span>
+      </div>
+
+      <div className="matchViewTabs" role="tablist" aria-label={t("matchTable.viewTabsLabel")}>
+        {(["upcoming", "recent"] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            role="tab"
+            aria-selected={activeView === view}
+            className={`matchViewTab ${activeView === view ? "matchViewTab-active" : ""}`}
+            onClick={() => onSelectView?.(view)}
+          >
+            {view === "upcoming"
+              ? t("matchTable.upcomingMatches")
+              : t("matchTable.recentResults")}
+          </button>
+        ))}
       </div>
 
       <section className="predictionSummaryBanner" aria-label={t("matchTable.summary.title")}>
@@ -315,48 +276,18 @@ export default function MatchTable({
         </div>
       ) : (
         <>
-          {groupedMatches.upcoming.length > 0 ? (
+          {matches.length > 0 ? (
             <div style={{ marginBottom: "40px" }}>
               <h3
                 className="panelTitle"
                 style={{ fontSize: "1.1rem", marginBottom: "16px", color: "var(--accent-primary)" }}
               >
-                {t("matchTable.upcomingMatches")}
+                {activeView === "upcoming"
+                  ? t("matchTable.upcomingMatches")
+                  : t("matchTable.recentResults")}
               </h3>
               <div className="matchGrid">
-                {visibleUpcomingMatches.map((match) => (
-                  <MatchCard
-                    key={match.id}
-                    match={match}
-                    isSelected={selectedMatchId === match.id}
-                    onOpen={onOpen}
-                  />
-                ))}
-              </div>
-              {hiddenUpcomingMatchCount > 0 ? (
-                <div style={{ display: "flex", justifyContent: "center", marginTop: "20px" }}>
-                  <button
-                    className="loadMoreBtn"
-                    type="button"
-                    onClick={() => setShowAllUpcomingMatches(true)}
-                  >
-                    {t("matchTable.showLaterUpcoming", { count: hiddenUpcomingMatchCount })}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {groupedMatches.past.length > 0 ? (
-            <div>
-              <h3
-                className="panelTitle"
-                style={{ fontSize: "1.1rem", marginBottom: "16px", color: "var(--text-secondary)" }}
-              >
-                {t("matchTable.recentResults")}
-              </h3>
-              <div className="matchGrid">
-                {groupedMatches.past.map((match) => (
+                {matches.map((match) => (
                   <MatchCard
                     key={match.id}
                     match={match}
@@ -381,16 +312,12 @@ export default function MatchTable({
               </p>
             </div>
 
-            <div ref={loadMoreRef} style={{ height: 1 }} />
-            {canLoadMoreMatches && (
-              <button
-                className="loadMoreBtn"
-                onClick={onLoadMore}
-                disabled={isLoadingMore}
-              >
-                {isLoadingMore ? t("status.loading") : t("matchTable.loadMore")}
-              </button>
-            )}
+            {canLoadMoreMatches ? (
+              <div ref={loadMoreRef} className="paginationSentinel" aria-hidden="true" />
+            ) : null}
+            {isLoadingMore ? (
+              <p className="progressLabel" aria-live="polite">{t("status.loading")}</p>
+            ) : null}
           </div>
         </>
       )}
