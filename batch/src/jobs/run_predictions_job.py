@@ -830,6 +830,10 @@ def build_training_dataset(
             market_by_snapshot,
             kickoff_at=str(match.get("kickoff_at") or ""),
         )
+        book_probs, bookmaker_available = resolve_bookmaker_context(
+            book_probs,
+            allow_prior_fallback=True,
+        )
         if not book_probs:
             continue
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -841,6 +845,7 @@ def build_training_dataset(
             signal_snapshot,
             book_probs,
             prediction_market,
+            bookmaker_available=bookmaker_available,
         )
         features.append(feature_vector_to_model_input(feature_context))
         labels.append(match["final_result"])
