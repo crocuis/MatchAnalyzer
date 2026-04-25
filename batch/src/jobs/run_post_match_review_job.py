@@ -11,7 +11,10 @@ from batch.src.rollout.promotion_policy import (
     build_rollout_promotion_decision,
 )
 from batch.src.settings import load_settings
-from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.artifact_store import (
+    archive_json_artifact,
+    build_supabase_storage_artifact_client,
+)
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import (
     build_history_row_id,
@@ -218,6 +221,7 @@ def run_review_job(
     r2_client: R2Client,
     *,
     target_date: str | None,
+    supabase_storage_client=None,
 ) -> dict:
     predictions = client.read_rows("predictions")
     market_rows = client.read_rows("market_probabilities")
@@ -300,6 +304,7 @@ def run_review_job(
         artifact_payload.append(
             archive_json_artifact(
                 r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
                 artifact_id=artifact_id,
                 owner_type="post_match_review",
                 owner_id=review_row["id"],
@@ -364,6 +369,7 @@ def run_review_job(
     artifact_payload.extend([
         archive_json_artifact(
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
             artifact_id=latest_aggregation_artifact_id,
             owner_type="post_match_review_aggregation",
             owner_id="latest",
@@ -377,6 +383,7 @@ def run_review_job(
         ),
         archive_json_artifact(
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
             artifact_id=history_aggregation_artifact_id,
             owner_type="post_match_review_aggregation_version",
             owner_id=history_row_id,
@@ -523,6 +530,7 @@ def main() -> None:
         client,
         r2_client,
         target_date=os.environ.get("REAL_REVIEW_DATE"),
+        supabase_storage_client=build_supabase_storage_artifact_client(settings),
     )
     print(json.dumps(result, sort_keys=True))
 

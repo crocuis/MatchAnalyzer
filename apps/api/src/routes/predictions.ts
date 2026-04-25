@@ -110,6 +110,13 @@ const predictionSourceEvaluationTables = [
   "prediction_source_evaluations",
 ];
 
+const PREDICTION_SOURCE_EVALUATION_SELECT =
+  "id, created_at, report_json, report_payload, report, evaluation_report, shadow, shadow_summary, rollout, rollout_summary";
+const PREDICTION_MODEL_REGISTRY_SELECT =
+  "id, model_family, training_window, feature_version, calibration_version, selection_metadata, training_metadata, created_at";
+const PREDICTION_FUSION_POLICY_SELECT =
+  "id, source_report_id, policy_payload, created_at";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -555,7 +562,9 @@ async function fetchLatestPredictionSourceEvaluationRow(
   supabase: ApiSupabaseClient,
   tableName: string,
 ) {
-  const orderedQuery = supabase.from(tableName).select("*");
+  const orderedQuery = supabase
+    .from(tableName)
+    .select(PREDICTION_SOURCE_EVALUATION_SELECT);
   const orderedResult = await orderedQuery
     .order("created_at", { ascending: false })
     .limit(1)
@@ -565,7 +574,11 @@ async function fetchLatestPredictionSourceEvaluationRow(
     orderedResult.error?.message?.includes("created_at") ||
     orderedResult.error?.message?.includes("column")
   ) {
-    return supabase.from(tableName).select("*").limit(1).maybeSingle();
+    return supabase
+      .from(tableName)
+      .select(PREDICTION_SOURCE_EVALUATION_SELECT)
+      .limit(1)
+      .maybeSingle();
   }
 
   return orderedResult;
@@ -576,7 +589,9 @@ async function fetchPredictionSourceEvaluationRows(
   tableName: string,
   limitCount: number,
 ) {
-  const orderedQuery = supabase.from(tableName).select("*");
+  const orderedQuery = supabase
+    .from(tableName)
+    .select(PREDICTION_SOURCE_EVALUATION_SELECT);
   const orderedResult = await orderedQuery
     .order("created_at", { ascending: false })
     .limit(limitCount);
@@ -585,7 +600,10 @@ async function fetchPredictionSourceEvaluationRows(
     orderedResult.error?.message?.includes("created_at") ||
     orderedResult.error?.message?.includes("column")
   ) {
-    return supabase.from(tableName).select("*").limit(limitCount);
+    return supabase
+      .from(tableName)
+      .select(PREDICTION_SOURCE_EVALUATION_SELECT)
+      .limit(limitCount);
   }
 
   return orderedResult;
@@ -681,7 +699,7 @@ export async function loadLatestPredictionModelRegistryView(
 ) {
   const { data, error } = await supabase
     .from("model_versions")
-    .select("*")
+    .select(PREDICTION_MODEL_REGISTRY_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -703,7 +721,7 @@ export async function loadLatestPredictionFusionPolicyView(
 ) {
   const { data, error } = await supabase
     .from("prediction_fusion_policies")
-    .select("*")
+    .select(PREDICTION_FUSION_POLICY_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -726,7 +744,7 @@ export async function loadPredictionFusionPolicyHistoryView(
   const laneSummaries = await loadRolloutLaneSummaries(supabase);
   const { data, error } = await supabase
     .from("prediction_fusion_policies")
-    .select("*")
+    .select(PREDICTION_FUSION_POLICY_SELECT)
     .order("created_at", { ascending: false })
     .limit(6);
 

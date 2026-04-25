@@ -1487,6 +1487,36 @@ describe("prediction API", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
+    const selectedColumns: string[] = [];
+    const query = {
+      select: vi.fn((columns: string) => {
+        selectedColumns.push(columns);
+        return query;
+      }),
+      order: vi.fn(() => query),
+      limit: vi.fn(() => query),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      in: vi.fn(async () => ({ data: [], error: null })),
+    };
+    const supabase = {
+      from: vi.fn(() => query),
+    } as never;
+
+    await loadLatestPredictionFusionPolicyView(supabase);
+    await loadLatestPredictionModelRegistryView(supabase);
+    await loadLatestReviewAggregationView(supabase);
+    await loadLatestRolloutPromotionDecisionView(supabase);
+
+    expect(selectedColumns).not.toContain("*");
+    expect(selectedColumns).toContain("id, source_report_id, policy_payload, created_at");
+    expect(selectedColumns).toContain(
+      "id, model_family, training_window, feature_version, calibration_version, selection_metadata, training_metadata, created_at",
+    );
+    expect(selectedColumns).toContain("id, report_payload, created_at");
+    expect(selectedColumns).toContain("id, decision_payload, created_at");
+  });
+
   it("surfaces query failures from the route helpers", async () => {
     const failingQuery = {
       select: vi.fn().mockReturnThis(),

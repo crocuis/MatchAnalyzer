@@ -44,7 +44,10 @@ from batch.src.model.evaluate_prediction_sources import (
 )
 from batch.src.model.train_baseline import train_baseline_model
 from batch.src.settings import load_settings
-from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.artifact_store import (
+    archive_json_artifact,
+    build_supabase_storage_artifact_client,
+)
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -1593,6 +1596,7 @@ def main() -> None:
         secret_access_key=getattr(settings, "r2_secret_access_key", None),
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
+    supabase_storage_client = build_supabase_storage_artifact_client(settings)
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     prediction_rows = read_optional_rows(client, "predictions")
@@ -1987,6 +1991,7 @@ def main() -> None:
         artifact_payload.append(
             archive_json_artifact(
                 r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
                 artifact_id=artifact_id,
                 owner_type="prediction",
                 owner_id=prediction_id,

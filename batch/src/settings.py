@@ -26,6 +26,8 @@ class Settings:
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None
     r2_s3_endpoint: str | None = None
+    supabase_artifact_bucket: str | None = None
+    supabase_artifact_cache_control_seconds: int = 86400
 
     @property
     def supabase_service_key(self) -> str:
@@ -97,4 +99,8 @@ def load_settings() -> Settings:
         r2_access_key_id=env("R2_ACCESS_KEY_ID"),
         r2_secret_access_key=env("R2_SECRET_ACCESS_KEY"),
         r2_s3_endpoint=env("R2_S3_ENDPOINT"),
+        supabase_artifact_bucket=env("SUPABASE_ARTIFACT_BUCKET"),
+        supabase_artifact_cache_control_seconds=int(
+            env("SUPABASE_ARTIFACT_CACHE_CONTROL_SECONDS") or "86400"
+        ),
     )

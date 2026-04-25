@@ -99,6 +99,16 @@ type BuildDailyPicksArgs = {
   options: LoadDailyPicksOptions;
 };
 
+const DAILY_PICK_SELECTS: Record<string, string> = {
+  teams: "id, name, crest_url, logo_url",
+  competitions: "id, name",
+  match_snapshots: "id, match_id, checkpoint_type",
+  predictions:
+    "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, explanation_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
+};
+const DAILY_PICK_MATCH_SELECT =
+  "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result";
+
 function normalizeDateFilter(value: string | null | undefined): string | null {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return null;
@@ -149,7 +159,10 @@ async function readRows(
   supabase: ApiSupabaseClient,
   tableName: string,
 ): Promise<DailyPickRow[]> {
-  const result = await supabase.from(tableName).select("*").order("id");
+  const result = await supabase
+    .from(tableName)
+    .select(DAILY_PICK_SELECTS[tableName] ?? "id")
+    .order("id");
   if (result.error) {
     throw new Error(result.error.message);
   }
@@ -177,7 +190,10 @@ async function readRowsByIds(
   if (ids.length === 0) {
     return [];
   }
-  const result = await supabase.from(tableName).select("*").in(columnName, ids);
+  const result = await supabase
+    .from(tableName)
+    .select(DAILY_PICK_SELECTS[tableName] ?? columnName)
+    .in(columnName, ids);
   if (result.error) {
     throw new Error(result.error.message);
   }
@@ -188,7 +204,7 @@ async function readMatches(
   supabase: ApiSupabaseClient,
   options: LoadDailyPicksOptions,
 ): Promise<DailyPickRow[]> {
-  let query = supabase.from("matches").select("*");
+  let query = supabase.from("matches").select(DAILY_PICK_MATCH_SELECT);
   const date = normalizeDateFilter(options.date);
   if (date) {
     const nextDate = new Date(`${date}T00:00:00Z`);

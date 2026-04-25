@@ -26,7 +26,10 @@ from batch.src.rollout.promotion_policy import (
     build_rollout_promotion_decision,
 )
 from batch.src.settings import load_settings
-from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.artifact_store import (
+    archive_json_artifact,
+    build_supabase_storage_artifact_client,
+)
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import (
     build_history_row_id,
@@ -437,6 +440,7 @@ def main() -> None:
         secret_access_key=getattr(settings, "r2_secret_access_key", None),
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
+    supabase_storage_client = build_supabase_storage_artifact_client(settings)
     snapshot_rows = client.read_rows("match_snapshots")
     prediction_rows = read_optional_rows(client, "predictions")
     market_rows = client.read_rows("market_probabilities")
@@ -495,6 +499,7 @@ def main() -> None:
     artifact_rows = [
         archive_json_artifact(
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
             artifact_id=latest_report_artifact_id,
             owner_type="prediction_source_evaluation_report",
             owner_id="latest",
@@ -508,6 +513,7 @@ def main() -> None:
         ),
         archive_json_artifact(
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
             artifact_id=history_report_artifact_id,
             owner_type="prediction_source_evaluation_report_version",
             owner_id=report_history_id,
@@ -521,6 +527,7 @@ def main() -> None:
         ),
         archive_json_artifact(
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
             artifact_id=latest_policy_artifact_id,
             owner_type="prediction_fusion_policy",
             owner_id="latest",
@@ -534,6 +541,7 @@ def main() -> None:
         ),
         archive_json_artifact(
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
             artifact_id=history_policy_artifact_id,
             owner_type="prediction_fusion_policy_version",
             owner_id=policy_history_id,

@@ -33,6 +33,8 @@ type ReviewAggregationHistoryView = {
   rollout: HistoryLaneSummary | null;
 };
 
+const REVIEW_AGGREGATION_SELECT = "id, report_payload, created_at";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -243,7 +245,7 @@ export async function loadLatestReviewAggregationView(
 ) {
   const { data, error } = await supabase
     .from("post_match_review_aggregations")
-    .select("*")
+    .select(REVIEW_AGGREGATION_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -266,7 +268,7 @@ export async function loadReviewAggregationHistoryView(
   const laneSummaries = await loadRolloutLaneSummaries(supabase);
   const { data, error } = await supabase
     .from("post_match_review_aggregations")
-    .select("*")
+    .select(REVIEW_AGGREGATION_SELECT)
     .order("created_at", { ascending: false })
     .limit(6);
 
