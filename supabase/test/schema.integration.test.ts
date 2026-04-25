@@ -152,6 +152,12 @@ describe("supabase schema integration", () => {
            'explanation_artifact_id'
          )`,
     );
+    const droppedLegacyPayloadColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where (table_name = 'predictions' and column_name = 'explanation_payload')
+          or (table_name = 'post_match_reviews' and column_name = 'market_comparison_summary')`,
+    );
 
     expect(competitions.rows[0]?.count).toBe(1);
     expect(teams.rows[0]?.count).toBe(2);
@@ -172,6 +178,7 @@ describe("supabase schema integration", () => {
     expect(dashboardMatchCardViews.rows[0]?.count).toBe(1);
     expect(artifactTables.rows[0]?.count).toBe(1);
     expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
+    expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
   });
 
   it("exposes dashboard league counts through the summary view", async () => {
@@ -196,8 +203,7 @@ describe("supabase schema integration", () => {
         draw_prob,
         away_prob,
         recommended_pick,
-        confidence_score,
-        explanation_payload
+        confidence_score
       )
       values (
         'prediction_001',
@@ -208,8 +214,7 @@ describe("supabase schema integration", () => {
         0.25,
         0.25,
         'HOME',
-        0.75,
-        '{"summary":["home edge"]}'::jsonb
+        0.75
       );
 
       insert into post_match_reviews (
@@ -218,8 +223,7 @@ describe("supabase schema integration", () => {
         prediction_id,
         actual_outcome,
         error_summary,
-        cause_tags,
-        market_comparison_summary
+        cause_tags
       )
       values (
         'review_001',
@@ -227,8 +231,7 @@ describe("supabase schema integration", () => {
         'prediction_001',
         'AWAY',
         'unexpected away transition',
-        '["major_directional_miss"]'::jsonb,
-        '{"market":"outperformed"}'::jsonb
+        '["major_directional_miss"]'::jsonb
       );
     `);
 
@@ -296,8 +299,7 @@ describe("supabase schema integration", () => {
         main_recommendation_pick,
         main_recommendation_confidence,
         main_recommendation_recommended,
-        main_recommendation_no_bet_reason,
-        explanation_payload
+        main_recommendation_no_bet_reason
       )
       values
         (
@@ -313,8 +315,7 @@ describe("supabase schema integration", () => {
           'HOME',
           0.75,
           true,
-          null,
-          '{"main_recommendation":{"pick":"HOME","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
+          null
         ),
         (
           'prediction_002',
@@ -329,8 +330,7 @@ describe("supabase schema integration", () => {
           'HOME',
           0.41,
           false,
-          'low_confidence',
-          '{"main_recommendation":{"pick":"DRAW","confidence":0.41,"recommended":false,"no_bet_reason":"low_confidence"}}'::jsonb
+          'low_confidence'
         );
     `);
 
@@ -389,8 +389,7 @@ describe("supabase schema integration", () => {
         main_recommendation_pick,
         main_recommendation_confidence,
         main_recommendation_recommended,
-        main_recommendation_no_bet_reason,
-        explanation_payload
+        main_recommendation_no_bet_reason
       )
       values
         (
@@ -406,8 +405,7 @@ describe("supabase schema integration", () => {
           'HOME',
           0.75,
           true,
-          null,
-          '{"main_recommendation":{"pick":"HOME","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
+          null
         ),
         (
           'prediction_post_kickoff',
@@ -422,8 +420,7 @@ describe("supabase schema integration", () => {
           'DRAW',
           0.75,
           true,
-          null,
-          '{"main_recommendation":{"pick":"DRAW","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
+          null
         );
     `);
 
@@ -491,7 +488,6 @@ describe("supabase schema integration", () => {
         away_prob,
         recommended_pick,
         confidence_score,
-        explanation_payload,
         summary_payload,
         main_recommendation_pick,
         main_recommendation_confidence,
@@ -518,7 +514,6 @@ describe("supabase schema integration", () => {
         0.25,
         'HOME',
         0.75,
-        '{"value_recommendation":{"pick":"AWAY","recommended":true,"edge":0.12,"expected_value":0.31,"market_price":0.24,"model_probability":0.42,"market_probability":0.30,"market_source":"prediction_market"}}'::jsonb,
         '{"source_agreement_ratio":0.67}'::jsonb,
         'HOME',
         0.75,
@@ -542,8 +537,7 @@ describe("supabase schema integration", () => {
         prediction_id,
         actual_outcome,
         error_summary,
-        cause_tags,
-        market_comparison_summary
+        cause_tags
       )
       values (
         'review_001',
@@ -551,8 +545,7 @@ describe("supabase schema integration", () => {
         'prediction_001',
         'AWAY',
         'unexpected away transition',
-        '["major_directional_miss"]'::jsonb,
-        '{"market":"outperformed"}'::jsonb
+        '["major_directional_miss"]'::jsonb
       );
     `);
 
@@ -651,8 +644,7 @@ describe("supabase schema integration", () => {
         draw_prob,
         away_prob,
         recommended_pick,
-        confidence_score,
-        explanation_payload
+        confidence_score
       )
       values (
         'prediction_001',
@@ -663,8 +655,7 @@ describe("supabase schema integration", () => {
         0.25,
         0.25,
         'HOME',
-        0.75,
-        '{"summary":["home edge"]}'::jsonb
+        0.75
       );
     `);
 
@@ -676,8 +667,7 @@ describe("supabase schema integration", () => {
           prediction_id,
           actual_outcome,
           error_summary,
-          cause_tags,
-          market_comparison_summary
+          cause_tags
         )
         values (
           'review_001',
@@ -685,8 +675,7 @@ describe("supabase schema integration", () => {
           'prediction_001',
           'AWAY',
           'prediction referenced the wrong fixture',
-          '["mismatch"]'::jsonb,
-          '{"market":"n/a"}'::jsonb
+          '["mismatch"]'::jsonb
         );
       `),
     ).rejects.toThrow();

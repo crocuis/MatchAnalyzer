@@ -22,7 +22,17 @@ def main() -> None:
         if updated != original
     ]
     if changed_predictions:
-        client.upsert_rows("predictions", changed_predictions)
+        client.upsert_rows(
+            "predictions",
+            [
+                {
+                    key: value
+                    for key, value in prediction.items()
+                    if key != "explanation_payload"
+                }
+                for prediction in changed_predictions
+            ],
+        )
     print(
         json.dumps(
             {

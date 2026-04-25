@@ -2187,7 +2187,6 @@ def main() -> None:
                 ),
                 "variant_markets_summary": variant_markets,
                 "explanation_artifact_id": artifact_id,
-                "explanation_payload": summary_payload,
             }
         )
         feature_snapshot_payload.append(
@@ -2212,7 +2211,11 @@ def main() -> None:
         [build_model_version_row(by_checkpoint_selection=model_selection_by_checkpoint)],
     )
     artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
-    inserted = client.upsert_rows("predictions", payload)
+    persisted_payload = [
+        {key: value for key, value in row.items() if key != "explanation_payload"}
+        for row in payload
+    ]
+    inserted = client.upsert_rows("predictions", persisted_payload)
     feature_snapshots_inserted = client.upsert_rows(
         "prediction_feature_snapshots", feature_snapshot_payload
     )

@@ -193,7 +193,7 @@ export async function loadReviewView(
   const { data, error } = await supabase
     .from("post_match_reviews")
     .select(
-      "match_id, actual_outcome, error_summary, cause_tags, market_comparison_summary, summary_payload, comparison_available, market_outperformed_model, taxonomy_miss_family, taxonomy_severity, taxonomy_consensus_level, taxonomy_market_signal, attribution_primary_signal, attribution_secondary_signal, review_artifact_id, created_at",
+      "match_id, actual_outcome, error_summary, cause_tags, summary_payload, comparison_available, market_outperformed_model, taxonomy_miss_family, taxonomy_severity, taxonomy_consensus_level, taxonomy_market_signal, attribution_primary_signal, attribution_secondary_signal, review_artifact_id, created_at",
     )
     .eq("match_id", matchId)
     .order("created_at", { ascending: false })
@@ -228,18 +228,18 @@ export async function loadReviewView(
                   consensus_level: data.taxonomy_consensus_level ?? undefined,
                   market_signal: data.taxonomy_market_signal ?? undefined,
                 }
-              : (data.market_comparison_summary?.taxonomy ?? null),
+              : null,
           attributionSummary:
             data.attribution_primary_signal || data.attribution_secondary_signal
               ? {
                   primary_signal: data.attribution_primary_signal ?? null,
                   secondary_signal: data.attribution_secondary_signal ?? null,
                 }
-              : (data.market_comparison_summary?.attribution_summary ?? null),
+              : null,
           marketComparison:
             data.summary_payload && typeof data.summary_payload === "object"
               ? data.summary_payload
-              : data.market_comparison_summary,
+              : null,
           artifact,
         }
       : null,
@@ -302,9 +302,8 @@ export async function loadReviewAggregationHistoryView(
     },
     [],
   );
-  const latestRow = rows.length > 0 && isRecord(rows[0])
-    ? (rows[0] as Record<string, unknown>)
-    : null;
+  const latestRow: Record<string, unknown> | null =
+    rows.length > 0 && isRecord(rows[0]) ? rows[0] : null;
   const payload: Record<string, unknown> = latestRow
     ? isRecord(latestRow.report_payload)
       ? latestRow.report_payload

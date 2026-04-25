@@ -47,8 +47,11 @@ def _normalize_probability_map(probability_by_label: dict[str, float]) -> dict[s
 
 
 def _prediction_payload(prediction: dict) -> dict:
-    payload = prediction.get("explanation_payload")
-    return payload if isinstance(payload, dict) else {}
+    summary_payload = prediction.get("summary_payload")
+    if isinstance(summary_payload, dict):
+        return summary_payload
+    explanation_payload = prediction.get("explanation_payload")
+    return explanation_payload if isinstance(explanation_payload, dict) else {}
 
 
 def _feature_context(payload: dict) -> dict:
@@ -369,10 +372,12 @@ def recalibrate_predictions(
             "confidence_uplift": confidence_uplift,
             "predicted_probabilities": updated_probability_map,
         }
-        summary_payload = deepcopy(prediction.get("summary_payload") or {})
-        if isinstance(summary_payload, dict):
-            summary_payload["raw_confidence_score"] = updated_confidence
-            summary_payload["calibrated_confidence_score"] = updated_confidence
+        summary_payload = deepcopy(_prediction_payload(prediction))
+        summary_payload["raw_confidence_score"] = updated_confidence
+        summary_payload["calibrated_confidence_score"] = updated_confidence
+        summary_payload["main_recommendation"] = updated_recommendation
+        summary_payload["no_bet_reason"] = updated_recommendation["no_bet_reason"]
+        summary_payload["posthoc_recalibration"] = payload["posthoc_recalibration"]
         updated_prediction = {
             **prediction,
             "home_prob": updated_probability_map["home"],

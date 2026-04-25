@@ -6,7 +6,6 @@ import {
 } from "../lib/edge-cache";
 import {
   normalizeMainRecommendationFromSummary,
-  normalizeValueRecommendation,
   normalizeValueRecommendationFromSummary,
   normalizeVariantMarketsFromSummary,
   type PredictionLaneSummaryFields,
@@ -104,7 +103,7 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
   competitions: "id, name",
   match_snapshots: "id, match_id, checkpoint_type",
   predictions:
-    "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, explanation_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
+    "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
 };
 const DAILY_PICK_MATCH_SELECT =
   "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result";
@@ -139,7 +138,6 @@ type PredictionCandidate = {
   confidence: number;
   createdAt: string | null;
   summaryPayload: unknown;
-  legacyPayload: unknown;
   mainRecommendationPick: string | null;
   mainRecommendationConfidence: number | null;
   mainRecommendationRecommended: boolean | null;
@@ -374,7 +372,6 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
       confidence: confidence ?? 0,
       createdAt: readString(prediction.created_at),
       summaryPayload: prediction.summary_payload,
-      legacyPayload: prediction.explanation_payload,
       mainRecommendationPick: readString(prediction.main_recommendation_pick),
       mainRecommendationConfidence: readNumber(prediction.main_recommendation_confidence),
       mainRecommendationRecommended: readBoolean(prediction.main_recommendation_recommended),
@@ -512,7 +509,6 @@ function buildMoneylineAndVariantPicks(
     },
     representative.recommendedPick,
     representative.confidence,
-    representative.legacyPayload,
   );
   const valueRecommendation = normalizeValueRecommendationFromSummary(
     {
@@ -531,13 +527,11 @@ function buildMoneylineAndVariantPicks(
       valueRecommendationMarketSource:
         representative.valueRecommendationMarketSource ?? null,
     } satisfies PredictionLaneSummaryFields,
-    representative.legacyPayload,
   );
   const variantMarkets = normalizeVariantMarketsFromSummary(
     {
       variantMarketsSummary: representative.variantMarketsSummary,
     } satisfies PredictionLaneSummaryFields,
-    representative.legacyPayload,
   );
   const alignedValueRecommendation =
     valueRecommendation?.pick === mainRecommendation.pick
