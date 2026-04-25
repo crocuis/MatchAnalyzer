@@ -50,23 +50,26 @@ export default function MatchTable({
     ? Math.min((matches.length / totalMatches) * 100, 100)
     : 0;
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const successRate = predictionSummary?.successRate ?? 0;
+  const successRate = predictionSummary?.successRate ?? null;
   const canLoadMoreMatches = !isAllLoaded;
   const visibleMatchCount = matches.length;
-  const isRecentView = activeView === "recent";
   const summaryTotalMatches = Math.max(
     predictionSummaryTotalMatches ?? totalMatches,
     predictionSummary?.predictedCount ?? 0,
     predictionSummary?.evaluatedCount ?? 0,
   );
-  const coverageRate = summaryTotalMatches > 0
-    ? (predictionSummary?.predictedCount ?? 0) / summaryTotalMatches
-    : 0;
-  const gaugeRate = Math.min(isRecentView ? successRate : coverageRate, 1);
+  const predictedCount = predictionSummary?.predictedCount ?? 0;
+  const evaluatedCount = predictionSummary?.evaluatedCount ?? 0;
+  const correctCount = predictionSummary?.correctCount ?? 0;
+  const incorrectCount = predictionSummary?.incorrectCount ?? 0;
+  const gaugeRate = Math.min(successRate ?? 0, 1);
   const gaugeRateLabel =
-    predictionSummary === null || (isRecentView && predictionSummary.successRate === null)
+    predictionSummary === null || successRate === null
       ? t("matchTable.summary.noData")
       : Math.round(gaugeRate * 100);
+  const hitRecordLabel = evaluatedCount > 0
+    ? t("matchTable.summary.hitRecord", { correct: correctCount, evaluated: evaluatedCount })
+    : t("matchTable.summary.noEvaluatedMatches");
   const dailyPicksCount = dailyPicksSummary?.items.length ?? 0;
   const dailyPicksGeneratedAt = dailyPicksSummary?.generatedAt
     ? new Date(dailyPicksSummary.generatedAt).toLocaleString(undefined, {
@@ -154,23 +157,6 @@ export default function MatchTable({
         </span>
       </div>
 
-      <div className="matchViewTabs" role="tablist" aria-label={t("matchTable.viewTabsLabel")}>
-        {(["upcoming", "recent"] as const).map((view) => (
-          <button
-            key={view}
-            type="button"
-            role="tab"
-            aria-selected={activeView === view}
-            className={`matchViewTab ${activeView === view ? "matchViewTab-active" : ""}`}
-            onClick={() => onSelectView?.(view)}
-          >
-            {view === "upcoming"
-              ? t("matchTable.upcomingMatches")
-              : t("matchTable.recentResults")}
-          </button>
-        ))}
-      </div>
-
       <section className="predictionSummaryBanner" aria-label={t("matchTable.summary.title")}>
         <div className="predictionSummaryGauge">
           <svg className="gaugeSvg" viewBox="0 0 140 140">
@@ -197,9 +183,7 @@ export default function MatchTable({
               {typeof gaugeRateLabel === "number" ? `${gaugeRateLabel}%` : gaugeRateLabel}
             </span>
             <span className="gaugeLabel">
-              {isRecentView
-                ? t("matchTable.summary.successRate")
-                : t("matchTable.summary.coverageRate")}
+              {t("matchTable.summary.verifiedHitRate")}
             </span>
           </div>
         </div>
@@ -210,65 +194,58 @@ export default function MatchTable({
               {t("matchTable.summary.title")}
             </span>
             <span className="predictionSummaryBannerCaption">
-              {isRecentView
-                ? t("matchTable.summary.recentCaption")
-                : t("matchTable.summary.upcomingCaption")}
+              {t("matchTable.summary.verifiedCaption")}
+            </span>
+            <span className="predictionSummaryRecord">
+              {hitRecordLabel}
             </span>
           </div>
           <div className="predictionSummaryGrid">
-            {!isRecentView ? (
-              <div className="predictionSummaryStat predictionSummaryStat-wide">
-                <div className="predictionSummaryLabelGroup">
-                  <div className="predictionSummaryIcon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>
-                  </div>
-                  <span className="metricLabel">{t("matchTable.summary.predictionData")}</span>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>
                 </div>
-                <strong className="predictionSummaryValue">
-                  {predictionSummary?.predictedCount ?? 0}
-                  <span className="predictionSummarySubValue"> / {summaryTotalMatches}</span>
-                </strong>
+                <span className="metricLabel">{t("matchTable.summary.predictionReady")}</span>
               </div>
-            ) : null}
-            {isRecentView ? (
-              <>
-                <div className="predictionSummaryStat">
-                  <div className="predictionSummaryLabelGroup">
-                    <div className="predictionSummaryIcon" style={{ color: "var(--accent-success)" }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
-                    </div>
-                    <span className="metricLabel">{t("matchTable.summary.correct")}</span>
-                  </div>
-                  <strong className="predictionSummaryValue predictionSummaryValue-success">
-                    {predictionSummary?.correctCount ?? 0}
-                  </strong>
+              <strong className="predictionSummaryValue">
+                {predictedCount}
+                <span className="predictionSummarySubValue"> / {summaryTotalMatches}</span>
+              </strong>
+            </div>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></svg>
                 </div>
-                <div className="predictionSummaryStat">
-                  <div className="predictionSummaryLabelGroup">
-                    <div className="predictionSummaryIcon" style={{ color: "var(--accent-danger)" }}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-                    </div>
-                    <span className="metricLabel">{t("matchTable.summary.incorrect")}</span>
-                  </div>
-                  <strong className="predictionSummaryValue predictionSummaryValue-danger">
-                    {predictionSummary?.incorrectCount ?? 0}
-                  </strong>
-                </div>
-              </>
-            ) : null}
-            {isRecentView ? (
-              <div className="predictionSummaryStat">
-                <div className="predictionSummaryLabelGroup">
-                  <div className="predictionSummaryIcon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></svg>
-                  </div>
-                  <span className="metricLabel">{t("matchTable.summary.evaluated")}</span>
-                </div>
-                <strong className="predictionSummaryValue">
-                  {predictionSummary?.evaluatedCount ?? 0}
-                </strong>
+                <span className="metricLabel">{t("matchTable.summary.evaluated")}</span>
               </div>
-            ) : null}
+              <strong className="predictionSummaryValue">
+                {evaluatedCount}
+              </strong>
+            </div>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon" style={{ color: "var(--accent-success)" }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                </div>
+                <span className="metricLabel">{t("matchTable.summary.correct")}</span>
+              </div>
+              <strong className="predictionSummaryValue predictionSummaryValue-success">
+                {correctCount}
+              </strong>
+            </div>
+            <div className="predictionSummaryStat">
+              <div className="predictionSummaryLabelGroup">
+                <div className="predictionSummaryIcon" style={{ color: "var(--accent-danger)" }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                </div>
+                <span className="metricLabel">{t("matchTable.summary.incorrect")}</span>
+              </div>
+              <strong className="predictionSummaryValue predictionSummaryValue-danger">
+                {incorrectCount}
+              </strong>
+            </div>
           </div>
         </div>
       </section>
@@ -295,6 +272,23 @@ export default function MatchTable({
           {t("dailyPicks.entry.openShort")}
         </button>
       </section>
+
+      <div className="matchViewTabs" role="tablist" aria-label={t("matchTable.viewTabsLabel")}>
+        {(["upcoming", "recent"] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            role="tab"
+            aria-selected={activeView === view}
+            className={`matchViewTab ${activeView === view ? "matchViewTab-active" : ""}`}
+            onClick={() => onSelectView?.(view)}
+          >
+            {view === "upcoming"
+              ? t("matchTable.upcomingMatches")
+              : t("matchTable.recentResults")}
+          </button>
+        ))}
+      </div>
 
       {matches.length === 0 ? (
         <div className="contentPanel" style={{ textAlign: "center", padding: "48px" }}>

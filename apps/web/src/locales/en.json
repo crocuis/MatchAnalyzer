@@ -191,12 +191,17 @@
       "upcomingCaption": "Prediction coverage across the full league dataset",
       "recentCaption": "Settled match hits and misses across the full league dataset",
       "predictionData": "Prediction data",
+      "predictionReady": "Prediction ready",
       "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "Evaluated",
       "correct": "Correct",
       "incorrect": "Incorrect",
       "coverageRate": "Coverage",
       "successRate": "Success rate",
+      "verifiedHitRate": "Verified hit rate",
+      "verifiedCaption": "Settled matches with a HOME/DRAW/AWAY prediction",
+      "hitRecord": "{{correct}} / {{evaluated}} hits",
+      "noEvaluatedMatches": "No evaluated matches yet",
       "successRateValue": "{{rate}}% success rate",
       "noData": "—"
     }

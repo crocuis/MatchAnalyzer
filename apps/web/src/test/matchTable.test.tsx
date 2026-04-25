@@ -469,7 +469,7 @@ describe("MatchTable", () => {
     }
   });
 
-  it("shows upcoming prediction coverage against the full league dataset", () => {
+  it("shows verified hit rate as the primary metric in the upcoming view", () => {
     const matches: MatchCardRow[] = [
       {
         id: "future-001",
@@ -507,10 +507,60 @@ describe("MatchTable", () => {
     );
 
     const summary = screen.getByLabelText("League prediction summary");
-    expect(summary).toHaveTextContent("Prediction data");
+    expect(summary).toHaveTextContent("Verified hit rate");
+    expect(summary).toHaveTextContent("42%");
+    expect(summary).toHaveTextContent("140 / 333 hits");
+    expect(summary).toHaveTextContent("Prediction ready");
     expect(summary).toHaveTextContent("340 / 380");
     expect(summary).not.toHaveTextContent("340 / 7");
     expect(summary).not.toHaveTextContent("7 / 7");
+  });
+
+  it("renders the shared prediction summary and Daily Picks before the view tabs", () => {
+    const matches: MatchCardRow[] = [
+      {
+        id: "future-001",
+        leagueId: "premier-league",
+        homeTeam: "Future Home",
+        awayTeam: "Future Away",
+        kickoffAt: "2026-04-30T19:00:00Z",
+        status: "Scheduled",
+        recommendedPick: null,
+        confidence: null,
+        needsReview: false,
+      },
+    ];
+    const predictionSummary: LeaguePredictionSummary = {
+      predictedCount: 8,
+      evaluatedCount: 6,
+      correctCount: 4,
+      incorrectCount: 2,
+      successRate: 4 / 6,
+    };
+
+    render(
+      <MatchTable
+        matches={matches}
+        currentLeagueId={null}
+        predictionSummary={predictionSummary}
+        predictionSummaryTotalMatches={10}
+        totalMatches={1}
+        panelId="league-matches-panel"
+        selectedMatchId={null}
+        onOpen={() => {}}
+        onOpenDailyPicks={() => {}}
+        onLoadMore={() => {}}
+      />,
+    );
+
+    const summaries = screen.getAllByLabelText("League prediction summary");
+    const dailyPicks = screen.getByLabelText("Daily Picks");
+    const tabList = screen.getByRole("tablist", { name: "Match views" });
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.compareDocumentPosition(dailyPicks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(dailyPicks.compareDocumentPosition(tabList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summaries[0]?.compareDocumentPosition(tabList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("emphasizes full-dataset hits and misses in the recent results view", () => {
@@ -553,13 +603,17 @@ describe("MatchTable", () => {
     );
 
     const summary = screen.getByLabelText("League prediction summary");
+    expect(summary).toHaveTextContent("Verified hit rate");
+    expect(summary).toHaveTextContent("42%");
+    expect(summary).toHaveTextContent("140 / 333 hits");
     expect(summary).toHaveTextContent("Correct");
     expect(summary).toHaveTextContent("140");
     expect(summary).toHaveTextContent("Incorrect");
     expect(summary).toHaveTextContent("193");
     expect(summary).toHaveTextContent("Evaluated");
     expect(summary).toHaveTextContent("333");
-    expect(summary).not.toHaveTextContent("Prediction data");
+    expect(summary).toHaveTextContent("Prediction ready");
+    expect(summary).toHaveTextContent("340 / 380");
   });
 
   it("does not observe pagination when the active view is fully loaded", () => {

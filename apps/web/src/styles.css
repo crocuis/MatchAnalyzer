@@ -1310,12 +1310,19 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   align-items: center;
   gap: 12px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
 }
 .predictionSummaryBannerCaption {
   color: var(--text-secondary);
   font-size: 0.85rem;
   font-weight: 500;
   opacity: 0.8;
+}
+.predictionSummaryRecord {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 .predictionSummaryGrid {
   display: grid;
