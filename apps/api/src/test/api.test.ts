@@ -217,6 +217,63 @@ describe("prediction API", () => {
     });
   });
 
+  it("blocks sensitive prediction reports without an operational api key", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      undefined,
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
+  it("allows sensitive prediction reports with a valid operational api key", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      {
+        headers: {
+          "x-operational-api-key": "secret-key",
+        },
+      },
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      report: null,
+    });
+  });
+
+  it("allows sensitive prediction reports when either operational api key header is valid", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      {
+        headers: {
+          authorization: "Bearer secret-key",
+          "x-operational-api-key": "wrong-key",
+        },
+      },
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      report: null,
+    });
+  });
+
+  it("blocks sensitive rollout reports without an operational api key", async () => {
+    const response = await app.request(
+      "/rollouts/promotion/latest",
+      undefined,
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
   it("returns an empty daily picks payload when no supabase client is configured", async () => {
     setDailyPicksClock();
     const response = await app.request("/daily-picks");
@@ -1517,6 +1574,52 @@ describe("prediction API", () => {
     expect(selectedColumns).toContain("id, decision_payload, created_at");
   });
 
+  it("does not request legacy prediction explanation payload columns", async () => {
+    const selectedColumns: string[] = [];
+    const emptyQuery = {
+      select: vi.fn((columns: string) => {
+        selectedColumns.push(columns);
+        return emptyQuery;
+      }),
+      eq: vi.fn(() => emptyQuery),
+      gte: vi.fn(() => emptyQuery),
+      lt: vi.fn(() => emptyQuery),
+      in: vi.fn(async () => ({ data: [], error: null })),
+      order: vi.fn(async () => ({ data: [], error: null })),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+    };
+    const supabase = {
+      from: vi.fn(() => emptyQuery),
+    } as never;
+
+    await loadPredictionView(supabase, "match-123");
+    await loadMatchItems(supabase);
+    await loadDailyPicksView(supabase, { date: "2026-04-24" });
+
+    expect(selectedColumns.join("\n")).not.toContain("explanation_payload");
+  });
+
+  it("does not request legacy review market comparison payload columns", async () => {
+    const selectedColumns: string[] = [];
+    const reviewQuery = {
+      select: vi.fn((columns: string) => {
+        selectedColumns.push(columns);
+        return reviewQuery;
+      }),
+      eq: vi.fn(() => reviewQuery),
+      order: vi.fn(() => reviewQuery),
+      limit: vi.fn(() => reviewQuery),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+    };
+    const supabase = {
+      from: vi.fn(() => reviewQuery),
+    } as never;
+
+    await loadReviewView(supabase, "match-123");
+
+    expect(selectedColumns.join("\n")).not.toContain("market_comparison_summary");
+  });
+
   it("surfaces query failures from the route helpers", async () => {
     const failingQuery = {
       select: vi.fn().mockReturnThis(),
@@ -2192,7 +2295,9 @@ describe("prediction API", () => {
     const response = await app.request("/matches?leagueId=premier-league&locale=ko&limit=1");
 
     expect(response.status).toBe(200);
-    const payload = await response.json();
+    const payload = await response.json() as {
+      items: Array<{ homeTeam: string; awayTeam: string }>;
+    };
     expect(payload.items[0].homeTeam).toBe("첼시");
     expect(payload.items[0].awayTeam).toBe("아스널");
     expect(tableCalls).not.toContain("predictions");
@@ -3889,7 +3994,7 @@ describe("prediction API", () => {
             away_prob: 0.3,
             recommended_pick: "HOME",
             confidence_score: 0.52,
-            explanation_payload: {
+            summary_payload: {
               source_agreement_ratio: 0.67,
               source_metadata: {
                 market_segment: "without_prediction_market",
@@ -3911,7 +4016,7 @@ describe("prediction API", () => {
             away_prob: 0.4,
             recommended_pick: "AWAY",
             confidence_score: 0.61,
-            explanation_payload: {
+            summary_payload: {
               source_agreement_ratio: 1,
               source_metadata: {
                 market_segment: "with_prediction_market",
@@ -3994,7 +4099,7 @@ describe("prediction API", () => {
             away_prob: 0.4,
             recommended_pick: "AWAY",
             confidence_score: 0.61,
-            explanation_payload: { source_agreement_ratio: 1 },
+            summary_payload: { source_agreement_ratio: 1 },
             created_at: "2026-04-27T12:00:00Z",
           },
           {
@@ -4006,30 +4111,26 @@ describe("prediction API", () => {
             away_prob: 0.3,
             recommended_pick: "HOME",
             confidence_score: 0.52,
-            explanation_payload: {
-              value_recommendation: {
-                pick: "AWAY",
-                recommended: true,
-                edge: 0.1,
-                expected_value: 0.3125,
-                market_price: 0.24,
-                model_probability: 0.42,
-                market_probability: 0.32,
-                market_source: "prediction_market",
-              },
-              variant_markets: [
-                {
-                  market_family: "spreads",
-                  source_name: "polymarket_spreads",
+            value_recommendation_pick: "AWAY",
+            value_recommendation_recommended: true,
+            value_recommendation_edge: 0.1,
+            value_recommendation_expected_value: 0.3125,
+            value_recommendation_market_price: 0.24,
+            value_recommendation_model_probability: 0.42,
+            value_recommendation_market_probability: 0.32,
+            value_recommendation_market_source: "prediction_market",
+            variant_markets_summary: [
+              {
+                market_family: "spreads",
+                source_name: "polymarket_spreads",
                   line_value: -0.5,
                   selection_a_label: "Home -0.5",
                   selection_a_price: 0.54,
                   selection_b_label: "Away +0.5",
-                  selection_b_price: 0.46,
-                  market_slug: "spread-slug",
-                },
-              ],
-            },
+                selection_b_price: 0.46,
+                market_slug: "spread-slug",
+              },
+            ],
             created_at: "2026-04-27T11:00:00Z",
           },
         ],

@@ -39,7 +39,7 @@ def _archive_prediction_rows(
             {
                 **row,
                 "explanation_artifact_id": artifact_id,
-                "explanation_payload": row.get("summary_payload") or {},
+                "summary_payload": row.get("summary_payload") or {},
             }
         )
     return archived_rows, artifact_rows
@@ -74,7 +74,7 @@ def _archive_review_rows(
             {
                 **row,
                 "review_artifact_id": artifact_id,
-                "market_comparison_summary": {},
+                "summary_payload": row.get("summary_payload") or {},
             }
         )
     return archived_rows, artifact_rows
@@ -274,9 +274,29 @@ def main() -> None:
 
     persisted_artifacts = client.upsert_rows("stored_artifacts", artifact_rows) if artifact_rows else 0
     if prediction_artifacts:
-        client.upsert_rows("predictions", archived_predictions)
+        client.upsert_rows(
+            "predictions",
+            [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "explanation_payload"
+                }
+                for row in archived_predictions
+            ],
+        )
     if review_artifacts:
-        client.upsert_rows("post_match_reviews", archived_reviews)
+        client.upsert_rows(
+            "post_match_reviews",
+            [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key != "market_comparison_summary"
+                }
+                for row in archived_reviews
+            ],
+        )
     for table_name, archived_rows in pending_table_updates:
         client.upsert_rows(table_name, archived_rows)
     print(

@@ -164,73 +164,6 @@ export interface PredictionLaneSummaryFields {
   variantMarketsSummary?: unknown;
 }
 
-export function normalizeMainRecommendation(
-  explanationPayload: unknown,
-  fallbackPick: string,
-  fallbackConfidence: number,
-): MainRecommendation {
-  const payload = isRecord(explanationPayload) ? explanationPayload : null;
-  const raw = payload?.main_recommendation;
-  if (!isRecord(raw)) {
-    return {
-      pick: fallbackPick,
-      confidence: fallbackConfidence,
-      recommended: true,
-      noBetReason: null,
-    };
-  }
-
-  return {
-    pick: readString(raw.pick) ?? fallbackPick,
-    confidence: readNumber(raw.confidence),
-    recommended: readBoolean(raw.recommended) ?? true,
-    noBetReason: readString(raw.no_bet_reason),
-  };
-}
-
-export function normalizeValueRecommendation(
-  explanationPayload: unknown,
-): ValueRecommendation | null {
-  const payload = isRecord(explanationPayload) ? explanationPayload : null;
-  const raw = payload?.value_recommendation;
-  if (!isRecord(raw)) {
-    return null;
-  }
-
-  const pick = readString(raw.pick);
-  const edge = readNumber(raw.edge);
-  const expectedValue = readNumber(raw.expected_value);
-  const marketPrice = readNumber(raw.market_price);
-  const modelProbability = readNumber(raw.model_probability);
-  const marketProbability = readNumber(raw.market_probability);
-  const marketSource = readString(raw.market_source);
-  const recommended = readBoolean(raw.recommended);
-
-  if (
-    pick === null ||
-    edge === null ||
-    expectedValue === null ||
-    marketPrice === null ||
-    modelProbability === null ||
-    marketProbability === null ||
-    marketSource === null ||
-    recommended === null
-  ) {
-    return null;
-  }
-
-  return {
-    pick,
-    recommended,
-    edge,
-    expectedValue,
-    marketPrice,
-    modelProbability,
-    marketProbability,
-    marketSource,
-  };
-}
-
 export function normalizeVariantMarkets(
   explanationPayload: unknown,
 ): VariantMarket[] {
@@ -299,19 +232,17 @@ export function normalizeVariantMarkets(
 
 export function normalizeSummaryPayload(
   summaryPayload: unknown,
-  fallbackPayload: unknown = null,
 ): unknown {
   if (isRecord(summaryPayload)) {
     return summaryPayload;
   }
-  return fallbackPayload;
+  return null;
 }
 
 export function normalizeMainRecommendationFromSummary(
   summary: PredictionLaneSummaryFields,
   fallbackPick: string,
   fallbackConfidence: number,
-  fallbackPayload: unknown = null,
 ): MainRecommendation {
   const pick = readString(summary.mainRecommendationPick);
   const confidence = readNumber(summary.mainRecommendationConfidence);
@@ -327,12 +258,16 @@ export function normalizeMainRecommendationFromSummary(
     };
   }
 
-  return normalizeMainRecommendation(fallbackPayload, fallbackPick, fallbackConfidence);
+  return {
+    pick: fallbackPick,
+    confidence: fallbackConfidence,
+    recommended: true,
+    noBetReason: null,
+  };
 }
 
 export function normalizeValueRecommendationFromSummary(
   summary: PredictionLaneSummaryFields,
-  fallbackPayload: unknown = null,
 ): ValueRecommendation | null {
   const pick = readString(summary.valueRecommendationPick);
   const recommended = readBoolean(summary.valueRecommendationRecommended);
@@ -378,16 +313,15 @@ export function normalizeValueRecommendationFromSummary(
     };
   }
 
-  return normalizeValueRecommendation(fallbackPayload);
+  return null;
 }
 
 export function normalizeVariantMarketsFromSummary(
   summary: PredictionLaneSummaryFields,
-  fallbackPayload: unknown = null,
 ): VariantMarket[] {
   if (Array.isArray(summary.variantMarketsSummary)) {
     return normalizeVariantMarkets({ variant_markets: summary.variantMarketsSummary });
   }
 
-  return normalizeVariantMarkets(fallbackPayload);
+  return [];
 }

@@ -33,11 +33,20 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 
 def is_no_bet_prediction(prediction: dict) -> bool:
-    explanation_payload = prediction.get("explanation_payload") or {}
+    if prediction.get("main_recommendation_recommended") is False:
+        return True
+    summary_payload = prediction.get("summary_payload")
+    explanation_payload = prediction.get("explanation_payload")
+    prediction_payload = (
+        summary_payload
+        if isinstance(summary_payload, dict)
+        else explanation_payload
+        if isinstance(explanation_payload, dict)
+        else {}
+    )
     return (
-        isinstance(explanation_payload, dict)
-        and isinstance(explanation_payload.get("main_recommendation"), dict)
-        and explanation_payload["main_recommendation"].get("recommended") is False
+        isinstance(prediction_payload.get("main_recommendation"), dict)
+        and prediction_payload["main_recommendation"].get("recommended") is False
     )
 
 
@@ -460,8 +469,9 @@ def run_review_job(
     artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
     persisted_review_rows = [
         {
-            **review_row,
-            "market_comparison_summary": {},
+            key: value
+            for key, value in review_row.items()
+            if key != "market_comparison_summary"
         }
         for review_row in payload
     ]

@@ -336,8 +336,28 @@ function resolveApiBasePath(): string {
   return deployApiOrigin || "/api";
 }
 
+const API_PROXY_BASE_PATH = "/api";
+const OPERATIONAL_REPORT_PATHS = new Set([
+  "/predictions/source-evaluation/latest",
+  "/predictions/source-evaluation/history",
+  "/predictions/model-registry/latest",
+  "/predictions/fusion-policy/latest",
+  "/predictions/fusion-policy/history",
+  "/reviews/aggregation/latest",
+  "/reviews/aggregation/history",
+  "/rollouts/promotion/latest",
+]);
+
+export function isOperationalReportApiPath(path: string): boolean {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return OPERATIONAL_REPORT_PATHS.has(normalizedPath);
+}
+
 export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (isOperationalReportApiPath(normalizedPath)) {
+    return `${API_PROXY_BASE_PATH}${normalizedPath}`;
+  }
   return `${resolveApiBasePath()}${normalizedPath}`;
 }
 

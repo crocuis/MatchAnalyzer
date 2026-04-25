@@ -7,12 +7,9 @@ import {
   cachedResponse,
 } from "../lib/edge-cache";
 import {
-  normalizeMainRecommendation,
   normalizeMainRecommendationFromSummary,
   normalizeSummaryPayload,
-  normalizeVariantMarkets,
   normalizeVariantMarketsFromSummary,
-  normalizeValueRecommendation,
   normalizeValueRecommendationFromSummary,
   type MainRecommendation,
   type ValueRecommendation,
@@ -82,10 +79,8 @@ function pickMarketEnrichedPrediction(
     predictions.find(
       (prediction) =>
         prediction.valueRecommendationPick !== null ||
-        normalizeValueRecommendation(prediction.legacyPayload) !== null ||
         normalizeVariantMarketsFromSummary(
           { variantMarketsSummary: prediction.variantMarketsSummary },
-          prediction.legacyPayload,
         ).length > 0,
     ) ?? null
   );
@@ -159,9 +154,9 @@ type MatchListItem = {
   status: ReturnType<typeof deriveMatchStatus>;
   recommendedPick: string | null;
   confidence: number | null;
-  mainRecommendation: ReturnType<typeof normalizeMainRecommendation> | null;
-  valueRecommendation: ReturnType<typeof normalizeValueRecommendation> | null;
-  variantMarkets: ReturnType<typeof normalizeVariantMarkets>;
+  mainRecommendation: MainRecommendation | null;
+  valueRecommendation: ValueRecommendation | null;
+  variantMarkets: VariantMarket[];
   noBetReason: string | null;
   explanationPayload?: unknown;
   needsReview: boolean;
@@ -173,7 +168,6 @@ type PredictionCandidate = {
   confidence: number;
   createdAt: string | null;
   summaryPayload: unknown;
-  legacyPayload: unknown;
   mainRecommendationPick: string | null;
   mainRecommendationConfidence: number | null;
   mainRecommendationRecommended: boolean | null;
@@ -351,7 +345,6 @@ function normalizeDashboardMainRecommendation(
     },
     row.representative_recommended_pick ?? "UNKNOWN",
     Number(row.representative_confidence_score ?? 0),
-    null,
   );
 }
 
@@ -435,18 +428,11 @@ function buildPredictionSummaryFromLeagueSummary(
   if (!league) {
     return null;
   }
-  const matchCountValue = "matchCount" in league
-    ? league.matchCount
-    : league.match_count;
-  const predictedCount = "predictedCount" in league
-    ? league.predictedCount
-    : league.predicted_count;
-  const evaluatedCountValue = "evaluatedCount" in league
-    ? league.evaluatedCount
-    : league.evaluated_count;
-  const correctCountValue = "correctCount" in league
-    ? league.correctCount
-    : league.correct_count;
+  const leagueRecord = league as Record<string, unknown>;
+  const matchCountValue = leagueRecord.matchCount ?? leagueRecord.match_count;
+  const predictedCount = leagueRecord.predictedCount ?? leagueRecord.predicted_count;
+  const evaluatedCountValue = leagueRecord.evaluatedCount ?? leagueRecord.evaluated_count;
+  const correctCountValue = leagueRecord.correctCount ?? leagueRecord.correct_count;
   const matchCount = Number(matchCountValue ?? Number.POSITIVE_INFINITY);
   const maximumCount = Number.isFinite(matchCount)
     ? Math.max(matchCount, 0)
@@ -631,14 +617,12 @@ export async function loadDashboardMatchCardsPageView(
             valueRecommendationMarketProbability: row.value_recommendation_market_probability,
             valueRecommendationMarketSource: row.value_recommendation_market_source,
           },
-          null,
         )
       : null;
     const variantMarkets = row.has_prediction
       ? normalizeVariantMarketsFromSummary(
-          { variantMarketsSummary: row.variant_markets_summary },
-          null,
-        )
+        { variantMarketsSummary: row.variant_markets_summary },
+      )
       : [];
     return {
       id: row.id,
@@ -903,7 +887,7 @@ async function loadSelectedLeaguePageView(
     supabase
       .from("predictions")
       .select(
-        "match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_payload, created_at",
+        "match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, created_at",
       )
       .in("match_id", matchIds)
       .order("created_at", { ascending: false }),
@@ -934,8 +918,7 @@ async function loadSelectedLeaguePageView(
       recommendedPick: row.recommended_pick,
       confidence: Number(row.confidence_score ?? 0),
       createdAt: row.created_at ?? null,
-      summaryPayload: normalizeSummaryPayload(row.summary_payload, row.explanation_payload),
-      legacyPayload: row.explanation_payload,
+      summaryPayload: normalizeSummaryPayload(row.summary_payload),
       mainRecommendationPick: row.main_recommendation_pick ?? null,
       mainRecommendationConfidence:
         row.main_recommendation_confidence == null
@@ -997,7 +980,6 @@ async function loadSelectedLeaguePageView(
               },
               representative.recommendedPick,
               representative.confidence,
-              representative.legacyPayload,
             ),
             valueRecommendation: normalizeValueRecommendationFromSummary(
               {
@@ -1016,14 +998,12 @@ async function loadSelectedLeaguePageView(
                 valueRecommendationMarketSource:
                   marketEnriched?.valueRecommendationMarketSource ?? null,
               },
-              marketEnriched?.legacyPayload ?? representative.legacyPayload,
             ),
             variantMarkets: normalizeVariantMarketsFromSummary(
               {
                 variantMarketsSummary:
                   marketEnriched?.variantMarketsSummary ?? representative.variantMarketsSummary,
               },
-              marketEnriched?.legacyPayload ?? representative.legacyPayload,
             ),
           }
         : null,
