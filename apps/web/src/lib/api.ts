@@ -509,10 +509,14 @@ export function fetchMatches(params?: {
   cursor?: string | null;
   limit?: number;
   locale?: string | null;
+  view?: "upcoming" | "recent" | null;
 }): Promise<MatchListResponse> {
   const search = new URLSearchParams();
   if (params?.leagueId) {
     search.set("leagueId", params.leagueId);
+  }
+  if (params?.view) {
+    search.set("view", params.view);
   }
   if (params?.cursor) {
     search.set("cursor", params.cursor);

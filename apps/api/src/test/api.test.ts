@@ -1881,6 +1881,50 @@ describe("prediction API", () => {
     });
   });
 
+  it("filters dashboard match cards by requested match view", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 12,
+            review_count: 3,
+            predicted_count: 9,
+            evaluated_count: 6,
+            correct_count: 4,
+            incorrect_count: 2,
+            success_rate: 4 / 6,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      view: "recent",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
+    expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 1);
+    expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
+  });
+
   it("serves localized match cards from the dashboard card page without querying predictions", async () => {
     const tableCalls: string[] = [];
     vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue({

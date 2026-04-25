@@ -155,6 +155,32 @@ describe("match pagination fetcher", () => {
     );
   });
 
+  it("passes match view through to the matches endpoint when provided", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        items: [],
+        leagues: [],
+        selectedLeagueId: "premier-league",
+        nextCursor: null,
+        totalMatches: 0,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchMatches } = await import("../lib/api");
+
+    await fetchMatches({
+      leagueId: "premier-league",
+      view: "recent",
+      limit: 6,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/matches?leagueId=premier-league&view=recent&limit=6",
+    );
+  });
+
   it("passes locale through to the matches endpoint when provided", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

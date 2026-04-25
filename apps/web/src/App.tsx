@@ -44,12 +44,16 @@ type MatchDetailState = {
   review: PostMatchReview | null;
 };
 
-type LeaguePageState = {
+type MatchListViewKind = "upcoming" | "recent";
+
+type MatchPageState = {
   items: MatchCardRow[];
   nextCursor: string | null;
   predictionSummary: LeaguePredictionSummary | null;
   totalMatches: number;
 };
+
+type LeaguePageState = Partial<Record<MatchListViewKind, MatchPageState>>;
 
 const LEAGUE_ORDER = [
   "premier-league",
@@ -62,7 +66,8 @@ const LEAGUE_ORDER = [
   "conference-league",
 ];
 
-const PAGE_SIZE = 4;
+const PAGE_SIZE = 6;
+const DEFAULT_MATCH_VIEW: MatchListViewKind = "upcoming";
 
 function resolveLeaguePayload(
   response: {
@@ -95,6 +100,26 @@ function resolveLeaguePayload(
     nextCursor: response.nextCursor ?? null,
     totalMatches: response.totalMatches ?? response.items.length,
   };
+}
+
+function buildMatchPageState(
+  response: {
+    items: MatchCardRow[];
+    predictionSummary?: LeaguePredictionSummary | null;
+    nextCursor?: string | null;
+    totalMatches?: number;
+  },
+): MatchPageState {
+  return {
+    items: response.items,
+    nextCursor: response.nextCursor ?? null,
+    predictionSummary: response.predictionSummary ?? null,
+    totalMatches: response.totalMatches ?? response.items.length,
+  };
+}
+
+function getPageKey(leagueId: string, view: MatchListViewKind): string {
+  return `${leagueId}:${view}`;
 }
 
 function deriveLeagueSummaries(matches: MatchCardRow[], t: (key: string) => string): LeagueSummary[] {
@@ -157,6 +182,7 @@ export default function App() {
   const [isDailyPicksModalOpen, setIsDailyPicksModalOpen] = useState(false);
   const [dailyPicksLeagueId, setDailyPicksLeagueId] = useState<string | null>(null);
   const [selectedLeagueId, setSelectedLeagueId] = useState<string | null>(null);
+  const [activeMatchView, setActiveMatchView] = useState<MatchListViewKind>(DEFAULT_MATCH_VIEW);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const [dailyPickMatchesById, setDailyPickMatchesById] = useState<Record<string, MatchCardRow>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -165,7 +191,7 @@ export default function App() {
     {},
   );
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
-  const [loadingMoreLeagueId, setLoadingMoreLeagueId] = useState<string | null>(null);
+  const [loadingMorePageKey, setLoadingMorePageKey] = useState<string | null>(null);
   const [evaluationReport, setEvaluationReport] = useState<PredictionSourceEvaluationReport | null>(null);
   const [evaluationHistoryView, setEvaluationHistoryView] = useState<PredictionSourceEvaluationHistoryResponse | null>(null);
   const [modelRegistryReport, setModelRegistryReport] = useState<PredictionModelRegistryReport | null>(null);
@@ -187,6 +213,7 @@ export default function App() {
         const response = await fetchMatches({
           limit: PAGE_SIZE,
           locale: i18n.language,
+          view: DEFAULT_MATCH_VIEW,
         });
         if (!isMounted) {
           return;
@@ -197,10 +224,12 @@ export default function App() {
           setSelectedLeagueId(resolved.selectedLeagueId);
           setLeaguePages({
             [resolved.selectedLeagueId]: {
-              items: response.items,
-              nextCursor: resolved.nextCursor,
-              predictionSummary: resolved.predictionSummary,
-              totalMatches: resolved.totalMatches,
+              [DEFAULT_MATCH_VIEW]: buildMatchPageState({
+                items: response.items,
+                nextCursor: resolved.nextCursor,
+                predictionSummary: resolved.predictionSummary,
+                totalMatches: resolved.totalMatches,
+              }),
             },
           });
         } else {
@@ -242,26 +271,35 @@ export default function App() {
   }, [derivedLeagues, selectedLeagueId]);
 
   const leagueMatches = useMemo(
-    () => (selectedLeagueId ? (leaguePages[selectedLeagueId]?.items ?? []) : []),
-    [leaguePages, selectedLeagueId],
+    () => (
+      selectedLeagueId
+        ? (leaguePages[selectedLeagueId]?.[activeMatchView]?.items ?? [])
+        : []
+    ),
+    [activeMatchView, leaguePages, selectedLeagueId],
   );
 
-  const currentLeaguePage = selectedLeagueId ? leaguePages[selectedLeagueId] : undefined;
+  const currentLeaguePage = selectedLeagueId
+    ? leaguePages[selectedLeagueId]?.[activeMatchView]
+    : undefined;
   const totalMatches = currentLeaguePage?.totalMatches
     ?? derivedLeagues.find((league) => league.id === selectedLeagueId)?.matchCount
     ?? 0;
   const predictionSummary = currentLeaguePage?.predictionSummary ?? null;
   const hasMoreMatches = Boolean(currentLeaguePage?.nextCursor);
   const loadedMatches = useMemo(
-    () => Object.values(leaguePages).flatMap((page) => page.items),
+    () => Object.values(leaguePages).flatMap((page) =>
+      Object.values(page).flatMap((viewPage) => viewPage?.items ?? []),
+    ),
     [leaguePages],
   );
 
   useEffect(() => {
-    if (!selectedLeagueId || leaguePages[selectedLeagueId]) {
+    if (!selectedLeagueId || leaguePages[selectedLeagueId]?.[activeMatchView]) {
       return;
     }
     const leagueId = selectedLeagueId;
+    const view = activeMatchView;
 
     let isMounted = true;
     setMatchesStatus((current) => (current === "ready" ? "ready" : "loading"));
@@ -272,6 +310,7 @@ export default function App() {
           leagueId,
           limit: PAGE_SIZE,
           locale: i18n.language,
+          view,
         });
         if (!isMounted) {
           return;
@@ -281,10 +320,13 @@ export default function App() {
         setLeaguePages((current) => ({
           ...current,
           [leagueId]: {
-            items: response.items,
-            nextCursor: resolved.nextCursor,
-            predictionSummary: resolved.predictionSummary,
-            totalMatches: resolved.totalMatches,
+            ...current[leagueId],
+            [view]: buildMatchPageState({
+              items: response.items,
+              nextCursor: resolved.nextCursor,
+              predictionSummary: resolved.predictionSummary,
+              totalMatches: resolved.totalMatches,
+            }),
           },
         }));
         setMatchesStatus("ready");
@@ -300,7 +342,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [i18n.language, leaguePages, leagues, selectedLeagueId, t]);
+  }, [activeMatchView, i18n.language, leaguePages, leagues, selectedLeagueId, t]);
 
   const fallbackSelectedMatchId = leagueMatches[0]?.id ?? null;
   const activeMatchId = selectedMatchId ?? fallbackSelectedMatchId;
@@ -398,6 +440,13 @@ export default function App() {
     setReportMatchId(null);
   }
 
+  function handleSelectMatchView(view: MatchListViewKind) {
+    setActiveMatchView(view);
+    setSelectedMatchId(null);
+    setIsModalOpen(false);
+    setReportMatchId(null);
+  }
+
   function handleOpenMatch(matchId: string) {
     setSelectedMatchId(matchId);
     setIsModalOpen(true);
@@ -424,25 +473,31 @@ export default function App() {
   }
 
   function handleLoadMore() {
-    if (!selectedLeagueId || !currentLeaguePage?.nextCursor || loadingMoreLeagueId === selectedLeagueId) {
+    if (!selectedLeagueId || !currentLeaguePage?.nextCursor) {
       return;
     }
     const leagueId = selectedLeagueId;
+    const view = activeMatchView;
+    const pageKey = getPageKey(leagueId, view);
+    if (loadingMorePageKey === pageKey) {
+      return;
+    }
     const nextCursor = currentLeaguePage.nextCursor;
 
     void (async () => {
-      setLoadingMoreLeagueId(leagueId);
+      setLoadingMorePageKey(pageKey);
       try {
         const response = await fetchMatches({
           leagueId,
           cursor: nextCursor,
           limit: PAGE_SIZE,
           locale: i18n.language,
+          view,
         });
         const resolved = resolveLeaguePayload(response, t, leagues);
         setLeagues(resolved.leagues);
         setLeaguePages((current) => {
-          const existing = current[leagueId]?.items ?? [];
+          const existing = current[leagueId]?.[view]?.items ?? [];
           const mergedItems = [
             ...existing,
             ...response.items.filter(
@@ -452,17 +507,20 @@ export default function App() {
           return {
             ...current,
             [leagueId]: {
-              items: mergedItems,
-              nextCursor: resolved.nextCursor,
-              predictionSummary: resolved.predictionSummary,
-              totalMatches: resolved.totalMatches,
+              ...current[leagueId],
+              [view]: {
+                items: mergedItems,
+                nextCursor: resolved.nextCursor,
+                predictionSummary: resolved.predictionSummary,
+                totalMatches: resolved.totalMatches,
+              },
             },
           };
         });
       } catch {
         setMatchesStatus("error");
       } finally {
-        setLoadingMoreLeagueId((current) => (current === leagueId ? null : current));
+        setLoadingMorePageKey((current) => (current === pageKey ? null : current));
       }
     })();
   }
@@ -554,9 +612,17 @@ export default function App() {
               setIsDailyPicksModalOpen(true);
             }}
             onLoadMore={handleLoadMore}
+            activeView={activeMatchView}
+            onSelectView={handleSelectMatchView}
             panelId="league-matches-panel"
             selectedMatchId={isModalOpen ? activeMatchId : null}
-            isLoadingMore={loadingMoreLeagueId === selectedLeagueId && hasMoreMatches}
+            isLoadingMore={
+              Boolean(
+                selectedLeagueId
+                && loadingMorePageKey === getPageKey(selectedLeagueId, activeMatchView)
+                && hasMoreMatches,
+              )
+            }
           />
         ) : null}
 
