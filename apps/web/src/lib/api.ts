@@ -330,18 +330,15 @@ export interface PredictionModelRegistryReport {
   };
 }
 
-const DEPLOY_API_ORIGIN =
-  (
-    import.meta.env.VITE_API_BASE_URL ??
-    (typeof process !== "undefined" ? process.env.VITE_API_BASE_URL : "")
-  )
-    ?.trim()
-    .replace(/\/+$/, "") ?? "";
-const API_BASE_PATH = DEPLOY_API_ORIGIN || "/api";
+function resolveApiBasePath(): string {
+  const deployApiOrigin =
+    import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
+  return deployApiOrigin || "/api";
+}
 
 export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE_PATH}${normalizedPath}`;
+  return `${resolveApiBasePath()}${normalizedPath}`;
 }
 
 export interface MatchListResponse {

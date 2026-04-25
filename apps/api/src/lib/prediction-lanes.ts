@@ -16,6 +16,83 @@ function readBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function formatLineValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function labelAlreadyHasLine(label: string): boolean {
+  return /(?:^|\s)[+-]?\d+(?:\.\d+)?$/.test(label);
+}
+
+function appendLineIfMissing(label: string, lineLabel: string): string {
+  if (labelAlreadyHasLine(label)) {
+    return label;
+  }
+  return `${label} ${lineLabel}`;
+}
+
+function normalizeVariantMarketLabels({
+  marketFamily,
+  selectionALabel,
+  selectionBLabel,
+  recommendedPick,
+  lineValue,
+  marketSlug,
+}: {
+  marketFamily: string;
+  selectionALabel: string;
+  selectionBLabel: string;
+  recommendedPick: string | null;
+  lineValue: number | null;
+  marketSlug: string | null;
+}): {
+  selectionALabel: string;
+  selectionBLabel: string;
+  recommendedPick: string | null;
+} {
+  if (lineValue === null) {
+    return { selectionALabel, selectionBLabel, recommendedPick };
+  }
+
+  let nextSelectionALabel = selectionALabel;
+  let nextSelectionBLabel = selectionBLabel;
+
+  if (marketFamily === "totals") {
+    const lineLabel = formatLineValue(lineValue);
+    nextSelectionALabel = appendLineIfMissing(selectionALabel, lineLabel);
+    nextSelectionBLabel = appendLineIfMissing(selectionBLabel, lineLabel);
+  }
+
+  if (
+    marketFamily === "spreads" &&
+    marketSlug !== null &&
+    /spread-(?:home|away)-/.test(marketSlug)
+  ) {
+    const absoluteLine = Math.abs(lineValue);
+    nextSelectionALabel = appendLineIfMissing(
+      selectionALabel,
+      `-${formatLineValue(absoluteLine)}`,
+    );
+    nextSelectionBLabel = appendLineIfMissing(
+      selectionBLabel,
+      `+${formatLineValue(absoluteLine)}`,
+    );
+  }
+
+  const nextRecommendedPick =
+    recommendedPick === selectionALabel
+      ? nextSelectionALabel
+      : recommendedPick === selectionBLabel
+        ? nextSelectionBLabel
+        : recommendedPick;
+
+  return {
+    selectionALabel: nextSelectionALabel,
+    selectionBLabel: nextSelectionBLabel,
+    recommendedPick: nextRecommendedPick,
+  };
+}
+
 export interface MainRecommendation {
   pick: string;
   confidence: number | null;
@@ -171,17 +248,27 @@ export function normalizeVariantMarkets(
     const marketPrice = readNumber(entry.market_price);
     const modelProbability = readNumber(entry.model_probability);
     const marketProbability = readNumber(entry.market_probability);
+    const lineValue = readNumber(entry.line_value);
+    const marketSlug = readString(entry.market_slug);
+    const labels = normalizeVariantMarketLabels({
+      marketFamily,
+      selectionALabel,
+      selectionBLabel,
+      recommendedPick,
+      lineValue,
+      marketSlug,
+    });
 
     return [{
       marketFamily,
       sourceName,
-      lineValue: readNumber(entry.line_value),
-      selectionALabel,
+      lineValue,
+      selectionALabel: labels.selectionALabel,
       selectionAPrice: readNumber(entry.selection_a_price),
-      selectionBLabel,
+      selectionBLabel: labels.selectionBLabel,
       selectionBPrice: readNumber(entry.selection_b_price),
-      marketSlug: readString(entry.market_slug),
-      ...(recommendedPick !== null ? { recommendedPick } : {}),
+      marketSlug,
+      ...(labels.recommendedPick !== null ? { recommendedPick: labels.recommendedPick } : {}),
       ...(recommended !== null ? { recommended } : {}),
       ...(noBetReason !== null ? { noBetReason } : {}),
       ...(edge !== null ? { edge } : {}),

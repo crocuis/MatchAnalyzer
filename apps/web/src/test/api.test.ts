@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+beforeEach(() => {
+  vi.stubEnv("VITE_API_BASE_URL", "");
+});
 
 afterEach(() => {
   vi.useRealTimers();

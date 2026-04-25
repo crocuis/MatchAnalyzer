@@ -20,6 +20,11 @@ from batch.src.jobs.sample_data import (
     SAMPLE_MODEL_VERSION_ID,
     SAMPLE_MODEL_VERSION_ROW,
 )
+from batch.src.llm.advisory import (
+    NvidiaChatClient,
+    build_disabled_prediction_advisory,
+    request_prediction_advisory,
+)
 from batch.src.markets import index_market_rows_by_snapshot, select_market_row
 from batch.src.model.evaluate_walk_forward import (
     calibrate_confidence_from_buckets,
@@ -105,6 +110,10 @@ def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
         for match_id in raw_match_ids.split(",")
         if match_id.strip()
     }
+
+
+def read_env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) in {"1", "true", "TRUE", "yes", "YES"}
 
 
 def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
@@ -273,6 +282,15 @@ def read_persisted_market_enrichment(prediction_payload: dict) -> dict:
     if not isinstance(market_enrichment, dict):
         return {}
     return deepcopy(market_enrichment)
+
+
+def read_persisted_available_llm_advisory(prediction_payload: dict) -> dict:
+    llm_advisory = prediction_payload.get("llm_advisory")
+    if not isinstance(llm_advisory, dict):
+        return {}
+    if llm_advisory.get("status") != "available":
+        return {}
+    return deepcopy(llm_advisory)
 
 
 def build_market_enrichment_summary(
@@ -1268,6 +1286,55 @@ def _extract_signed_number(value: object) -> float | None:
         return None
 
 
+def _format_variant_line(value: float) -> str:
+    return f"{value:g}"
+
+
+def _format_signed_variant_line(value: float) -> str:
+    formatted = _format_variant_line(abs(value))
+    return f"+{formatted}" if value >= 0 else f"-{formatted}"
+
+
+def _normalize_variant_selection_label(
+    *,
+    market_family: str,
+    selection_label: object,
+    line_value: float | None,
+    match: dict | None,
+    teams_by_id: dict[str, dict] | None,
+) -> str:
+    label = str(selection_label or "")
+    if not label:
+        return label
+    if _extract_signed_number(label) is not None:
+        return label
+
+    normalized_label = _normalize_variant_text(label)
+    if market_family == "totals":
+        if (
+            line_value is not None
+            and (
+                re.search(r"\bover\b", normalized_label) is not None
+                or re.search(r"\bunder\b", normalized_label) is not None
+            )
+        ):
+            return f"{label} {_format_variant_line(abs(line_value))}"
+        return label
+
+    if market_family == "spreads":
+        selection_line = _resolve_selection_line(
+            market_family=market_family,
+            selection_label=label,
+            line_value=line_value,
+            match=match,
+            teams_by_id=teams_by_id,
+        )
+        if selection_line is not None:
+            return f"{label} {_format_signed_variant_line(selection_line)}"
+
+    return label
+
+
 def _is_quarter_line(line_value: float) -> bool:
     fractional = abs(line_value) % 1.0
     return math.isclose(fractional, 0.25, abs_tol=1e-9) or math.isclose(
@@ -1603,20 +1670,42 @@ def build_variant_markets(
     markets = []
     for row in variant_rows:
         raw_payload = row.get("raw_payload") or {}
+        line_value = _read_numeric(row.get("line_value"))
+        market_family = row["market_family"]
+        selection_a_label = _normalize_variant_selection_label(
+            market_family=market_family,
+            selection_label=row["selection_a_label"],
+            line_value=line_value,
+            match=match,
+            teams_by_id=teams_by_id,
+        )
+        selection_b_label = _normalize_variant_selection_label(
+            market_family=market_family,
+            selection_label=row["selection_b_label"],
+            line_value=line_value,
+            match=match,
+            teams_by_id=teams_by_id,
+        )
+        normalized_row = {
+            **row,
+            "line_value": line_value,
+            "selection_a_label": selection_a_label,
+            "selection_b_label": selection_b_label,
+        }
         market = {
-            "market_family": row["market_family"],
+            "market_family": market_family,
             "source_name": row["source_name"],
-            "line_value": row.get("line_value"),
-            "selection_a_label": row["selection_a_label"],
+            "line_value": line_value,
+            "selection_a_label": selection_a_label,
             "selection_a_price": row.get("selection_a_price"),
-            "selection_b_label": row["selection_b_label"],
+            "selection_b_label": selection_b_label,
             "selection_b_price": row.get("selection_b_price"),
             "market_slug": raw_payload.get("market_slug")
             if isinstance(raw_payload, dict)
             else None,
         }
         recommendation = _build_variant_recommendation(
-            row,
+            normalized_row,
             snapshot=snapshot,
             match=match,
             teams_by_id=teams_by_id,
@@ -1644,6 +1733,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
     summary_keys = (
         "bullets",
         "feature_attribution",
+        "llm_advisory",
         "base_model_source",
         "model_selection",
         "base_model_probs",
@@ -1668,6 +1758,45 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
     }
 
 
+def build_prediction_llm_context(
+    *,
+    match: dict,
+    snapshot: dict,
+    teams_by_id: dict[str, dict],
+    base_probs: dict,
+    book_probs: dict,
+    prediction_market_probs: dict,
+    fused_probs: dict,
+    main_recommendation: dict,
+    feature_context: dict,
+    feature_metadata: dict,
+    source_metadata: dict,
+) -> dict:
+    home_team = teams_by_id.get(str(match.get("home_team_id") or ""), {})
+    away_team = teams_by_id.get(str(match.get("away_team_id") or ""), {})
+    return {
+        "match": {
+            "id": match.get("id") or snapshot.get("match_id"),
+            "snapshot_id": snapshot.get("id"),
+            "checkpoint": snapshot.get("checkpoint_type"),
+            "competition_id": match.get("competition_id"),
+            "kickoff_at": match.get("kickoff_at"),
+            "home_team": home_team.get("name") or match.get("home_team_id"),
+            "away_team": away_team.get("name") or match.get("away_team_id"),
+        },
+        "probabilities": {
+            "base_model": base_probs,
+            "bookmaker": book_probs,
+            "prediction_market": prediction_market_probs,
+            "fused": fused_probs,
+        },
+        "recommendation": main_recommendation,
+        "feature_context": feature_context,
+        "feature_metadata": feature_metadata,
+        "source_metadata": source_metadata,
+    }
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
@@ -1678,6 +1807,38 @@ def main() -> None:
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
     supabase_storage_client = build_supabase_storage_artifact_client(settings)
+    prediction_llm_enabled = read_env_flag("LLM_PREDICTION_ADVISORY_ENABLED")
+    llm_provider = getattr(settings, "llm_provider", "nvidia")
+    prediction_llm_api_key = (
+        getattr(settings, "openrouter_api_key", None)
+        if llm_provider == "openrouter"
+        else getattr(settings, "nvidia_api_key", None)
+    )
+    prediction_llm_base_url = (
+        getattr(settings, "openrouter_base_url", None)
+        if llm_provider == "openrouter"
+        else getattr(settings, "nvidia_base_url", None)
+    )
+    prediction_llm_client = (
+        NvidiaChatClient(
+            api_key=prediction_llm_api_key,
+            base_url=prediction_llm_base_url,
+            provider=llm_provider,
+            app_url=getattr(settings, "openrouter_app_url", None),
+            app_title=getattr(settings, "openrouter_app_title", None),
+            timeout_seconds=getattr(settings, "llm_timeout_seconds", 60),
+            thinking=getattr(settings, "llm_thinking_enabled", False),
+            reasoning_effort=getattr(settings, "llm_reasoning_effort", "low"),
+            top_p=getattr(settings, "llm_top_p", 0.95),
+            max_tokens=getattr(settings, "llm_max_tokens", 1024),
+            temperature=getattr(settings, "llm_temperature", 0.2),
+            requests_per_minute=getattr(settings, "llm_requests_per_minute", 40),
+            retry_count=getattr(settings, "llm_retry_count", 2),
+            retry_backoff_seconds=getattr(settings, "llm_retry_backoff_seconds", 3.0),
+        )
+        if prediction_llm_enabled and prediction_llm_api_key
+        else None
+    )
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     prediction_rows = read_optional_rows(client, "predictions")
@@ -2089,6 +2250,43 @@ def main() -> None:
                 else None
             ),
         )
+        llm_advisory = None
+        if prediction_llm_enabled:
+            if prediction_llm_client is None:
+                llm_advisory = build_disabled_prediction_advisory(
+                    provider=llm_provider,
+                    model=getattr(settings, "llm_prediction_model", "deepseek-ai/deepseek-v4-flash"),
+                    reason="missing_api_key",
+                )
+            else:
+                llm_advisory = request_prediction_advisory(
+                    client=prediction_llm_client,
+                    model=getattr(settings, "llm_prediction_model", "deepseek-ai/deepseek-v4-flash"),
+                    provider=llm_provider,
+                    context=build_prediction_llm_context(
+                        match=match,
+                        snapshot=signal_snapshot,
+                        teams_by_id=teams_by_id,
+                        base_probs=base_probs,
+                        book_probs=book_probs,
+                        prediction_market_probs=prediction_market_probs,
+                        fused_probs={
+                            "home": row["home_prob"],
+                            "draw": row["draw_prob"],
+                            "away": row["away_prob"],
+                        },
+                        main_recommendation=main_recommendation,
+                        feature_context=feature_context,
+                        feature_metadata=feature_metadata,
+                        source_metadata=source_metadata,
+                    ),
+                )
+                if llm_advisory.get("status") != "available":
+                    persisted_llm_advisory = read_persisted_available_llm_advisory(
+                        existing_prediction_payload
+                    )
+                    if persisted_llm_advisory:
+                        llm_advisory = persisted_llm_advisory
         prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
         explanation_payload = {
             "bullets": row["explanation_bullets"],
@@ -2122,6 +2320,8 @@ def main() -> None:
                 preserved_market_enrichment=preserved_market_enrichment,
             ),
         }
+        if llm_advisory is not None:
+            explanation_payload["llm_advisory"] = llm_advisory
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
         artifact_id = f"prediction_artifact_{prediction_id}"

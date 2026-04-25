@@ -12,10 +12,12 @@ import type { MatchCardRow, PredictionSummary } from "../lib/api";
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllEnvs();
 });
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
+  vi.stubEnv("VITE_API_BASE_URL", "");
 
   vi.stubGlobal(
     "fetch",
