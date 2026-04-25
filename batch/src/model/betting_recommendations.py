@@ -89,6 +89,7 @@ def build_moneyline_candidate(
     *,
     match: dict,
     prediction: dict,
+    historical_matches: list[dict] | None = None,
 ) -> dict | None:
     if prediction.get("main_recommendation_recommended") is False:
         return None
@@ -113,7 +114,11 @@ def build_moneyline_candidate(
         "market_family": "moneyline",
         "selection_label": pick,
         "score": confidence,
-        "signal_score": _moneyline_signal_score(prediction),
+        "signal_score": _moneyline_signal_score(
+            prediction,
+            match=match,
+            historical_matches=historical_matches,
+        ),
         "confidence": confidence,
         "expected_value": _read_numeric(prediction.get("value_recommendation_expected_value")),
         "market_price": _resolve_moneyline_market_price(prediction, pick),
@@ -227,7 +232,11 @@ def build_settled_recommendation_candidates(
             snapshots_by_id=snapshots_by_id,
         )
         if latest_prediction is not None:
-            candidate = build_moneyline_candidate(match=match, prediction=latest_prediction)
+            candidate = build_moneyline_candidate(
+                match=match,
+                prediction=latest_prediction,
+                historical_matches=matches,
+            )
             if candidate is not None:
                 candidates_by_date[candidate["date"]].append(candidate)
 
@@ -497,7 +506,12 @@ def _resolve_moneyline_market_price(prediction: dict, pick: str) -> float | None
     return _read_numeric(prediction.get("value_recommendation_market_price"))
 
 
-def _moneyline_signal_score(prediction: dict) -> float:
+def _moneyline_signal_score(
+    prediction: dict,
+    *,
+    match: dict | None = None,
+    historical_matches: list[dict] | None = None,
+) -> float:
     payload = prediction.get("summary_payload")
     if not isinstance(payload, dict):
         payload = prediction.get("explanation_payload")
@@ -511,7 +525,116 @@ def _moneyline_signal_score(prediction: dict) -> float:
         value = _read_numeric(feature_context.get(key))
         if value is not None:
             signal_total += value
+    signal_total += _rolling_home_signal_score(
+        match=match,
+        historical_matches=historical_matches,
+    )
     return round(signal_total, 4)
+
+
+def _rolling_home_signal_score(
+    *,
+    match: dict | None,
+    historical_matches: list[dict] | None,
+) -> float:
+    if not match or not historical_matches:
+        return 0.0
+    kickoff_at = str(match.get("kickoff_at") or "")
+    home_team_id = str(match.get("home_team_id") or "")
+    away_team_id = str(match.get("away_team_id") or "")
+    if not kickoff_at or not home_team_id or not away_team_id:
+        return 0.0
+
+    home_recent = _team_recent_form(
+        historical_matches,
+        team_id=home_team_id,
+        kickoff_at=kickoff_at,
+    )
+    away_recent = _team_recent_form(
+        historical_matches,
+        team_id=away_team_id,
+        kickoff_at=kickoff_at,
+    )
+    home_venue = _team_recent_form(
+        historical_matches,
+        team_id=home_team_id,
+        kickoff_at=kickoff_at,
+        venue="home",
+    )
+    away_venue = _team_recent_form(
+        historical_matches,
+        team_id=away_team_id,
+        kickoff_at=kickoff_at,
+        venue="away",
+    )
+    ppg_delta = home_recent["points_per_match"] - away_recent["points_per_match"]
+    goal_delta = home_recent["goal_difference_per_match"] - away_recent[
+        "goal_difference_per_match"
+    ]
+    venue_ppg_delta = home_venue["points_per_match"] - away_venue["points_per_match"]
+    venue_goal_delta = home_venue["goal_difference_per_match"] - away_venue[
+        "goal_difference_per_match"
+    ]
+    return (
+        (2.0 * ppg_delta)
+        - (2.0 * goal_delta)
+        + venue_ppg_delta
+        + venue_goal_delta
+    )
+
+
+def _team_recent_form(
+    historical_matches: list[dict],
+    *,
+    team_id: str,
+    kickoff_at: str,
+    venue: str | None = None,
+    limit: int = 5,
+) -> dict[str, float]:
+    rows = []
+    for row in historical_matches:
+        if str(row.get("kickoff_at") or "") >= kickoff_at:
+            continue
+        if row.get("final_result") not in {"HOME", "DRAW", "AWAY"}:
+            continue
+        home_score = _read_numeric(row.get("home_score"))
+        away_score = _read_numeric(row.get("away_score"))
+        if home_score is None or away_score is None:
+            continue
+        is_home = str(row.get("home_team_id") or "") == team_id
+        is_away = str(row.get("away_team_id") or "") == team_id
+        if venue == "home" and not is_home:
+            continue
+        if venue == "away" and not is_away:
+            continue
+        if venue is None and not (is_home or is_away):
+            continue
+        rows.append(row)
+
+    rows = sorted(rows, key=lambda row: str(row.get("kickoff_at") or ""), reverse=True)[
+        :limit
+    ]
+    points = 0.0
+    goal_difference = 0.0
+    for row in rows:
+        is_home = str(row.get("home_team_id") or "") == team_id
+        home_score = float(row.get("home_score") or 0.0)
+        away_score = float(row.get("away_score") or 0.0)
+        goals_for, goals_against = (
+            (home_score, away_score) if is_home else (away_score, home_score)
+        )
+        goal_difference += goals_for - goals_against
+        if goals_for > goals_against:
+            points += 3.0
+        elif goals_for == goals_against:
+            points += 1.0
+
+    if not rows:
+        return {"points_per_match": 0.0, "goal_difference_per_match": 0.0}
+    return {
+        "points_per_match": points / len(rows),
+        "goal_difference_per_match": goal_difference / len(rows),
+    }
 
 
 def _net_profit(row: dict) -> float:

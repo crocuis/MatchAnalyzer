@@ -1,4 +1,5 @@
 from batch.src.model.betting_recommendations import (
+    build_moneyline_candidate,
     build_settled_recommendation_candidates,
     normalize_variant_market_row,
     select_daily_recommendations,
@@ -335,3 +336,57 @@ def test_select_daily_recommendations_uses_moneyline_signal_score_as_tiebreaker(
     )["2026-04-21"]
 
     assert selected[0]["match_id"] == "strong-signal"
+
+
+def test_build_moneyline_candidate_adds_pre_match_rolling_home_signal():
+    candidate = build_moneyline_candidate(
+        match={
+            "id": "target",
+            "kickoff_at": "2026-04-21T19:00:00Z",
+            "home_team_id": "home",
+            "away_team_id": "away",
+            "final_result": "HOME",
+        },
+        prediction={
+            "main_recommendation_pick": "HOME",
+            "main_recommendation_confidence": 0.65,
+            "summary_payload": {
+                "feature_context": {
+                    "elo_delta": 0.2,
+                    "xg_proxy_delta": 0.3,
+                    "form_delta": 0.0,
+                }
+            },
+        },
+        historical_matches=[
+            {
+                "id": "home-prior",
+                "kickoff_at": "2026-04-01T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "other",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 0,
+            },
+            {
+                "id": "away-prior",
+                "kickoff_at": "2026-04-02T19:00:00Z",
+                "home_team_id": "other",
+                "away_team_id": "away",
+                "final_result": "HOME",
+                "home_score": 3,
+                "away_score": 1,
+            },
+            {
+                "id": "future",
+                "kickoff_at": "2026-04-22T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "AWAY",
+                "home_score": 0,
+                "away_score": 2,
+            },
+        ],
+    )
+
+    assert candidate["signal_score"] == 5.5
