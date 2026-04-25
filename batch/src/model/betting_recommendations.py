@@ -4,7 +4,13 @@ import re
 from collections import Counter, defaultdict
 from copy import deepcopy
 
-from batch.src.jobs.run_predictions_job import build_variant_markets
+from batch.src.jobs.run_predictions_job import (
+    _evaluate_settlement_line,
+    _resolve_selection_line,
+    _resolve_settlement_lines,
+    _resolve_spread_selection_side,
+    build_variant_markets,
+)
 
 
 CHECKPOINT_PRIORITY = {
@@ -15,9 +21,9 @@ CHECKPOINT_PRIORITY = {
 }
 
 FAMILY_PRIORITY = {
-    "spreads": 0,
+    "moneyline": 0,
     "totals": 1,
-    "moneyline": 2,
+    "spreads": 2,
 }
 
 MONEYLINE_CONFIDENCE_THRESHOLD = 0.4
@@ -84,6 +90,8 @@ def build_moneyline_candidate(
     match: dict,
     prediction: dict,
 ) -> dict | None:
+    if prediction.get("main_recommendation_recommended") is False:
+        return None
     pick = str(
         prediction.get("main_recommendation_pick")
         or prediction.get("recommended_pick")
@@ -105,6 +113,8 @@ def build_moneyline_candidate(
         "market_family": "moneyline",
         "selection_label": pick,
         "score": confidence,
+        "confidence": confidence,
+        "expected_value": _read_numeric(prediction.get("value_recommendation_expected_value")),
         "market_price": _resolve_moneyline_market_price(prediction, pick),
         "hit": 1 if pick == str(match.get("final_result") or "") else 0,
     }
@@ -130,32 +140,28 @@ def build_variant_family_candidates(
         match=match,
         teams_by_id=teams_by_id,
     )
-    family_rows: dict[str, list[dict]] = defaultdict(list)
-    for row in built_rows:
-        family_rows[str(row.get("market_family") or "")].append(row)
-
     candidates: list[dict] = []
-    for family in ("spreads", "totals"):
-        family_candidates = family_rows.get(family) or []
-        if not family_candidates:
+    for row in built_rows:
+        family = str(row.get("market_family") or "")
+        if family not in {"spreads", "totals"}:
             continue
-        best_row = max(
-            family_candidates,
-            key=lambda item: float(item.get("model_probability") or 0.0),
-        )
-        line_value = _read_numeric(best_row.get("line_value"))
-        label = str(best_row.get("recommended_pick") or "")
-        hit = settle_variant_candidate(
+        if row.get("recommended") is not True:
+            continue
+        label = str(row.get("recommended_pick") or "")
+        if not label:
+            continue
+        model_probability = _read_numeric(row.get("model_probability"))
+        if model_probability is None:
+            continue
+        profit = settle_variant_candidate(
             market_family=family,
             selection_label=label,
-            line_value=line_value,
+            line_value=_read_numeric(row.get("line_value")),
+            market_price=_read_numeric(row.get("market_price")),
             match=match,
             teams_by_id=teams_by_id,
         )
-        if hit is None:
-            continue
-        model_probability = _read_numeric(best_row.get("model_probability"))
-        if model_probability is None:
+        if profit is None:
             continue
         candidates.append(
             {
@@ -164,8 +170,11 @@ def build_variant_family_candidates(
                 "market_family": family,
                 "selection_label": label,
                 "score": model_probability,
-                "market_price": _read_numeric(best_row.get("market_price")),
-                "hit": hit,
+                "confidence": None,
+                "expected_value": _read_numeric(row.get("expected_value")),
+                "market_price": _read_numeric(row.get("market_price")),
+                "profit": profit,
+                "hit": 1 if profit > 0 else 0,
             }
         )
     return candidates
@@ -313,11 +322,13 @@ def select_daily_recommendations(
         ]
         filtered.sort(
             key=lambda row: (
-                float(row.get("score") or 0.0),
-                -FAMILY_PRIORITY.get(str(row.get("market_family") or ""), 99),
+                FAMILY_PRIORITY.get(str(row.get("market_family") or ""), 99),
+                -(
+                    float(row.get("expected_value") or 0.0)
+                    + float(row.get("confidence") or 0.0)
+                ),
                 str(row.get("match_id") or ""),
             ),
-            reverse=True,
         )
         capped = filtered[:max_daily_recommendations]
         if len(capped) < min_daily_recommendations:
@@ -395,10 +406,11 @@ def settle_variant_candidate(
     market_family: str,
     selection_label: str,
     line_value: float | None,
+    market_price: float | None,
     match: dict,
     teams_by_id: dict[str, dict],
-) -> int | None:
-    if line_value is None:
+) -> float | None:
+    if line_value is None or market_price is None or market_price <= 0:
         return None
 
     home_score = _read_numeric(match.get("home_score"))
@@ -407,41 +419,49 @@ def settle_variant_candidate(
         return None
 
     normalized_label = selection_label.lower()
-    goal_difference = home_score - away_score
     total_goals = home_score + away_score
+    selection_line = _resolve_selection_line(
+        market_family=market_family,
+        selection_label=selection_label,
+        line_value=line_value,
+        match=match,
+        teams_by_id=teams_by_id,
+    )
+    settlement_lines = _resolve_settlement_lines(selection_line)
+    if not settlement_lines:
+        return None
 
     if market_family == "totals":
-        if "over" in normalized_label:
-            if total_goals == line_value:
-                return None
-            return 1 if total_goals > line_value else 0
-        if "under" in normalized_label:
-            if total_goals == line_value:
-                return None
-            return 1 if total_goals < line_value else 0
-        return None
+        is_over = "over" in normalized_label
+        is_under = "under" in normalized_label
+        if not is_over and not is_under:
+            return None
+        payout = 0.0
+        for settlement_line in settlement_lines:
+            result = (
+                float(total_goals) - settlement_line
+                if is_over
+                else settlement_line - float(total_goals)
+            )
+            payout += _evaluate_settlement_line(result, market_price)
+        return round((payout / len(settlement_lines) / market_price) - 1.0, 4)
 
-    home_name = str(
-        (teams_by_id.get(str(match.get("home_team_id") or "")) or {}).get("name") or ""
-    ).lower()
-    away_name = str(
-        (teams_by_id.get(str(match.get("away_team_id") or "")) or {}).get("name") or ""
-    ).lower()
-    handicap = abs(line_value)
-    if "-" in normalized_label and home_name and home_name in normalized_label:
-        adjusted = goal_difference - handicap
-    elif "+" in normalized_label and home_name and home_name in normalized_label:
-        adjusted = goal_difference + handicap
-    elif "-" in normalized_label and away_name and away_name in normalized_label:
-        adjusted = (-goal_difference) - handicap
-    elif "+" in normalized_label and away_name and away_name in normalized_label:
-        adjusted = (-goal_difference) + handicap
-    else:
+    selection_side = _resolve_spread_selection_side(
+        selection_label,
+        match=match,
+        teams_by_id=teams_by_id,
+    )
+    if selection_side is None:
         return None
-
-    if adjusted == 0:
-        return None
-    return 1 if adjusted > 0 else 0
+    payout = 0.0
+    for settlement_line in settlement_lines:
+        result = (
+            (home_score + settlement_line) - away_score
+            if selection_side == "home"
+            else (away_score + settlement_line) - home_score
+        )
+        payout += _evaluate_settlement_line(result, market_price)
+    return round((payout / len(settlement_lines) / market_price) - 1.0, 4)
 
 
 def zero_metrics() -> dict:
@@ -476,6 +496,9 @@ def _resolve_moneyline_market_price(prediction: dict, pick: str) -> float | None
 
 
 def _net_profit(row: dict) -> float:
+    explicit_profit = _read_numeric(row.get("profit"))
+    if explicit_profit is not None:
+        return explicit_profit
     market_price = _read_numeric(row.get("market_price"))
     if market_price in {None, 0.0}:
         return 0.0

@@ -91,9 +91,9 @@ function buildTableSupabase(tables: FakeTables) {
   } as never;
 }
 
-function setDailyPicksClock() {
+function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
   vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-04-24T03:00:00Z"));
+  vi.setSystemTime(now);
 }
 
 describe("prediction API", () => {
@@ -859,6 +859,73 @@ describe("prediction API", () => {
       marketFamily: "spreads",
       selectionLabel: "Chelsea -0.5",
       status: "recommended",
+    });
+  });
+
+  it("does not graft opposite-side value recommendation metadata onto the moneyline pick", async () => {
+    setDailyPicksClock(new Date("2026-04-25T12:00:00Z"));
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-26T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "AWAY",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.22,
+          value_recommendation_expected_value: 0.51,
+          value_recommendation_market_price: 0.33,
+          value_recommendation_model_probability: 0.55,
+          value_recommendation_market_probability: 0.33,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-26",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      edge: null,
+      expectedValue: null,
+      marketPrice: null,
+      modelProbability: null,
+      marketProbability: null,
     });
   });
 

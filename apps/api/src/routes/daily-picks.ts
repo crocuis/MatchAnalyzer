@@ -519,6 +519,10 @@ function buildMoneylineAndVariantPicks(
     } satisfies PredictionLaneSummaryFields,
     representative.legacyPayload,
   );
+  const alignedValueRecommendation =
+    valueRecommendation?.pick === mainRecommendation.pick
+      ? valueRecommendation
+      : null;
   const status =
     mainRecommendation.recommended ? "recommended" : "held";
 
@@ -528,11 +532,11 @@ function buildMoneylineAndVariantPicks(
     marketFamily: "moneyline",
     selectionLabel: mainRecommendation.pick,
     confidence: mainRecommendation.confidence,
-    edge: valueRecommendation?.edge ?? null,
-    expectedValue: valueRecommendation?.expectedValue ?? null,
-    marketPrice: valueRecommendation?.marketPrice ?? null,
-    modelProbability: valueRecommendation?.modelProbability ?? null,
-    marketProbability: valueRecommendation?.marketProbability ?? null,
+    edge: alignedValueRecommendation?.edge ?? null,
+    expectedValue: alignedValueRecommendation?.expectedValue ?? null,
+    marketPrice: alignedValueRecommendation?.marketPrice ?? null,
+    modelProbability: alignedValueRecommendation?.modelProbability ?? null,
+    marketProbability: alignedValueRecommendation?.marketProbability ?? null,
     sourceAgreementRatio: base.sourceAgreementRatio,
     status,
     noBetReason: mainRecommendation.noBetReason ?? null,
