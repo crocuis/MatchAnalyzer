@@ -4074,6 +4074,15 @@ describe("prediction API", () => {
             confidence_score: 0.61,
             summary_payload: {
               source_agreement_ratio: 1,
+              validation_metadata: {
+                rolling_window_days: 90,
+                sample_count: 55,
+                hit_rate: 0.8364,
+                coverage: 0.42,
+                confidence_bucket: "0.6-0.7",
+                validated_as_of: "2026-04-27T00:00:00Z",
+                model_version: "model-v1",
+              },
               source_metadata: {
                 market_segment: "with_prediction_market",
                 fusion_weights: {
@@ -4127,8 +4136,26 @@ describe("prediction API", () => {
 
     expect(detail.prediction?.recommendedPick).toBe("AWAY");
     expect(detail.prediction?.confidence).toBe(0.61);
+    expect(detail.prediction?.validationMetadata).toEqual({
+      rolling_window_days: 90,
+      sample_count: 55,
+      hit_rate: 0.8364,
+      coverage: 0.42,
+      confidence_bucket: "0.6-0.7",
+      validated_as_of: "2026-04-27T00:00:00Z",
+      model_version: "model-v1",
+    });
     expect(detail.prediction?.explanationPayload).toEqual({
       source_agreement_ratio: 1,
+      validation_metadata: {
+        rolling_window_days: 90,
+        sample_count: 55,
+        hit_rate: 0.8364,
+        coverage: 0.42,
+        confidence_bucket: "0.6-0.7",
+        validated_as_of: "2026-04-27T00:00:00Z",
+        model_version: "model-v1",
+      },
       source_metadata: {
         market_segment: "with_prediction_market",
         fusion_weights: {

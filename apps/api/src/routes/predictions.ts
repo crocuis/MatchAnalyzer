@@ -102,6 +102,8 @@ type PredictionFusionPolicyHistoryView = {
   rollout: HistoryLaneSummary | null;
 };
 
+type PredictionValidationMetadata = Record<string, unknown>;
+
 const predictionSourceEvaluationTables = [
   "prediction_source_evaluation_reports",
   "prediction_source_evaluation_report",
@@ -519,6 +521,14 @@ function normalizeHistoryLaneSummary(value: unknown): HistoryLaneSummary | null 
   }
 
   return summary;
+}
+
+function normalizeValidationMetadata(summaryPayload: unknown): PredictionValidationMetadata | null {
+  if (!isRecord(summaryPayload)) {
+    return null;
+  }
+  const metadata = summaryPayload.validation_metadata ?? summaryPayload.validationMetadata;
+  return isRecord(metadata) ? metadata : null;
 }
 
 function normalizeHistoryEntry<T>(
@@ -963,6 +973,9 @@ export async function loadPredictionView(
         Number(latestPrediction.confidence_score),
       )
     : null;
+  const validationMetadata = latestPrediction
+    ? normalizeValidationMetadata(latestPrediction.summary_payload)
+    : null;
   const valueRecommendation = latestPrediction && settledOutcome === null
     ? normalizeValueRecommendationFromSummary(
         {
@@ -1011,6 +1024,7 @@ export async function loadPredictionView(
           confidence: mainRecommendation?.recommended
             ? mainRecommendation.confidence ?? null
             : null,
+          validationMetadata,
           mainRecommendation,
           valueRecommendation,
           variantMarkets,
