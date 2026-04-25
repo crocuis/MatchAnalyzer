@@ -188,11 +188,14 @@
     "summary": {
       "title": "리그 예측 요약",
       "caption": "베팅 추천 여부와 관계없이 평가 대상에 포함된 종료 경기 기준",
+      "upcomingCaption": "리그 전체 데이터 기준 예측 데이터 입력 현황",
+      "recentCaption": "리그 전체 데이터 기준 종료 경기 적중/미적중 현황",
       "predictionData": "예측 데이터",
       "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "평가 대상",
       "correct": "적중",
       "incorrect": "미적중",
+      "coverageRate": "입력률",
       "successRate": "적중률",
       "successRateValue": "적중률 {{rate}}%",
       "noData": "—"

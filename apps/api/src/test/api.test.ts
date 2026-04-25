@@ -1928,7 +1928,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("caps dashboard prediction coverage at the active match view total", async () => {
+  it("keeps dashboard prediction summary scoped to the full league dataset", async () => {
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -2006,11 +2006,11 @@ describe("prediction API", () => {
 
     expect(page.totalMatches).toBe(7);
     expect(page.predictionSummary).toEqual({
-      predictedCount: 7,
-      evaluatedCount: 7,
-      correctCount: 7,
-      incorrectCount: 0,
-      successRate: 1,
+      predictedCount: 340,
+      evaluatedCount: 333,
+      correctCount: 140,
+      incorrectCount: 193,
+      successRate: 140 / 333,
     });
   });
 
