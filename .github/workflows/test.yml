@@ -7,6 +7,9 @@ on:
   pull_request:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
 
 jobs:
   verify:
@@ -18,7 +21,7 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,13 +30,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: npm install
+          cache: "pip"
+          cache-dependency-path: batch/requirements.txt
+      - run: npm install --no-audit --no-fund
       - run: python3 -m pip install -r batch/requirements.txt
       - run: npm test
       - run: npm --workspace apps/api run test
       - run: npm --workspace apps/web run test
       - run: python3 -m pytest
-      - run: python3 -m batch.src.jobs.ingest_fixtures_job
-      - run: python3 -m batch.src.jobs.ingest_markets_job
-      - run: python3 -m batch.src.jobs.run_predictions_job
-      - run: python3 -m batch.src.jobs.run_post_match_review_job

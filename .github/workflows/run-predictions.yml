@@ -38,7 +38,7 @@ jobs:
   predict:
     concurrency:
       group: run-predictions
-      cancel-in-progress: false
+      cancel-in-progress: true
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -48,12 +48,14 @@ jobs:
       OPENROUTER_APP_URL: ${{ vars.OPENROUTER_APP_URL }}
       OPENROUTER_APP_TITLE: ${{ vars.OPENROUTER_APP_TITLE }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: batch/requirements.txt
       - run: |
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"

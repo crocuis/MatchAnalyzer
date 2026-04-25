@@ -70,7 +70,7 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
 def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() -> None:
     workflow = read_workflow("post-match-review.yml")
 
-    assert 'cron: "45 * * * *"' in workflow
+    assert 'cron: "45 */6 * * *"' in workflow
     assert 'cron: "20 4 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
@@ -87,16 +87,13 @@ def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() ->
     assert "date -u -d 'yesterday' +%F" in workflow
 
 
-def test_report_missing_signal_coverage_workflow_runs_after_predictions() -> None:
+def test_report_missing_signal_coverage_workflow_runs_daily() -> None:
     workflow = read_workflow("report-missing-signal-coverage.yml")
 
-    assert "workflow_run:" in workflow
-    assert "workflows: [ingest-fixtures, ingest-markets, run-predictions]" in workflow
-    assert "types: [completed]" in workflow
+    assert "schedule:" in workflow
+    assert 'cron: "10 5 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
-    assert "github.event_name == 'workflow_dispatch'" in workflow
-    assert "github.event.workflow_run.conclusion == 'success'" in workflow
-    assert "schedule:" not in workflow
+    assert "workflow_run:" not in workflow
 
 
 def test_report_missing_signal_coverage_workflow_validates_and_exports_target_date() -> None:
