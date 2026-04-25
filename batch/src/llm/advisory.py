@@ -102,11 +102,16 @@ class NvidiaChatClient:
             method="POST",
         )
         payload = self._send_with_retries(request)
-        content = (
-            payload.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("LLM response missing choices")
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise ValueError("LLM response choice must be an object")
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("LLM response choice missing message")
+        content = message.get("content", "")
         return parse_json_object(str(content))
 
     def _send_with_retries(self, request: Request) -> dict[str, Any]:

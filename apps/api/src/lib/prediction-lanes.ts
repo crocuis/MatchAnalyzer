@@ -20,12 +20,19 @@ function formatLineValue(value: number): string {
   return Number.isInteger(value) ? String(value) : String(value);
 }
 
-function labelAlreadyHasLine(label: string): boolean {
+function labelAlreadyHasLine(label: string, marketFamily: string): boolean {
+  if (marketFamily === "spreads") {
+    return /(?:^|\s)[+-]\d+(?:\.\d+)?$/.test(label);
+  }
   return /(?:^|\s)[+-]?\d+(?:\.\d+)?$/.test(label);
 }
 
-function appendLineIfMissing(label: string, lineLabel: string): string {
-  if (labelAlreadyHasLine(label)) {
+function appendLineIfMissing(
+  label: string,
+  lineLabel: string,
+  marketFamily: string,
+): string {
+  if (labelAlreadyHasLine(label, marketFamily)) {
     return label;
   }
   return `${label} ${lineLabel}`;
@@ -59,8 +66,16 @@ function normalizeVariantMarketLabels({
 
   if (marketFamily === "totals") {
     const lineLabel = formatLineValue(lineValue);
-    nextSelectionALabel = appendLineIfMissing(selectionALabel, lineLabel);
-    nextSelectionBLabel = appendLineIfMissing(selectionBLabel, lineLabel);
+    nextSelectionALabel = appendLineIfMissing(
+      selectionALabel,
+      lineLabel,
+      marketFamily,
+    );
+    nextSelectionBLabel = appendLineIfMissing(
+      selectionBLabel,
+      lineLabel,
+      marketFamily,
+    );
   }
 
   if (
@@ -72,10 +87,12 @@ function normalizeVariantMarketLabels({
     nextSelectionALabel = appendLineIfMissing(
       selectionALabel,
       `-${formatLineValue(absoluteLine)}`,
+      marketFamily,
     );
     nextSelectionBLabel = appendLineIfMissing(
       selectionBLabel,
       `+${formatLineValue(absoluteLine)}`,
+      marketFamily,
     );
   }
 

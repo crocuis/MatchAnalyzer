@@ -45,6 +45,20 @@ class FakeResponse:
         ).encode("utf-8")
 
 
+class FakeRawResponse:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
 def test_build_prediction_advisory_messages_include_match_context_without_secret():
     messages = build_prediction_advisory_messages(
         {
@@ -247,6 +261,32 @@ def test_nvidia_chat_client_enforces_wall_clock_timeout_during_response_read():
         assert "LLM request exceeded" in str(exc)
     else:
         raise AssertionError("expected wall-clock timeout")
+
+
+def test_request_prediction_advisory_marks_empty_choices_unavailable():
+    def fake_opener(request, *, timeout):
+        return FakeRawResponse({"choices": []})
+
+    client = NvidiaChatClient(
+        api_key="test-key",
+        requests_per_minute=0,
+        retry_count=0,
+        opener=fake_opener,
+    )
+
+    advisory = request_prediction_advisory(
+        client=client,
+        model="deepseek-ai/deepseek-v4-flash",
+        context={"match": {"id": "match-1"}},
+    )
+
+    assert advisory == {
+        "schema_version": "prediction_llm_advisory.v1",
+        "status": "unavailable",
+        "provider": "nvidia",
+        "model": "deepseek-ai/deepseek-v4-flash",
+        "reason": "request_failed",
+    }
 
 
 def test_normalize_prediction_advisory_clamps_adjustments_and_keeps_schema():

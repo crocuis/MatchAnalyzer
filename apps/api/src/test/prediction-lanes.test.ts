@@ -40,4 +40,28 @@ describe("normalizeVariantMarkets", () => {
       recommendedPick: "West Ham United -1.5",
     });
   });
+
+  it("does not treat numeric team names as existing spread lines", () => {
+    const markets = normalizeVariantMarkets({
+      variant_markets: [
+        {
+          market_family: "spreads",
+          source_name: "polymarket_spreads",
+          line_value: 1.5,
+          selection_a_label: "1. FC Heidenheim 1846",
+          selection_a_price: 0.42,
+          selection_b_label: "Borussia Dortmund",
+          selection_b_price: 0.58,
+          market_slug: "bundesliga-hei-dor-2026-04-20-spread-away-1pt5",
+          recommended_pick: "1. FC Heidenheim 1846",
+        },
+      ],
+    });
+
+    expect(markets[0]).toMatchObject({
+      selectionALabel: "1. FC Heidenheim 1846 -1.5",
+      selectionBLabel: "Borussia Dortmund +1.5",
+      recommendedPick: "1. FC Heidenheim 1846 -1.5",
+    });
+  });
 });

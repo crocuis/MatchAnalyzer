@@ -206,6 +206,40 @@ def test_build_variant_markets_adds_line_to_line_less_variant_labels():
     assert variant_markets[1]["recommended_pick"] == "Over 2.5"
 
 
+def test_build_variant_markets_does_not_parse_numeric_team_names_as_spread_lines():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": 1.5,
+                "selection_a_label": "1. FC Heidenheim 1846",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Borussia Dortmund",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-home-1pt5"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 1.3,
+            "home_xg_against_last_5": 1.4,
+            "away_xg_for_last_5": 1.6,
+            "away_xg_against_last_5": 1.1,
+        },
+        match={
+            "home_team_id": "heidenheim",
+            "away_team_id": "dortmund",
+        },
+        teams_by_id={
+            "heidenheim": {"name": "1. FC Heidenheim 1846"},
+            "dortmund": {"name": "Borussia Dortmund"},
+        },
+    )
+
+    assert variant_markets[0]["selection_a_label"] == "1. FC Heidenheim 1846 +1.5"
+    assert variant_markets[0]["selection_b_label"] == "Borussia Dortmund -1.5"
+
+
 def test_build_variant_markets_adds_recommendations_for_integer_and_quarter_lines():
     variant_markets = run_predictions_job.build_variant_markets(
         [

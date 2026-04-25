@@ -1274,14 +1274,15 @@ def _normalize_variant_text(value: object) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
-def _extract_signed_number(value: object) -> float | None:
+def _extract_terminal_line_number(value: object, *, require_sign: bool) -> float | None:
     if not isinstance(value, str):
         return None
-    match = re.search(r"[+-]?\d+(?:\.\d+)?", value)
+    sign_pattern = r"[+-]" if require_sign else r"[+-]?"
+    match = re.search(rf"(?:^|\s)({sign_pattern}\d+(?:\.\d+)?)\s*$", value)
     if not match:
         return None
     try:
-        return float(match.group(0))
+        return float(match.group(1))
     except ValueError:
         return None
 
@@ -1306,11 +1307,11 @@ def _normalize_variant_selection_label(
     label = str(selection_label or "")
     if not label:
         return label
-    if _extract_signed_number(label) is not None:
-        return label
 
     normalized_label = _normalize_variant_text(label)
     if market_family == "totals":
+        if _extract_terminal_line_number(label, require_sign=False) is not None:
+            return label
         if (
             line_value is not None
             and (
@@ -1322,6 +1323,8 @@ def _normalize_variant_selection_label(
         return label
 
     if market_family == "spreads":
+        if _extract_terminal_line_number(label, require_sign=True) is not None:
+            return label
         selection_line = _resolve_selection_line(
             market_family=market_family,
             selection_label=label,
@@ -1350,14 +1353,15 @@ def _resolve_selection_line(
     match: dict | None,
     teams_by_id: dict[str, dict] | None,
 ) -> float | None:
-    parsed_line = _extract_signed_number(selection_label)
     if market_family == "totals":
+        parsed_line = _extract_terminal_line_number(selection_label, require_sign=False)
         if parsed_line is not None:
             return abs(parsed_line)
         return abs(line_value) if line_value is not None else None
     if market_family != "spreads":
         return line_value
 
+    parsed_line = _extract_terminal_line_number(selection_label, require_sign=True)
     if parsed_line is not None:
         return parsed_line
     selection_side = _resolve_spread_selection_side(
