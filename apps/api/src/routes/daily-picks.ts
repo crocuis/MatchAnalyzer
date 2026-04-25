@@ -640,27 +640,22 @@ function buildVariantPick(
 }
 
 function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
-  const familyPriority = (item: DailyPickItem) => {
-    switch (item.marketFamily) {
-      case "moneyline":
-        return 0;
-      case "totals":
-        return 1;
-      case "spreads":
-        return 2;
-      default:
-        return 3;
+  const recommendationScore = (item: DailyPickItem) => {
+    if (item.marketFamily === "moneyline") {
+      return item.confidence ?? 0;
     }
+    return item.modelProbability ?? 0;
   };
-  const familyDelta = familyPriority(left) - familyPriority(right);
-  if (familyDelta !== 0) {
-    return familyDelta;
-  }
-  const leftScore = (left.expectedValue ?? 0) + (left.confidence ?? 0);
-  const rightScore = (right.expectedValue ?? 0) + (right.confidence ?? 0);
+
+  const leftScore = recommendationScore(left);
+  const rightScore = recommendationScore(right);
   return (
     rightScore - leftScore
+    || (right.expectedValue ?? 0) - (left.expectedValue ?? 0)
+    || (right.edge ?? 0) - (left.edge ?? 0)
+    || (right.sourceAgreementRatio ?? 0) - (left.sourceAgreementRatio ?? 0)
     || Date.parse(left.kickoffAt) - Date.parse(right.kickoffAt)
+    || left.id.localeCompare(right.id)
   );
 }
 

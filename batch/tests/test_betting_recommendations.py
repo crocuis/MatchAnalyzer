@@ -252,7 +252,7 @@ def test_settle_variant_candidate_handles_quarter_lines_with_partial_outcomes():
     assert half_loss == -0.5
 
 
-def test_select_daily_recommendations_matches_live_family_priority_before_score():
+def test_select_daily_recommendations_matches_live_recommendation_score_order():
     selected = select_daily_recommendations(
         {
             "2026-04-21": [
@@ -298,7 +298,7 @@ def test_select_daily_recommendations_matches_live_family_priority_before_score(
     )["2026-04-21"]
 
     assert [row["market_family"] for row in selected] == [
-        "moneyline",
-        "totals",
         "spreads",
+        "totals",
+        "moneyline",
     ]

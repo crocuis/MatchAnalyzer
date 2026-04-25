@@ -835,7 +835,7 @@ describe("prediction API", () => {
     ]);
   });
 
-  it("keeps recommended moneyline picks ahead of recommended variant picks in the default daily picks view", async () => {
+  it("orders recommended daily picks by recommendation score across market families", async () => {
     setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
@@ -889,9 +889,9 @@ describe("prediction API", () => {
               recommended: true,
               no_bet_reason: null,
               edge: 0.45,
-              expected_value: 3.0,
+              expected_value: 0.12,
               market_price: 0.15,
-              model_probability: 0.6,
+              model_probability: 0.9,
               market_probability: 0.15,
             },
           ],
@@ -910,15 +910,71 @@ describe("prediction API", () => {
     });
 
     expect(view.items[0]).toMatchObject({
-      marketFamily: "moneyline",
-      selectionLabel: "HOME",
-      status: "recommended",
-    });
-    expect(view.items[1]).toMatchObject({
       marketFamily: "spreads",
       selectionLabel: "Chelsea -0.5",
       status: "recommended",
     });
+    expect(view.items[1]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      status: "recommended",
+    });
+  });
+
+  it("caps default daily picks at the ten strongest recommendations", async () => {
+    setDailyPicksClock();
+    const matchIndexes = Array.from({ length: 11 }, (_value, index) => index);
+    const supabase = buildTableSupabase({
+      matches: matchIndexes.map((index) => ({
+        id: `match-${index}`,
+        competition_id: "premier-league",
+        kickoff_at: `2026-04-24T${String(10 + index).padStart(2, "0")}:00:00Z`,
+        home_team_id: "home",
+        away_team_id: "away",
+      })),
+      teams: [
+        { id: "home", name: "Home" },
+        { id: "away", name: "Away" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: matchIndexes.map((index) => ({
+        id: `snapshot-${index}`,
+        match_id: `match-${index}`,
+        checkpoint_type: "T_MINUS_24H",
+      })),
+      predictions: matchIndexes.map((index) => ({
+        id: `prediction-${index}`,
+        match_id: `match-${index}`,
+        snapshot_id: `snapshot-${index}`,
+        recommended_pick: "HOME",
+        confidence_score: 0.5 + index / 100,
+        main_recommendation_pick: "HOME",
+        main_recommendation_confidence: 0.5 + index / 100,
+        main_recommendation_recommended: true,
+        main_recommendation_no_bet_reason: null,
+        created_at: `2026-04-24T08:${String(index).padStart(2, "0")}:00Z`,
+      })),
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items).toHaveLength(10);
+    expect(view.items.map((item) => item.matchId)).toEqual([
+      "match-10",
+      "match-9",
+      "match-8",
+      "match-7",
+      "match-6",
+      "match-5",
+      "match-4",
+      "match-3",
+      "match-2",
+      "match-1",
+    ]);
   });
 
   it("does not graft opposite-side value recommendation metadata onto the moneyline pick", async () => {
