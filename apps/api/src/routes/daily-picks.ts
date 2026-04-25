@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import type { AppBindings } from "../env";
 import {
+  API_EGRESS_CACHE_CONTROL,
+  cachedResponse,
+} from "../lib/edge-cache";
+import {
   normalizeMainRecommendationFromSummary,
   normalizeValueRecommendation,
   normalizeValueRecommendationFromSummary,
@@ -651,25 +655,27 @@ function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
 }
 
 dailyPicks.get("/", async (c) => {
-  const supabase = getSupabaseClient(c.env);
-  const marketFamilyQuery = c.req.query("marketFamily");
-  const marketFamily =
-    marketFamilyQuery === "moneyline"
-    || marketFamilyQuery === "spreads"
-    || marketFamilyQuery === "totals"
-      ? marketFamilyQuery
-      : "all";
+  return cachedResponse(c, async () => {
+    const supabase = getSupabaseClient(c.env);
+    const marketFamilyQuery = c.req.query("marketFamily");
+    const marketFamily =
+      marketFamilyQuery === "moneyline"
+      || marketFamilyQuery === "spreads"
+      || marketFamilyQuery === "totals"
+        ? marketFamilyQuery
+        : "all";
 
-  const view = await loadDailyPicksView(supabase, {
-    date: c.req.query("date") ?? undefined,
-    leagueId: c.req.query("leagueId") ?? null,
-    marketFamily,
-    includeHeld: c.req.query("includeHeld") === "true",
-    locale: normalizeLocale(c.req.query("locale")),
-  });
+    const view = await loadDailyPicksView(supabase, {
+      date: c.req.query("date") ?? undefined,
+      leagueId: c.req.query("leagueId") ?? null,
+      marketFamily,
+      includeHeld: c.req.query("includeHeld") === "true",
+      locale: normalizeLocale(c.req.query("locale")),
+    });
 
-  return c.json(view, 200, {
-    "cache-control": "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+    return c.json(view, 200, {
+      "cache-control": API_EGRESS_CACHE_CONTROL,
+    });
   });
 });
 

@@ -99,6 +99,8 @@ function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
 describe("prediction API", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("returns a health payload", async () => {
@@ -1428,6 +1430,61 @@ describe("prediction API", () => {
     expect(response.headers.get("cache-control")).toBe(
       "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
     );
+  });
+
+  it("serves repeated matches requests from cache without querying Supabase", async () => {
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+    const secondResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves repeated daily picks requests from cache without querying Supabase", async () => {
+    setDailyPicksClock();
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/daily-picks?date=2026-04-24", {
+      headers: { host: "localhost" },
+    });
+    const secondResponse = await app.request("/daily-picks?date=2026-04-24", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces query failures from the route helpers", async () => {

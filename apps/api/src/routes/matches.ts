@@ -3,6 +3,10 @@ import { deriveMatchStatus } from "@match-analyzer/contracts";
 
 import type { AppBindings } from "../env";
 import {
+  API_EGRESS_CACHE_CONTROL,
+  cachedResponse,
+} from "../lib/edge-cache";
+import {
   normalizeMainRecommendation,
   normalizeMainRecommendationFromSummary,
   normalizeSummaryPayload,
@@ -1044,70 +1048,77 @@ export async function loadMatchItems(
 }
 
 matches.get("/", async (c) => {
-  const supabase = getSupabaseClient(c.env);
-  const leagueId = c.req.query("leagueId") ?? undefined;
-  const cursor = c.req.query("cursor") ?? undefined;
-  const limit = c.req.query("limit") ?? undefined;
-  const locale = normalizeLocale(c.req.query("locale"));
-  c.header(
-    "Cache-Control",
-    "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
-  );
+  return cachedResponse(c, async () => {
+    const supabase = getSupabaseClient(c.env);
+    const leagueId = c.req.query("leagueId") ?? undefined;
+    const cursor = c.req.query("cursor") ?? undefined;
+    const limit = c.req.query("limit") ?? undefined;
+    const locale = normalizeLocale(c.req.query("locale"));
 
-  if (!supabase) {
-    return c.json({
-      items: [],
-      leagues: [],
-      predictionSummary: null,
-      selectedLeagueId: null,
-      nextCursor: null,
-      totalMatches: 0,
-    });
-  }
-  try {
-    if (locale) {
-      return c.json(
-        await loadMatchPageView(supabase, {
-          leagueId,
-          cursor,
-          limit,
-          locale,
-        }),
-      );
-    }
-    return c.json(
-      await loadDashboardMatchCardsPageView(supabase, {
-        leagueId,
-        cursor,
-        limit,
-      }),
-    );
-  } catch (error) {
-    if (
-      error instanceof Error
-      && isMissingRelationError({ message: error.message })
-    ) {
-      return c.json(
-        await loadMatchPageView(supabase, {
-          leagueId,
-          cursor,
-          limit,
-          locale,
-        }),
-      );
-    }
-    return c.json(
-      {
+    if (!supabase) {
+      return c.json({
         items: [],
         leagues: [],
         predictionSummary: null,
         selectedLeagueId: null,
         nextCursor: null,
         totalMatches: 0,
-      },
-      500,
-    );
-  }
+      }, 200, {
+        "cache-control": API_EGRESS_CACHE_CONTROL,
+      });
+    }
+    try {
+      if (locale) {
+        return c.json(
+          await loadMatchPageView(supabase, {
+            leagueId,
+            cursor,
+            limit,
+            locale,
+          }),
+          200,
+          { "cache-control": API_EGRESS_CACHE_CONTROL },
+        );
+      }
+      return c.json(
+        await loadDashboardMatchCardsPageView(supabase, {
+          leagueId,
+          cursor,
+          limit,
+        }),
+        200,
+        { "cache-control": API_EGRESS_CACHE_CONTROL },
+      );
+    } catch (error) {
+      if (
+        error instanceof Error
+        && isMissingRelationError({ message: error.message })
+      ) {
+        return c.json(
+          await loadMatchPageView(supabase, {
+            leagueId,
+            cursor,
+            limit,
+            locale,
+          }),
+          200,
+          { "cache-control": API_EGRESS_CACHE_CONTROL },
+        );
+      }
+      return c.json(
+        {
+          items: [],
+          leagues: [],
+          predictionSummary: null,
+          selectedLeagueId: null,
+          nextCursor: null,
+          totalMatches: 0,
+        },
+        500,
+        { "cache-control": API_EGRESS_CACHE_CONTROL },
+      );
+    }
+  });
 });
 
 export default matches;
