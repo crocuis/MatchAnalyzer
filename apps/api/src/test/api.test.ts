@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "../index";
 import * as supabaseModule from "../lib/supabase";
 import { loadDailyPicksView } from "../routes/daily-picks";
@@ -91,7 +91,16 @@ function buildTableSupabase(tables: FakeTables) {
   } as never;
 }
 
+function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+}
+
 describe("prediction API", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns a health payload", async () => {
     const response = await app.request("/health");
     expect(response.status).toBe(200);
@@ -207,8 +216,7 @@ describe("prediction API", () => {
   });
 
   it("returns an empty daily picks payload when no supabase client is configured", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-24T03:00:00Z"));
+    setDailyPicksClock();
     const response = await app.request("/daily-picks");
 
     expect(response.status).toBe(200);
@@ -234,6 +242,7 @@ describe("prediction API", () => {
   });
 
   it("builds capped moneyline picks and keeps price-only variants held", async () => {
+    setDailyPicksClock();
     const tables = {
       matches: [
         {
@@ -526,6 +535,7 @@ describe("prediction API", () => {
   });
 
   it("filters daily picks by market family and includeHeld at the route level", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -645,6 +655,7 @@ describe("prediction API", () => {
   });
 
   it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -736,16 +747,6 @@ describe("prediction API", () => {
 
     expect(view.items).toEqual([
       expect.objectContaining({
-        marketFamily: "spreads",
-        selectionLabel: "Chelsea -0.5",
-        status: "recommended",
-        expectedValue: 0.4,
-        marketPrice: 0.45,
-        modelProbability: 0.63,
-        marketProbability: 0.45,
-        noBetReason: null,
-      }),
-      expect.objectContaining({
         marketFamily: "totals",
         selectionLabel: "Over 2.5",
         status: "recommended",
@@ -753,6 +754,16 @@ describe("prediction API", () => {
         marketPrice: 0.49,
         modelProbability: 0.66,
         marketProbability: 0.49,
+        noBetReason: null,
+      }),
+      expect.objectContaining({
+        marketFamily: "spreads",
+        selectionLabel: "Chelsea -0.5",
+        status: "recommended",
+        expectedValue: 0.4,
+        marketPrice: 0.45,
+        modelProbability: 0.63,
+        marketProbability: 0.45,
         noBetReason: null,
       }),
     ]);
@@ -765,7 +776,161 @@ describe("prediction API", () => {
     ]);
   });
 
+  it("keeps recommended moneyline picks ahead of recommended variant picks in the default daily picks view", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.15,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.85,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+              recommended_pick: "Chelsea -0.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.45,
+              expected_value: 3.0,
+              market_price: 0.15,
+              model_probability: 0.6,
+              market_probability: 0.15,
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      status: "recommended",
+    });
+    expect(view.items[1]).toMatchObject({
+      marketFamily: "spreads",
+      selectionLabel: "Chelsea -0.5",
+      status: "recommended",
+    });
+  });
+
+  it("does not graft opposite-side value recommendation metadata onto the moneyline pick", async () => {
+    setDailyPicksClock(new Date("2026-04-25T12:00:00Z"));
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-26T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "AWAY",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.22,
+          value_recommendation_expected_value: 0.51,
+          value_recommendation_market_price: 0.33,
+          value_recommendation_model_probability: 0.55,
+          value_recommendation_market_probability: 0.33,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-26",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      edge: null,
+      expectedValue: null,
+      marketPrice: null,
+      modelProbability: null,
+      marketProbability: null,
+    });
+  });
+
   it("localizes team labels in daily picks when locale-specific translations exist", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -946,6 +1111,7 @@ describe("prediction API", () => {
   });
 
   it("ignores predictions whose snapshot points at a different match", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -996,6 +1162,7 @@ describe("prediction API", () => {
   });
 
   it("ignores an impossible date filter instead of crashing", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -1053,6 +1220,7 @@ describe("prediction API", () => {
   });
 
   it("prefers the latest enriched prediction row when multiple checkpoints exist", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -1143,6 +1311,7 @@ describe("prediction API", () => {
   });
 
   it("does not graft older enrichment onto a newer representative row", async () => {
+    setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
         {
@@ -2267,6 +2436,9 @@ describe("prediction API", () => {
   });
 
   it("falls back when crest/emblem columns are not present yet", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T00:00:00Z"));
+
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),

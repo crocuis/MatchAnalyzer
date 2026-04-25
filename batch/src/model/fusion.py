@@ -7,6 +7,7 @@ MAIN_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.62
 MAIN_RECOMMENDATION_MIN_BUCKET_COUNT = 5
 MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP = 0.08
 VALUE_RECOMMENDATION_EV_THRESHOLD = 0.15
+VALUE_RECOMMENDATION_MIN_MARKET_PRICE = 0.05
 CURRENT_FUSED_CONFIDENCE_MIN = 0.45
 CURRENT_FUSED_SOURCE_AGREEMENT_MIN = 0.34
 CURRENT_FUSED_MAX_DIVERGENCE = 0.05
@@ -594,6 +595,7 @@ def build_value_recommendation(
     prediction_market_available: bool,
     market_prices: dict | None = None,
     threshold: float = VALUE_RECOMMENDATION_EV_THRESHOLD,
+    minimum_market_price: float = VALUE_RECOMMENDATION_MIN_MARKET_PRICE,
 ) -> dict | None:
     if not prediction_market_available:
         return None
@@ -603,7 +605,7 @@ def build_value_recommendation(
         outcome
         for outcome in ("home", "draw", "away")
         if isinstance(market_prices.get(outcome), (int, float))
-        and float(market_prices[outcome]) > 0
+        and float(market_prices[outcome]) >= minimum_market_price
         and isinstance(base_probs.get(outcome), (int, float))
         and isinstance(market_probs.get(outcome), (int, float))
     ]

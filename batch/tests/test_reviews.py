@@ -267,6 +267,99 @@ def test_build_variant_markets_adds_recommendations_for_integer_and_quarter_line
     ]
 
 
+def test_build_variant_markets_does_not_recommend_ultra_longshot_variant_prices():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -2.5,
+                "selection_a_label": "Home -2.5",
+                "selection_a_price": 0.02,
+                "selection_b_label": "Away +2.5",
+                "selection_b_price": 0.98,
+                "raw_payload": {"market_slug": "spread-longshot"},
+            }
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -2.5,
+            "selection_a_label": "Home -2.5",
+            "selection_a_price": 0.02,
+            "selection_b_label": "Away +2.5",
+            "selection_b_price": 0.98,
+            "market_slug": "spread-longshot",
+            "recommended_pick": "Away +2.5",
+            "recommended": False,
+            "no_bet_reason": "variant_market_too_longshot",
+            "edge": pytest.approx(-0.1623, abs=1e-4),
+            "expected_value": pytest.approx(-0.1656, abs=1e-4),
+            "market_price": 0.98,
+            "model_probability": pytest.approx(0.8177, abs=1e-4),
+            "market_probability": 0.98,
+        }
+    ]
+
+
+def test_build_variant_markets_preserves_no_bet_reason_without_model_probability():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-slug"},
+            }
+        ],
+        snapshot={},
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.5,
+            "selection_a_label": "Home -0.5",
+            "selection_a_price": 0.45,
+            "selection_b_label": "Away +0.5",
+            "selection_b_price": 0.55,
+            "market_slug": "spread-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
+        }
+    ]
+
+
 def test_build_review_keeps_empty_tags_for_correct_prediction():
     review = build_review(
         prediction={
@@ -2443,6 +2536,130 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     }
 
 
+def test_run_predictions_job_calibrates_selector_confidence_against_selected_probs(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "complete",
+                        "lineup_status": "confirmed",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.80,
+                        "draw_prob": 0.12,
+                        "away_prob": 0.08,
+                    },
+                    {
+                        "id": "target_match_t_minus_24h_prediction_market",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "prediction_market",
+                        "home_prob": 0.82,
+                        "draw_prob": 0.10,
+                        "away_prob": 0.08,
+                    },
+                ],
+                "matches": [
+                    {
+                        "id": "target_match",
+                        "competition_id": "premier-league",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+                "predictions": [],
+                "market_variants": [],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    def fake_confidence_score(fused_probs, base_probs=None, context=None):
+        return 0.91 if fused_probs["home"] > 0.8 else 0.41
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **_kwargs: (
+            {"home": 0.90, "draw": 0.05, "away": 0.05},
+            "trained_baseline",
+            {},
+        ),
+    )
+    monkeypatch.setattr(run_predictions_job, "confidence_score", fake_confidence_score)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "current_fused_selector_history_ready",
+        lambda _candidates: True,
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_current_fused_probabilities",
+        lambda _candidates: {
+            "target_match_t_minus_24h": {"home": 0.34, "draw": 0.33, "away": 0.33},
+        },
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_confidence_bucket_summary",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "archive_json_artifact",
+        lambda **kwargs: {
+            "id": kwargs["artifact_id"],
+            "owner_type": kwargs["owner_type"],
+            "owner_id": kwargs["owner_id"],
+            "artifact_kind": kwargs["artifact_kind"],
+            "storage_backend": "r2",
+            "bucket_name": "workflow-artifacts",
+            "object_key": kwargs["key"],
+            "storage_uri": f"r2://workflow-artifacts/{kwargs['key']}",
+            "content_type": "application/json",
+            "size_bytes": 0,
+            "checksum_sha256": "test",
+            "summary_payload": kwargs.get("summary_payload") or {},
+            "metadata": kwargs.get("metadata") or {},
+        },
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    explanation_payload = prediction["explanation_payload"]
+
+    assert prediction["home_prob"] == 0.34
+    assert prediction["confidence_score"] == 0.41
+    assert prediction["main_recommendation_confidence"] == 0.41
+    assert explanation_payload["raw_confidence_score"] == 0.41
+    assert explanation_payload["calibrated_confidence_score"] == 0.41
+    assert explanation_payload["current_fused_selection"]["selected_source"] == "historical_selector"
+
+
 def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
     state: dict[str, list[dict]] = {}
 
@@ -2545,6 +2762,8 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "selection_b_label": "Away +0.5",
             "selection_b_price": 0.46,
             "market_slug": "spread-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
         },
         {
             "market_family": "totals",
@@ -2555,6 +2774,8 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "selection_b_label": "Under 2.5",
             "selection_b_price": 0.43,
             "market_slug": "total-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
         },
     ]
 

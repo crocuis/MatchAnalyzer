@@ -2,15 +2,19 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 import re
+import subprocess
 import sys
+import time
 import unicodedata
 from typing import Any
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
 POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
 BETMAN_BUYABLE_GAMES_URL = "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do"
 BETMAN_GAME_INFO_URL = "https://m.betman.co.kr/buyPsblGame/gameInfoInq.do"
+BETMAN_URLOPEN_MAX_ATTEMPTS = 3
 BETMAN_COMPETITION_NAME_HINTS: dict[str, tuple[str, ...]] = {
     "premier-league": ("epl", "프리미어"),
     "la-liga": ("라리가", "laliga"),
@@ -63,8 +67,32 @@ def fetch_betman_json(
         headers={"Content-Type": "application/json; charset=UTF-8"},
         method="POST",
     )
-    with urlopen(request) as response:
-        return json.loads(response.read().decode("utf-8"))
+    for attempt in range(1, BETMAN_URLOPEN_MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(request) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except URLError:
+            if attempt == BETMAN_URLOPEN_MAX_ATTEMPTS:
+                break
+            time.sleep(float(attempt))
+
+    completed = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-X",
+            "POST",
+            url,
+            "-H",
+            "Content-Type: application/json; charset=UTF-8",
+            "--data",
+            json.dumps(request_payload, ensure_ascii=False),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(completed.stdout)
 
 
 def fetch_betman_buyable_games() -> dict[str, Any]:
@@ -360,24 +388,41 @@ def resolve_variant_line_value(
     selection_b_label: str,
 ) -> float | None:
     raw_spread = _read_numeric(market.get("spread"))
-    if raw_spread is not None and abs(raw_spread) >= 0.1:
-        return raw_spread
-
     label_candidates = [
         _extract_first_signed_number(selection_a_label),
         _extract_first_signed_number(selection_b_label),
         _extract_first_signed_number(str(market.get("question") or "")),
         _extract_line_value_from_slug(str(market.get("slug") or "")),
     ]
+    best_label_candidate = next(
+        (candidate for candidate in label_candidates if candidate not in {None, 0.0}),
+        None,
+    )
     if market_type == "spreads":
-        for candidate in label_candidates:
-            if candidate not in {None, 0.0}:
-                return candidate
+        if (
+            raw_spread is not None
+            and abs(raw_spread) >= 0.1
+            and (
+                best_label_candidate is None
+                or abs(raw_spread) >= abs(best_label_candidate) * 0.5
+            )
+        ):
+            return raw_spread
+        if best_label_candidate not in {None, 0.0}:
+            return best_label_candidate
         return raw_spread
     if market_type == "totals":
-        for candidate in label_candidates:
-            if candidate is not None and candidate > 0:
-                return abs(candidate)
+        if (
+            raw_spread is not None
+            and raw_spread > 0.1
+            and (
+                best_label_candidate is None
+                or raw_spread >= abs(best_label_candidate) * 0.5
+            )
+        ):
+            return abs(raw_spread)
+        if best_label_candidate is not None and best_label_candidate > 0:
+            return abs(best_label_candidate)
         return raw_spread
     return raw_spread
 

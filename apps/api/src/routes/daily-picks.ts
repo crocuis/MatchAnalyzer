@@ -519,6 +519,10 @@ function buildMoneylineAndVariantPicks(
     } satisfies PredictionLaneSummaryFields,
     representative.legacyPayload,
   );
+  const alignedValueRecommendation =
+    valueRecommendation?.pick === mainRecommendation.pick
+      ? valueRecommendation
+      : null;
   const status =
     mainRecommendation.recommended ? "recommended" : "held";
 
@@ -528,11 +532,11 @@ function buildMoneylineAndVariantPicks(
     marketFamily: "moneyline",
     selectionLabel: mainRecommendation.pick,
     confidence: mainRecommendation.confidence,
-    edge: valueRecommendation?.edge ?? null,
-    expectedValue: valueRecommendation?.expectedValue ?? null,
-    marketPrice: valueRecommendation?.marketPrice ?? null,
-    modelProbability: valueRecommendation?.modelProbability ?? null,
-    marketProbability: valueRecommendation?.marketProbability ?? null,
+    edge: alignedValueRecommendation?.edge ?? null,
+    expectedValue: alignedValueRecommendation?.expectedValue ?? null,
+    marketPrice: alignedValueRecommendation?.marketPrice ?? null,
+    modelProbability: alignedValueRecommendation?.modelProbability ?? null,
+    marketProbability: alignedValueRecommendation?.marketProbability ?? null,
     sourceAgreementRatio: base.sourceAgreementRatio,
     status,
     noBetReason: mainRecommendation.noBetReason ?? null,
@@ -622,6 +626,22 @@ function buildVariantPick(
 }
 
 function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
+  const familyPriority = (item: DailyPickItem) => {
+    switch (item.marketFamily) {
+      case "moneyline":
+        return 0;
+      case "totals":
+        return 1;
+      case "spreads":
+        return 2;
+      default:
+        return 3;
+    }
+  };
+  const familyDelta = familyPriority(left) - familyPriority(right);
+  if (familyDelta !== 0) {
+    return familyDelta;
+  }
   const leftScore = (left.expectedValue ?? 0) + (left.confidence ?? 0);
   const rightScore = (right.expectedValue ?? 0) + (right.confidence ?? 0);
   return (
