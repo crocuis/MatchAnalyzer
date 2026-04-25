@@ -4,8 +4,16 @@ def build_review(
     market_probs: dict | None,
 ) -> dict:
     cause_tags: list[str] = []
-    explanation_payload = prediction.get("explanation_payload") or {}
-    source_agreement_ratio = explanation_payload.get("source_agreement_ratio")
+    summary_payload = prediction.get("summary_payload")
+    explanation_payload = prediction.get("explanation_payload")
+    prediction_payload = (
+        summary_payload
+        if isinstance(summary_payload, dict)
+        else explanation_payload
+        if isinstance(explanation_payload, dict)
+        else {}
+    )
+    source_agreement_ratio = prediction_payload.get("source_agreement_ratio")
     directional_miss = prediction["recommended_pick"] != actual_outcome
     if directional_miss:
         cause_tags.append("major_directional_miss")
@@ -68,7 +76,7 @@ def build_review(
     else:
         market_signal = "model_outperformed_market"
 
-    feature_attribution = explanation_payload.get("feature_attribution") or []
+    feature_attribution = prediction_payload.get("feature_attribution") or []
     primary_signal = (
         feature_attribution[0].get("signal_key")
         if isinstance(feature_attribution, list)

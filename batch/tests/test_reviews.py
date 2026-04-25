@@ -1247,8 +1247,8 @@ def test_run_predictions_job_surfaces_divergence_features_and_market_availabilit
     prediction_by_snapshot = {
         row["snapshot_id"]: row for row in state["predictions"]
     }
-    market_backed = prediction_by_snapshot["match_a_t_minus_24h"]["explanation_payload"]
-    bookmaker_only = prediction_by_snapshot["match_b_t_minus_24h"]["explanation_payload"]
+    market_backed = prediction_by_snapshot["match_a_t_minus_24h"]["summary_payload"]
+    bookmaker_only = prediction_by_snapshot["match_b_t_minus_24h"]["summary_payload"]
 
     assert market_backed["prediction_market_available"] is True
     assert market_backed["feature_context"]["form_delta"] == 3
@@ -1481,10 +1481,10 @@ def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):
     assert feature_snapshot["match_id"] == prediction["match_id"]
     assert feature_snapshot["model_version_id"] == prediction["model_version_id"]
     assert feature_snapshot["checkpoint_type"] == "T_MINUS_24H"
-    assert feature_snapshot["feature_context"] == prediction["explanation_payload"]["feature_context"]
-    assert feature_snapshot["feature_metadata"] == prediction["explanation_payload"]["feature_metadata"]
-    assert feature_snapshot["source_metadata"] == prediction["explanation_payload"]["source_metadata"]
-    assert prediction["explanation_payload"]["feature_context"]["prediction_market_available"] is True
+    assert feature_snapshot["feature_context"] == prediction["summary_payload"]["feature_context"]
+    assert feature_snapshot["feature_metadata"] == prediction["summary_payload"]["feature_metadata"]
+    assert feature_snapshot["source_metadata"] == prediction["summary_payload"]["source_metadata"]
+    assert prediction["summary_payload"]["feature_context"]["prediction_market_available"] is True
 
 
 def test_run_predictions_job_persists_model_version_selection_metadata(monkeypatch):
@@ -1696,7 +1696,7 @@ def test_run_predictions_job_applies_latest_persisted_fusion_policy(monkeypatch)
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    source_metadata = prediction["explanation_payload"]["source_metadata"]
+    source_metadata = prediction["summary_payload"]["source_metadata"]
 
     assert prediction["home_prob"] == pytest.approx(0.43, abs=1e-6)
     assert prediction["draw_prob"] == pytest.approx(0.29, abs=1e-6)
@@ -1840,7 +1840,7 @@ def test_run_predictions_job_falls_back_to_derived_weights_when_latest_policy_is
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    source_metadata = prediction["explanation_payload"]["source_metadata"]
+    source_metadata = prediction["summary_payload"]["source_metadata"]
 
     assert source_metadata["fusion_policy"] is None
     assert source_metadata["fusion_weights"] == {
@@ -2486,7 +2486,7 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
 
     assert explanation_payload["base_model_source"] == "trained_baseline"
     assert explanation_payload["base_model_probs"]["home"] > 0.5
@@ -2650,7 +2650,7 @@ def test_run_predictions_job_calibrates_selector_confidence_against_selected_pro
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
 
     assert prediction["home_prob"] == 0.34
     assert prediction["confidence_score"] == 0.41
@@ -2911,13 +2911,13 @@ def test_run_predictions_job_preserves_existing_market_enrichment_when_rerun_lac
     assert prediction["value_recommendation_pick"] == "HOME"
     assert prediction["value_recommendation_market_source"] == "prediction_market"
     assert prediction["variant_markets_summary"] == existing_prediction["variant_markets_summary"]
-    assert prediction["explanation_payload"]["prediction_market_available"] is False
-    assert prediction["explanation_payload"]["feature_context"]["prediction_market_available"] is False
+    assert prediction["summary_payload"]["prediction_market_available"] is False
+    assert prediction["summary_payload"]["feature_context"]["prediction_market_available"] is False
     assert (
-        prediction["explanation_payload"]["source_metadata"]["market_sources"]["prediction_market"]["available"]
+        prediction["summary_payload"]["source_metadata"]["market_sources"]["prediction_market"]["available"]
         is False
     )
-    assert prediction["explanation_payload"]["market_enrichment"] == {
+    assert prediction["summary_payload"]["market_enrichment"] == {
         "status": "preserved",
         "current_prediction_market_available": False,
         "prediction_market_row_id": "target_match_t_minus_24h_prediction_market",
@@ -3052,7 +3052,7 @@ def test_run_predictions_job_uses_persisted_snapshot_signals_without_history_rec
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
 
     assert explanation_payload["feature_context"]["form_delta"] == 0
     assert explanation_payload["feature_context"]["rest_delta"] == 0
@@ -3217,7 +3217,7 @@ def test_run_predictions_job_recomputes_stale_snapshot_signals_after_intervening
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    feature_context = prediction["explanation_payload"]["feature_context"]
+    feature_context = prediction["summary_payload"]["feature_context"]
 
     assert feature_context["form_delta"] == 2
     assert feature_context["rest_delta"] == 2
@@ -3354,7 +3354,7 @@ def test_run_predictions_job_marks_absence_coverage_unavailable_for_non_premier_
     [prediction] = state["predictions"]
     missing_reason_keys = {
         reason["reason_key"]
-        for reason in prediction["explanation_payload"]["feature_metadata"]["missing_signal_reasons"]
+        for reason in prediction["summary_payload"]["feature_metadata"]["missing_signal_reasons"]
     }
 
     assert "absence_coverage_unavailable" in missing_reason_keys
@@ -3604,7 +3604,7 @@ def test_run_predictions_job_marks_centroid_fallback_and_applies_penalty(monkeyp
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
 
     assert explanation_payload["base_model_source"] == "centroid_fallback"
 
@@ -3656,7 +3656,7 @@ def test_run_predictions_job_uses_standard_confidence_gate_for_bookmaker_fallbac
 
     run_predictions_job.main()
 
-    explanation_payload = state["predictions"][0]["explanation_payload"]
+    explanation_payload = state["predictions"][0]["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert state["predictions"][0]["main_recommendation_recommended"] is False
@@ -3713,7 +3713,7 @@ def test_run_predictions_job_boosts_draw_for_balanced_bookmaker_fallback(monkeyp
     run_predictions_job.main()
 
     prediction = state["predictions"][0]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert prediction["recommended_pick"] == "DRAW"
@@ -3830,7 +3830,7 @@ def test_run_predictions_job_skips_strong_draw_boost_when_away_signals_are_align
     run_predictions_job.main()
 
     prediction = state["predictions"][0]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert prediction["recommended_pick"] == "AWAY"
@@ -3893,7 +3893,7 @@ def test_run_predictions_job_shifts_strong_home_fallback_toward_draw_when_xg_dis
     run_predictions_job.main()
 
     prediction = state["predictions"][0]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert prediction["recommended_pick"] == "DRAW"
@@ -3963,7 +3963,7 @@ def test_run_predictions_job_shifts_unsupported_home_favorite_toward_draw_when_x
 
     run_predictions_job.main()
 
-    explanation_payload = state["predictions"][0]["explanation_payload"]
+    explanation_payload = state["predictions"][0]["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert state["predictions"][0]["main_recommendation_recommended"] is False
@@ -4037,7 +4037,7 @@ def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_withou
 
     run_predictions_job.main()
 
-    explanation_payload = state["predictions"][0]["explanation_payload"]
+    explanation_payload = state["predictions"][0]["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
     assert state["predictions"][0]["main_recommendation_recommended"] is False
@@ -4088,7 +4088,7 @@ def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing
     run_predictions_job.main()
 
     [prediction] = state["predictions"]
-    explanation_payload = prediction["explanation_payload"]
+    explanation_payload = prediction["summary_payload"]
     source_metadata = explanation_payload["source_metadata"]
 
     assert explanation_payload["base_model_source"] == "prior_fallback"

@@ -6,12 +6,9 @@ import {
   type RolloutLaneSummary as HistoryLaneSummary,
 } from "../lib/rollout-lane-states";
 import {
-  normalizeMainRecommendation,
   normalizeMainRecommendationFromSummary,
   normalizeSummaryPayload,
-  normalizeVariantMarkets,
   normalizeVariantMarketsFromSummary,
-  normalizeValueRecommendation,
   normalizeValueRecommendationFromSummary,
 } from "../lib/prediction-lanes";
 import { ensureOperationalReportsAccess } from "../lib/operational-auth";
@@ -669,9 +666,10 @@ export async function loadPredictionSourceEvaluationHistoryView(
       Array.isArray(data) ? data : [],
       normalizePredictionSourceEvaluationReport,
     );
-    const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0])
-      ? (data[0] as Record<string, unknown>)
-      : null;
+    const latestRow: Record<string, unknown> | null =
+      Array.isArray(data) && data.length > 0 && isRecord(data[0])
+        ? data[0]
+        : null;
     const latestPayload = latestRow ? extractPredictionSourceEvaluationPayload(latestRow) : null;
 
     return {
@@ -777,9 +775,10 @@ export async function loadPredictionFusionPolicyHistoryView(
     Array.isArray(data) ? data : [],
     normalizePredictionFusionPolicyReport,
   );
-  const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0])
-    ? (data[0] as Record<string, unknown>)
-    : null;
+  const latestRow: Record<string, unknown> | null =
+    Array.isArray(data) && data.length > 0 && isRecord(data[0])
+      ? data[0]
+      : null;
   const latestPayload = latestRow ? extractPredictionFusionPolicyPayload(latestRow) : null;
 
   return {
@@ -825,7 +824,6 @@ function comparePredictionRows(
 
 function pickMarketEnrichedPrediction(
   predictions: Array<{
-    explanation_payload: unknown;
     value_recommendation_pick?: string | null;
     value_recommendation_recommended?: boolean | null;
     value_recommendation_edge?: number | null;
@@ -841,12 +839,10 @@ function pickMarketEnrichedPrediction(
     predictions.find(
       (prediction) =>
         prediction.value_recommendation_pick != null ||
-        normalizeValueRecommendation(prediction.explanation_payload) !== null ||
         normalizeVariantMarketsFromSummary(
           {
             variantMarketsSummary: prediction.variant_markets_summary,
           },
-          prediction.explanation_payload,
         ).length > 0,
     ) ?? null
   );
@@ -864,7 +860,7 @@ export async function loadPredictionView(
     supabase
       .from("predictions")
       .select(
-        "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, explanation_payload, created_at",
+        "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, created_at",
       )
       .eq("match_id", matchId)
       .order("created_at", { ascending: false }),
@@ -911,7 +907,6 @@ export async function loadPredictionView(
       );
       const normalizedSummary = normalizeSummaryPayload(
         prediction?.summary_payload,
-        prediction?.explanation_payload,
       ) as { bullets?: unknown; explanation_bullets?: unknown } | null;
       const bullets =
         normalizedSummary &&
@@ -943,7 +938,6 @@ export async function loadPredictionView(
                   },
                   prediction.recommended_pick,
                   Number(prediction.confidence_score ?? 0),
-                  prediction.explanation_payload,
                 ).recommended
                   ? `Pick ${prediction.recommended_pick}`
                   : "No bet"
@@ -967,7 +961,6 @@ export async function loadPredictionView(
         },
         latestPrediction.recommended_pick,
         Number(latestPrediction.confidence_score),
-        latestPrediction.explanation_payload,
       )
     : null;
   const valueRecommendation = latestPrediction && settledOutcome === null
@@ -989,8 +982,6 @@ export async function loadPredictionView(
           valueRecommendationMarketSource:
             marketEnrichedPrediction?.value_recommendation_market_source ?? null,
         },
-        marketEnrichedPrediction?.explanation_payload ??
-          latestPrediction.explanation_payload,
       )
     : null;
   const variantMarkets = latestPrediction
@@ -1000,8 +991,6 @@ export async function loadPredictionView(
             marketEnrichedPrediction?.variant_markets_summary ??
             latestPrediction.variant_markets_summary,
         },
-        marketEnrichedPrediction?.explanation_payload ??
-          latestPrediction.explanation_payload,
       )
     : [];
 
@@ -1030,7 +1019,6 @@ export async function loadPredictionView(
             : (mainRecommendation?.noBetReason ?? null),
           explanationPayload: normalizeSummaryPayload(
             latestPrediction.summary_payload,
-            latestPrediction.explanation_payload,
           ),
           artifact,
         }
