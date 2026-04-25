@@ -16,20 +16,45 @@ def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     assert "REAL_FIXTURE_DATE=" in workflow
 
 
+def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> None:
+    workflow = read_workflow("ingest-fixtures.yml")
+
+    assert "FIXTURE_FUTURE_START_DAYS: 7" in workflow
+    assert "FIXTURE_FUTURE_END_DAYS: 14" in workflow
+    assert 'date -u -d "$TARGET_DATE_CANONICAL" +%F' in workflow
+    assert "seq \"$FIXTURE_FUTURE_START_DAYS\" \"$FIXTURE_FUTURE_END_DAYS\"" in workflow
+    assert "FIXTURE_DATES<<EOF" in workflow
+    assert "while IFS= read -r TARGET_DATE; do" in workflow
+    assert 'REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job' in workflow
+    assert "REAL_PREDICTION_MATCH_IDS" in workflow
+    assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
+    assert 'echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"' in workflow
+    assert 'if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then' in workflow
+    assert "<<'PY'" not in workflow
+    assert "python3 -c" in workflow
+
+
 def test_ingest_markets_workflow_sets_real_market_date() -> None:
     workflow = read_workflow("ingest-markets.yml")
 
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "REAL_MARKET_DATE=" in workflow
+    assert "REAL_PREDICTION_MATCH_IDS" in workflow
+    assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
+    assert "<<'PY'" not in workflow
+    assert "python3 -c" in workflow
 
 
-def test_run_predictions_workflow_sets_real_prediction_date() -> None:
+def test_run_predictions_workflow_supports_manual_date_or_match_targets_only() -> None:
     workflow = read_workflow("run-predictions.yml")
 
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
+    assert "target_match_ids:" in workflow
     assert "REAL_PREDICTION_DATE=" in workflow
+    assert "REAL_PREDICTION_MATCH_IDS=" in workflow
+    assert "schedule:" not in workflow
 
 
 def test_post_match_review_workflow_sets_real_review_date() -> None:
@@ -45,7 +70,7 @@ def test_report_missing_signal_coverage_workflow_runs_after_predictions() -> Non
     workflow = read_workflow("report-missing-signal-coverage.yml")
 
     assert "workflow_run:" in workflow
-    assert "workflows: [run-predictions]" in workflow
+    assert "workflows: [ingest-fixtures, ingest-markets, run-predictions]" in workflow
     assert "types: [completed]" in workflow
     assert "workflow_dispatch:" in workflow
     assert "github.event_name == 'workflow_dispatch'" in workflow

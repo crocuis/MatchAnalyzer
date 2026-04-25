@@ -4,6 +4,70 @@
     "title": "Match Analysis Hub",
     "subtitle": "Discover the edge in match predictions with advanced probability modeling. Get optimal betting insights and monitor model performance in real-time."
   },
+  "dailyPicks": {
+    "entry": {
+      "header": "Daily Picks",
+      "eyebrow": "Pick",
+      "boardTitle": "Daily Picks",
+      "boardCaption": "Today's top filtered insights.",
+      "volume": "Daily volume",
+      "volumeValue": "5-10 picks",
+      "open": "View Daily Picks",
+      "openShort": "View"
+    },
+    "title": "Daily Picks",
+    "subtitle": "A focused board of today's qualified recommendations. Historical targets are shown as model gates, not future profit guarantees.",
+    "back": "Back to dashboard",
+    "empty": "No recommendations passed today's filters.",
+    "error": "Daily Picks could not be loaded.",
+    "showHeldCandidates": "Show {{count}} held candidates",
+    "summary": {
+      "recommendations": "Recommendations",
+      "count": "{{count}} picks",
+      "updated": "Updated",
+      "markets": "Markets",
+      "coverage": "Market coverage",
+      "targets": "Backtest gates",
+      "targetValues": "{{hitRate}}% hit / {{roi}}% ROI",
+      "loading": "Loading Daily Picks summary"
+    },
+    "marketFamilies": {
+      "all": "All",
+      "moneyline": "Moneyline",
+      "spreads": "Handicap",
+      "totals": "Over/Under"
+    },
+    "filters": {
+      "league": "League",
+      "allLeagues": "All leagues",
+      "showHeld": "Show held"
+    },
+    "target": {
+      "hitRate": "Backtest hit rate",
+      "roi": "Backtest ROI",
+      "volume": "Daily picks"
+    },
+    "metrics": {
+      "confidence": "Confidence",
+      "expectedValue": "Expected value",
+      "marketPrice": "Market price",
+      "modelProbability": "Model probability"
+    },
+    "status": {
+      "recommended": "Recommended",
+      "held": "Held",
+      "pending": "Pending",
+      "hit": "Hit",
+      "miss": "Miss"
+    },
+    "noBetReasons": {
+      "low_confidence": "Low confidence",
+      "heldByRecommendationGate": "Held by recommendation gate",
+      "variant_market_price_only": "Market price only",
+      "variant_model_inputs_missing": "Model inputs missing",
+      "variant_ev_below_threshold": "Expected value below threshold"
+    }
+  },
   "leagues": {
     "premier-league": "Premier League",
     "laliga": "La Liga",
@@ -16,8 +80,10 @@
     "chapions-league": "UEFA Champions League",
     "uel": "UEFA Europa League",
     "europa-league": "UEFA Europa League",
+    "conference-league": "UEFA Conference League",
     "uecl": "UEFA Conference League",
     "kleague": "K League",
+    "k-league": "K League",
     "eredivisie": "Eredivisie",
     "primeira-liga": "Primeira Liga",
     "summary": {
@@ -41,6 +107,7 @@
     "summaryBadges": {
       "reviewRequired": "Review required",
       "marketMissing": "Market missing",
+      "marketPreserved": "Stale Market",
       "lineupPending": "Lineup pending",
       "highConsensus": "High consensus",
       "signalConflict": "Signal conflict",
@@ -113,17 +180,22 @@
   "matchTable": {
     "upcomingMatches": "Upcoming Matches",
     "recentResults": "Recent Results",
+    "viewTabsLabel": "Match views",
     "loadMore": "Load More Matches",
+    "showLaterUpcoming": "Show {{count}} later matches",
     "showingStatus": "Showing {{count}} of {{total}} matches",
     "allLoaded": "All matches loaded",
     "summary": {
       "title": "League prediction summary",
       "caption": "Settled matches included in evaluation, regardless of bet recommendation",
+      "upcomingCaption": "Prediction coverage across the full league dataset",
+      "recentCaption": "Settled match hits and misses across the full league dataset",
       "predictionData": "Prediction data",
       "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "Evaluated",
       "correct": "Correct",
       "incorrect": "Incorrect",
+      "coverageRate": "Coverage",
       "successRate": "Success rate",
       "successRateValue": "{{rate}}% success rate",
       "noData": "—"
@@ -146,6 +218,7 @@
       "missingSignalsReasons": "Why signals are missing",
       "syncActionsTitle": "Sync actions",
       "valuePickTitle": "Value Pick",
+      "marketPreservedNote": "Using the last synced market context while live market refresh is unavailable.",
       "expectedValue": "Expected value",
       "marketPrice": "Market price",
       "modelProbability": "Model probability",

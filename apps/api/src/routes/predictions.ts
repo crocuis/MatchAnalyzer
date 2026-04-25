@@ -111,12 +111,60 @@ const predictionSourceEvaluationTables = [
   "prediction_source_evaluations",
 ];
 
+const PREDICTION_SOURCE_EVALUATION_SELECT =
+  "id, created_at, report_json, report_payload, report, evaluation_report, shadow, shadow_summary, rollout, rollout_summary";
+const PREDICTION_MODEL_REGISTRY_SELECT =
+  "id, model_family, training_window, feature_version, calibration_version, selection_metadata, training_metadata, created_at";
+const PREDICTION_FUSION_POLICY_SELECT =
+  "id, source_report_id, policy_payload, created_at";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function resolveSettledOutcome(args: {
+  finalResult: string | null | undefined;
+  kickoffAt: string | null | undefined;
+  homeScore: number | null | undefined;
+  awayScore: number | null | undefined;
+}) {
+  if (
+    args.finalResult === "HOME"
+    || args.finalResult === "DRAW"
+    || args.finalResult === "AWAY"
+  ) {
+    return args.finalResult;
+  }
+
+  if (
+    typeof args.homeScore !== "number"
+    || typeof args.awayScore !== "number"
+  ) {
+    return null;
+  }
+
+  const kickoffMillis =
+    typeof args.kickoffAt === "string" && args.kickoffAt.length > 0
+      ? Date.parse(args.kickoffAt)
+      : NaN;
+  const settledByTime =
+    Number.isFinite(kickoffMillis)
+    && kickoffMillis <= Date.now() - (3 * 60 * 60 * 1000);
+  if (!settledByTime) {
+    return null;
+  }
+
+  if (args.homeScore > args.awayScore) {
+    return "HOME";
+  }
+  if (args.homeScore < args.awayScore) {
+    return "AWAY";
+  }
+  return "DRAW";
 }
 
 function readString(value: unknown): string | null {
@@ -256,7 +304,9 @@ function normalizePredictionSourceEvaluationReport(
   };
 }
 
-function extractPredictionSourceEvaluationPayload(row: Record<string, unknown>) {
+function extractPredictionSourceEvaluationPayload(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   const nestedPayload =
     (isRecord(row.report_json) && row.report_json) ||
     (isRecord(row.report_payload) && row.report_payload) ||
@@ -293,12 +343,17 @@ async function loadArtifactById(
     return null;
   }
 
+  const storageBackend =
+    typeof data.storage_backend === "string" ? data.storage_backend : null;
+  const storageUri =
+    storageBackend === "supabase_storage" ? null : data.storage_uri;
+
   return {
     id: data.id,
-    storageBackend: data.storage_backend,
+    storageBackend,
     bucketName: data.bucket_name,
     objectKey: data.object_key,
-    storageUri: data.storage_uri,
+    storageUri,
     contentType: data.content_type,
     sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : null,
     checksumSha256:
@@ -432,7 +487,9 @@ function normalizePredictionFusionPolicyReport(
   };
 }
 
-function extractPredictionFusionPolicyPayload(row: Record<string, unknown>) {
+function extractPredictionFusionPolicyPayload(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   return isRecord(row.policy_payload)
     ? row.policy_payload
     : isRecord(row.policyPayload)
@@ -515,7 +572,9 @@ async function fetchLatestPredictionSourceEvaluationRow(
   supabase: ApiSupabaseClient,
   tableName: string,
 ) {
-  const orderedQuery = supabase.from(tableName).select("*");
+  const orderedQuery = supabase
+    .from(tableName)
+    .select(PREDICTION_SOURCE_EVALUATION_SELECT);
   const orderedResult = await orderedQuery
     .order("created_at", { ascending: false })
     .limit(1)
@@ -525,7 +584,11 @@ async function fetchLatestPredictionSourceEvaluationRow(
     orderedResult.error?.message?.includes("created_at") ||
     orderedResult.error?.message?.includes("column")
   ) {
-    return supabase.from(tableName).select("*").limit(1).maybeSingle();
+    return supabase
+      .from(tableName)
+      .select(PREDICTION_SOURCE_EVALUATION_SELECT)
+      .limit(1)
+      .maybeSingle();
   }
 
   return orderedResult;
@@ -536,7 +599,9 @@ async function fetchPredictionSourceEvaluationRows(
   tableName: string,
   limitCount: number,
 ) {
-  const orderedQuery = supabase.from(tableName).select("*");
+  const orderedQuery = supabase
+    .from(tableName)
+    .select(PREDICTION_SOURCE_EVALUATION_SELECT);
   const orderedResult = await orderedQuery
     .order("created_at", { ascending: false })
     .limit(limitCount);
@@ -545,7 +610,10 @@ async function fetchPredictionSourceEvaluationRows(
     orderedResult.error?.message?.includes("created_at") ||
     orderedResult.error?.message?.includes("column")
   ) {
-    return supabase.from(tableName).select("*").limit(limitCount);
+    return supabase
+      .from(tableName)
+      .select(PREDICTION_SOURCE_EVALUATION_SELECT)
+      .limit(limitCount);
   }
 
   return orderedResult;
@@ -601,7 +669,9 @@ export async function loadPredictionSourceEvaluationHistoryView(
       Array.isArray(data) ? data : [],
       normalizePredictionSourceEvaluationReport,
     );
-    const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0]) ? data[0] : null;
+    const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0])
+      ? (data[0] as Record<string, unknown>)
+      : null;
     const latestPayload = latestRow ? extractPredictionSourceEvaluationPayload(latestRow) : null;
 
     return {
@@ -641,7 +711,7 @@ export async function loadLatestPredictionModelRegistryView(
 ) {
   const { data, error } = await supabase
     .from("model_versions")
-    .select("*")
+    .select(PREDICTION_MODEL_REGISTRY_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -663,7 +733,7 @@ export async function loadLatestPredictionFusionPolicyView(
 ) {
   const { data, error } = await supabase
     .from("prediction_fusion_policies")
-    .select("*")
+    .select(PREDICTION_FUSION_POLICY_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -686,7 +756,7 @@ export async function loadPredictionFusionPolicyHistoryView(
   const laneSummaries = await loadRolloutLaneSummaries(supabase);
   const { data, error } = await supabase
     .from("prediction_fusion_policies")
-    .select("*")
+    .select(PREDICTION_FUSION_POLICY_SELECT)
     .order("created_at", { ascending: false })
     .limit(6);
 
@@ -707,7 +777,9 @@ export async function loadPredictionFusionPolicyHistoryView(
     Array.isArray(data) ? data : [],
     normalizePredictionFusionPolicyReport,
   );
-  const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0]) ? data[0] : null;
+  const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0])
+    ? (data[0] as Record<string, unknown>)
+    : null;
   const latestPayload = latestRow ? extractPredictionFusionPolicyPayload(latestRow) : null;
 
   return {
@@ -787,6 +859,7 @@ export async function loadPredictionView(
   const [
     { data: predictionRows, error: predictionsError },
     { data: snapshotRows, error: snapshotsError },
+    { data: matchRow, error: matchError },
   ] = await Promise.all([
     supabase
       .from("predictions")
@@ -799,9 +872,14 @@ export async function loadPredictionView(
       .from("match_snapshots")
       .select("id, checkpoint_type, captured_at, lineup_status, snapshot_quality")
       .eq("match_id", matchId),
+    supabase
+      .from("matches")
+      .select("kickoff_at, final_result, home_score, away_score")
+      .eq("id", matchId)
+      .maybeSingle(),
   ]);
 
-  if (predictionsError || snapshotsError) {
+  if (predictionsError || snapshotsError || matchError) {
     throw new Error("prediction queries failed");
   }
 
@@ -812,6 +890,12 @@ export async function loadPredictionView(
 
   const latestPrediction = sortedPredictions[0] ?? null;
   const marketEnrichedPrediction = pickMarketEnrichedPrediction(sortedPredictions);
+  const settledOutcome = resolveSettledOutcome({
+    finalResult: matchRow?.final_result ?? null,
+    kickoffAt: matchRow?.kickoff_at ?? null,
+    homeScore: readNumber(matchRow?.home_score),
+    awayScore: readNumber(matchRow?.away_score),
+  });
   const artifact = latestPrediction
     ? await loadArtifactById(supabase, latestPrediction.explanation_artifact_id)
     : null;
@@ -886,7 +970,7 @@ export async function loadPredictionView(
         latestPrediction.explanation_payload,
       )
     : null;
-  const valueRecommendation = latestPrediction
+  const valueRecommendation = latestPrediction && settledOutcome === null
     ? normalizeValueRecommendationFromSummary(
         {
           valueRecommendationPick:

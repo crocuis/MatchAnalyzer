@@ -144,6 +144,14 @@ export R2_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
 export VITE_API_BASE_URL=https://your-api-origin.example.com
 ```
 
+운영 리포트 API를 보호하려면 API Worker와 Pages Function 런타임에 같은 키를 설정한다.
+웹 대시보드는 민감 리포트 요청만 같은 origin의 `/api/...` 프록시로 보내며, Pages `_worker.js`가 서버 측에서 이 키를 주입한다.
+
+```bash
+export OPERATIONAL_REPORTS_API_KEY=your-operational-report-key
+export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
+```
+
 ## 테스트
 
 저장소 규칙상 아래 순서로 검증한다.

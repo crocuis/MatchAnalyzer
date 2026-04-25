@@ -23,16 +23,17 @@ CHECKPOINT_PRIORITIES = {
     "T_MINUS_6H": 1,
     "T_MINUS_24H": 0,
 }
-RECALIBRATION_MODEL_ID = "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+RECALIBRATION_MODEL_ID = "hist_gradient_boosting_depth9_leaf3_lr008_iter250_v1"
 RECALIBRATION_FALLBACK_MODEL_ID = "decision_tree_depth6_v1"
-RECALIBRATION_MAX_DEPTH = 3
-RECALIBRATION_MIN_SAMPLES_LEAF = 10
+RECALIBRATION_MAX_DEPTH = 9
+RECALIBRATION_MIN_SAMPLES_LEAF = 3
 RECALIBRATION_LEARNING_RATE = 0.08
-RECALIBRATION_MAX_ITER = 500
+RECALIBRATION_MAX_ITER = 250
 RECALIBRATION_TREE_MAX_DEPTH = 6
 RECALIBRATION_MIN_HIST_GRADIENT_ROWS = 100
 RECALIBRATION_MIN_CLASS_COUNT = 3
-RECALIBRATION_MIN_CONFIDENCE_UPLIFT = 0.05
+RECALIBRATION_MIN_CONFIDENCE_UPLIFT = 0.01
+RECALIBRATION_ELIGIBLE_BASE_SOURCES = {"bookmaker_fallback", "prior_fallback"}
 
 
 def _normalize_probability_map(probability_by_label: dict[str, float]) -> dict[str, float]:
@@ -64,9 +65,12 @@ def _bookmaker_probabilities(payload: dict) -> dict:
         return {}
     bookmaker = market_sources.get("bookmaker")
     if not isinstance(bookmaker, dict):
-        return {}
+        bookmaker = {}
     probabilities = bookmaker.get("probabilities")
-    return probabilities if isinstance(probabilities, dict) else {}
+    if isinstance(probabilities, dict):
+        return probabilities
+    base_model_probs = payload.get("base_model_probs")
+    return base_model_probs if isinstance(base_model_probs, dict) else {}
 
 
 def is_recalibration_candidate(prediction: dict) -> bool:
@@ -79,7 +83,7 @@ def is_recalibration_candidate(prediction: dict) -> bool:
         )
     )
     return (
-        payload.get("base_model_source") == "bookmaker_fallback"
+        payload.get("base_model_source") in RECALIBRATION_ELIGIBLE_BASE_SOURCES
         and not prediction_market_available
     )
 
@@ -365,6 +369,10 @@ def recalibrate_predictions(
             "confidence_uplift": confidence_uplift,
             "predicted_probabilities": updated_probability_map,
         }
+        summary_payload = deepcopy(prediction.get("summary_payload") or {})
+        if isinstance(summary_payload, dict):
+            summary_payload["raw_confidence_score"] = updated_confidence
+            summary_payload["calibrated_confidence_score"] = updated_confidence
         updated_prediction = {
             **prediction,
             "home_prob": updated_probability_map["home"],
@@ -372,6 +380,11 @@ def recalibrate_predictions(
             "away_prob": updated_probability_map["away"],
             "recommended_pick": predicted_pick,
             "confidence_score": updated_confidence,
+            "summary_payload": summary_payload,
+            "main_recommendation_pick": updated_recommendation["pick"],
+            "main_recommendation_confidence": updated_recommendation["confidence"],
+            "main_recommendation_recommended": updated_recommendation["recommended"],
+            "main_recommendation_no_bet_reason": updated_recommendation["no_bet_reason"],
             "explanation_payload": payload,
         }
         if predicted_pick != original_pick:

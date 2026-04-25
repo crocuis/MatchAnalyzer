@@ -4,6 +4,70 @@
     "title": "매치 분석 허브",
     "subtitle": "데이터 기반의 정교한 확률 모델링으로 시장의 엣지(Edge)를 포착하여 최적의 베팅 방법을 제안하고, 분석 모델의 성과를 실시간으로 모니터링합니다."
   },
+  "dailyPicks": {
+    "entry": {
+      "header": "Daily Picks",
+      "eyebrow": "추천",
+      "boardTitle": "Daily Picks",
+      "boardCaption": "오늘의 주요 추천 항목입니다.",
+      "volume": "추천 수",
+      "volumeValue": "5-10건",
+      "open": "Daily Picks 보기",
+      "openShort": "보기"
+    },
+    "title": "Daily Picks",
+    "subtitle": "오늘 조건을 통과한 추천만 모아 봅니다. 성과 기준은 백테스트 목표이며 미래 수익 보장이 아닙니다.",
+    "back": "대시보드로 돌아가기",
+    "empty": "오늘 조건을 통과한 추천이 없습니다.",
+    "error": "Daily Picks를 불러오지 못했습니다.",
+    "showHeldCandidates": "보류 후보 {{count}}건 보기",
+    "summary": {
+      "recommendations": "추천 수",
+      "count": "{{count}}건",
+      "updated": "업데이트",
+      "markets": "시장",
+      "coverage": "시장 커버리지",
+      "targets": "백테스트 기준",
+      "targetValues": "적중 {{hitRate}}% / ROI {{roi}}%",
+      "loading": "Daily Picks 요약 불러오는 중"
+    },
+    "marketFamilies": {
+      "all": "전체",
+      "moneyline": "승무패",
+      "spreads": "핸디캡",
+      "totals": "언더/오버"
+    },
+    "filters": {
+      "league": "리그",
+      "allLeagues": "전체 리그",
+      "showHeld": "보류 항목 표시"
+    },
+    "target": {
+      "hitRate": "백테스트 적중률",
+      "roi": "백테스트 ROI",
+      "volume": "하루 추천 수"
+    },
+    "metrics": {
+      "confidence": "신뢰도",
+      "expectedValue": "기대값",
+      "marketPrice": "시장 가격",
+      "modelProbability": "모델 확률"
+    },
+    "status": {
+      "recommended": "추천",
+      "held": "보류",
+      "pending": "대기",
+      "hit": "적중",
+      "miss": "미적중"
+    },
+    "noBetReasons": {
+      "low_confidence": "신뢰도 부족",
+      "heldByRecommendationGate": "추천 게이트 보류",
+      "variant_market_price_only": "시장 가격만 있음",
+      "variant_model_inputs_missing": "모델 입력 부족",
+      "variant_ev_below_threshold": "기대값 기준 미달"
+    }
+  },
   "leagues": {
     "premier-league": "프리미어리그",
     "laliga": "라리가",
@@ -16,8 +80,10 @@
     "chapions-league": "UEFA 챔피언스리그",
     "uel": "UEFA 유로파리그",
     "europa-league": "UEFA 유로파리그",
+    "conference-league": "UEFA 컨퍼런스리그",
     "uecl": "UEFA 컨퍼런스리그",
     "kleague": "K리그",
+    "k-league": "K리그",
     "eredivisie": "에레디비시",
     "primeira-liga": "프리메이라리가",
     "summary": {
@@ -41,6 +107,7 @@
     "summaryBadges": {
       "reviewRequired": "리뷰 필요",
       "marketMissing": "시장 데이터 없음",
+      "marketPreserved": "보존된 시장",
       "lineupPending": "라인업 미확정",
       "highConsensus": "합의도 높음",
       "signalConflict": "신호 충돌",
@@ -113,17 +180,22 @@
   "matchTable": {
     "upcomingMatches": "예정된 경기",
     "recentResults": "최근 경기 결과",
+    "viewTabsLabel": "매치 보기",
     "loadMore": "매치 더 보기",
+    "showLaterUpcoming": "이후 예정 경기 {{count}}개 더 보기",
     "showingStatus": "전체 {{total}}개 중 {{count}}개 매치 표시 중",
     "allLoaded": "모든 매치를 불러왔습니다",
     "summary": {
       "title": "리그 예측 요약",
       "caption": "베팅 추천 여부와 관계없이 평가 대상에 포함된 종료 경기 기준",
+      "upcomingCaption": "리그 전체 데이터 기준 예측 데이터 입력 현황",
+      "recentCaption": "리그 전체 데이터 기준 종료 경기 적중/미적중 현황",
       "predictionData": "예측 데이터",
       "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "평가 대상",
       "correct": "적중",
       "incorrect": "미적중",
+      "coverageRate": "입력률",
       "successRate": "적중률",
       "successRateValue": "적중률 {{rate}}%",
       "noData": "—"
@@ -146,6 +218,7 @@
       "missingSignalsReasons": "누락 이유",
       "syncActionsTitle": "동기화 보강 방안",
       "valuePickTitle": "가치 베팅",
+      "marketPreservedNote": "최신 시장 갱신이 없어 마지막 동기화 시장 기준을 표시하고 있습니다.",
       "expectedValue": "기대 수익",
       "marketPrice": "시장 가격",
       "modelProbability": "모델 확률",

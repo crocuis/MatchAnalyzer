@@ -32,6 +32,8 @@ type RolloutPromotionDecisionReport = {
   createdAt: string | null;
 };
 
+const ROLLOUT_PROMOTION_DECISION_SELECT = "id, decision_payload, created_at";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -117,7 +119,7 @@ export async function loadLatestRolloutPromotionDecisionView(
 ) {
   const { data, error } = await supabase
     .from("rollout_promotion_decisions")
-    .select("*")
+    .select(ROLLOUT_PROMOTION_DECISION_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

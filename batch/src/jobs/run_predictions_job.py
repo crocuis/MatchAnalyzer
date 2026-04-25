@@ -1,6 +1,9 @@
 import json
 import math
 import os
+import re
+from copy import deepcopy
+from datetime import datetime
 
 from batch.src.features.feature_builder import (
     build_prediction_feature_snapshot_row,
@@ -8,12 +11,14 @@ from batch.src.features.feature_builder import (
     build_feature_vector,
     feature_vector_to_model_input,
 )
-from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
+from batch.src.ingest.fetch_fixtures import (
+    build_match_history_snapshot_fields,
+    estimate_result_observed_at,
+)
 from batch.src.jobs.sample_data import (
     SAMPLE_MATCH_ID,
     SAMPLE_MODEL_VERSION_ID,
     SAMPLE_MODEL_VERSION_ROW,
-    SAMPLE_PREDICTION_CONTEXT,
 )
 from batch.src.markets import index_market_rows_by_snapshot, select_market_row
 from batch.src.model.evaluate_walk_forward import (
@@ -29,6 +34,7 @@ from batch.src.model.fusion import (
     build_main_recommendation,
     fuse_probabilities,
     build_value_recommendation,
+    VALUE_RECOMMENDATION_EV_THRESHOLD,
     choose_recommended_pick,
     confidence_score,
 )
@@ -41,7 +47,10 @@ from batch.src.model.evaluate_prediction_sources import (
 )
 from batch.src.model.train_baseline import train_baseline_model
 from batch.src.settings import load_settings
-from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.artifact_store import (
+    archive_json_artifact,
+    build_supabase_storage_artifact_client,
+)
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -60,6 +69,42 @@ BOOKMAKER_FALLBACK_DRAW_MAX_PROBABILITY = 0.24
 BOOKMAKER_FALLBACK_NEUTRAL_ELO_MAX_ABS = 0.05
 BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
+TRAINING_RECENT_SNAPSHOT_LIMIT = 200
+TRAINED_BASELINE_UNAVAILABLE = object()
+VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
+VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
+PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
+    "snapshot_quality",
+    "lineup_status",
+    "home_elo",
+    "away_elo",
+    "home_xg_for_last_5",
+    "home_xg_against_last_5",
+    "away_xg_for_last_5",
+    "away_xg_against_last_5",
+    "home_matches_last_7d",
+    "away_matches_last_7d",
+    "home_points_last_5",
+    "away_points_last_5",
+    "home_rest_days",
+    "away_rest_days",
+    "home_lineup_score",
+    "away_lineup_score",
+    "home_absence_count",
+    "away_absence_count",
+    "lineup_strength_delta",
+    "lineup_source_summary",
+)
+
+
+def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
+    if not raw_match_ids:
+        return set()
+    return {
+        match_id.strip()
+        for match_id in raw_match_ids.split(",")
+        if match_id.strip()
+    }
 
 
 def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
@@ -89,13 +134,19 @@ def select_real_prediction_inputs(
     snapshot_rows: list[dict],
     market_rows: list[dict],
     match_rows: list[dict],
-    target_date: str,
+    target_date: str | None,
+    target_match_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    eligible_match_ids = {
-        row["id"]
-        for row in match_rows
-        if row.get("kickoff_at", "").startswith(target_date)
-    }
+    explicit_match_ids = target_match_ids or set()
+    eligible_match_ids = (
+        explicit_match_ids
+        if explicit_match_ids
+        else {
+            row["id"]
+            for row in match_rows
+            if target_date and row.get("kickoff_at", "").startswith(target_date)
+        }
+    )
     selected_snapshots = [
         row
         for row in snapshot_rows
@@ -111,7 +162,38 @@ def select_real_prediction_inputs(
     return selected_snapshots, selected_markets
 
 
-def build_market_probabilities(snapshot_id: str, market_by_snapshot: dict[str, dict[str, dict]]) -> tuple[dict, dict | None]:
+def parse_iso_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def is_market_observed_before_kickoff(
+    market: dict | None,
+    *,
+    kickoff_at: str | None,
+) -> bool:
+    if not market or not kickoff_at:
+        return True
+    observed_at = parse_iso_datetime(market.get("observed_at"))
+    kickoff = parse_iso_datetime(kickoff_at)
+    if observed_at is None or kickoff is None:
+        return True
+    return observed_at <= kickoff
+
+
+def build_market_probabilities(
+    snapshot_id: str,
+    market_by_snapshot: dict[str, dict[str, dict]],
+    *,
+    kickoff_at: str | None = None,
+) -> tuple[dict, dict | None]:
     bookmaker = select_market_row(
         market_by_snapshot,
         snapshot_id=snapshot_id,
@@ -124,6 +206,11 @@ def build_market_probabilities(snapshot_id: str, market_by_snapshot: dict[str, d
         source_type="prediction_market",
         market_family="moneyline_3way",
     )
+    if not is_market_observed_before_kickoff(
+        prediction_market,
+        kickoff_at=kickoff_at,
+    ):
+        prediction_market = None
     if not bookmaker:
         return {}, prediction_market
     return {
@@ -143,6 +230,105 @@ def read_prediction_payload(prediction: dict | None) -> dict:
     if isinstance(explanation_payload, dict):
         return explanation_payload
     return {}
+
+
+def read_persisted_value_recommendation(prediction: dict | None) -> dict | None:
+    if not isinstance(prediction, dict):
+        return None
+    required_fields = (
+        "value_recommendation_pick",
+        "value_recommendation_recommended",
+        "value_recommendation_edge",
+        "value_recommendation_expected_value",
+        "value_recommendation_market_price",
+        "value_recommendation_model_probability",
+        "value_recommendation_market_probability",
+        "value_recommendation_market_source",
+    )
+    if any(prediction.get(field) is None for field in required_fields):
+        return None
+    return {
+        "pick": prediction["value_recommendation_pick"],
+        "recommended": prediction["value_recommendation_recommended"],
+        "edge": prediction["value_recommendation_edge"],
+        "expected_value": prediction["value_recommendation_expected_value"],
+        "market_price": prediction["value_recommendation_market_price"],
+        "model_probability": prediction["value_recommendation_model_probability"],
+        "market_probability": prediction["value_recommendation_market_probability"],
+        "market_source": prediction["value_recommendation_market_source"],
+    }
+
+
+def read_persisted_variant_markets(prediction: dict | None) -> list[dict]:
+    if not isinstance(prediction, dict):
+        return []
+    variant_markets = prediction.get("variant_markets_summary")
+    if not isinstance(variant_markets, list):
+        return []
+    return deepcopy(variant_markets)
+
+
+def read_persisted_market_enrichment(prediction_payload: dict) -> dict:
+    market_enrichment = prediction_payload.get("market_enrichment")
+    if not isinstance(market_enrichment, dict):
+        return {}
+    return deepcopy(market_enrichment)
+
+
+def build_market_enrichment_summary(
+    *,
+    prediction_market: dict | None,
+    variant_market_rows: list[dict],
+    existing_prediction: dict | None,
+    existing_prediction_payload: dict,
+    preserved_market_enrichment: bool,
+) -> dict:
+    variant_market_ids = [
+        str(row["id"]) for row in variant_market_rows if isinstance(row, dict) and row.get("id")
+    ]
+    if prediction_market is not None or variant_market_ids:
+        return {
+            "status": "current",
+            "current_prediction_market_available": prediction_market is not None,
+            "prediction_market_row_id": (
+                str(prediction_market.get("id")) if prediction_market and prediction_market.get("id") else None
+            ),
+            "prediction_market_source_name": (
+                str(prediction_market.get("source_name"))
+                if prediction_market and prediction_market.get("source_name")
+                else None
+            ),
+            "prediction_market_observed_at": (
+                str(prediction_market.get("observed_at"))
+                if prediction_market and prediction_market.get("observed_at")
+                else None
+            ),
+            "variant_market_ids": variant_market_ids,
+            "variant_market_count": len(variant_market_ids),
+            "preserved_from_prediction_id": None,
+        }
+    if preserved_market_enrichment and isinstance(existing_prediction, dict):
+        previous_market_enrichment = read_persisted_market_enrichment(existing_prediction_payload)
+        return {
+            "status": "preserved",
+            "current_prediction_market_available": False,
+            "prediction_market_row_id": previous_market_enrichment.get("prediction_market_row_id"),
+            "prediction_market_source_name": previous_market_enrichment.get("prediction_market_source_name"),
+            "prediction_market_observed_at": previous_market_enrichment.get("prediction_market_observed_at"),
+            "variant_market_ids": deepcopy(previous_market_enrichment.get("variant_market_ids") or []),
+            "variant_market_count": int(previous_market_enrichment.get("variant_market_count") or 0),
+            "preserved_from_prediction_id": str(existing_prediction.get("id") or ""),
+        }
+    return {
+        "status": "none",
+        "current_prediction_market_available": False,
+        "prediction_market_row_id": None,
+        "prediction_market_source_name": None,
+        "prediction_market_observed_at": None,
+        "variant_market_ids": [],
+        "variant_market_count": 0,
+        "preserved_from_prediction_id": None,
+    }
 
 
 def read_probability_map(value: object) -> dict[str, float] | None:
@@ -295,17 +481,69 @@ def resolve_bookmaker_context(
     return {}, False
 
 
-def enrich_snapshot_with_match_history(
+def snapshot_has_intervening_completed_match(
     snapshot: dict,
     *,
+    match: dict | None,
+    match_rows: list[dict],
+) -> bool:
+    if not match:
+        return False
+    captured_at = parse_iso_datetime(snapshot.get("captured_at"))
+    target_kickoff = parse_iso_datetime(match.get("kickoff_at"))
+    if captured_at is None or target_kickoff is None:
+        return False
+    target_team_ids = {
+        str(match.get("home_team_id") or ""),
+        str(match.get("away_team_id") or ""),
+    } - {""}
+    if not target_team_ids:
+        return False
+
+    for row in match_rows:
+        if row.get("id") == match.get("id") or not row.get("final_result"):
+            continue
+        kickoff_at = parse_iso_datetime(row.get("kickoff_at"))
+        if kickoff_at is None or kickoff_at >= target_kickoff:
+            continue
+        row_team_ids = {
+            str(row.get("home_team_id") or ""),
+            str(row.get("away_team_id") or ""),
+        } - {""}
+        if not target_team_ids & row_team_ids:
+            continue
+        result_observed_at = parse_iso_datetime(row.get("result_observed_at"))
+        if result_observed_at is not None and captured_at < result_observed_at:
+            return True
+        if result_observed_at is None:
+            estimated_observed_at = estimate_result_observed_at(row)
+            if estimated_observed_at is not None and captured_at < estimated_observed_at:
+                return True
+        if result_observed_at is None and captured_at < kickoff_at:
+            return True
+    return False
+
+
+def refresh_snapshot_long_signals_if_stale(
+    snapshot: dict,
+    *,
+    match: dict | None,
     match_rows: list[dict],
 ) -> dict:
-    match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
-    match = match_by_id.get(snapshot.get("match_id"))
-    if not match:
+    if not snapshot_has_intervening_completed_match(
+        snapshot,
+        match=match,
+        match_rows=match_rows,
+    ):
         return snapshot
-    if not match.get("kickoff_at") or not match.get("home_team_id") or not match.get("away_team_id"):
+    if (
+        not match
+        or not match.get("kickoff_at")
+        or not match.get("home_team_id")
+        or not match.get("away_team_id")
+    ):
         return snapshot
+
     historical_matches = [
         row
         for row in match_rows
@@ -314,12 +552,15 @@ def enrich_snapshot_with_match_history(
         and row.get("away_team_id")
         and row.get("final_result")
     ]
-    history_fields = build_match_history_snapshot_fields(match, historical_matches)
-    enriched_snapshot = {**snapshot}
-    for key, value in history_fields.items():
-        if enriched_snapshot.get(key) is None:
-            enriched_snapshot[key] = value
-    return enriched_snapshot
+    history_fields = build_match_history_snapshot_fields(
+        match,
+        historical_matches,
+        as_of=snapshot.get("captured_at"),
+    )
+    return {
+        **snapshot,
+        **history_fields,
+    }
 
 
 def resolve_absence_reason_key(match: dict | None) -> str:
@@ -337,26 +578,39 @@ def build_historical_source_performance_summary(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     checkpoint_type: str,
-    target_date: str,
+    target_date: str | None,
     market_segment: str,
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] | None = None,
+    baseline_model_cache: dict[tuple[str, str], object] | None = None,
 ) -> dict[str, dict[str, float | int]]:
+    if not target_date:
+        return {}
     match_by_id = {row["id"]: row for row in match_rows}
     rows: list[dict] = []
-    historical_snapshots = [
-        snapshot
-        for snapshot in snapshot_rows
-        if snapshot.get("checkpoint_type") == checkpoint_type
-        and match_by_id.get(snapshot["match_id"], {}).get("final_result")
-        and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10] < target_date
-    ]
+    historical_snapshots = sorted(
+        [
+            snapshot
+            for snapshot in snapshot_rows
+            if snapshot.get("checkpoint_type") == checkpoint_type
+            and match_by_id.get(snapshot["match_id"], {}).get("final_result")
+            and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10]
+            < target_date
+        ],
+        key=lambda snapshot: match_by_id[snapshot["match_id"]]["kickoff_at"],
+    )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
     for snapshot in historical_snapshots:
         match = match_by_id[snapshot["match_id"]]
-        enriched_snapshot = enrich_snapshot_with_match_history(
+        signal_snapshot = refresh_snapshot_long_signals_if_stale(
             snapshot,
+            match=match,
             match_rows=match_rows,
         )
         book_probs, prediction_market = build_market_probabilities(
-            enriched_snapshot["id"], market_by_snapshot
+            signal_snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
         )
         book_probs, bookmaker_available = resolve_bookmaker_context(
             book_probs,
@@ -365,7 +619,7 @@ def build_historical_source_performance_summary(
         if not book_probs:
             continue
         feature_context = build_snapshot_context(
-            enriched_snapshot,
+            signal_snapshot,
             book_probs,
             prediction_market,
             bookmaker_available=bookmaker_available,
@@ -378,13 +632,15 @@ def build_historical_source_performance_summary(
         if historical_segment != market_segment:
             continue
         base_probs, _base_model_source, _model_selection = predict_base_probabilities(
-            snapshot=enriched_snapshot,
+            snapshot=signal_snapshot,
             feature_context=feature_context,
             book_probs=book_probs,
             snapshot_rows=snapshot_rows,
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
             target_date=str(match["kickoff_at"])[:10],
+            training_dataset_cache=training_dataset_cache,
+            baseline_model_cache=baseline_model_cache,
         )
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
@@ -462,12 +718,7 @@ def build_source_metadata(
         source_type="bookmaker",
         market_family="moneyline_3way",
     )
-    prediction_market_row = select_market_row(
-        market_by_snapshot,
-        snapshot_id=snapshot_id,
-        source_type="prediction_market",
-        market_family="moneyline_3way",
-    )
+    prediction_market_row = prediction_market
     return {
         "market_segment": (
             "with_prediction_market"
@@ -507,14 +758,11 @@ def build_source_metadata(
     }
 
 
-def build_snapshot_context(
-    snapshot: dict,
+def build_market_signal_input(
     book_probs: dict,
     prediction_market: dict | None,
-    *,
-    bookmaker_available: bool = True,
 ) -> dict:
-    feature_input = {
+    return {
         "book_home_prob": book_probs["home"],
         "book_draw_prob": book_probs["draw"],
         "book_away_prob": book_probs["away"],
@@ -528,41 +776,44 @@ def build_snapshot_context(
         if prediction_market
         else book_probs["away"],
         "prediction_market_available": prediction_market is not None,
-        "snapshot_quality": snapshot.get("snapshot_quality", "complete"),
-        "lineup_status": snapshot.get("lineup_status", "unknown"),
-        "home_elo": snapshot.get("home_elo"),
-        "away_elo": snapshot.get("away_elo"),
-        "home_xg_for_last_5": snapshot.get("home_xg_for_last_5"),
-        "home_xg_against_last_5": snapshot.get("home_xg_against_last_5"),
-        "away_xg_for_last_5": snapshot.get("away_xg_for_last_5"),
-        "away_xg_against_last_5": snapshot.get("away_xg_against_last_5"),
-        "home_matches_last_7d": snapshot.get("home_matches_last_7d"),
-        "away_matches_last_7d": snapshot.get("away_matches_last_7d"),
-        "home_points_last_5": snapshot.get("home_points_last_5"),
-        "away_points_last_5": snapshot.get("away_points_last_5"),
-        "home_rest_days": snapshot.get("home_rest_days"),
-        "away_rest_days": snapshot.get("away_rest_days"),
-        "home_lineup_score": snapshot.get("home_lineup_score"),
-        "away_lineup_score": snapshot.get("away_lineup_score"),
-        "home_absence_count": snapshot.get("home_absence_count"),
-        "away_absence_count": snapshot.get("away_absence_count"),
-        "lineup_strength_delta": snapshot.get("lineup_strength_delta"),
-        "lineup_source_summary": snapshot.get("lineup_source_summary"),
     }
+
+
+def build_persisted_snapshot_signal_input(snapshot: dict) -> dict:
+    feature_input = {
+        field: snapshot.get(field)
+        for field in PERSISTED_SNAPSHOT_SIGNAL_FIELDS
+    }
+    feature_input["snapshot_quality"] = snapshot.get("snapshot_quality", "complete")
+    feature_input["lineup_status"] = snapshot.get("lineup_status", "unknown")
     if snapshot.get("form_delta") is not None:
         feature_input["form_delta"] = snapshot["form_delta"]
     elif (
         snapshot.get("home_points_last_5") is None
         or snapshot.get("away_points_last_5") is None
     ):
-        feature_input["form_delta"] = SAMPLE_PREDICTION_CONTEXT["form_delta"]
+        feature_input["form_delta"] = 0
     if snapshot.get("rest_delta") is not None:
         feature_input["rest_delta"] = snapshot["rest_delta"]
     elif (
         snapshot.get("home_rest_days") is None
         or snapshot.get("away_rest_days") is None
     ):
-        feature_input["rest_delta"] = SAMPLE_PREDICTION_CONTEXT["rest_delta"]
+        feature_input["rest_delta"] = 0
+    return feature_input
+
+
+def build_snapshot_context(
+    snapshot: dict,
+    book_probs: dict,
+    prediction_market: dict | None,
+    *,
+    bookmaker_available: bool = True,
+) -> dict:
+    feature_input = {
+        **build_market_signal_input(book_probs, prediction_market),
+        **build_persisted_snapshot_signal_input(snapshot),
+    }
     feature_vector = build_feature_vector(feature_input)
     feature_vector["bookmaker_available"] = int(bookmaker_available)
     return feature_vector
@@ -578,31 +829,73 @@ def build_training_dataset(
     features: list[list[float]] = []
     labels: list[str] = []
     match_by_id = {row["id"]: row for row in match_rows}
+    historical_snapshots = []
     for snapshot in snapshot_rows:
-        if snapshot.get("checkpoint_type") != checkpoint_type:
-            continue
         match = match_by_id.get(snapshot["match_id"])
-        if not match or not match.get("final_result"):
+        kickoff_at = str((match or {}).get("kickoff_at") or "")
+        if (
+            snapshot.get("checkpoint_type") != checkpoint_type
+            or not match
+            or not match.get("final_result")
+            or kickoff_at[:10] >= target_date
+        ):
             continue
-        if match.get("kickoff_at", "")[:10] >= target_date:
-            continue
+        historical_snapshots.append((kickoff_at, snapshot, match))
+    historical_snapshots = sorted(historical_snapshots, key=lambda row: row[0])[
+        -TRAINING_RECENT_SNAPSHOT_LIMIT:
+    ]
+    for _kickoff_at, snapshot, match in historical_snapshots:
         book_probs, prediction_market = build_market_probabilities(
-            snapshot["id"], market_by_snapshot
+            snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
+        )
+        book_probs, bookmaker_available = resolve_bookmaker_context(
+            book_probs,
+            allow_prior_fallback=True,
         )
         if not book_probs:
             continue
-        enriched_snapshot = enrich_snapshot_with_match_history(
+        signal_snapshot = refresh_snapshot_long_signals_if_stale(
             snapshot,
+            match=match,
             match_rows=match_rows,
         )
         feature_context = build_snapshot_context(
-            enriched_snapshot,
+            signal_snapshot,
             book_probs,
             prediction_market,
+            bookmaker_available=bookmaker_available,
         )
         features.append(feature_vector_to_model_input(feature_context))
         labels.append(match["final_result"])
     return features, labels
+
+
+def get_training_dataset(
+    *,
+    snapshot_rows: list[dict],
+    market_by_snapshot: dict[str, dict[str, dict]],
+    match_rows: list[dict],
+    target_date: str,
+    checkpoint_type: str,
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] | None,
+) -> tuple[list[list[float]], list[str]]:
+    cache_key = (checkpoint_type, target_date)
+    if training_dataset_cache is not None and cache_key in training_dataset_cache:
+        return training_dataset_cache[cache_key]
+    dataset = build_training_dataset(
+        snapshot_rows=snapshot_rows,
+        market_by_snapshot=market_by_snapshot,
+        match_rows=match_rows,
+        target_date=target_date,
+        checkpoint_type=checkpoint_type,
+    )
+    if training_dataset_cache is not None:
+        training_dataset_cache[cache_key] = dataset
+    return dataset
 
 
 def build_centroid_probabilities(
@@ -752,6 +1045,10 @@ def predict_base_probabilities(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     target_date: str | None,
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] | None = None,
+    baseline_model_cache: dict[tuple[str, str], object] | None = None,
     ) -> tuple[dict, str, dict]:
     bookmaker_available = bool(feature_context.get("bookmaker_available", 1))
     if not target_date:
@@ -774,12 +1071,13 @@ def predict_base_probabilities(
         )
 
     feature_input = feature_vector_to_model_input(feature_context)
-    features, labels = build_training_dataset(
+    features, labels = get_training_dataset(
         snapshot_rows=snapshot_rows,
         market_by_snapshot=market_by_snapshot,
         match_rows=match_rows,
         target_date=target_date,
         checkpoint_type=snapshot["checkpoint_type"],
+        training_dataset_cache=training_dataset_cache,
     )
     if not {"HOME", "DRAW", "AWAY"}.issubset(set(labels)):
         if not bookmaker_available:
@@ -801,9 +1099,17 @@ def predict_base_probabilities(
         )
 
     centroid_probs = build_centroid_probabilities(features, labels, feature_input)
-    try:
-        model = train_baseline_model(features, labels)
-    except ValueError:
+    cache_key = (snapshot["checkpoint_type"], target_date)
+    if baseline_model_cache is not None and cache_key in baseline_model_cache:
+        model = baseline_model_cache[cache_key]
+    else:
+        try:
+            model = train_baseline_model(features, labels)
+        except ValueError:
+            model = TRAINED_BASELINE_UNAVAILABLE
+        if baseline_model_cache is not None:
+            baseline_model_cache[cache_key] = model
+    if model is TRAINED_BASELINE_UNAVAILABLE:
         return (
             centroid_probs,
             "centroid_fallback",
@@ -838,8 +1144,10 @@ def build_confidence_bucket_summary(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     checkpoint_type: str,
-    target_date: str,
+    target_date: str | None,
 ) -> dict[str, dict[str, float | int]]:
+    if not target_date:
+        return {}
     match_by_id = {row["id"]: row for row in match_rows}
     historical_snapshots = sorted(
         [
@@ -850,12 +1158,18 @@ def build_confidence_bucket_summary(
             and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10] < target_date
         ],
         key=lambda snapshot: match_by_id[snapshot["match_id"]]["kickoff_at"],
-    )
+    )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
     records: list[dict] = []
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] = {}
+    baseline_model_cache: dict[tuple[str, str], object] = {}
     for snapshot in historical_snapshots:
         kickoff_date = match_by_id[snapshot["match_id"]]["kickoff_at"][:10]
         book_probs, prediction_market = build_market_probabilities(
-            snapshot["id"], market_by_snapshot
+            snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match_by_id[snapshot["match_id"]].get("kickoff_at") or ""),
         )
         book_probs, bookmaker_available = resolve_bookmaker_context(
             book_probs,
@@ -877,6 +1191,8 @@ def build_confidence_bucket_summary(
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
             target_date=kickoff_date,
+            training_dataset_cache=training_dataset_cache,
+            baseline_model_cache=baseline_model_cache,
         )
         scoring_context = {
             **feature_context,
@@ -928,24 +1244,399 @@ def build_confidence_bucket_summary(
     return summarize_confidence_buckets(records)
 
 
-def build_variant_markets(variant_rows: list[dict]) -> list[dict]:
+def _read_numeric(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _normalize_variant_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _extract_signed_number(value: object) -> float | None:
+    if not isinstance(value, str):
+        return None
+    match = re.search(r"[+-]?\d+(?:\.\d+)?", value)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _is_quarter_line(line_value: float) -> bool:
+    fractional = abs(line_value) % 1.0
+    return math.isclose(fractional, 0.25, abs_tol=1e-9) or math.isclose(
+        fractional, 0.75, abs_tol=1e-9
+    )
+
+
+def _resolve_selection_line(
+    *,
+    market_family: str,
+    selection_label: object,
+    line_value: float | None,
+    match: dict | None,
+    teams_by_id: dict[str, dict] | None,
+) -> float | None:
+    parsed_line = _extract_signed_number(selection_label)
+    if market_family == "totals":
+        if parsed_line is not None:
+            return abs(parsed_line)
+        return abs(line_value) if line_value is not None else None
+    if market_family != "spreads":
+        return line_value
+
+    if parsed_line is not None:
+        return parsed_line
+    selection_side = _resolve_spread_selection_side(
+        selection_label,
+        match=match,
+        teams_by_id=teams_by_id,
+    )
+    if line_value is None or selection_side is None:
+        return None
+    return line_value if selection_side == "home" else -line_value
+
+
+def _resolve_settlement_lines(line_value: float | None) -> list[float]:
+    if line_value is None:
+        return []
+    if _is_quarter_line(line_value):
+        return [line_value - 0.25, line_value + 0.25]
+    return [line_value]
+
+
+def _evaluate_settlement_line(result: float, price: float) -> float:
+    if result > 1e-12:
+        return 1.0
+    if abs(result) <= 1e-12:
+        return price
+    return 0.0
+
+
+def _estimate_variant_goal_expectancies(snapshot: dict | None) -> tuple[float, float] | None:
+    if not isinstance(snapshot, dict):
+        return None
+
+    home_xg_for = _read_numeric(snapshot.get("home_xg_for_last_5"))
+    home_xg_against = _read_numeric(snapshot.get("home_xg_against_last_5"))
+    away_xg_for = _read_numeric(snapshot.get("away_xg_for_last_5"))
+    away_xg_against = _read_numeric(snapshot.get("away_xg_against_last_5"))
+    if None in (home_xg_for, home_xg_against, away_xg_for, away_xg_against):
+        return None
+
+    home_lambda = max(((home_xg_for or 0.0) + (away_xg_against or 0.0)) / 2.0, 0.2)
+    away_lambda = max(((away_xg_for or 0.0) + (home_xg_against or 0.0)) / 2.0, 0.2)
+    return home_lambda, away_lambda
+
+
+def _poisson_probability(goal_count: int, expected_goals: float) -> float:
+    if goal_count < 0:
+        return 0.0
+    return math.exp(-expected_goals) * (expected_goals**goal_count) / math.factorial(
+        goal_count
+    )
+
+
+def _build_goal_matrix(
+    *,
+    home_expected_goals: float,
+    away_expected_goals: float,
+    max_goals: int = VARIANT_GOAL_DISTRIBUTION_MAX_GOALS,
+) -> list[tuple[int, int, float]]:
+    probabilities = []
+    for home_goals in range(max_goals + 1):
+        home_prob = _poisson_probability(home_goals, home_expected_goals)
+        for away_goals in range(max_goals + 1):
+            away_prob = _poisson_probability(away_goals, away_expected_goals)
+            probabilities.append((home_goals, away_goals, home_prob * away_prob))
+    return probabilities
+
+
+def _resolve_spread_selection_side(
+    label: object,
+    *,
+    match: dict | None,
+    teams_by_id: dict[str, dict] | None,
+) -> str | None:
+    normalized_label = _normalize_variant_text(label)
+    if not normalized_label:
+        return None
+    if re.search(r"\bhome\b", normalized_label):
+        return "home"
+    if re.search(r"\baway\b", normalized_label):
+        return "away"
+    if not isinstance(match, dict) or not isinstance(teams_by_id, dict):
+        return None
+
+    home_team = teams_by_id.get(str(match.get("home_team_id") or ""))
+    away_team = teams_by_id.get(str(match.get("away_team_id") or ""))
+    home_name = _normalize_variant_text((home_team or {}).get("name"))
+    away_name = _normalize_variant_text((away_team or {}).get("name"))
+    home_id = _normalize_variant_text(match.get("home_team_id"))
+    away_id = _normalize_variant_text(match.get("away_team_id"))
+
+    if home_name and home_name in normalized_label:
+        return "home"
+    if away_name and away_name in normalized_label:
+        return "away"
+    if home_id and home_id in normalized_label:
+        return "home"
+    if away_id and away_id in normalized_label:
+        return "away"
+    return None
+
+
+def _calculate_variant_model_probability(
+    *,
+    market_family: str,
+    selection_label: object,
+    line_value: float | None,
+    market_price: float | None,
+    goal_matrix: list[tuple[int, int, float]],
+    match: dict | None,
+    teams_by_id: dict[str, dict] | None,
+) -> float | None:
+    if market_price is None or market_price <= 0:
+        return None
+
+    normalized_label = _normalize_variant_text(selection_label)
+    selection_line = _resolve_selection_line(
+        market_family=market_family,
+        selection_label=selection_label,
+        line_value=line_value,
+        match=match,
+        teams_by_id=teams_by_id,
+    )
+    settlement_lines = _resolve_settlement_lines(selection_line)
+    if not settlement_lines:
+        return None
+    selection_side = None
+    is_over = False
+    is_under = False
+    if market_family == "totals":
+        is_over = re.search(r"\bover\b", normalized_label) is not None
+        is_under = re.search(r"\bunder\b", normalized_label) is not None
+        if not is_over and not is_under:
+            return None
+    elif market_family == "spreads":
+        selection_side = _resolve_spread_selection_side(
+            selection_label,
+            match=match,
+            teams_by_id=teams_by_id,
+        )
+        if selection_side is None:
+            return None
+    else:
+        return None
+
+    total_expected_payout = 0.0
+    for home_goals, away_goals, probability in goal_matrix:
+        settlement_payout = 0.0
+        total_goals = home_goals + away_goals
+        for settlement_line in settlement_lines:
+            if market_family == "totals":
+                if is_over:
+                    settlement_payout += _evaluate_settlement_line(
+                        float(total_goals) - settlement_line,
+                        market_price,
+                    )
+                else:
+                    settlement_payout += _evaluate_settlement_line(
+                        settlement_line - float(total_goals),
+                        market_price,
+                    )
+            elif selection_side == "home":
+                settlement_payout += _evaluate_settlement_line(
+                    (home_goals + settlement_line) - away_goals,
+                    market_price,
+                )
+            else:
+                settlement_payout += _evaluate_settlement_line(
+                    (away_goals + settlement_line) - home_goals,
+                    market_price,
+                )
+        total_expected_payout += probability * (settlement_payout / len(settlement_lines))
+    return round(total_expected_payout, 4)
+
+
+def _build_variant_recommendation(
+    row: dict,
+    *,
+    snapshot: dict | None,
+    match: dict | None,
+    teams_by_id: dict[str, dict] | None,
+) -> dict:
+    expectation = _estimate_variant_goal_expectancies(snapshot)
+    if expectation is None:
+        return {
+            "recommended_pick": None,
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
+            "edge": None,
+            "expected_value": None,
+            "market_price": None,
+            "model_probability": None,
+            "market_probability": None,
+        }
+
+    home_expected_goals, away_expected_goals = expectation
+    goal_matrix = _build_goal_matrix(
+        home_expected_goals=home_expected_goals,
+        away_expected_goals=away_expected_goals,
+    )
+
+    line_value = _read_numeric(row.get("line_value"))
+    selection_a_price = _read_numeric(row.get("selection_a_price"))
+    selection_b_price = _read_numeric(row.get("selection_b_price"))
+    selection_a_probability = _calculate_variant_model_probability(
+        market_family=str(row.get("market_family") or ""),
+        selection_label=row.get("selection_a_label"),
+        line_value=line_value,
+        market_price=selection_a_price,
+        goal_matrix=goal_matrix,
+        match=match,
+        teams_by_id=teams_by_id,
+    )
+    selection_b_probability = _calculate_variant_model_probability(
+        market_family=str(row.get("market_family") or ""),
+        selection_label=row.get("selection_b_label"),
+        line_value=line_value,
+        market_price=selection_b_price,
+        goal_matrix=goal_matrix,
+        match=match,
+        teams_by_id=teams_by_id,
+    )
+    candidates = []
+    excluded_longshot_candidate = False
+    if (
+        selection_a_probability is not None
+        and isinstance(selection_a_price, float)
+        and selection_a_price > 0
+    ):
+        candidate = {
+            "label": row.get("selection_a_label"),
+            "price": round(selection_a_price, 4),
+            "model_probability": selection_a_probability,
+            "market_probability": round(selection_a_price, 4),
+            "edge": round(selection_a_probability - selection_a_price, 4),
+            "expected_value": round(
+                (selection_a_probability / selection_a_price) - 1.0,
+                4,
+            ),
+        }
+        if selection_a_price >= VARIANT_RECOMMENDATION_MIN_MARKET_PRICE:
+            candidates.append(candidate)
+        else:
+            excluded_longshot_candidate = True
+    if (
+        selection_b_probability is not None
+        and isinstance(selection_b_price, float)
+        and selection_b_price > 0
+    ):
+        candidate = {
+            "label": row.get("selection_b_label"),
+            "price": round(selection_b_price, 4),
+            "model_probability": selection_b_probability,
+            "market_probability": round(selection_b_price, 4),
+            "edge": round(selection_b_probability - selection_b_price, 4),
+            "expected_value": round(
+                (selection_b_probability / selection_b_price) - 1.0,
+                4,
+            ),
+        }
+        if selection_b_price >= VARIANT_RECOMMENDATION_MIN_MARKET_PRICE:
+            candidates.append(candidate)
+        else:
+            excluded_longshot_candidate = True
+
+    if not candidates:
+        return {
+            "recommended_pick": None,
+            "recommended": False,
+            "no_bet_reason": (
+                "variant_market_too_longshot"
+                if excluded_longshot_candidate
+                else "variant_market_price_only"
+            ),
+            "edge": None,
+            "expected_value": None,
+            "market_price": None,
+            "model_probability": None,
+            "market_probability": None,
+        }
+
+    best_candidate = max(candidates, key=lambda candidate: candidate["expected_value"])
+    recommended = best_candidate["expected_value"] >= VALUE_RECOMMENDATION_EV_THRESHOLD
+    return {
+        "recommended_pick": best_candidate["label"],
+        "recommended": recommended,
+        "no_bet_reason": (
+            None
+            if recommended
+            else (
+                "variant_market_too_longshot"
+                if excluded_longshot_candidate
+                else "variant_ev_below_threshold"
+            )
+        ),
+        "edge": best_candidate["edge"],
+        "expected_value": best_candidate["expected_value"],
+        "market_price": best_candidate["price"],
+        "model_probability": best_candidate["model_probability"],
+        "market_probability": best_candidate["market_probability"],
+    }
+
+
+def build_variant_markets(
+    variant_rows: list[dict],
+    *,
+    snapshot: dict | None = None,
+    match: dict | None = None,
+    teams_by_id: dict[str, dict] | None = None,
+) -> list[dict]:
     markets = []
     for row in variant_rows:
         raw_payload = row.get("raw_payload") or {}
-        markets.append(
-            {
-                "market_family": row["market_family"],
-                "source_name": row["source_name"],
-                "line_value": row.get("line_value"),
-                "selection_a_label": row["selection_a_label"],
-                "selection_a_price": row.get("selection_a_price"),
-                "selection_b_label": row["selection_b_label"],
-                "selection_b_price": row.get("selection_b_price"),
-                "market_slug": raw_payload.get("market_slug")
-                if isinstance(raw_payload, dict)
-                else None,
-            }
+        market = {
+            "market_family": row["market_family"],
+            "source_name": row["source_name"],
+            "line_value": row.get("line_value"),
+            "selection_a_label": row["selection_a_label"],
+            "selection_a_price": row.get("selection_a_price"),
+            "selection_b_label": row["selection_b_label"],
+            "selection_b_price": row.get("selection_b_price"),
+            "market_slug": raw_payload.get("market_slug")
+            if isinstance(raw_payload, dict)
+            else None,
+        }
+        recommendation = _build_variant_recommendation(
+            row,
+            snapshot=snapshot,
+            match=match,
+            teams_by_id=teams_by_id,
         )
+        if recommendation["recommended_pick"] is not None:
+            market["recommended_pick"] = recommendation["recommended_pick"]
+        if (
+            recommendation["model_probability"] is not None
+            or recommendation["no_bet_reason"] is not None
+            or recommendation["recommended"]
+        ):
+            market["recommended"] = recommendation["recommended"]
+            market["no_bet_reason"] = recommendation["no_bet_reason"]
+        if recommendation["model_probability"] is not None:
+            market["edge"] = recommendation["edge"]
+            market["expected_value"] = recommendation["expected_value"]
+            market["market_price"] = recommendation["market_price"]
+            market["model_probability"] = recommendation["model_probability"]
+            market["market_probability"] = recommendation["market_probability"]
+        markets.append(market)
     return markets
 
 
@@ -968,6 +1659,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "feature_context",
         "feature_metadata",
         "source_metadata",
+        "market_enrichment",
     )
     return {
         key: explanation_payload[key]
@@ -985,24 +1677,28 @@ def main() -> None:
         secret_access_key=getattr(settings, "r2_secret_access_key", None),
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
+    supabase_storage_client = build_supabase_storage_artifact_client(settings)
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
     prediction_rows = read_optional_rows(client, "predictions")
     variant_rows = read_optional_rows(client, "market_variants")
     use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
+    target_match_ids = parse_match_id_targets(os.environ.get("REAL_PREDICTION_MATCH_IDS"))
+    use_real_prediction_targets = bool(use_real_predictions or target_match_ids)
     if not snapshot_rows:
         raise ValueError("match_snapshots must exist before running predictions")
-    if not market_rows and not use_real_predictions:
+    if not market_rows and not use_real_prediction_targets:
         raise ValueError("market_probabilities must exist before running predictions")
 
     match_rows: list[dict] = []
-    if use_real_predictions:
+    if use_real_prediction_targets:
         match_rows = client.read_rows("matches")
         target_snapshots, target_market_rows = select_real_prediction_inputs(
             snapshot_rows=snapshot_rows,
             market_rows=market_rows,
             match_rows=match_rows,
             target_date=use_real_predictions,
+            target_match_ids=target_match_ids,
         )
         if not target_snapshots:
             raise ValueError(
@@ -1027,6 +1723,11 @@ def main() -> None:
             raise ValueError("sample pipeline expects exactly 4 snapshots")
     market_by_snapshot = index_market_rows_by_snapshot(market_rows)
     latest_fusion_policy = read_latest_fusion_policy(client)
+    existing_predictions_by_id = {
+        str(row["id"]): row
+        for row in prediction_rows
+        if isinstance(row, dict) and row.get("id")
+    }
     variant_rows_by_snapshot: dict[str, list[dict]] = {}
     for row in variant_rows:
         variant_rows_by_snapshot.setdefault(row["snapshot_id"], []).append(row)
@@ -1035,36 +1736,64 @@ def main() -> None:
     artifact_payload = []
     model_selection_by_checkpoint: dict[str, dict] = {}
     skipped_snapshots = []
+    match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
+    teams_by_id = {
+        str(row["id"]): row for row in read_optional_rows(client, "teams") if row.get("id")
+    }
+    historical_performance_cache: dict[
+        tuple[str, str | None, str],
+        dict[str, dict[str, float | int]],
+    ] = {}
+    confidence_bucket_cache: dict[
+        tuple[str, str | None],
+        dict[str, dict[str, float | int]],
+    ] = {}
+    current_fused_candidates_cache: dict[
+        tuple[str, str | None, bool],
+        list[dict],
+    ] = {}
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] = {}
+    baseline_model_cache: dict[tuple[str, str], object] = {}
     for snapshot in target_snapshots:
-        enriched_snapshot = (
-            enrich_snapshot_with_match_history(snapshot, match_rows=match_rows)
-            if use_real_predictions
-            else snapshot
+        match = match_by_id.get(snapshot.get("match_id"), {})
+        signal_snapshot = refresh_snapshot_long_signals_if_stale(
+            snapshot,
+            match=match,
+            match_rows=match_rows,
+        )
+        snapshot_target_date = (
+            use_real_predictions or str(match.get("kickoff_at") or "")[:10] or None
         )
         book_probs, prediction_market = build_market_probabilities(
-            enriched_snapshot["id"], market_by_snapshot
+            signal_snapshot["id"],
+            market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
         )
         bookmaker_available = bool(book_probs)
-        if use_real_predictions:
+        if use_real_prediction_targets:
             if not bookmaker_available:
                 book_probs = dict(DEFAULT_NO_BOOKMAKER_PRIOR_PROBS)
         elif not book_probs:
             skipped_snapshots.append(snapshot["id"])
             continue
         feature_context = build_snapshot_context(
-            enriched_snapshot,
+            signal_snapshot,
             book_probs,
             prediction_market,
             bookmaker_available=bookmaker_available,
         )
         base_probs, base_model_source, model_selection = predict_base_probabilities(
-            snapshot=enriched_snapshot,
+            snapshot=signal_snapshot,
             feature_context=feature_context,
             book_probs=book_probs,
             snapshot_rows=snapshot_rows,
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
-            target_date=use_real_predictions,
+            target_date=snapshot_target_date,
+            training_dataset_cache=training_dataset_cache,
+            baseline_model_cache=baseline_model_cache,
         )
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
@@ -1105,29 +1834,52 @@ def main() -> None:
             if feature_context["prediction_market_available"]
             else "without_prediction_market"
         )
-        historical_performance = (
-            build_historical_source_performance_summary(
-                snapshot_rows=snapshot_rows,
-                market_by_snapshot=market_by_snapshot,
-                match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
-                market_segment=market_segment,
+        historical_performance = {}
+        if use_real_prediction_targets:
+            performance_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
+                market_segment,
             )
-            if use_real_predictions
-            else {}
-        )
-        if use_real_predictions and not historical_performance:
-            historical_performance = build_historical_source_performance_summary(
-                snapshot_rows=snapshot_rows,
-                market_by_snapshot=market_by_snapshot,
-                match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
-                market_segment="without_prediction_market"
-                if market_segment == "with_prediction_market"
-                else "with_prediction_market",
-            )
+            if performance_key not in historical_performance_cache:
+                historical_performance_cache[performance_key] = (
+                    build_historical_source_performance_summary(
+                        snapshot_rows=snapshot_rows,
+                        market_by_snapshot=market_by_snapshot,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                        market_segment=market_segment,
+                        training_dataset_cache=training_dataset_cache,
+                        baseline_model_cache=baseline_model_cache,
+                    )
+                )
+            historical_performance = historical_performance_cache[performance_key]
+            if not historical_performance:
+                fallback_segment = (
+                    "without_prediction_market"
+                    if market_segment == "with_prediction_market"
+                    else "with_prediction_market"
+                )
+                fallback_key = (
+                    signal_snapshot["checkpoint_type"],
+                    snapshot_target_date,
+                    fallback_segment,
+                )
+                if fallback_key not in historical_performance_cache:
+                    historical_performance_cache[fallback_key] = (
+                        build_historical_source_performance_summary(
+                            snapshot_rows=snapshot_rows,
+                            market_by_snapshot=market_by_snapshot,
+                            match_rows=match_rows,
+                            checkpoint_type=signal_snapshot["checkpoint_type"],
+                            target_date=snapshot_target_date,
+                            market_segment=fallback_segment,
+                            training_dataset_cache=training_dataset_cache,
+                            baseline_model_cache=baseline_model_cache,
+                        )
+                    )
+                historical_performance = historical_performance_cache[fallback_key]
         available_variants = (
             (
                 ("base_model", "bookmaker", "prediction_market")
@@ -1147,9 +1899,10 @@ def main() -> None:
                 if latest_fusion_policy
                 else None
             ),
-            checkpoint=enriched_snapshot["checkpoint_type"],
+            checkpoint=signal_snapshot["checkpoint_type"],
             market_segment=market_segment,
             allowed_variants=available_variants,
+            competition_id=str(match.get("competition_id") or ""),
         )
         source_weights = (
             persisted_policy["weights"]
@@ -1172,8 +1925,8 @@ def main() -> None:
         ):
             source_weights = {"base_model": 1.0}
         row = build_prediction_row(
-            match_id=enriched_snapshot["match_id"],
-            checkpoint=enriched_snapshot["checkpoint_type"],
+            match_id=signal_snapshot["match_id"],
+            checkpoint=signal_snapshot["checkpoint_type"],
             base_probs=base_probs,
             book_probs=book_probs,
             market_probs=prediction_market_probs,
@@ -1190,32 +1943,43 @@ def main() -> None:
             "selected_source": "raw_fused",
             "historical_candidate_count": 0,
         }
-        if use_real_predictions:
-            historical_current_fused_candidates = build_historical_current_fused_candidates(
-                prediction_rows=prediction_rows,
-                snapshot_rows=snapshot_rows,
-                match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
-                prediction_market_available=bool(
-                    feature_context["prediction_market_available"]
-                ),
+        if use_real_prediction_targets:
+            current_fused_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
+                bool(feature_context["prediction_market_available"]),
             )
+            if current_fused_key not in current_fused_candidates_cache:
+                current_fused_candidates_cache[current_fused_key] = (
+                    build_historical_current_fused_candidates(
+                        prediction_rows=prediction_rows,
+                        snapshot_rows=snapshot_rows,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                        prediction_market_available=bool(
+                            feature_context["prediction_market_available"]
+                        ),
+                    )
+                )
+            historical_current_fused_candidates = current_fused_candidates_cache[
+                current_fused_key
+            ]
             if current_fused_selector_history_ready(historical_current_fused_candidates):
                 selected_fused_probs = build_current_fused_probabilities(
                     [
                         *historical_current_fused_candidates,
                         {
-                            "snapshot_id": enriched_snapshot["id"],
+                            "snapshot_id": signal_snapshot["id"],
                             "kickoff_at": next(
                                 (
                                     str(match.get("kickoff_at") or "")
                                     for match in match_rows
-                                    if match.get("id") == enriched_snapshot["match_id"]
+                                    if match.get("id") == signal_snapshot["match_id"]
                                 ),
                                 "",
                             ),
-                            "checkpoint": enriched_snapshot["checkpoint_type"],
+                            "checkpoint": signal_snapshot["checkpoint_type"],
                             "prediction_market_available": bool(
                                 feature_context["prediction_market_available"]
                             ),
@@ -1227,7 +1991,7 @@ def main() -> None:
                             "context": scoring_context,
                         },
                     ]
-                )[enriched_snapshot["id"]]
+                )[signal_snapshot["id"]]
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]
@@ -1237,6 +2001,7 @@ def main() -> None:
                     base_probs=base_probs,
                     context=scoring_context,
                 )
+                raw_confidence_score = row["confidence_score"]
                 selected_source = "historical_selector"
                 if selected_fused_probs == raw_fused_probs:
                     selected_source = "raw_fused"
@@ -1244,17 +2009,21 @@ def main() -> None:
                     "selected_source": selected_source,
                     "historical_candidate_count": len(historical_current_fused_candidates),
                 }
-        confidence_bucket_summary = (
-            build_confidence_bucket_summary(
-                snapshot_rows=snapshot_rows,
-                market_by_snapshot=market_by_snapshot,
-                match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
-                target_date=use_real_predictions,
+        confidence_bucket_summary = {}
+        if use_real_prediction_targets:
+            confidence_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
             )
-            if use_real_predictions
-            else {}
-        )
+            if confidence_key not in confidence_bucket_cache:
+                confidence_bucket_cache[confidence_key] = build_confidence_bucket_summary(
+                    snapshot_rows=snapshot_rows,
+                    market_by_snapshot=market_by_snapshot,
+                    match_rows=match_rows,
+                    checkpoint_type=signal_snapshot["checkpoint_type"],
+                    target_date=snapshot_target_date,
+                )
+            confidence_bucket_summary = confidence_bucket_cache[confidence_key]
         row["confidence_score"] = calibrate_confidence_from_buckets(
             raw_confidence_score,
             confidence_bucket_summary,
@@ -1272,20 +2041,35 @@ def main() -> None:
             prediction_market_available=feature_context["prediction_market_available"],
         )
         variant_markets = build_variant_markets(
-            variant_rows_by_snapshot.get(snapshot["id"], [])
+            variant_rows_by_snapshot.get(snapshot["id"], []),
+            snapshot=signal_snapshot,
+            match=match,
+            teams_by_id=teams_by_id,
         )
+        prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
+        existing_prediction = existing_predictions_by_id.get(prediction_id)
+        existing_prediction_payload = read_prediction_payload(existing_prediction)
+        preserved_market_enrichment = False
+        if value_recommendation is None:
+            value_recommendation = read_persisted_value_recommendation(existing_prediction)
+            preserved_market_enrichment = value_recommendation is not None
+        if not variant_markets:
+            preserved_variant_markets = read_persisted_variant_markets(existing_prediction)
+            if preserved_variant_markets:
+                variant_markets = preserved_variant_markets
+                preserved_market_enrichment = True
         feature_metadata = build_feature_metadata(
-            enriched_snapshot,
+            signal_snapshot,
             feature_context,
             absence_reason_key=resolve_absence_reason_key(
                 next(
-                    (match for match in match_rows if match.get("id") == enriched_snapshot["match_id"]),
+                    (match for match in match_rows if match.get("id") == signal_snapshot["match_id"]),
                     None,
                 )
             ),
         )
         source_metadata = build_source_metadata(
-            snapshot_id=enriched_snapshot["id"],
+            snapshot_id=signal_snapshot["id"],
             market_by_snapshot=market_by_snapshot,
             base_probs=base_probs,
             book_probs=book_probs,
@@ -1330,13 +2114,21 @@ def main() -> None:
             "feature_context": feature_context,
             "feature_metadata": feature_metadata,
             "source_metadata": source_metadata,
+            "market_enrichment": build_market_enrichment_summary(
+                prediction_market=prediction_market,
+                variant_market_rows=variant_rows_by_snapshot.get(snapshot["id"], []),
+                existing_prediction=existing_prediction,
+                existing_prediction_payload=existing_prediction_payload,
+                preserved_market_enrichment=preserved_market_enrichment,
+            ),
         }
         summary_payload = build_prediction_summary_payload(explanation_payload)
-        model_selection_by_checkpoint[enriched_snapshot["checkpoint_type"]] = model_selection
+        model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
         artifact_id = f"prediction_artifact_{prediction_id}"
         artifact_payload.append(
             archive_json_artifact(
                 r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
                 artifact_id=artifact_id,
                 owner_type="prediction",
                 owner_id=prediction_id,
@@ -1345,8 +2137,8 @@ def main() -> None:
                 payload=explanation_payload,
                 summary_payload={
                     "match_id": row["match_id"],
-                    "snapshot_id": enriched_snapshot["id"],
-                    "checkpoint_type": enriched_snapshot["checkpoint_type"],
+                    "snapshot_id": signal_snapshot["id"],
+                    "checkpoint_type": signal_snapshot["checkpoint_type"],
                 },
                 metadata={
                     "model_version_id": SAMPLE_MODEL_VERSION_ID,
@@ -1356,7 +2148,7 @@ def main() -> None:
         payload.append(
             {
                 "id": prediction_id,
-                "snapshot_id": enriched_snapshot["id"],
+                "snapshot_id": signal_snapshot["id"],
                 "match_id": row["match_id"],
                 "model_version_id": SAMPLE_MODEL_VERSION_ID,
                 "home_prob": row["home_prob"],
@@ -1401,7 +2193,7 @@ def main() -> None:
         feature_snapshot_payload.append(
             build_prediction_feature_snapshot_row(
                 prediction_id=prediction_id,
-                snapshot=enriched_snapshot,
+                snapshot=signal_snapshot,
                 match_id=row["match_id"],
                 model_version_id=SAMPLE_MODEL_VERSION_ID,
                 feature_context=feature_context,

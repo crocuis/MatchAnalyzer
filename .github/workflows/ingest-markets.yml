@@ -42,4 +42,17 @@ jobs:
           fi
           echo "REAL_MARKET_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
-      - run: python3 -m batch.src.jobs.ingest_markets_job
+      - name: Ingest markets and refresh changed predictions
+        shell: bash
+        run: |
+          MARKET_LOG="$(mktemp)"
+          python3 -m batch.src.jobs.ingest_markets_job | tee "$MARKET_LOG"
+          CHANGED_MATCH_IDS="$(
+            python3 -c 'import json, sys; from pathlib import Path; lines = [line.strip() for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]; payload = json.loads(lines[-1]) if lines else {}; print(",".join(payload.get("changed_match_ids", [])))' "$MARKET_LOG"
+          )"
+          if [ -z "$CHANGED_MATCH_IDS" ]; then
+            echo "No changed market matches detected; skipping prediction refresh."
+            exit 0
+          fi
+          REAL_PREDICTION_MATCH_IDS="$CHANGED_MATCH_IDS" \
+            python3 -m batch.src.jobs.run_predictions_job

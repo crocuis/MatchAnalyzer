@@ -1,7 +1,10 @@
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from batch.src.features.build_snapshots import build_snapshot
 from batch.src.ingest.normalizers import normalize_team_name
@@ -14,9 +17,12 @@ CORE_SUPPORTED_COMPETITION_IDS = {
     "ligue-1",
     "champions-league",
     "europa-league",
+    "conference-league",
     "world-cup",
     "european-championship",
 }
+
+RESULT_OBSERVED_AT_FALLBACK_DELAY = timedelta(hours=24)
 
 FOOTBALL_DATA_COMPETITION_CODES = {
     "premier-league": "PL",
@@ -26,8 +32,30 @@ FOOTBALL_DATA_COMPETITION_CODES = {
     "ligue-1": "FL1",
     "champions-league": "CL",
     "europa-league": "EL",
+    "conference-league": "UCL",
     "world-cup": "WC",
     "european-championship": "EC",
+}
+
+UEFA_CUP_COMPETITION_IDS = {
+    "champions-league",
+    "europa-league",
+    "conference-league",
+}
+
+ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS = {
+    "premier-league": "eng.1",
+    "la-liga": "esp.1",
+    "bundesliga": "ger.1",
+    "serie-a": "ita.1",
+    "ligue-1": "fra.1",
+    "champions-league": "uefa.champions",
+    "europa-league": "uefa.europa",
+    "conference-league": "uefa.europa.conf",
+}
+
+ESPN_PUBLIC_SOCCER_COMPETITION_IDS = {
+    value: key for key, value in ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS.items()
 }
 
 BASE_ELO = 1500.0
@@ -56,6 +84,7 @@ STARTER_WEIGHT = 1 / 11
 BENCH_PLAYER_WEIGHT = 0.02
 RECENT_EVENT_LIMIT = 3
 RECENCY_WEIGHTS = (1.0, 0.7, 0.4)
+LINEUP_CONTEXT_LOOKAHEAD_HOURS = 1
 
 
 def normalize_kickoff_at(value: str) -> str:
@@ -96,6 +125,200 @@ def unwrap_sports_skills_data(payload: Any) -> dict[str, Any]:
     return payload
 
 
+def history_competition_ids(competition_id: str) -> tuple[str | None, ...]:
+    normalized = str(competition_id or "")
+    if normalized in UEFA_CUP_COMPETITION_IDS:
+        return (None, normalized)
+    return (normalized,)
+
+
+def _read_espn_score_value(value: Any) -> int:
+    if isinstance(value, dict):
+        value = value.get("value", value.get("displayValue"))
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(float(value))
+        except ValueError:
+            return 0
+    return 0
+
+
+def _espn_public_status(event: dict[str, Any]) -> str:
+    competition = (event.get("competitions") or [{}])[0]
+    status = competition.get("status", {})
+    status_name = status.get("type", {}).get("name", "")
+    return {
+        "STATUS_SCHEDULED": "not_started",
+        "STATUS_IN_PROGRESS": "live",
+        "STATUS_HALFTIME": "halftime",
+        "STATUS_FINAL": "closed",
+        "STATUS_FULL_TIME": "closed",
+        "STATUS_POSTPONED": "postponed",
+        "STATUS_CANCELED": "cancelled",
+        "STATUS_SUSPENDED": "suspended",
+        "STATUS_FIRST_HALF": "1st_half",
+        "STATUS_SECOND_HALF": "2nd_half",
+        "STATUS_END_PERIOD": "halftime",
+    }.get(status_name, "not_started")
+
+
+def _espn_public_event_to_schedule_event(
+    event: dict[str, Any],
+    *,
+    fallback_competition_id: str,
+) -> dict[str, Any]:
+    competition = (event.get("competitions") or [{}])[0]
+    competitors = competition.get("competitors") or []
+    home = next((entry for entry in competitors if entry.get("homeAway") == "home"), {})
+    away = next((entry for entry in competitors if entry.get("homeAway") == "away"), {})
+    season_year = str((event.get("season") or {}).get("year") or "")
+    league_slug = str((event.get("league") or {}).get("slug") or "")
+    competition_id = ESPN_PUBLIC_SOCCER_COMPETITION_IDS.get(
+        league_slug,
+        fallback_competition_id,
+    )
+    home_score = _read_espn_score_value(home.get("score"))
+    away_score = _read_espn_score_value(away.get("score"))
+    venue = competition.get("venue") or {}
+    return {
+        "id": str(event.get("id", "")),
+        "status": _espn_public_status(event),
+        "start_time": competition.get("date", event.get("date", "")),
+        "matchday": None,
+        "round": "",
+        "round_name": (event.get("week") or {}).get("text", ""),
+        "competition": {
+            "id": competition_id,
+            "name": (event.get("league") or {}).get("name", ""),
+        },
+        "season": {
+            "id": f"{competition_id}-{season_year}" if season_year else "",
+            "name": season_year,
+            "year": season_year,
+        },
+        "venue": {
+            "id": str(venue.get("id", "")),
+            "name": venue.get("fullName", ""),
+            "city": (venue.get("address") or {}).get("city", ""),
+            "country": (venue.get("address") or {}).get("country", ""),
+        },
+        "competitors": [
+            {
+                "team": {
+                    "id": str((home.get("team") or {}).get("id", "")),
+                    "name": (home.get("team") or {}).get("displayName", ""),
+                    "short_name": (home.get("team") or {}).get("shortDisplayName", ""),
+                    "abbreviation": (home.get("team") or {}).get("abbreviation", ""),
+                },
+                "qualifier": "home",
+                "score": home_score,
+            },
+            {
+                "team": {
+                    "id": str((away.get("team") or {}).get("id", "")),
+                    "name": (away.get("team") or {}).get("displayName", ""),
+                    "short_name": (away.get("team") or {}).get("shortDisplayName", ""),
+                    "abbreviation": (away.get("team") or {}).get("abbreviation", ""),
+                },
+                "qualifier": "away",
+                "score": away_score,
+            },
+        ],
+        "scores": {
+            "home": home_score,
+            "away": away_score,
+        },
+        "odds": [],
+        "referees": [],
+    }
+
+
+def fetch_espn_public_team_schedule(
+    team_id: str,
+    *,
+    competition_id: str,
+    season_year: str | None = None,
+) -> dict[str, Any]:
+    league_slug = ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS.get(competition_id)
+    if not league_slug:
+        return {"team": {}, "events": []}
+    params = {"season": season_year} if season_year else {}
+    query = f"?{urlencode(params)}" if params else ""
+    url = (
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+        f"{league_slug}/teams/{team_id}/schedule{query}"
+    )
+    request = Request(url, headers={"User-Agent": "MatchAnalyzer/1.0"})
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"team": {}, "events": []}
+
+    events = [
+        _espn_public_event_to_schedule_event(
+            event,
+            fallback_competition_id=competition_id,
+        )
+        for event in payload.get("events", [])
+        if isinstance(event, dict)
+    ]
+    events.sort(key=lambda event: event.get("start_time", ""))
+    team_data = {}
+    for event in events:
+        for competitor in event.get("competitors", []):
+            team = competitor.get("team") or {}
+            if str(team.get("id", "")) == str(team_id):
+                team_data = team
+                break
+        if team_data:
+            break
+    return {"team": team_data, "events": events}
+
+
+def build_espn_public_season_dates(season_year: str) -> str:
+    year = int(season_year)
+    return f"{year}0801-{year + 1}0630"
+
+
+def fetch_espn_public_season_events(
+    *,
+    competition_id: str,
+    season_year: str,
+) -> list[dict[str, Any]]:
+    league_slug = ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS.get(competition_id)
+    if not league_slug:
+        return []
+
+    params = {
+        "dates": build_espn_public_season_dates(season_year),
+        "limit": "1000",
+    }
+    url = (
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+        f"{league_slug}/scoreboard?{urlencode(params)}"
+    )
+    request = Request(url, headers={"User-Agent": "MatchAnalyzer/1.0"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+
+    events = [
+        _espn_public_event_to_schedule_event(
+            event,
+            fallback_competition_id=competition_id,
+        )
+        for event in payload.get("events", [])
+        if isinstance(event, dict)
+    ]
+    events.sort(key=lambda event: event.get("start_time", ""))
+    return events
+
+
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return football.get_daily_schedule(date=date)
@@ -114,16 +337,27 @@ def fetch_missing_players(season_id: str) -> dict[str, Any]:
 def fetch_team_schedule(
     team_id: str,
     *,
-    competition_id: str,
+    competition_id: str | None = None,
     season_year: str | None = None,
 ) -> dict[str, Any]:
     football = load_sports_skills_football()
-    return unwrap_sports_skills_data(
+    request_kwargs = {
+        "team_id": team_id,
+        "season_year": season_year,
+    }
+    if competition_id:
+        request_kwargs["competition_id"] = competition_id
+    data = unwrap_sports_skills_data(
         football.get_team_schedule(
-            team_id=team_id,
-            competition_id=competition_id,
-            season_year=season_year,
+            **request_kwargs,
         )
+    )
+    if data.get("events") or not competition_id:
+        return data
+    return fetch_espn_public_team_schedule(
+        team_id,
+        competition_id=competition_id,
+        season_year=season_year,
     )
 
 
@@ -177,17 +411,22 @@ def _recent_player_form_by_team(
     competition_id: str,
     season_id: str,
 ) -> dict[str, float]:
-    schedule = fetch_team_schedule(
-        team_id,
-        competition_id=competition_id,
-        season_year=_extract_season_year(season_id),
-    )
-    recent_events = [
-        event
-        for event in schedule.get("events", [])
-        if event.get("status") == "closed" and event.get("id")
-    ]
-    recent_events = list(reversed(recent_events))[:RECENT_EVENT_LIMIT]
+    recent_events_by_id: dict[str, dict[str, Any]] = {}
+    for history_competition_id in history_competition_ids(competition_id):
+        schedule = fetch_team_schedule(
+            team_id,
+            competition_id=history_competition_id,
+            season_year=_extract_season_year(season_id),
+        )
+        for event in schedule.get("events", []):
+            event_id = str(event.get("id") or "")
+            if event.get("status") == "closed" and event_id:
+                recent_events_by_id[event_id] = event
+    recent_events = sorted(
+        recent_events_by_id.values(),
+        key=lambda event: event.get("start_time", ""),
+        reverse=True,
+    )[:RECENT_EVENT_LIMIT]
     player_scores: dict[str, float] = {}
     for index, event in enumerate(recent_events):
         event_weight = RECENCY_WEIGHTS[index] if index < len(RECENCY_WEIGHTS) else 0.2
@@ -262,6 +501,23 @@ def _derived_absence_count(
     return sum(1 for player_name in ranked_recent_players if player_name not in starting_names)
 
 
+def _should_fetch_lineup_context(event: dict[str, Any]) -> bool:
+    start_time = event.get("start_time")
+    if not start_time:
+        return True
+    if event.get("status") == "closed":
+        return False
+    try:
+        kickoff_at = datetime.fromisoformat(str(start_time).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if kickoff_at.tzinfo is None:
+        return True
+    return kickoff_at.astimezone(timezone.utc) <= datetime.now(timezone.utc) + timedelta(
+        hours=LINEUP_CONTEXT_LOOKAHEAD_HOURS
+    )
+
+
 def competition_emblem_url(competition_id: str) -> str | None:
     code = FOOTBALL_DATA_COMPETITION_CODES.get(competition_id)
     if not code:
@@ -314,7 +570,11 @@ def filter_supported_events(events: list[dict[str, Any]]) -> list[dict[str, Any]
 def infer_competition_type(competition_id: str) -> str:
     if is_international_competition_id(competition_id):
         return "international"
-    if competition_id in {"champions-league", "europa-league"}:
+    if competition_id in {
+        "champions-league",
+        "europa-league",
+        "conference-league",
+    }:
         return "cup"
     return "league"
 
@@ -358,7 +618,33 @@ def build_team_rows_from_event(event: dict[str, Any]) -> list[dict[str, str]]:
     return rows
 
 
-def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
+def _event_has_stale_final_score(event: dict[str, Any]) -> bool:
+    scores = event.get("scores") or {}
+    home_score = scores.get("home")
+    away_score = scores.get("away")
+    if not isinstance(home_score, int) or not isinstance(away_score, int):
+        return False
+    if home_score == 0 and away_score == 0:
+        return False
+
+    try:
+        kickoff_at = datetime.fromisoformat(
+            str(event["start_time"]).replace("Z", "+00:00")
+        )
+    except (KeyError, ValueError):
+        return False
+
+    # ESPN occasionally leaves past completed cup matches as scheduled while scores are final.
+    return kickoff_at.astimezone(timezone.utc) < datetime.now(timezone.utc) - timedelta(
+        hours=3
+    )
+
+
+def build_match_row_from_event(
+    event: dict[str, Any],
+    *,
+    result_observed_at: str | None = None,
+) -> dict[str, Any]:
     home_team = next(
         competitor["team"]
         for competitor in event["competitors"]
@@ -373,7 +659,7 @@ def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
     final_result = None
     home_score = None
     away_score = None
-    if status == "closed":
+    if status == "closed" or _event_has_stale_final_score(event):
         home_score = event["scores"]["home"]
         away_score = event["scores"]["away"]
         if home_score > away_score:
@@ -393,13 +679,15 @@ def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
         "final_result": final_result,
         "home_score": home_score,
         "away_score": away_score,
+        "result_observed_at": result_observed_at if final_result is not None else None,
     }
 
 
 def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    target_events = [event for event in events if _should_fetch_lineup_context(event)]
     missing_by_season: dict[str, dict[str, dict[str, float | int]]] = {}
     recent_form_cache: dict[tuple[str, str, str], dict[str, float]] = {}
-    for event in events:
+    for event in target_events:
         season_id = event.get("season", {}).get("id", "")
         competition_id = event.get("competition", {}).get("id", "")
         if (
@@ -421,7 +709,7 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
             missing_by_season[season_id] = team_absences
 
     contexts: dict[str, dict[str, Any]] = {}
-    for event in events:
+    for event in target_events:
         event_id = event.get("id")
         if not event_id:
             continue
@@ -524,6 +812,49 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
 
 def _parse_kickoff(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def _parse_optional_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return datetime.fromisoformat(value)
+
+
+def estimate_result_observed_at(match: dict[str, Any]) -> datetime | None:
+    observed_at = _parse_optional_datetime(match.get("result_observed_at"))
+    if observed_at is not None:
+        return observed_at
+    kickoff_at = _parse_optional_datetime(match.get("kickoff_at"))
+    if kickoff_at is None or not match.get("final_result"):
+        return None
+    return kickoff_at + RESULT_OBSERVED_AT_FALLBACK_DELAY
+
+
+def is_match_result_visible_at(
+    match: dict[str, Any],
+    as_of: datetime | None,
+) -> bool:
+    if not match.get("final_result") or not match.get("kickoff_at"):
+        return False
+    if as_of is None:
+        return True
+    observed_at = estimate_result_observed_at(match)
+    return observed_at is not None and observed_at <= as_of
+
+
+def _filter_visible_historical_matches(
+    historical_matches: list[dict[str, Any]],
+    *,
+    target_kickoff: datetime,
+    as_of: datetime | None,
+) -> list[dict[str, Any]]:
+    return [
+        match
+        for match in historical_matches
+        if match.get("kickoff_at")
+        and _parse_kickoff(match["kickoff_at"]) < target_kickoff
+        and is_match_result_visible_at(match, as_of)
+    ]
 
 
 def _build_elo_by_team(historical_matches: list[dict[str, Any]], target_kickoff: datetime) -> dict[str, float]:
@@ -631,14 +962,22 @@ def _build_team_history_metrics(
 def build_match_history_snapshot_fields(
     match: dict[str, Any],
     historical_matches: list[dict[str, Any]],
+    *,
+    as_of: str | datetime | None = None,
 ) -> dict[str, int | float | None]:
     target_kickoff = _parse_kickoff(match["kickoff_at"])
-    elo_by_team = _build_elo_by_team(historical_matches, target_kickoff)
+    as_of_datetime = _parse_optional_datetime(as_of) if isinstance(as_of, str) else as_of
+    visible_historical_matches = _filter_visible_historical_matches(
+        historical_matches,
+        target_kickoff=target_kickoff,
+        as_of=as_of_datetime,
+    )
+    elo_by_team = _build_elo_by_team(visible_historical_matches, target_kickoff)
     home_metrics = _build_team_history_metrics(
-        match["home_team_id"], historical_matches, target_kickoff, elo_by_team
+        match["home_team_id"], visible_historical_matches, target_kickoff, elo_by_team
     )
     away_metrics = _build_team_history_metrics(
-        match["away_team_id"], historical_matches, target_kickoff, elo_by_team
+        match["away_team_id"], visible_historical_matches, target_kickoff, elo_by_team
     )
     form_delta = None
     if (
@@ -683,14 +1022,23 @@ def build_snapshot_rows_from_matches(
     historical_rows = historical_matches or []
     lineup_contexts = lineup_context_by_match or {}
     for match in matches:
-        history_fields = build_match_history_snapshot_fields(match, historical_rows)
+        snapshot_captured_at = resolve_snapshot_captured_at(
+            match=match,
+            checkpoint=checkpoint,
+            captured_at=captured_at,
+        )
+        history_fields = build_match_history_snapshot_fields(
+            match,
+            historical_rows,
+            as_of=snapshot_captured_at,
+        )
         lineup_context = lineup_contexts.get(match["id"], {})
         snapshot = build_snapshot(
             match_id=match["id"],
             checkpoint=checkpoint,
             lineup_status=lineup_context.get("lineup_status", "unknown"),
             has_market_data=False,
-            captured_at=captured_at,
+            captured_at=snapshot_captured_at,
         )
         snapshot_rows.append(
             {
@@ -721,3 +1069,35 @@ def build_snapshot_rows_from_matches(
             }
         )
     return snapshot_rows
+
+
+def parse_snapshot_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def resolve_snapshot_captured_at(
+    *,
+    match: dict[str, Any],
+    checkpoint: str,
+    captured_at: str | None,
+) -> str | None:
+    if match.get("final_result") is None:
+        return captured_at
+
+    kickoff_at = parse_snapshot_datetime(match.get("kickoff_at"))
+    observed_at = parse_snapshot_datetime(captured_at)
+    if kickoff_at is None or observed_at is None or observed_at < kickoff_at:
+        return captured_at
+
+    checkpoint_offsets = {
+        "T_MINUS_24H": timedelta(hours=24),
+        "T_MINUS_6H": timedelta(hours=6),
+        "T_MINUS_1H": timedelta(hours=1),
+        "LINEUP_CONFIRMED": timedelta(hours=1),
+    }
+    return (kickoff_at - checkpoint_offsets.get(checkpoint, timedelta(hours=24))).isoformat()

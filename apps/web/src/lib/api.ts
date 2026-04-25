@@ -78,6 +78,14 @@ export interface VariantMarket {
   selectionBLabel: string;
   selectionBPrice: number | null;
   marketSlug: string | null;
+  recommendedPick?: string;
+  recommended?: boolean;
+  noBetReason?: string | null;
+  edge?: number | null;
+  expectedValue?: number | null;
+  marketPrice?: number | null;
+  modelProbability?: number | null;
+  marketProbability?: number | null;
 }
 
 export interface PredictionFeatureContext {
@@ -121,6 +129,24 @@ export interface PredictionFeatureMetadata {
   missing_signal_reasons?: PredictionMissingSignalReason[];
 }
 
+export interface PredictionMarketEnrichment {
+  status?: string;
+  currentPredictionMarketAvailable?: boolean;
+  current_prediction_market_available?: boolean;
+  predictionMarketRowId?: string | null;
+  prediction_market_row_id?: string | null;
+  predictionMarketSourceName?: string | null;
+  prediction_market_source_name?: string | null;
+  predictionMarketObservedAt?: string | null;
+  prediction_market_observed_at?: string | null;
+  variantMarketIds?: string[];
+  variant_market_ids?: string[];
+  variantMarketCount?: number;
+  variant_market_count?: number;
+  preservedFromPredictionId?: string | null;
+  preserved_from_prediction_id?: string | null;
+}
+
 export interface PredictionExplanationPayload {
   missingSignals?: string[];
   missing_signals?: string[];
@@ -152,6 +178,8 @@ export interface PredictionExplanationPayload {
   feature_context?: PredictionFeatureContext;
   featureMetadata?: PredictionFeatureMetadata;
   feature_metadata?: PredictionFeatureMetadata;
+  marketEnrichment?: PredictionMarketEnrichment;
+  market_enrichment?: PredictionMarketEnrichment;
   featureAttribution?: Array<{
     featureKey?: string;
     feature_key?: string;
@@ -310,9 +338,28 @@ const DEPLOY_API_ORIGIN =
     ?.trim()
     .replace(/\/+$/, "") ?? "";
 const API_BASE_PATH = DEPLOY_API_ORIGIN || "/api";
+const API_PROXY_BASE_PATH = "/api";
+const OPERATIONAL_REPORT_PATHS = new Set([
+  "/predictions/source-evaluation/latest",
+  "/predictions/source-evaluation/history",
+  "/predictions/model-registry/latest",
+  "/predictions/fusion-policy/latest",
+  "/predictions/fusion-policy/history",
+  "/reviews/aggregation/latest",
+  "/reviews/aggregation/history",
+  "/rollouts/promotion/latest",
+]);
+
+export function isOperationalReportApiPath(path: string): boolean {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return OPERATIONAL_REPORT_PATHS.has(normalizedPath);
+}
 
 export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (isOperationalReportApiPath(normalizedPath)) {
+    return `${API_PROXY_BASE_PATH}${normalizedPath}`;
+  }
   return `${API_BASE_PATH}${normalizedPath}`;
 }
 
@@ -331,6 +378,49 @@ export interface LeaguePredictionSummary {
   correctCount: number;
   incorrectCount: number;
   successRate: number | null;
+}
+
+export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
+
+export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss";
+
+export interface DailyPickItem {
+  id: string;
+  matchId: string;
+  predictionId: string | null;
+  leagueId: string;
+  leagueLabel: string;
+  homeTeam: string;
+  homeTeamLogoUrl?: string | null;
+  awayTeam: string;
+  awayTeamLogoUrl?: string | null;
+  kickoffAt: string;
+  marketFamily: DailyPickMarketFamily;
+  selectionLabel: string;
+  confidence: number | null;
+  edge: number | null;
+  expectedValue: number | null;
+  marketPrice: number | null;
+  modelProbability: number | null;
+  marketProbability: number | null;
+  sourceAgreementRatio: number | null;
+  status: DailyPickStatus;
+  noBetReason: string | null;
+  reasonLabels: string[];
+}
+
+export interface DailyPicksResponse {
+  generatedAt: string | null;
+  date: string | null;
+  target: {
+    minDailyRecommendations: number;
+    maxDailyRecommendations: number;
+    hitRate: number;
+    roi: number;
+  };
+  coverage: Record<DailyPickMarketFamily | "held", number>;
+  items: DailyPickItem[];
+  heldItems: DailyPickItem[];
 }
 
 export interface PredictionResponse {
@@ -437,10 +527,15 @@ export function fetchMatches(params?: {
   leagueId?: string | null;
   cursor?: string | null;
   limit?: number;
+  locale?: string | null;
+  view?: "upcoming" | "recent" | null;
 }): Promise<MatchListResponse> {
   const search = new URLSearchParams();
   if (params?.leagueId) {
     search.set("leagueId", params.leagueId);
+  }
+  if (params?.view) {
+    search.set("view", params.view);
   }
   if (params?.cursor) {
     search.set("cursor", params.cursor);
@@ -448,8 +543,45 @@ export function fetchMatches(params?: {
   if (params?.limit) {
     search.set("limit", String(params.limit));
   }
+  if (params?.locale) {
+    search.set("locale", params.locale);
+  }
   const query = search.toString();
   return fetchJson<MatchListResponse>(query ? `/matches?${query}` : "/matches");
+}
+
+export function resolveDailyPicksDate(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function fetchDailyPicks(params?: {
+  date?: string | null;
+  leagueId?: string | null;
+  marketFamily?: DailyPickMarketFamily | "all" | null;
+  includeHeld?: boolean;
+  locale?: string | null;
+}): Promise<DailyPicksResponse> {
+  const search = new URLSearchParams();
+  if (params?.date) {
+    search.set("date", params.date);
+  }
+  if (params?.leagueId) {
+    search.set("leagueId", params.leagueId);
+  }
+  if (params?.marketFamily) {
+    search.set("marketFamily", params.marketFamily);
+  }
+  if (params?.includeHeld) {
+    search.set("includeHeld", "true");
+  }
+  if (params?.locale) {
+    search.set("locale", params.locale);
+  }
+  const query = search.toString();
+  return fetchJson<DailyPicksResponse>(query ? `/daily-picks?${query}` : "/daily-picks");
 }
 
 export function fetchPrediction(matchId: string): Promise<PredictionResponse> {

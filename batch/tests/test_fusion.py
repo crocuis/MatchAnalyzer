@@ -143,6 +143,100 @@ def test_choose_fusion_weights_prefers_checkpoint_market_segment_policy_and_filt
     }
 
 
+def test_choose_fusion_weights_uses_competition_policy_before_broad_segments():
+    policy_row = build_latest_fusion_policy(
+        report_id="latest",
+        recommended_weights={
+            "overall": {
+                "base_model": 0.34,
+                "bookmaker": 0.33,
+                "prediction_market": 0.33,
+            },
+            "by_checkpoint": {
+                "T_MINUS_24H": {
+                    "base_model": 0.2,
+                    "bookmaker": 0.7,
+                    "prediction_market": 0.1,
+                }
+            },
+            "by_competition": {
+                "champions-league": {
+                    "base_model": 0.7,
+                    "bookmaker": 0.2,
+                    "prediction_market": 0.1,
+                }
+            },
+        },
+    )
+
+    selected = choose_fusion_weights(
+        policy_payload=policy_row["policy_payload"],
+        checkpoint="T_MINUS_24H",
+        market_segment="with_prediction_market",
+        competition_id="champions-league",
+        allowed_variants=("base_model", "bookmaker", "prediction_market"),
+    )
+
+    assert selected == {
+        "matched_on": "by_competition",
+        "policy_id": "latest",
+        "weights": {
+            "base_model": 0.7,
+            "bookmaker": 0.2,
+            "prediction_market": 0.1,
+        },
+    }
+
+
+def test_choose_fusion_weights_uses_competition_policy_from_legacy_selection_order():
+    selected = choose_fusion_weights(
+        policy_payload={
+            "policy_id": "latest",
+            "selection_order": [
+                "by_checkpoint_market_segment",
+                "by_checkpoint",
+                "by_market_segment",
+                "overall",
+            ],
+            "weights": {
+                "overall": {
+                    "base_model": 0.34,
+                    "bookmaker": 0.33,
+                    "prediction_market": 0.33,
+                },
+                "by_checkpoint": {
+                    "T_MINUS_24H": {
+                        "base_model": 0.2,
+                        "bookmaker": 0.7,
+                        "prediction_market": 0.1,
+                    }
+                },
+                "by_competition": {
+                    "europa-league": {
+                        "base_model": 0.65,
+                        "bookmaker": 0.25,
+                        "prediction_market": 0.1,
+                    }
+                },
+            },
+        },
+        checkpoint="T_MINUS_24H",
+        market_segment="with_prediction_market",
+        competition_id="europa-league",
+        allowed_variants=("base_model", "bookmaker", "prediction_market"),
+    )
+
+    assert selected == {
+        "matched_on": "by_competition",
+        "policy_id": "latest",
+        "weights": {
+            "base_model": 0.65,
+            "bookmaker": 0.25,
+            "prediction_market": 0.1,
+        },
+    }
+
+
 def test_choose_fusion_weights_returns_none_for_invalid_policy_payload():
     assert (
         choose_fusion_weights(
@@ -607,6 +701,37 @@ def test_build_value_recommendation_allows_low_probability_pick_with_strong_ev()
         "market_source": "prediction_market",
         "model_probability": 0.13,
         "pick": "HOME",
+        "recommended": True,
+    }
+
+
+def test_build_value_recommendation_ignores_extreme_low_market_prices():
+    recommendation = build_value_recommendation(
+        base_probs={"home": 0.54, "draw": 0.24, "away": 0.22},
+        market_probs={"home": 0.001, "draw": 0.48, "away": 0.519},
+        market_prices={"home": 0.001, "draw": 0.48, "away": 0.519},
+        prediction_market_available=True,
+    )
+
+    assert recommendation is None
+
+
+def test_build_value_recommendation_falls_back_to_valid_price_after_extreme_price():
+    recommendation = build_value_recommendation(
+        base_probs={"home": 0.54, "draw": 0.32, "away": 0.14},
+        market_probs={"home": 0.001, "draw": 0.24, "away": 0.759},
+        market_prices={"home": 0.001, "draw": 0.24, "away": 0.759},
+        prediction_market_available=True,
+    )
+
+    assert recommendation == {
+        "edge": 0.08,
+        "expected_value": 0.3333,
+        "market_probability": 0.24,
+        "market_price": 0.24,
+        "market_source": "prediction_market",
+        "model_probability": 0.32,
+        "pick": "DRAW",
         "recommended": True,
     }
 

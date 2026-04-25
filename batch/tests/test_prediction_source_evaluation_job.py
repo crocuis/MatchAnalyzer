@@ -255,6 +255,7 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
     }
     assert state["prediction_fusion_policies"][0]["policy_payload"]["selection_order"] == [
         "by_checkpoint_market_segment",
+        "by_competition",
         "by_checkpoint",
         "by_market_segment",
         "overall",
@@ -345,6 +346,99 @@ def test_build_evaluation_report_uses_persisted_prediction_payload_when_market_r
     assert report["overall"]["bookmaker"]["count"] == 1
     assert report["overall"]["base_model"]["count"] == 1
     assert report["overall"]["current_fused"]["count"] == 1
+
+
+def test_build_evaluation_report_ignores_stale_prediction_market_from_payload() -> None:
+    report = evaluation_job.build_evaluation_report(
+        snapshot_rows=[
+            {
+                "id": "snapshot-001",
+                "match_id": "match-001",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        prediction_rows=[
+            {
+                "id": "prediction-001",
+                "match_id": "match-001",
+                "snapshot_id": "snapshot-001",
+                "home_prob": 0.20,
+                "draw_prob": 0.65,
+                "away_prob": 0.15,
+                "confidence_score": 0.65,
+                "summary_payload": {
+                    "base_model_probs": {
+                        "home": 0.42,
+                        "draw": 0.28,
+                        "away": 0.30,
+                    },
+                    "prediction_market_available": True,
+                    "feature_context": {
+                        "prediction_market_available": True,
+                    },
+                    "source_metadata": {
+                        "market_sources": {
+                            "bookmaker": {
+                                "available": True,
+                                "source_name": "book-a",
+                                "probabilities": {
+                                    "home": 0.45,
+                                    "draw": 0.30,
+                                    "away": 0.25,
+                                },
+                            },
+                            "prediction_market": {
+                                "available": True,
+                                "source_name": "poly-a",
+                                "probabilities": {
+                                    "home": 0.0005,
+                                    "draw": 0.999,
+                                    "away": 0.0005,
+                                },
+                            },
+                        }
+                    },
+                },
+            }
+        ],
+        market_rows=[
+            {
+                "id": "snapshot-001_bookmaker",
+                "snapshot_id": "snapshot-001",
+                "source_type": "bookmaker",
+                "market_family": "moneyline_3way",
+                "source_name": "book-a",
+                "home_prob": 0.45,
+                "draw_prob": 0.30,
+                "away_prob": 0.25,
+            },
+            {
+                "id": "snapshot-001_prediction_market",
+                "snapshot_id": "snapshot-001",
+                "source_type": "prediction_market",
+                "market_family": "moneyline_3way",
+                "source_name": "poly-a",
+                "home_prob": 0.0005,
+                "draw_prob": 0.999,
+                "away_prob": 0.0005,
+                "observed_at": "2026-04-10T23:00:00+00:00",
+            },
+        ],
+        match_rows=[
+            {
+                "id": "match-001",
+                "competition_id": "epl",
+                "kickoff_at": "2026-04-10T19:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+    )
+
+    assert report["snapshots_evaluated"] == 1
+    assert report["rows_evaluated"] == 3
+    assert "prediction_market" not in report["overall"]
+    assert "with_prediction_market" not in report["by_market_segment"]
+    assert report["by_market_segment"]["without_prediction_market"]["bookmaker"]["count"] == 1
 
 
 def test_build_evaluation_report_applies_current_fused_safeguard_to_persisted_payload() -> None:

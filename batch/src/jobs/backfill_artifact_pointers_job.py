@@ -1,13 +1,20 @@
 import json
 
 from batch.src.settings import load_settings
-from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.artifact_store import (
+    archive_json_artifact,
+    build_supabase_storage_artifact_client,
+)
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import read_optional_rows
 from batch.src.storage.supabase_client import SupabaseClient
 
 
-def _archive_prediction_rows(rows: list[dict], r2_client: R2Client) -> tuple[list[dict], list[dict]]:
+def _archive_prediction_rows(
+    rows: list[dict],
+    r2_client: R2Client,
+    supabase_storage_client=None,
+) -> tuple[list[dict], list[dict]]:
     archived_rows: list[dict] = []
     artifact_rows: list[dict] = []
     for row in rows:
@@ -18,6 +25,7 @@ def _archive_prediction_rows(rows: list[dict], r2_client: R2Client) -> tuple[lis
         artifact_rows.append(
             archive_json_artifact(
                 r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
                 artifact_id=artifact_id,
                 owner_type="prediction",
                 owner_id=row["id"],
@@ -37,7 +45,11 @@ def _archive_prediction_rows(rows: list[dict], r2_client: R2Client) -> tuple[lis
     return archived_rows, artifact_rows
 
 
-def _archive_review_rows(rows: list[dict], r2_client: R2Client) -> tuple[list[dict], list[dict]]:
+def _archive_review_rows(
+    rows: list[dict],
+    r2_client: R2Client,
+    supabase_storage_client=None,
+) -> tuple[list[dict], list[dict]]:
     archived_rows: list[dict] = []
     artifact_rows: list[dict] = []
     for row in rows:
@@ -48,6 +60,7 @@ def _archive_review_rows(rows: list[dict], r2_client: R2Client) -> tuple[list[di
         artifact_rows.append(
             archive_json_artifact(
                 r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
                 artifact_id=artifact_id,
                 owner_type="post_match_review",
                 owner_id=row["id"],
@@ -105,6 +118,7 @@ def _archive_report_rows(
     artifact_kind: str,
     key_prefix: str,
     r2_client: R2Client,
+    supabase_storage_client=None,
 ) -> tuple[list[dict], list[dict]]:
     archived_rows: list[dict] = []
     artifact_rows: list[dict] = []
@@ -127,6 +141,7 @@ def _archive_report_rows(
         artifact_rows.append(
             archive_json_artifact(
                 r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
                 artifact_id=artifact_id,
                 owner_type=owner_type,
                 owner_id=row["id"],
@@ -158,18 +173,27 @@ def main() -> None:
         secret_access_key=getattr(settings, "r2_secret_access_key", None),
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
+    supabase_storage_client = build_supabase_storage_artifact_client(settings)
 
     artifact_rows: list[dict] = []
     updated_counts: dict[str, int] = {}
     pending_table_updates: list[tuple[str, list[dict]]] = []
 
     predictions = read_optional_rows(client, "predictions")
-    archived_predictions, prediction_artifacts = _archive_prediction_rows(predictions, r2_client)
+    archived_predictions, prediction_artifacts = _archive_prediction_rows(
+        predictions,
+        r2_client,
+        supabase_storage_client,
+    )
     artifact_rows.extend(prediction_artifacts)
     updated_counts["predictions"] = len(prediction_artifacts)
 
     reviews = read_optional_rows(client, "post_match_reviews")
-    archived_reviews, review_artifacts = _archive_review_rows(reviews, r2_client)
+    archived_reviews, review_artifacts = _archive_review_rows(
+        reviews,
+        r2_client,
+        supabase_storage_client,
+    )
     artifact_rows.extend(review_artifacts)
     updated_counts["post_match_reviews"] = len(review_artifacts)
 
@@ -241,6 +265,7 @@ def main() -> None:
             artifact_kind=artifact_kind,
             key_prefix=key_prefix,
             r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
         )
         if table_artifacts:
             pending_table_updates.append((table_name, archived_rows))

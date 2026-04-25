@@ -5,7 +5,7 @@ permissions:
 
 on:
   workflow_run:
-    workflows: [run-predictions]
+    workflows: [ingest-fixtures, ingest-markets, run-predictions]
     types: [completed]
   workflow_dispatch:
     inputs:

@@ -64,6 +64,10 @@
    ```
 
    참고:
+   - GitHub Actions의 fixtures ingestion은 기준 UTC 날짜와 `+7일..+14일` 구간을 순회한다. 가까운 1주 선행 적재는 필요할 때 로컬에서 `REAL_FIXTURE_DATE`를 날짜별로 지정해 실행한다.
+   - `REAL_FIXTURE_HYDRATE_HISTORY=1`을 추가하면 fixture ingest 중 팀 일정 기반 historical metric 보강을 수행한다. 선행 적재 기본 경로에서는 기존 `matches`만 사용해 원격 호출량을 줄인다.
+   - `REAL_FIXTURE_BACKFILL_TEAM_ASSETS=1`을 추가하면 fixture ingest 중 누락 팀 로고 fallback 조회를 수행한다. 기본 경로는 원천 schedule에 포함된 asset과 기존 DB asset만 병합한다.
+   - 라인업/최근 선수 form 동기화는 킥오프 1시간 이내 경기만 대상으로 한다. 그보다 먼 예정 경기는 일정과 기본 스냅샷만 먼저 적재한다.
    - Polymarket 연동은 현재 `epl`, `ucl`, `uel`, `kor` 계열만 보수적으로 지원한다.
    - `prediction_market` row가 없어도 prediction/review는 bookmaker fallback으로 계속 진행된다.
    - `match_snapshots.snapshot_quality`는 시장 row가 붙으면 `complete`로 승격된다.

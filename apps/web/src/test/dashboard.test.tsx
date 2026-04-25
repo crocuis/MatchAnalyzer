@@ -3,9 +3,11 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import FullReportView from "../components/FullReportView";
 import MatchCard from "../components/MatchCard";
 import MatchDetailModal from "../components/MatchDetailModal";
 import i18n from "../i18n/config";
+import { fetchDailyPicks } from "../lib/api";
 import type { MatchCardRow, PredictionSummary } from "../lib/api";
 
 afterEach(() => {
@@ -574,6 +576,140 @@ beforeEach(async () => {
         };
       }
 
+      if (url.startsWith("/api/daily-picks")) {
+        return {
+          ok: true,
+          json: async () => {
+            const items = [
+              {
+                id: "pick-1",
+                matchId: "match-001",
+                predictionId: "prediction-1",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Chelsea",
+                awayTeam: "Manchester City",
+                kickoffAt: "2026-04-27 19:00 UTC",
+                marketFamily: "moneyline",
+                selectionLabel: "HOME",
+                confidence: 0.72,
+                edge: 0.12,
+                expectedValue: 0.28,
+                marketPrice: 0.54,
+                modelProbability: 0.69,
+                marketProbability: 0.57,
+                sourceAgreementRatio: 0.8,
+                status: "recommended",
+                noBetReason: null,
+                reasonLabels: ["mainRecommendation"],
+              },
+              {
+                id: "pick-3",
+                matchId: "match-003",
+                predictionId: "prediction-3",
+                leagueId: "champions-league",
+                leagueLabel: "UEFA Champions League",
+                homeTeam: "Inter",
+                homeTeamLogoUrl: "https://crests.football-data.org/108.png",
+                awayTeam: "Bayern Munich",
+                awayTeamLogoUrl: "https://crests.football-data.org/5.png",
+                kickoffAt: "2026-04-28 19:00 UTC",
+                marketFamily: "moneyline",
+                selectionLabel: "DRAW",
+                confidence: 0.71,
+                edge: 0.1,
+                expectedValue: 0.21,
+                marketPrice: 0.53,
+                modelProbability: 0.64,
+                marketProbability: 0.53,
+                sourceAgreementRatio: 0.7,
+                status: "recommended",
+                noBetReason: null,
+                reasonLabels: ["mainRecommendation"],
+              },
+            ];
+            const heldItems = [
+              {
+                id: "held-spread-1",
+                matchId: "match-002",
+                predictionId: "prediction-2",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Liverpool",
+                awayTeam: "Brentford",
+                kickoffAt: "2026-04-27 21:00 UTC",
+                marketFamily: "spreads",
+                selectionLabel: "Home -0.5",
+                confidence: null,
+                edge: null,
+                expectedValue: null,
+                marketPrice: 0.58,
+                modelProbability: null,
+                marketProbability: 0.58,
+                sourceAgreementRatio: 0.75,
+                status: "held",
+                noBetReason: "variant_market_price_only",
+                reasonLabels: ["spreads", "heldByRecommendationGate"],
+              },
+              {
+                id: "held-total-1",
+                matchId: "match-003",
+                predictionId: "prediction-3",
+                leagueId: "champions-league",
+                leagueLabel: "UEFA Champions League",
+                homeTeam: "Inter",
+                homeTeamLogoUrl: "https://crests.football-data.org/108.png",
+                awayTeam: "Bayern Munich",
+                awayTeamLogoUrl: "https://crests.football-data.org/5.png",
+                kickoffAt: "2026-04-28 19:00 UTC",
+                marketFamily: "totals",
+                selectionLabel: "Under 2.5",
+                confidence: null,
+                edge: null,
+                expectedValue: null,
+                marketPrice: 0.53,
+                modelProbability: null,
+                marketProbability: 0.53,
+                sourceAgreementRatio: 0.7,
+                status: "held",
+                noBetReason: "variant_market_price_only",
+                reasonLabels: ["totals", "heldByRecommendationGate"],
+              },
+              {
+                id: "held-1",
+                matchId: "match-004",
+                predictionId: "prediction-4",
+                leagueId: "premier-league",
+                leagueLabel: "Premier League",
+                homeTeam: "Arsenal",
+                awayTeam: "Fulham",
+                kickoffAt: "2026-04-20 19:00 UTC",
+                marketFamily: "moneyline",
+                selectionLabel: "HOME",
+                confidence: 0.51,
+                edge: 0.02,
+                expectedValue: 0.04,
+                marketPrice: 0.61,
+                modelProbability: 0.63,
+                marketProbability: 0.61,
+                sourceAgreementRatio: 0.5,
+                status: "held",
+                noBetReason: "low_confidence",
+                reasonLabels: ["heldByRecommendationGate"],
+              },
+            ];
+            return {
+              generatedAt: "2026-04-24T08:00:00Z",
+              date: "2026-04-24",
+              target: { minDailyRecommendations: 5, maxDailyRecommendations: 10, hitRate: 0.7, roi: 0.2 },
+              coverage: { moneyline: 3, spreads: 1, totals: 1, held: 3 },
+              items,
+              heldItems,
+            };
+          },
+        };
+      }
+
       if (url.endsWith("/api/predictions/match-001")) {
         return {
           ok: true,
@@ -1005,11 +1141,246 @@ function hasTextContent(text: string) {
     node?.textContent?.replace(/\s+/g, " ").trim() === text;
 }
 
+it("fetches daily picks with filters", async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({
+      generatedAt: "2026-04-24T08:00:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      coverage: { moneyline: 1, spreads: 1, totals: 1, held: 1 },
+      items: [],
+      heldItems: [],
+    }),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await fetchDailyPicks({
+    date: "2026-04-24",
+    leagueId: "premier-league",
+    marketFamily: "spreads",
+    includeHeld: true,
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/daily-picks?date=2026-04-24&leagueId=premier-league&marketFamily=spreads&includeHeld=true",
+  );
+});
+
 describe("dashboard redesign", () => {
   it("preserves the prediction workspace heading", () => {
     render(<App />);
 
     expect(screen.getByText("Match Analysis Hub")).toBeInTheDocument();
+  });
+
+  it("shows daily picks header and board entry points", async () => {
+    render(<App />);
+
+    const fetchMock = vi.mocked(fetch);
+    const dailyPicksCalls = () =>
+      fetchMock.mock.calls
+        .map(([url]) => url)
+        .filter((url): url is string => typeof url === "string" && url.startsWith("/api/daily-picks"));
+    expect(await screen.findByRole("heading", { name: /^daily picks$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^view$/i })).toBeInTheDocument();
+    expect(await screen.findByText("2 picks")).toBeInTheDocument();
+    expect(dailyPicksCalls()).toContainEqual(expect.stringMatching(/^\/api\/daily-picks\?date=\d{4}-\d{2}-\d{2}&locale=en$/));
+  });
+
+  it("opens the daily picks view from the dashboard CTA", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+  });
+
+  it("keeps the daily picks CTA available after matches load", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+  });
+
+  it("renders daily picks market filters and recommendation cards", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+    expect(screen.getByText("HOME")).toBeInTheDocument();
+    expect(screen.getByText("DRAW")).toBeInTheDocument();
+    expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
+    expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /over\/under/i })).toBeInTheDocument();
+  });
+
+  it("opens match detail from a daily pick outside the dashboard league page", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+    expect(await within(dailyPicksDialog).findByAltText("Inter crest")).toBeInTheDocument();
+    expect(within(dailyPicksDialog).getByAltText("Bayern Munich crest")).toBeInTheDocument();
+    fireEvent.click(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Inter vs Bayern Munich" }),
+    ).toBeInTheDocument();
+    const matchDetailDialog = screen.getByRole("dialog", { name: "Inter vs Bayern Munich" });
+    expect(within(matchDetailDialog).getByAltText("Inter crest")).toBeInTheDocument();
+    expect(within(matchDetailDialog).getByAltText("Bayern Munich crest")).toBeInTheDocument();
+  });
+
+  it("keeps the daily picks modal open when closing a detail opened from it", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+    fireEvent.click(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Inter vs Bayern Munich" }),
+    ).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Inter vs Bayern Munich" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: /daily picks/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.body.style.overflow).toBe("hidden");
+    });
+  });
+
+  it("keeps held moneyline picks as no-bet while detail data is loading", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /show held/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /arsenal vs fulham/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Arsenal vs Fulham" });
+    expect(within(dialog).getByLabelText("Bet: Unavailable")).toBeInTheDocument();
+  });
+
+  it("filters daily picks by market family and can show held items", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /handicap/i }));
+
+    expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
+    expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /show held/i }));
+
+    expect(await screen.findByText("Home -0.5")).toBeInTheDocument();
+    expect(screen.getByText(/market price only/i)).toBeInTheDocument();
+    expect(screen.queryByText(/low confidence/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /moneyline/i }));
+
+    expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
+  });
+
+  it("opens the teaser CTA with all league daily picks and updates cards when the league select changes", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    expect(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    ).toBeInTheDocument();
+    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue("");
+
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "champions-league" },
+    });
+
+    await waitFor(() => {
+      expect(
+        within(dailyPicksDialog).getByRole("button", {
+          name: /inter.*bayern munich/i,
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(
+      within(dailyPicksDialog).queryByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resets daily picks filters to the all-leagues context on reopen", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    let dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    fireEvent.change(within(dailyPicksDialog).getByRole("combobox", { name: /league/i }), {
+      target: { value: "" },
+    });
+    fireEvent.click(within(dailyPicksDialog).getByRole("button", { name: /handicap/i }));
+    fireEvent.click(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /daily picks/i })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(await screen.findByRole("tab", { name: "UEFA Champions League" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+
+    expect(within(dailyPicksDialog).getByRole("combobox", { name: /league/i })).toHaveValue("");
+    expect(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i })).not.toBeChecked();
+    expect(
+      await within(dailyPicksDialog).findByRole("button", {
+        name: /inter.*bayern munich/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(dailyPicksDialog).getByRole("button", {
+        name: /chelsea.*manchester city/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("does not fetch evaluation reports when opening the match detail modal", async () => {
@@ -1050,6 +1421,112 @@ describe("dashboard redesign", () => {
     expect(screen.getByText(/1 need review/i)).toBeInTheDocument();
     expect(screen.getByRole("tabpanel", { name: "Match Timeline" })).toBeInTheDocument();
     expect(screen.getByText("Showing 3 of 3 matches")).toBeInTheDocument();
+  });
+
+  it("keeps match view pages cached when switching between upcoming and recent tabs", async () => {
+    render(<App />);
+
+    await screen.findByRole("tab", { name: "Upcoming Matches" });
+    const fetchMock = vi.mocked(fetch);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+        ),
+      ).toBe(true);
+    });
+    const recentRequestCount = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+    ).length;
+
+    fireEvent.click(screen.getByRole("tab", { name: "Upcoming Matches" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+        ),
+      ).toHaveLength(recentRequestCount);
+    });
+  });
+
+  it("derives a translated conference league tab when the bootstrap response omits league summaries", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.startsWith("/api/matches")) {
+          return {
+            ok: true,
+            json: async () => ({
+              items: [
+                {
+                  id: "uecl-match-001",
+                  leagueId: "conference-league",
+                  leagueLabel: "UEFA Conference League",
+                  leagueEmblemUrl: "https://crests.football-data.org/UECL.png",
+                  homeTeam: "Chelsea",
+                  awayTeam: "Fiorentina",
+                  kickoffAt: "2026-04-28 19:00 UTC",
+                  status: "Scheduled",
+                  recommendedPick: null,
+                  confidence: null,
+                  needsReview: false,
+                },
+              ],
+              leagues: [],
+              predictionSummary: null,
+              selectedLeagueId: "conference-league",
+              nextCursor: null,
+              totalMatches: 1,
+            }),
+          };
+        }
+
+        if (url.startsWith("/api/daily-picks")) {
+          return {
+            ok: true,
+            json: async () => ({
+              generatedAt: null,
+              date: "2026-04-28",
+              target: {
+                minDailyRecommendations: 5,
+                maxDailyRecommendations: 10,
+                hitRate: 0.7,
+                roi: 0.2,
+              },
+              coverage: { moneyline: 0, spreads: 0, totals: 0, held: 0 },
+              items: [],
+              heldItems: [],
+            }),
+          };
+        }
+
+        return {
+          ok: true,
+          json: async () => ({
+            report: null,
+            history: [],
+            latest: null,
+            previous: null,
+            reviewAggregation: null,
+            rollout: null,
+            decision: null,
+          }),
+        };
+      }),
+    );
+
+    render(<App />);
+
+    const tablist = await screen.findByRole("tablist", { name: "Leagues" });
+    expect(
+      within(tablist).getByRole("tab", { name: "UEFA Conference League" }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("renders a card-grid style match list with operator metadata", async () => {
@@ -1165,8 +1642,8 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("Calibration evidence")).toBeInTheDocument();
     expect(screen.getByText("0.7-0.8")).toBeInTheDocument();
     expect(screen.getByText("67% hit rate · 6 matches")).toBeInTheDocument();
-    expect(screen.getByText("Market price")).toBeInTheDocument();
-    expect(screen.getAllByText("30%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Market price")).toBeNull();
+    expect(screen.queryByText("+40%")).toBeNull();
     expect(modal.getAllByText("Additional markets").length).toBeGreaterThan(0);
     expect(modal.getByText("Handicap 0.5")).toBeInTheDocument();
     expect(modal.getByText("Home -0.5 lead · 54% vs 46%")).toBeInTheDocument();
@@ -1192,7 +1669,7 @@ describe("dashboard redesign", () => {
     expect(modal.getByLabelText("Bet: Recommended")).toBeInTheDocument();
     expect(modal.getByText("Signal summary")).toBeInTheDocument();
     expect(modal.getByText("HOME lean with the strongest available support.")).toBeInTheDocument();
-    expect(modal.getAllByText("Value Pick").length).toBeGreaterThan(0);
+    expect(modal.queryByText("Value Pick")).toBeNull();
     expect(modal.getAllByText("Additional markets").length).toBeGreaterThan(0);
     expect(modal.getByRole("button", { name: /View Full Intelligence Report/ })).toBeInTheDocument();
   });
@@ -1356,6 +1833,41 @@ describe("dashboard redesign", () => {
     );
 
     expect(document.querySelector(".matchCard.state-complete")).not.toBeNull();
+  });
+
+  it("renders settled displayed predictions as hits even when the bet lane stayed on no-bet", () => {
+    const settledNoBetMatch: MatchCardRow = {
+      id: "settled-no-bet-hit",
+      leagueId: "premier-league",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27 21:00 UTC",
+      status: "Review Ready",
+      finalResult: "HOME",
+      homeScore: 2,
+      awayScore: 1,
+      recommendedPick: null,
+      confidence: null,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      needsReview: false,
+    };
+
+    render(
+      <MatchCard match={settledNoBetMatch} isSelected={false} onOpen={() => {}} />,
+    );
+
+    const card = within(
+      screen.getByRole("button", { name: "Liverpool vs Brentford" }),
+    );
+
+    expect(card.getByLabelText("Verdict: Correct")).toBeInTheDocument();
+    expect(document.querySelector(".verdictGlyph-hit")).not.toBeNull();
+    expect(document.querySelector(".verdictText-hit")).not.toBeNull();
   });
 
   it("uses matching modal tones for pending and settled no-bet states", () => {
@@ -1692,6 +2204,60 @@ describe("dashboard redesign", () => {
       expect(screen.getAllByText("Prediction market segment").length).toBeGreaterThan(0);
       expect(screen.getAllByText("with prediction market").length).toBeGreaterThan(0);
     });
+  });
+
+  it("does not label report misses as correct calls when review tags are unavailable", () => {
+    const match: MatchCardRow = {
+      id: "report-miss-without-review",
+      leagueId: "premier-league",
+      homeTeam: "Chelsea",
+      awayTeam: "Manchester City",
+      kickoffAt: "2026-04-27 19:00 UTC",
+      status: "Review Ready",
+      finalResult: "AWAY",
+      homeScore: 1,
+      awayScore: 2,
+      recommendedPick: "HOME",
+      confidence: 0.7,
+      needsReview: true,
+    };
+    const prediction: PredictionSummary = {
+      matchId: match.id,
+      checkpointLabel: "LINEUP_CONFIRMED",
+      recommendedPick: "HOME",
+      confidence: 0.7,
+      homeWinProbability: 70,
+      drawProbability: 18,
+      awayWinProbability: 12,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.7,
+        recommended: true,
+        noBetReason: null,
+      },
+    };
+
+    render(
+      <FullReportView
+        match={match}
+        prediction={prediction}
+        evaluationReport={null}
+        evaluationHistoryView={null}
+        modelRegistryReport={null}
+        fusionPolicyReport={null}
+        fusionPolicyHistoryView={null}
+        reviewAggregationReport={null}
+        reviewAggregationHistoryView={null}
+        promotionDecisionReport={null}
+        checkpoints={[]}
+        review={null}
+        onBack={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Miss type")).toBeInTheDocument();
+    expect(screen.getByText("Miss")).toBeInTheDocument();
+    expect(screen.queryByText("Correct call")).toBeNull();
   });
 
   it("closes the detail modal on Escape", async () => {

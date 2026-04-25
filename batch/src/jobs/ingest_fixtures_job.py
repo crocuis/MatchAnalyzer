@@ -31,6 +31,56 @@ def dedupe_rows(rows: list[dict]) -> list[dict]:
     return list(deduped.values())
 
 
+def rows_differ(
+    previous_row: dict | None,
+    next_row: dict,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> bool:
+    if previous_row is None:
+        return True
+    keys = (set(previous_row) | set(next_row)) - (ignored_fields or set())
+    return any(previous_row.get(key) != next_row.get(key) for key in keys)
+
+
+def collect_changed_fixture_match_ids(
+    *,
+    match_rows: list[dict],
+    existing_match_rows: list[dict],
+    snapshot_rows: list[dict],
+    existing_snapshot_rows: list[dict],
+) -> list[str]:
+    changed_match_ids: set[str] = set()
+    existing_matches_by_id = {
+        row["id"]: row for row in existing_match_rows if isinstance(row, dict) and row.get("id")
+    }
+    for row in match_rows:
+        match_id = row.get("id")
+        if match_id and rows_differ(existing_matches_by_id.get(match_id), row):
+            changed_match_ids.add(str(match_id))
+
+    existing_snapshots_by_id = {
+        row["id"]: row
+        for row in existing_snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    for row in snapshot_rows:
+        match_id = row.get("match_id")
+        snapshot_id = row.get("id")
+        if (
+            match_id
+            and snapshot_id
+            and rows_differ(
+                existing_snapshots_by_id.get(snapshot_id),
+                row,
+                ignored_fields={"captured_at"},
+            )
+        ):
+            changed_match_ids.add(str(match_id))
+
+    return sorted(changed_match_ids)
+
+
 def merge_existing_asset_fields(
     rows: list[dict],
     existing_rows: list[dict],
@@ -54,6 +104,41 @@ def apply_asset_updates(rows: list[dict], updates: list[dict]) -> list[dict]:
     return [{**row, **updates_by_id.get(row["id"], {})} for row in rows]
 
 
+def build_team_translation_rows(
+    team_rows: list[dict],
+    *,
+    locale: str,
+    source_name: str | None = None,
+    is_primary: bool = False,
+) -> list[dict]:
+    rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for team in team_rows:
+        team_id = str(team.get("id") or "").strip()
+        display_name = str(team.get("name") or "").strip()
+        if not team_id or not display_name:
+            continue
+        translation_id = (
+            f"{team_id}:{locale}:primary"
+            if is_primary
+            else f"{team_id}:{locale}:{source_name or 'default'}:{display_name}"
+        )
+        if translation_id in seen_ids:
+            continue
+        seen_ids.add(translation_id)
+        rows.append(
+            {
+                "id": translation_id,
+                "team_id": team_id,
+                "locale": locale,
+                "display_name": display_name,
+                "source_name": source_name,
+                "is_primary": is_primary,
+            }
+        )
+    return rows
+
+
 def prepare_sync_asset_rows(
     *,
     competition_rows: list[dict],
@@ -62,6 +147,7 @@ def prepare_sync_asset_rows(
     schedules: list[dict],
     existing_competitions: list[dict],
     existing_teams: list[dict],
+    fetch_missing_team_assets: bool = True,
 ) -> tuple[list[dict], list[dict]]:
     prepared_competitions = merge_existing_asset_fields(
         dedupe_rows(competition_rows),
@@ -79,6 +165,7 @@ def prepare_sync_asset_rows(
         competitions=prepared_competitions,
         matches=match_rows,
         schedules=schedules,
+        allowed_team_ids=None if fetch_missing_team_assets else set(),
     )
     return (
         apply_asset_updates(prepared_competitions, competition_updates),
@@ -103,6 +190,26 @@ def build_hydration_season_years(season_id: str) -> tuple[str | None, ...]:
     return (season_year, str(current_year - 1))
 
 
+def should_hydrate_real_fixture_history() -> bool:
+    return os.environ.get("REAL_FIXTURE_HYDRATE_HISTORY", "0") in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
+
+
+def should_backfill_real_fixture_team_assets() -> bool:
+    return os.environ.get("REAL_FIXTURE_BACKFILL_TEAM_ASSETS", "0") in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
+
+
 def hydrate_recent_historical_matches(
     match_rows: list[dict],
     historical_matches: list[dict],
@@ -111,7 +218,7 @@ def hydrate_recent_historical_matches(
         row["id"]: row for row in historical_matches if row.get("id")
     }
     target_match_ids = {row["id"] for row in match_rows if row.get("id")}
-    schedule_cache: dict[tuple[str, str, str | None], list[dict]] = {}
+    schedule_cache: dict[tuple[str, str | None, str | None], list[dict]] = {}
 
     for match_row in match_rows:
         competition_id = str(match_row.get("competition_id") or "")
@@ -123,22 +230,28 @@ def hydrate_recent_historical_matches(
             if not team_id or not competition_id:
                 continue
             for season_year in season_years:
-                cache_key = (team_id, competition_id, season_year)
-                if cache_key not in schedule_cache:
-                    schedule_cache[cache_key] = fixture_ingest.fetch_team_schedule(
-                        team_id,
-                        competition_id=competition_id,
-                        season_year=season_year,
-                    ).get("events", [])
-                for event in schedule_cache[cache_key]:
-                    if event.get("status") != "closed" or not event.get("id"):
-                        continue
-                    if event["id"] in target_match_ids or event["id"] in hydrated_by_id:
-                        continue
-                    historical_row = fixture_ingest.build_match_row_from_event(event)
-                    if historical_row.get("final_result") is None:
-                        continue
-                    hydrated_by_id[historical_row["id"]] = historical_row
+                for history_competition_id in fixture_ingest.history_competition_ids(
+                    competition_id
+                ):
+                    cache_key = (team_id, history_competition_id, season_year)
+                    if cache_key not in schedule_cache:
+                        schedule_cache[cache_key] = fixture_ingest.fetch_team_schedule(
+                            team_id,
+                            competition_id=history_competition_id,
+                            season_year=season_year,
+                        ).get("events", [])
+                    for event in schedule_cache[cache_key]:
+                        if event.get("status") != "closed" or not event.get("id"):
+                            continue
+                        if (
+                            event["id"] in target_match_ids
+                            or event["id"] in hydrated_by_id
+                        ):
+                            continue
+                        historical_row = fixture_ingest.build_match_row_from_event(event)
+                        if historical_row.get("final_result") is None:
+                            continue
+                        hydrated_by_id[historical_row["id"]] = historical_row
 
     return list(hydrated_by_id.values())
 
@@ -188,13 +301,19 @@ def main() -> None:
     if use_real_schedule:
         schedule = fetch_daily_schedule(use_real_schedule)
         events = filter_supported_events(schedule["data"]["events"])
+        captured_at = datetime.now(timezone.utc).isoformat()
         competition_rows = []
         team_rows = []
         payload = []
         for event in events:
             competition_rows.append(build_competition_row_from_event(event))
             team_rows.extend(build_team_rows_from_event(event))
-            payload.append(build_match_row_from_event(event))
+            payload.append(
+                build_match_row_from_event(
+                    event,
+                    result_observed_at=captured_at,
+                )
+            )
         archive_payload = {
             **schedule,
             "data": {
@@ -204,14 +323,14 @@ def main() -> None:
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
         lineup_context_by_match = build_lineup_context_by_match(events)
-        captured_at = datetime.now(timezone.utc).isoformat()
         historical_matches = client.read_rows("matches")
+        existing_snapshot_rows = client.read_rows("match_snapshots")
         snapshot_rows_payload = build_sync_snapshot_rows(
             match_rows=payload,
             captured_at=captured_at,
             historical_matches=historical_matches,
             lineup_context_by_match=lineup_context_by_match,
-            hydrate_historical_matches=True,
+            hydrate_historical_matches=should_hydrate_real_fixture_history(),
         )
         competition_rows, team_rows = prepare_sync_asset_rows(
             competition_rows=competition_rows,
@@ -220,6 +339,18 @@ def main() -> None:
             schedules=[archive_payload],
             existing_competitions=client.read_rows("competitions"),
             existing_teams=client.read_rows("teams"),
+            fetch_missing_team_assets=should_backfill_real_fixture_team_assets(),
+        )
+        team_translation_rows = build_team_translation_rows(
+            team_rows,
+            locale="en",
+            is_primary=True,
+        )
+        changed_match_ids = collect_changed_fixture_match_ids(
+            match_rows=payload,
+            existing_match_rows=historical_matches,
+            snapshot_rows=snapshot_rows_payload,
+            existing_snapshot_rows=existing_snapshot_rows,
         )
     else:
         normalized = build_fixture_row(SAMPLE_RAW_FIXTURE, {})
@@ -235,7 +366,26 @@ def main() -> None:
         archive_key = "fixtures/match_001.json"
         competition_rows = []
         team_rows = []
+        team_translation_rows = [
+            {
+                "id": "arsenal:en:primary",
+                "team_id": "arsenal",
+                "locale": "en",
+                "display_name": "Arsenal",
+                "source_name": None,
+                "is_primary": True,
+            },
+            {
+                "id": "chelsea:en:primary",
+                "team_id": "chelsea",
+                "locale": "en",
+                "display_name": "Chelsea",
+                "source_name": None,
+                "is_primary": True,
+            },
+        ]
         snapshot_rows_payload = SAMPLE_SNAPSHOT_ROWS
+        changed_match_ids = [payload[0]["id"]]
 
     archive_uri = R2Client(
         settings.r2_bucket,
@@ -251,6 +401,11 @@ def main() -> None:
     team_count = (
         client.upsert_rows("teams", team_rows) if team_rows else 0
     )
+    team_translation_count = (
+        client.upsert_rows("team_translations", team_translation_rows)
+        if team_translation_rows
+        else 0
+    )
     fixture_rows = client.upsert_rows("matches", payload)
     snapshot_rows = (
         client.upsert_rows("match_snapshots", snapshot_rows_payload)
@@ -264,8 +419,10 @@ def main() -> None:
                 "archive_uri": archive_uri,
                 "competition_rows": competition_count,
                 "team_rows": team_count,
+                "team_translation_rows": team_translation_count,
                 "fixture_rows": fixture_rows,
                 "snapshot_rows": snapshot_rows,
+                "changed_match_ids": changed_match_ids,
                 "payload": payload,
             },
             sort_keys=True,

@@ -75,7 +75,7 @@ export async function loadRolloutLaneSummaries(
 ): Promise<{ shadow: RolloutLaneSummary | null; rollout: RolloutLaneSummary | null }> {
   const { data, error } = await supabase
     .from("rollout_lane_states")
-    .select("*")
+    .select("rollout_channel, lane_payload")
     .in("rollout_channel", ["shadow", "rollout"])
     .limit(4);
 
@@ -92,12 +92,13 @@ export async function loadRolloutLaneSummaries(
       if (!isRecord(row)) {
         return accumulator;
       }
+      const rowRecord = row as Record<string, unknown>;
       const rolloutChannel =
-        readString(row.rollout_channel) ?? readString(row.rolloutChannel);
+        readString(rowRecord.rollout_channel) ?? readString(rowRecord.rolloutChannel);
       if (!rolloutChannel) {
         return accumulator;
       }
-      accumulator[rolloutChannel] = normalizeLaneSummaryRow(row);
+      accumulator[rolloutChannel] = normalizeLaneSummaryRow(rowRecord);
       return accumulator;
     },
     {},

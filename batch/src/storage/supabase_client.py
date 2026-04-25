@@ -3,7 +3,7 @@ import re
 from hashlib import sha256
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REMOTE_READ_PAGE_SIZE = 1000
@@ -20,6 +20,16 @@ class SupabaseClient:
         self.base_url = base_url
         self.service_key = service_key
 
+    def _normalize_bulk_upsert_rows(self, rows: list[dict]) -> list[dict]:
+        if len(rows) < 2:
+            return [dict(row) for row in rows]
+
+        all_keys = sorted({key for row in rows for key in row})
+        if all(row.keys() == rows[0].keys() for row in rows[1:]):
+            return [dict(row) for row in rows]
+
+        return [{key: row.get(key) for key in all_keys} for row in rows]
+
     def _use_file_backend(self) -> bool:
         hostname = urlparse(self.base_url).hostname or ""
         return hostname.endswith("placeholder.supabase.local") or hostname == "example.supabase.co"
@@ -35,11 +45,12 @@ class SupabaseClient:
         self,
         table_name: str,
         *,
+        columns: tuple[str, ...] | None,
         start: int,
         page_size: int,
         ordered: bool,
     ) -> list[dict]:
-        params = {"select": "*"}
+        params = {"select": ",".join(columns) if columns else "*"}
         if ordered:
             params["order"] = "id.asc"
         request = Request(
@@ -56,7 +67,12 @@ class SupabaseClient:
                 raise ValueError(f"Supabase read failed with status {response.status}")
             return json.loads(response.read().decode("utf-8"))
 
-    def _read_rows_remote(self, table_name: str) -> list[dict]:
+    def _read_rows_remote(
+        self,
+        table_name: str,
+        *,
+        columns: tuple[str, ...] | None,
+    ) -> list[dict]:
         rows: list[dict] = []
         start = 0
 
@@ -64,6 +80,7 @@ class SupabaseClient:
             try:
                 page = self._read_remote_rows_page(
                     table_name,
+                    columns=columns,
                     start=start,
                     page_size=REMOTE_READ_PAGE_SIZE,
                     ordered=True,
@@ -78,6 +95,7 @@ class SupabaseClient:
                 ):
                     fallback_page = self._read_remote_rows_page(
                         table_name,
+                        columns=columns,
                         start=0,
                         page_size=REMOTE_READ_PAGE_SIZE,
                         ordered=False,
@@ -117,10 +135,11 @@ class SupabaseClient:
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
+            normalized_rows = self._normalize_bulk_upsert_rows(rows)
             params = urlencode({"on_conflict": "id"})
             request = Request(
                 url=f"{self.base_url}/rest/v1/{table_name}?{params}",
-                data=json.dumps(rows).encode("utf-8"),
+                data=json.dumps(normalized_rows).encode("utf-8"),
                 headers={
                     **self._headers(),
                     "Prefer": "return=minimal,resolution=merge-duplicates",
@@ -138,7 +157,7 @@ class SupabaseClient:
                 body = exc.read().decode("utf-8")
                 retry_result = self._retry_without_missing_column(
                     table_name,
-                    rows,
+                    normalized_rows,
                     body,
                 )
                 if retry_result is not None:
@@ -155,18 +174,68 @@ class SupabaseClient:
             row["id"]: row for row in existing_rows if isinstance(row, dict) and "id" in row
         }
         for row in rows:
-            merged_rows[row["id"]] = row
+            existing_row = merged_rows.get(row["id"], {})
+            merged_rows[row["id"]] = {
+                **existing_row,
+                **row,
+            }
         target.write_text(json.dumps(list(merged_rows.values()), sort_keys=True))
         return len(rows)
 
-    def read_rows(self, table: str) -> list[dict]:
+    def delete_rows(self, table: str, column: str, values: list[str], batch_size: int = 20) -> int:
+        table_name = validate_table_name(table)
+        if not values:
+            return 0
+
+        if not self._use_file_backend():
+            deleted = 0
+            headers = {
+                **self._headers(),
+                "Prefer": "return=minimal",
+            }
+            for index in range(0, len(values), batch_size):
+                batch = values[index : index + batch_size]
+                in_filter = ",".join(batch)
+                url = (
+                    f"{self.base_url}/rest/v1/{table_name}"
+                    f"?{column}=in.({quote(in_filter, safe=',()-_')})"
+                )
+                request = Request(url=url, headers=headers, method="DELETE")
+                with urlopen(request, timeout=30) as response:
+                    if response.status >= 400:
+                        raise ValueError(
+                            f"Supabase delete failed for table={table_name}"
+                        )
+                deleted += len(batch)
+            return deleted
+
+        base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
+        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        if not target.exists():
+            return 0
+        value_set = set(values)
+        rows = json.loads(target.read_text())
+        retained_rows = [
+            row for row in rows if not isinstance(row, dict) or row.get(column) not in value_set
+        ]
+        target.write_text(json.dumps(retained_rows, sort_keys=True))
+        return len(rows) - len(retained_rows)
+
+    def read_rows(self, table: str, columns: tuple[str, ...] | None = None) -> list[dict]:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
-            return self._read_rows_remote(table_name)
+            return self._read_rows_remote(table_name, columns=columns)
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
         if not target.exists():
             return []
         rows = json.loads(target.read_text())
+        if columns:
+            column_set = set(columns)
+            rows = [
+                {key: value for key, value in row.items() if key in column_set}
+                for row in rows
+                if isinstance(row, dict)
+            ]
         return sorted(rows, key=lambda row: row.get("id", ""))

@@ -39,6 +39,327 @@ def test_build_review_tags_large_home_miss():
     assert review["market_outperformed_model"] is True
 
 
+def test_build_market_probabilities_ignores_prediction_market_observed_after_kickoff():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "DraftKings",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.51,
+                "draw_prob": 0.25,
+                "away_prob": 0.24,
+            },
+            {
+                "id": "match_t_minus_24h_prediction_market",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "prediction_market",
+                "source_name": "polymarket_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.0005,
+                "draw_prob": 0.999,
+                "away_prob": 0.0005,
+                "home_price": 0.0005,
+                "draw_price": 0.9995,
+                "away_price": 0.0005,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {"home": 0.51, "draw": 0.25, "away": 0.24}
+    assert prediction_market is None
+
+
+def test_build_variant_markets_adds_recommendations_for_supported_half_lines():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-slug"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 2.5,
+                "selection_a_label": "Over 2.5",
+                "selection_a_price": 0.49,
+                "selection_b_label": "Under 2.5",
+                "selection_b_price": 0.51,
+                "raw_payload": {"market_slug": "totals-slug"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.5,
+            "selection_a_label": "Home -0.5",
+            "selection_a_price": 0.45,
+            "selection_b_label": "Away +0.5",
+            "selection_b_price": 0.55,
+            "market_slug": "spread-slug",
+            "recommended_pick": "Home -0.5",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.1557, abs=1e-4),
+            "expected_value": pytest.approx(0.346, abs=1e-4),
+            "market_price": 0.45,
+            "model_probability": pytest.approx(0.6057, abs=1e-4),
+            "market_probability": 0.45,
+        },
+        {
+            "market_family": "totals",
+            "source_name": "polymarket_totals",
+            "line_value": 2.5,
+            "selection_a_label": "Over 2.5",
+            "selection_a_price": 0.49,
+            "selection_b_label": "Under 2.5",
+            "selection_b_price": 0.51,
+            "market_slug": "totals-slug",
+            "recommended_pick": "Over 2.5",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.0868, abs=1e-4),
+            "expected_value": pytest.approx(0.1771, abs=1e-4),
+            "market_price": 0.49,
+            "model_probability": pytest.approx(0.5768, abs=1e-4),
+            "market_probability": 0.49,
+        },
+    ]
+
+
+def test_build_variant_markets_adds_recommendations_for_integer_and_quarter_lines():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.25,
+                "selection_a_label": "Home -0.25",
+                "selection_a_price": 0.47,
+                "selection_b_label": "Away +0.25",
+                "selection_b_price": 0.53,
+                "raw_payload": {"market_slug": "spread-quarter"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 3.0,
+                "selection_a_label": "Over 3.0",
+                "selection_a_price": 0.41,
+                "selection_b_label": "Under 3.0",
+                "selection_b_price": 0.59,
+                "raw_payload": {"market_slug": "totals-integer"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 2.25,
+                "selection_a_label": "Over 2.25",
+                "selection_a_price": 0.46,
+                "selection_b_label": "Under 2.25",
+                "selection_b_price": 0.54,
+                "raw_payload": {"market_slug": "totals-quarter"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.25,
+            "selection_a_label": "Home -0.25",
+            "selection_a_price": 0.47,
+            "selection_b_label": "Away +0.25",
+            "selection_b_price": 0.53,
+            "market_slug": "spread-quarter",
+            "recommended_pick": "Home -0.25",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.1854, abs=1e-4),
+            "expected_value": pytest.approx(0.3945, abs=1e-4),
+            "market_price": 0.47,
+            "model_probability": pytest.approx(0.6554, abs=1e-4),
+            "market_probability": 0.47,
+        },
+        {
+            "market_family": "totals",
+            "source_name": "polymarket_totals",
+            "line_value": 3.0,
+            "selection_a_label": "Over 3.0",
+            "selection_a_price": 0.41,
+            "selection_b_label": "Under 3.0",
+            "selection_b_price": 0.59,
+            "market_slug": "totals-integer",
+            "recommended_pick": "Over 3.0",
+            "recommended": False,
+            "no_bet_reason": "variant_ev_below_threshold",
+            "edge": pytest.approx(0.0346, abs=1e-4),
+            "expected_value": pytest.approx(0.0844, abs=1e-4),
+            "market_price": 0.41,
+            "model_probability": pytest.approx(0.4446, abs=1e-4),
+            "market_probability": 0.41,
+        },
+        {
+            "market_family": "totals",
+            "source_name": "polymarket_totals",
+            "line_value": 2.25,
+            "selection_a_label": "Over 2.25",
+            "selection_a_price": 0.46,
+            "selection_b_label": "Under 2.25",
+            "selection_b_price": 0.54,
+            "market_slug": "totals-quarter",
+            "recommended_pick": "Over 2.25",
+            "recommended": True,
+            "no_bet_reason": None,
+            "edge": pytest.approx(0.1683, abs=1e-4),
+            "expected_value": pytest.approx(0.3659, abs=1e-4),
+            "market_price": 0.46,
+            "model_probability": pytest.approx(0.6283, abs=1e-4),
+            "market_probability": 0.46,
+        },
+    ]
+
+
+def test_build_variant_markets_does_not_recommend_ultra_longshot_variant_prices():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -2.5,
+                "selection_a_label": "Home -2.5",
+                "selection_a_price": 0.02,
+                "selection_b_label": "Away +2.5",
+                "selection_b_price": 0.98,
+                "raw_payload": {"market_slug": "spread-longshot"},
+            }
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -2.5,
+            "selection_a_label": "Home -2.5",
+            "selection_a_price": 0.02,
+            "selection_b_label": "Away +2.5",
+            "selection_b_price": 0.98,
+            "market_slug": "spread-longshot",
+            "recommended_pick": "Away +2.5",
+            "recommended": False,
+            "no_bet_reason": "variant_market_too_longshot",
+            "edge": pytest.approx(-0.1623, abs=1e-4),
+            "expected_value": pytest.approx(-0.1656, abs=1e-4),
+            "market_price": 0.98,
+            "model_probability": pytest.approx(0.8177, abs=1e-4),
+            "market_probability": 0.98,
+        }
+    ]
+
+
+def test_build_variant_markets_preserves_no_bet_reason_without_model_probability():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-slug"},
+            }
+        ],
+        snapshot={},
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets == [
+        {
+            "market_family": "spreads",
+            "source_name": "polymarket_spreads",
+            "line_value": -0.5,
+            "selection_a_label": "Home -0.5",
+            "selection_a_price": 0.45,
+            "selection_b_label": "Away +0.5",
+            "selection_b_price": 0.55,
+            "market_slug": "spread-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
+        }
+    ]
+
+
 def test_build_review_keeps_empty_tags_for_correct_prediction():
     review = build_review(
         prediction={
@@ -281,6 +602,46 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
 
     assert selected_snapshots == [snapshot_rows[0], snapshot_rows[1]]
     assert selected_markets == [market_rows[0], market_rows[1]]
+
+
+def test_select_real_prediction_inputs_prefers_explicit_match_ids_over_date():
+    snapshot_rows = [
+        {"id": "match_a_t_minus_24h", "match_id": "match_a", "checkpoint_type": "T_MINUS_24H"},
+        {"id": "match_b_t_minus_24h", "match_id": "match_b", "checkpoint_type": "T_MINUS_24H"},
+    ]
+    market_rows = [
+        {
+            "id": "match_a_t_minus_24h_bookmaker",
+            "snapshot_id": "match_a_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.4,
+            "draw_prob": 0.3,
+            "away_prob": 0.3,
+        },
+        {
+            "id": "match_b_t_minus_24h_bookmaker",
+            "snapshot_id": "match_b_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.45,
+            "draw_prob": 0.25,
+            "away_prob": 0.30,
+        },
+    ]
+    match_rows = [
+        {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
+        {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00"},
+    ]
+
+    selected_snapshots, selected_markets = select_real_prediction_inputs(
+        snapshot_rows=snapshot_rows,
+        market_rows=market_rows,
+        match_rows=match_rows,
+        target_date="2026-04-12",
+        target_match_ids={"match_b"},
+    )
+
+    assert selected_snapshots == [snapshot_rows[1]]
+    assert selected_markets == [market_rows[1]]
 
 
 def test_build_review_payload_keeps_completed_predictions_without_market_rows():
@@ -978,6 +1339,74 @@ def test_run_predictions_job_generates_all_available_checkpoints_in_real_mode(
         "match_a_t_minus_24h",
         "match_a_t_minus_6h",
     ]
+
+
+def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_a_t_minus_24h",
+                        "match_id": "match_a",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 3,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                    {
+                        "id": "match_b_t_minus_24h",
+                        "match_id": "match_b",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 4,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_a_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_a_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.52,
+                        "draw_prob": 0.25,
+                        "away_prob": 0.23,
+                    },
+                    {
+                        "id": "match_b_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_b_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.55,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.21,
+                    },
+                ],
+                "matches": [
+                    {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00", "final_result": None},
+                    {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00", "final_result": None},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_MATCH_IDS", "match_b")
+
+    run_predictions_job.main()
+
+    assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
 
 
 def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):
@@ -2107,6 +2536,130 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     }
 
 
+def test_run_predictions_job_calibrates_selector_confidence_against_selected_probs(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "complete",
+                        "lineup_status": "confirmed",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.80,
+                        "draw_prob": 0.12,
+                        "away_prob": 0.08,
+                    },
+                    {
+                        "id": "target_match_t_minus_24h_prediction_market",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "prediction_market",
+                        "home_prob": 0.82,
+                        "draw_prob": 0.10,
+                        "away_prob": 0.08,
+                    },
+                ],
+                "matches": [
+                    {
+                        "id": "target_match",
+                        "competition_id": "premier-league",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+                "predictions": [],
+                "market_variants": [],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    def fake_confidence_score(fused_probs, base_probs=None, context=None):
+        return 0.91 if fused_probs["home"] > 0.8 else 0.41
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **_kwargs: (
+            {"home": 0.90, "draw": 0.05, "away": 0.05},
+            "trained_baseline",
+            {},
+        ),
+    )
+    monkeypatch.setattr(run_predictions_job, "confidence_score", fake_confidence_score)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "current_fused_selector_history_ready",
+        lambda _candidates: True,
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_current_fused_probabilities",
+        lambda _candidates: {
+            "target_match_t_minus_24h": {"home": 0.34, "draw": 0.33, "away": 0.33},
+        },
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_confidence_bucket_summary",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "archive_json_artifact",
+        lambda **kwargs: {
+            "id": kwargs["artifact_id"],
+            "owner_type": kwargs["owner_type"],
+            "owner_id": kwargs["owner_id"],
+            "artifact_kind": kwargs["artifact_kind"],
+            "storage_backend": "r2",
+            "bucket_name": "workflow-artifacts",
+            "object_key": kwargs["key"],
+            "storage_uri": f"r2://workflow-artifacts/{kwargs['key']}",
+            "content_type": "application/json",
+            "size_bytes": 0,
+            "checksum_sha256": "test",
+            "summary_payload": kwargs.get("summary_payload") or {},
+            "metadata": kwargs.get("metadata") or {},
+        },
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    explanation_payload = prediction["explanation_payload"]
+
+    assert prediction["home_prob"] == 0.34
+    assert prediction["confidence_score"] == 0.41
+    assert prediction["main_recommendation_confidence"] == 0.41
+    assert explanation_payload["raw_confidence_score"] == 0.41
+    assert explanation_payload["calibrated_confidence_score"] == 0.41
+    assert explanation_payload["current_fused_selection"]["selected_source"] == "historical_selector"
+
+
 def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
     state: dict[str, list[dict]] = {}
 
@@ -2209,6 +2762,8 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "selection_b_label": "Away +0.5",
             "selection_b_price": 0.46,
             "market_slug": "spread-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
         },
         {
             "market_family": "totals",
@@ -2219,11 +2774,164 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
             "selection_b_label": "Under 2.5",
             "selection_b_price": 0.43,
             "market_slug": "total-slug",
+            "recommended": False,
+            "no_bet_reason": "variant_model_inputs_missing",
         },
     ]
 
 
-def test_run_predictions_job_derives_form_and_rest_from_match_history_when_snapshot_fields_are_missing(
+def test_run_predictions_job_preserves_existing_market_enrichment_when_rerun_lacks_prediction_market(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    existing_prediction = {
+        "id": "target_match_t_minus_24h_model_v1",
+        "snapshot_id": "target_match_t_minus_24h",
+        "match_id": "target_match",
+        "model_version_id": "model_v1",
+        "home_prob": 0.62,
+        "draw_prob": 0.21,
+        "away_prob": 0.17,
+        "recommended_pick": "HOME",
+        "confidence_score": 0.74,
+        "summary_payload": {
+            "prediction_market_available": True,
+            "market_enrichment": {
+                "status": "current",
+                "current_prediction_market_available": True,
+                "prediction_market_row_id": "target_match_t_minus_24h_prediction_market",
+                "prediction_market_source_name": "polymarket_moneyline_3way",
+                "prediction_market_observed_at": "2026-04-12T15:30:00Z",
+                "variant_market_ids": [
+                    "target_match_t_minus_24h_prediction_market_spreads_sample"
+                ],
+                "variant_market_count": 1,
+                "preserved_from_prediction_id": None,
+            },
+            "feature_context": {
+                "prediction_market_available": True,
+                "market_gap_home": 0.08,
+                "market_gap_draw": -0.03,
+                "market_gap_away": -0.05,
+                "max_abs_divergence": 0.08,
+                "sources_agree": True,
+            },
+            "source_metadata": {
+                "market_segment": "with_prediction_market",
+                "market_sources": {
+                    "prediction_market": {
+                        "available": True,
+                        "source_name": "polymarket_moneyline_3way",
+                        "probabilities": {
+                            "home": 0.54,
+                            "draw": 0.24,
+                            "away": 0.22,
+                        },
+                    }
+                },
+            },
+        },
+        "value_recommendation_pick": "HOME",
+        "value_recommendation_recommended": True,
+        "value_recommendation_edge": 0.08,
+        "value_recommendation_expected_value": 0.1481,
+        "value_recommendation_market_price": 0.54,
+        "value_recommendation_model_probability": 0.62,
+        "value_recommendation_market_probability": 0.54,
+        "value_recommendation_market_source": "prediction_market",
+        "variant_markets_summary": [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": -0.5,
+                "selection_a_label": "Home -0.5",
+                "selection_a_price": 0.55,
+                "selection_b_label": "Away +0.5",
+                "selection_b_price": 0.45,
+                "market_slug": "spread-slug",
+            }
+        ],
+    }
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 7,
+                        "rest_delta": 2,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "odds_api",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.56,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.20,
+                    },
+                ],
+                "market_variants": [],
+                "predictions": [deepcopy(existing_prediction)],
+                "matches": [
+                    {
+                        "id": "target_match",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return deepcopy(self.tables.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = deepcopy(rows)
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    assert prediction["value_recommendation_pick"] == "HOME"
+    assert prediction["value_recommendation_market_source"] == "prediction_market"
+    assert prediction["variant_markets_summary"] == existing_prediction["variant_markets_summary"]
+    assert prediction["explanation_payload"]["prediction_market_available"] is False
+    assert prediction["explanation_payload"]["feature_context"]["prediction_market_available"] is False
+    assert (
+        prediction["explanation_payload"]["source_metadata"]["market_sources"]["prediction_market"]["available"]
+        is False
+    )
+    assert prediction["explanation_payload"]["market_enrichment"] == {
+        "status": "preserved",
+        "current_prediction_market_available": False,
+        "prediction_market_row_id": "target_match_t_minus_24h_prediction_market",
+        "prediction_market_source_name": "polymarket_moneyline_3way",
+        "prediction_market_observed_at": "2026-04-12T15:30:00Z",
+        "variant_market_ids": [
+            "target_match_t_minus_24h_prediction_market_spreads_sample"
+        ],
+        "variant_market_count": 1,
+        "preserved_from_prediction_id": "target_match_t_minus_24h_model_v1",
+    }
+
+
+def test_run_predictions_job_uses_persisted_snapshot_signals_without_history_recalculation(
     monkeypatch,
 ):
     state: dict[str, list[dict]] = {}
@@ -2346,24 +3054,203 @@ def test_run_predictions_job_derives_form_and_rest_from_match_history_when_snaps
     [prediction] = state["predictions"]
     explanation_payload = prediction["explanation_payload"]
 
-    assert explanation_payload["feature_context"]["form_delta"] == 5
-    assert explanation_payload["feature_context"]["rest_delta"] == -3
+    assert explanation_payload["feature_context"]["form_delta"] == 0
+    assert explanation_payload["feature_context"]["rest_delta"] == 0
     assert explanation_payload["feature_metadata"]["missing_fields"] == [
         "away_absence_count",
+        "away_elo",
         "away_lineup_score",
+        "away_matches_last_7d",
+        "away_points_last_5",
+        "away_rest_days",
+        "away_xg_against_last_5",
+        "away_xg_for_last_5",
+        "form_delta",
         "home_absence_count",
+        "home_elo",
         "home_lineup_score",
+        "home_matches_last_7d",
+        "home_points_last_5",
+        "home_rest_days",
+        "home_xg_against_last_5",
+        "home_xg_for_last_5",
         "lineup_source_summary",
         "lineup_strength_delta",
+        "rest_delta",
     ]
     missing_reason_keys = {
         reason["reason_key"]
         for reason in explanation_payload["feature_metadata"]["missing_signal_reasons"]
     }
     assert missing_reason_keys == {
+        "form_context_missing",
+        "schedule_context_missing",
+        "rating_context_missing",
+        "xg_context_missing",
         "lineup_context_missing",
         "absence_feed_missing",
     }
+
+
+def test_run_predictions_job_recomputes_stale_snapshot_signals_after_intervening_match(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "captured_at": "2026-08-12T12:00:00+00:00",
+                        "snapshot_quality": "partial",
+                        "lineup_status": "unknown",
+                        "form_delta": 0,
+                        "rest_delta": 0,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.56,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.20,
+                    },
+                ],
+                "market_variants": [],
+                "matches": [
+                    {
+                        "id": "hist_home_1",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-11T18:00:00+00:00",
+                        "home_team_id": "arsenal",
+                        "away_team_id": "everton",
+                        "home_score": 2,
+                        "away_score": 0,
+                        "final_result": "HOME",
+                        "result_observed_at": "2026-08-13T12:00:00+00:00",
+                    },
+                    {
+                        "id": "hist_home_2",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-08T18:00:00+00:00",
+                        "home_team_id": "tottenham",
+                        "away_team_id": "arsenal",
+                        "home_score": 1,
+                        "away_score": 3,
+                        "final_result": "AWAY",
+                    },
+                    {
+                        "id": "hist_away_1",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-10T18:00:00+00:00",
+                        "home_team_id": "chelsea",
+                        "away_team_id": "liverpool",
+                        "home_score": 1,
+                        "away_score": 1,
+                        "final_result": "DRAW",
+                    },
+                    {
+                        "id": "hist_away_2",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-05T18:00:00+00:00",
+                        "home_team_id": "aston-villa",
+                        "away_team_id": "chelsea",
+                        "home_score": 2,
+                        "away_score": 1,
+                        "final_result": "HOME",
+                    },
+                    {
+                        "id": "target_match",
+                        "competition_id": "premier-league",
+                        "season": "premier-league-2026",
+                        "kickoff_at": "2026-08-15T18:00:00+00:00",
+                        "home_team_id": "arsenal",
+                        "away_team_id": "chelsea",
+                        "home_score": None,
+                        "away_score": None,
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **kwargs: (
+            kwargs["book_probs"],
+            "bookmaker_fallback",
+            {
+                "selected_candidate": None,
+                "selection_metric": None,
+                "selection_ran": False,
+                "candidate_scores": {},
+                "fallback_source": "bookmaker_fallback",
+            },
+        ),
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-08-15")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    feature_context = prediction["explanation_payload"]["feature_context"]
+
+    assert feature_context["form_delta"] == 2
+    assert feature_context["rest_delta"] == 2
+
+
+def test_snapshot_stale_fallback_treats_recent_missing_observed_at_as_untrusted():
+    snapshot = {
+        "id": "target_match_t_minus_24h",
+        "match_id": "target_match",
+        "captured_at": "2026-08-12T12:00:00+00:00",
+    }
+    target_match = {
+        "id": "target_match",
+        "kickoff_at": "2026-08-15T18:00:00+00:00",
+        "home_team_id": "arsenal",
+        "away_team_id": "chelsea",
+    }
+    match_rows = [
+        {
+            "id": "recent_completed_match",
+            "kickoff_at": "2026-08-11T18:00:00+00:00",
+            "home_team_id": "arsenal",
+            "away_team_id": "everton",
+            "final_result": "HOME",
+            "result_observed_at": None,
+        }
+    ]
+
+    assert run_predictions_job.snapshot_has_intervening_completed_match(
+        snapshot,
+        match=target_match,
+        match_rows=match_rows,
+    )
 
 
 def test_run_predictions_job_marks_absence_coverage_unavailable_for_non_premier_league(
@@ -3211,6 +4098,96 @@ def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing
     assert source_metadata["fusion_weights"] == {"base_model": 1.0}
 
 
+def test_build_training_dataset_includes_snapshots_without_bookmaker_rows():
+    snapshot_rows = [
+        {
+            "id": "hist_home_snapshot",
+            "match_id": "hist_home",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": 2,
+            "rest_delta": 0,
+        },
+        {
+            "id": "hist_draw_snapshot",
+            "match_id": "hist_draw",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": 0,
+            "rest_delta": 0,
+        },
+        {
+            "id": "hist_away_snapshot",
+            "match_id": "hist_away",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": -2,
+            "rest_delta": 0,
+        },
+    ]
+    match_rows = [
+        {
+            "id": "hist_home",
+            "kickoff_at": "2026-04-01T18:00:00+00:00",
+            "final_result": "HOME",
+        },
+        {
+            "id": "hist_draw",
+            "kickoff_at": "2026-04-02T18:00:00+00:00",
+            "final_result": "DRAW",
+        },
+        {
+            "id": "hist_away",
+            "kickoff_at": "2026-04-03T18:00:00+00:00",
+            "final_result": "AWAY",
+        },
+    ]
+
+    features, labels = run_predictions_job.build_training_dataset(
+        snapshot_rows=snapshot_rows,
+        market_by_snapshot={},
+        match_rows=match_rows,
+        target_date="2026-04-04",
+        checkpoint_type="T_MINUS_24H",
+    )
+
+    assert len(features) == 3
+    assert labels == ["HOME", "DRAW", "AWAY"]
+
+
+def test_build_training_dataset_uses_recent_historical_window(monkeypatch):
+    monkeypatch.setattr(run_predictions_job, "TRAINING_RECENT_SNAPSHOT_LIMIT", 2)
+    snapshot_rows = [
+        {
+            "id": f"hist_{index}_snapshot",
+            "match_id": f"hist_{index}",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": index,
+            "rest_delta": 0,
+        }
+        for index in range(4)
+    ]
+    match_rows = [
+        {
+            "id": f"hist_{index}",
+            "kickoff_at": f"2026-04-0{index + 1}T18:00:00+00:00",
+            "final_result": result,
+        }
+        for index, result in enumerate(("HOME", "DRAW", "AWAY", "HOME"))
+    ]
+
+    _features, labels = run_predictions_job.build_training_dataset(
+        snapshot_rows=snapshot_rows,
+        market_by_snapshot={},
+        match_rows=match_rows,
+        target_date="2026-04-05",
+        checkpoint_type="T_MINUS_24H",
+    )
+
+    assert labels == ["AWAY", "HOME"]
+
+
 def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_without_bookmaker():
     summary = run_predictions_job.build_confidence_bucket_summary(
         snapshot_rows=[
@@ -3432,11 +4409,66 @@ def test_recalibrate_predictions_rewrites_bookmaker_fallback_rows() -> None:
         "AWAY",
         "AWAY",
     ]
+    assert [
+        row["main_recommendation_pick"] for row in updated_predictions
+    ] == [row["recommended_pick"] for row in updated_predictions]
+    assert [
+        row["main_recommendation_confidence"] for row in updated_predictions
+    ] == [row["confidence_score"] for row in updated_predictions]
+    assert [
+        row["main_recommendation_recommended"] for row in updated_predictions
+    ] == [
+        row["explanation_payload"]["main_recommendation"]["recommended"]
+        for row in updated_predictions
+    ]
+    assert [
+        row["main_recommendation_no_bet_reason"] for row in updated_predictions
+    ] == [
+        row["explanation_payload"]["main_recommendation"]["no_bet_reason"]
+        for row in updated_predictions
+    ]
     assert updated_predictions[0]["confidence_score"] >= predictions[0]["confidence_score"]
     assert summary["model_id"] == "decision_tree_depth6_v1"
     assert updated_predictions[0]["explanation_payload"]["posthoc_recalibration"]["model_id"] == (
         "decision_tree_depth6_v1"
     )
+
+
+def test_recalibrate_predictions_rewrites_prior_fallback_rows_without_bookmaker() -> None:
+    predictions, matches, snapshot_rows = build_recalibration_fixture_rows()
+    for prediction in predictions:
+        payload = prediction["explanation_payload"]
+        payload["base_model_source"] = "prior_fallback"
+        payload["source_metadata"]["market_sources"]["bookmaker"] = {
+            "available": False,
+            "source_name": None,
+            "probabilities": None,
+        }
+
+    updated_predictions, summary = recalibrate_predictions(
+        predictions=predictions,
+        matches=matches,
+        snapshot_rows=snapshot_rows,
+    )
+
+    assert summary["applied"] is True
+    assert summary["training_rows"] == 9
+    assert summary["changed_rows"] == 9
+    assert [row["recommended_pick"] for row in updated_predictions[:3]] == [
+        "HOME",
+        "HOME",
+        "HOME",
+    ]
+    assert [row["recommended_pick"] for row in updated_predictions[3:6]] == [
+        "DRAW",
+        "DRAW",
+        "DRAW",
+    ]
+    assert [row["recommended_pick"] for row in updated_predictions[6:]] == [
+        "AWAY",
+        "AWAY",
+        "AWAY",
+    ]
 
 
 def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_sets() -> None:
@@ -3482,11 +4514,11 @@ def test_recalibrate_predictions_uses_hist_gradient_boosting_for_large_training_
 
     assert summary["applied"] is True
     assert summary["training_rows"] == len(expanded_predictions)
-    assert summary["model_id"] == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+    assert summary["model_id"] == "hist_gradient_boosting_depth9_leaf3_lr008_iter250_v1"
     assert summary["changed_rows"] > 0
     assert any(
         row["explanation_payload"]["posthoc_recalibration"]["model_id"]
-        == "hist_gradient_boosting_depth3_leaf10_lr008_iter500_v1"
+        == "hist_gradient_boosting_depth9_leaf3_lr008_iter250_v1"
         for row in updated_predictions
         if "posthoc_recalibration" in row.get("explanation_payload", {})
     )
@@ -3529,7 +4561,7 @@ def test_recalibrate_predictions_skips_low_uplift_changes(
 
         def predict_proba(self, rows):
             responses = (
-                [0.39, 0.31, 0.30],
+                [0.355, 0.345, 0.30],
                 [0.8, 0.1, 0.1],
             )
             response = responses[min(self._calls, len(responses) - 1)]
@@ -3562,7 +4594,7 @@ def test_recalibrate_predictions_skips_low_uplift_changes(
         "confidence_uplift"
     ] == 0.45
     assert summary["changed_rows"] == 1
-    assert summary["min_confidence_uplift"] == 0.05
+    assert summary["min_confidence_uplift"] == 0.01
 
 
 def test_plan_missing_snapshot_repairs_rebuilds_snapshot_rows_from_feature_snapshots() -> None:

@@ -2,6 +2,7 @@ import type {
   MainRecommendation,
   PredictionExplanationPayload,
   PredictionFeatureMetadata,
+  PredictionMarketEnrichment,
 } from "./api";
 
 export type OutcomeCode = "HOME" | "DRAW" | "AWAY" | null;
@@ -35,6 +36,22 @@ function normalizeFeatureMetadata(
   return explanationPayload.featureMetadata ?? explanationPayload.feature_metadata ?? null;
 }
 
+function normalizeMarketEnrichment(
+  explanationPayload?: PredictionExplanationPayload,
+): PredictionMarketEnrichment | null {
+  if (!explanationPayload) {
+    return null;
+  }
+  return explanationPayload.marketEnrichment ?? explanationPayload.market_enrichment ?? null;
+}
+
+export function resolveMarketEnrichmentStatus(
+  explanationPayload?: PredictionExplanationPayload,
+): string | null {
+  const marketEnrichment = normalizeMarketEnrichment(explanationPayload);
+  return typeof marketEnrichment?.status === "string" ? marketEnrichment.status : null;
+}
+
 export function summarizeSignalHeadline(
   mainRecommendation: MainRecommendation | null,
   explanationPayload?: PredictionExplanationPayload,
@@ -48,6 +65,7 @@ export function summarizeSignalHeadline(
     readString(normalizeFeatureMetadata(explanationPayload)?.lineupStatus) ??
     readString(normalizeFeatureMetadata(explanationPayload)?.lineup_status) ??
     "unknown";
+  const marketEnrichmentStatus = resolveMarketEnrichmentStatus(explanationPayload);
   const xgProxyDelta =
     readNumber(featureContext?.xgProxyDelta) ?? readNumber(featureContext?.xg_proxy_delta);
 
@@ -71,6 +89,10 @@ export function summarizeSignalHeadline(
     return "Home lean exists, but supporting signals are mixed.";
   }
 
+  if (marketEnrichmentStatus === "preserved") {
+    return "Recommendation uses the last synced market context while the latest market refresh is unavailable.";
+  }
+
   return `${mainRecommendation.pick} lean with the strongest available support.`;
 }
 
@@ -92,6 +114,7 @@ export function summarizeSignalBadges(
   const sourceAgreementRatio =
     readNumber(explanationPayload?.sourceAgreementRatio) ??
     readNumber(explanationPayload?.source_agreement_ratio);
+  const marketEnrichmentStatus = resolveMarketEnrichmentStatus(explanationPayload);
   const xgProxyDelta =
     readNumber(featureContext?.xgProxyDelta) ?? readNumber(featureContext?.xg_proxy_delta);
   const missingReasonEntries =
@@ -103,6 +126,9 @@ export function summarizeSignalBadges(
   }
   if (predictionMarketAvailable === false) {
     badges.push("marketMissing");
+  }
+  if (marketEnrichmentStatus === "preserved") {
+    badges.push("marketPreserved");
   }
   if (lineupStatus !== "confirmed") {
     badges.push("lineupPending");
@@ -205,6 +231,9 @@ export function resolveVerdictState(args: {
     return kickoffHasPassed ? "pending" : "scheduled";
   }
   if (predictedOutcome === null) {
+    if (args.mainRecommendation?.recommended === false && actualOutcome) {
+      return "no_bet";
+    }
     return actualOutcome ? "unavailable" : kickoffHasPassed ? "pending" : "scheduled";
   }
   if (!actualOutcome) {

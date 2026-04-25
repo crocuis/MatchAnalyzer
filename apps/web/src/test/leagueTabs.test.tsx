@@ -48,4 +48,51 @@ describe("LeagueTabs", () => {
       });
     }
   });
+
+  it("falls back to readable league names and known emblems", () => {
+    render(
+      <LeagueTabs
+        leagues={[
+          {
+            id: "champions-league",
+            label: "",
+            emblemUrl: null,
+            matchCount: 4,
+            reviewCount: 0,
+          },
+        ]}
+        panelId="league-panel"
+        selectedLeagueId="champions-league"
+        onSelect={() => {}}
+      />
+    );
+
+    const tab = screen.getByRole("tab", { name: "UEFA Champions League" });
+    const emblem = tab.querySelector("img");
+
+    expect(tab).toBeInTheDocument();
+    expect(emblem).toHaveAttribute("src", "https://crests.football-data.org/CL.png");
+  });
+
+  it("does not expose missing translation keys as league names", () => {
+    render(
+      <LeagueTabs
+        leagues={[
+          {
+            id: "k-league",
+            label: "leagues.k-league",
+            emblemUrl: null,
+            matchCount: 2,
+            reviewCount: 1,
+          },
+        ]}
+        panelId="league-panel"
+        selectedLeagueId="k-league"
+        onSelect={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("tab", { name: "K League" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "leagues.k-league" })).not.toBeInTheDocument();
+  });
 });

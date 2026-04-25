@@ -12,6 +12,20 @@ from batch.src.ingest.fetch_fixtures import (
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
+TEAM_LOGO_SEARCH_ALIASES = {
+    "Fiorentina": ("ACF Fiorentina",),
+    "Real Betis": ("Real Betis Balompie",),
+    "Rapid Wien": ("SK Rapid Wien",),
+    "Djurgarden": ("Djurgardens IF",),
+    "Jagiellonia": ("Jagiellonia Bialystok",),
+    "Panathinaikos": ("Panathinaikos FC",),
+    "Copenhagen": ("FC Copenhagen",),
+    "Celje": ("NK Celje",),
+    "Lugano": ("FC Lugano",),
+    "Vitoria Guimaraes": ("Vitoria SC",),
+    "Legia Warsaw": ("Legia Warszawa",),
+}
+
 
 def load_sports_skills_metadata():
     from sports_skills import metadata
@@ -55,6 +69,29 @@ def normalize_team_search_result(result: dict) -> dict | None:
     }
 
 
+def iter_team_logo_search_names(team_name: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str | None) -> None:
+        normalized = str(candidate or "").strip()
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(normalized)
+
+    add(team_name)
+    for alias in TEAM_LOGO_SEARCH_ALIASES.get(team_name, ()):
+        add(alias)
+    if team_name.endswith(" FC"):
+        add(team_name[:-3])
+    else:
+        add(f"{team_name} FC")
+    if team_name.startswith("FC "):
+        add(team_name[3:])
+    return tuple(candidates)
+
+
 def fetch_team_crest(
     football,
     metadata,
@@ -68,9 +105,13 @@ def fetch_team_crest(
         if team.get("crest"):
             return team["crest"]
 
-    fallback = metadata.get_team_logo(team_name=team_name)
-    data = fallback.get("data") or {}
-    return data.get("logo_url") or None
+    for search_name in iter_team_logo_search_names(team_name):
+        fallback = metadata.get_team_logo(team_name=search_name)
+        data = fallback.get("data") or {}
+        logo_url = data.get("logo_url")
+        if logo_url:
+            return logo_url
+    return None
 
 
 def backfill_assets(

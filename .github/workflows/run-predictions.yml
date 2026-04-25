@@ -4,12 +4,14 @@ permissions:
   contents: read
 
 on:
-  schedule:
-    - cron: "30 * * * *"
   workflow_dispatch:
     inputs:
       target_date:
         description: "UTC date to predict in YYYY-MM-DD format. Defaults to current UTC date."
+        required: false
+        type: string
+      target_match_ids:
+        description: "Comma-separated match ids to refresh directly. When set, overrides target_date."
         required: false
         type: string
 
@@ -36,6 +38,11 @@ jobs:
       - name: Resolve target date
         shell: bash
         run: |
+          TARGET_MATCH_IDS="${{ github.event.inputs.target_match_ids }}"
+          if [ -n "$TARGET_MATCH_IDS" ]; then
+            echo "REAL_PREDICTION_MATCH_IDS=$TARGET_MATCH_IDS" >> "$GITHUB_ENV"
+            exit 0
+          fi
           TARGET_DATE="${{ github.event.inputs.target_date }}"
           if [ -z "$TARGET_DATE" ]; then
             TARGET_DATE="$(date -u +%F)"

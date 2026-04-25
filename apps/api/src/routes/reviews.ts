@@ -34,6 +34,8 @@ type ReviewAggregationHistoryView = {
   rollout: HistoryLaneSummary | null;
 };
 
+const REVIEW_AGGREGATION_SELECT = "id, report_payload, created_at";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -166,12 +168,17 @@ async function loadArtifactById(
     return null;
   }
 
+  const storageBackend =
+    typeof data.storage_backend === "string" ? data.storage_backend : null;
+  const storageUri =
+    storageBackend === "supabase_storage" ? null : data.storage_uri;
+
   return {
     id: data.id,
-    storageBackend: data.storage_backend,
+    storageBackend,
     bucketName: data.bucket_name,
     objectKey: data.object_key,
-    storageUri: data.storage_uri,
+    storageUri,
     contentType: data.content_type,
     sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : null,
     checksumSha256:
@@ -244,7 +251,7 @@ export async function loadLatestReviewAggregationView(
 ) {
   const { data, error } = await supabase
     .from("post_match_review_aggregations")
-    .select("*")
+    .select(REVIEW_AGGREGATION_SELECT)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -267,7 +274,7 @@ export async function loadReviewAggregationHistoryView(
   const laneSummaries = await loadRolloutLaneSummaries(supabase);
   const { data, error } = await supabase
     .from("post_match_review_aggregations")
-    .select("*")
+    .select(REVIEW_AGGREGATION_SELECT)
     .order("created_at", { ascending: false })
     .limit(6);
 
@@ -295,8 +302,10 @@ export async function loadReviewAggregationHistoryView(
     },
     [],
   );
-  const latestRow = rows.length > 0 && isRecord(rows[0]) ? rows[0] : null;
-  const payload = latestRow
+  const latestRow = rows.length > 0 && isRecord(rows[0])
+    ? (rows[0] as Record<string, unknown>)
+    : null;
+  const payload: Record<string, unknown> = latestRow
     ? isRecord(latestRow.report_payload)
       ? latestRow.report_payload
       : isRecord(latestRow.reportPayload)

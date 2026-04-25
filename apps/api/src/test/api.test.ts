@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "../index";
-import { loadMatchItems, loadMatchPageView } from "../routes/matches";
+import * as supabaseModule from "../lib/supabase";
+import { loadDailyPicksView } from "../routes/daily-picks";
+import {
+  loadDashboardMatchCardsPageView,
+  loadMatchItems,
+  loadMatchPageView,
+} from "../routes/matches";
 import { loadLatestRolloutPromotionDecisionView } from "../routes/rollouts";
 import {
   loadLatestPredictionFusionPolicyView,
@@ -16,7 +22,87 @@ import {
   loadReviewView,
 } from "../routes/reviews";
 
+type FakeTables = Record<string, Record<string, unknown>[]>;
+
+function buildTableSupabase(tables: FakeTables) {
+  return {
+    from(tableName: string) {
+      const allRows = [...(tables[tableName] ?? [])];
+      const applySort = (
+        value: Record<string, unknown>[],
+        column: string,
+        options?: { ascending?: boolean },
+      ) => {
+        const ascending = options?.ascending ?? true;
+        return [...value].sort((left, right) => {
+          const leftValue = left[column];
+          const rightValue = right[column];
+          if (leftValue === rightValue) {
+            return 0;
+          }
+          if (leftValue == null) {
+            return 1;
+          }
+          if (rightValue == null) {
+            return -1;
+          }
+          if (leftValue < rightValue) {
+            return ascending ? -1 : 1;
+          }
+          return ascending ? 1 : -1;
+        });
+      };
+      const buildResult = (value: Record<string, unknown>[]) =>
+        Promise.resolve({ data: value, error: null });
+
+      const buildQuery = (rows: Record<string, unknown>[]) => ({
+        eq(column: string, matchValue: unknown) {
+          return buildQuery(rows.filter((row) => row[column] === matchValue));
+        },
+        gte(column: string, matchValue: unknown) {
+          const comparable = matchValue as string | number;
+          return buildQuery(
+            rows.filter((row) => row[column] != null && (row[column] as string | number) >= comparable),
+          );
+        },
+        lt(column: string, matchValue: unknown) {
+          const comparable = matchValue as string | number;
+          return buildQuery(
+            rows.filter((row) => row[column] != null && (row[column] as string | number) < comparable),
+          );
+        },
+        in(column: string, values: unknown[]) {
+          return buildResult(rows.filter((row) => values.includes(row[column])));
+        },
+        order(column: string, options?: { ascending?: boolean }) {
+          return buildResult(applySort(rows, column, options));
+        },
+        limit(count: number) {
+          return buildResult(rows.slice(0, count));
+        },
+      });
+
+      return {
+        select() {
+          return buildQuery(allRows);
+        },
+      };
+    },
+  } as never;
+}
+
+function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+}
+
 describe("prediction API", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("returns a health payload", async () => {
     const response = await app.request("/health");
     expect(response.status).toBe(200);
@@ -159,6 +245,24 @@ describe("prediction API", () => {
     });
   });
 
+  it("allows sensitive prediction reports when either operational api key header is valid", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      {
+        headers: {
+          authorization: "Bearer secret-key",
+          "x-operational-api-key": "wrong-key",
+        },
+      },
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      report: null,
+    });
+  });
+
   it("blocks sensitive rollout reports without an operational api key", async () => {
     const response = await app.request(
       "/rollouts/promotion/latest",
@@ -168,6 +272,1183 @@ describe("prediction API", () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
+  it("returns an empty daily picks payload when no supabase client is configured", async () => {
+    setDailyPicksClock();
+    const response = await app.request("/daily-picks");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      generatedAt: null,
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      coverage: {
+        moneyline: 0,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [],
+      heldItems: [],
+    });
+    vi.useRealTimers();
+  });
+
+  it("builds capped moneyline picks and keeps price-only variants held", async () => {
+    setDailyPicksClock();
+    const tables = {
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-2",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T20:00:00Z",
+          home_team_id: "arsenal",
+          away_team_id: "fulham",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-3",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T21:00:00Z",
+          home_team_id: "liverpool",
+          away_team_id: "brentford",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-4",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T22:00:00Z",
+          home_team_id: "newcastle",
+          away_team_id: "villa",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea", crest_url: "https://crests.football-data.org/61.png", logo_url: null },
+        { id: "man-city", name: "Manchester City", crest_url: "https://crests.football-data.org/65.png", logo_url: null },
+        { id: "arsenal", name: "Arsenal", logo_url: null },
+        { id: "fulham", name: "Fulham", logo_url: null },
+        { id: "liverpool", name: "Liverpool", logo_url: null },
+        { id: "brentford", name: "Brentford", logo_url: null },
+        { id: "newcastle", name: "Newcastle", logo_url: null },
+        { id: "villa", name: "Aston Villa", logo_url: null },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League", emblem_url: null },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-2", match_id: "match-2", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-3", match_id: "match-3", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-4", match_id: "match-4", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.58,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.42,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.47,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.53,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-2",
+          match_id: "match-2",
+          snapshot_id: "snapshot-2",
+          recommended_pick: "HOME",
+          confidence_score: 0.7,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.7,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.1,
+          value_recommendation_expected_value: 0.22,
+          value_recommendation_market_price: 0.52,
+          value_recommendation_model_probability: 0.62,
+          value_recommendation_market_probability: 0.52,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Arsenal -0.5",
+              selection_a_price: 0.57,
+              selection_b_label: "Fulham +0.5",
+              selection_b_price: 0.43,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.51,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.49,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.75,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:05:00Z",
+        },
+        {
+          id: "prediction-3",
+          match_id: "match-3",
+          snapshot_id: "snapshot-3",
+          recommended_pick: "HOME",
+          confidence_score: 0.68,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.68,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.08,
+          value_recommendation_expected_value: 0.18,
+          value_recommendation_market_price: 0.5,
+          value_recommendation_model_probability: 0.58,
+          value_recommendation_market_probability: 0.5,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Liverpool -0.5",
+              selection_a_price: 0.56,
+              selection_b_label: "Brentford +0.5",
+              selection_b_price: 0.44,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 3.5",
+              selection_a_price: 0.46,
+              selection_b_label: "Under 3.5",
+              selection_b_price: 0.54,
+              line_value: 3.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.72,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:10:00Z",
+        },
+        {
+          id: "prediction-4",
+          match_id: "match-4",
+          snapshot_id: "snapshot-4",
+          recommended_pick: "HOME",
+          confidence_score: 0.66,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.66,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.06,
+          value_recommendation_expected_value: 0.14,
+          value_recommendation_market_price: 0.49,
+          value_recommendation_model_probability: 0.55,
+          value_recommendation_market_probability: 0.49,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Newcastle -0.5",
+              selection_a_price: 0.55,
+              selection_b_label: "Aston Villa +0.5",
+              selection_b_price: 0.45,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.48,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.52,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.7,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:15:00Z",
+        },
+      ],
+    };
+    const supabase = buildTableSupabase(tables);
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: false,
+    });
+
+    expect(view.date).toBe("2026-04-24");
+    expect(view.items).toHaveLength(4);
+    expect(new Set(view.items.map((item) => item.marketFamily))).toEqual(
+      new Set(["moneyline"]),
+    );
+    expect(
+      view.coverage.moneyline + view.coverage.spreads + view.coverage.totals,
+    ).toBe(12);
+    expect(view.items[0]).toMatchObject({
+      matchId: "match-1",
+      leagueId: "premier-league",
+      homeTeam: "Chelsea",
+      homeTeamLogoUrl: "https://crests.football-data.org/61.png",
+      awayTeam: "Manchester City",
+      awayTeamLogoUrl: "https://crests.football-data.org/65.png",
+      marketFamily: "moneyline",
+      status: "recommended",
+    });
+    expect(view.coverage).toMatchObject({
+      moneyline: 4,
+      spreads: 4,
+      totals: 4,
+      held: 8,
+    });
+
+    const heldView = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      marketFamily: "spreads",
+      includeHeld: true,
+    });
+
+    expect(heldView.items).toEqual([]);
+    expect(heldView.heldItems).toHaveLength(4);
+    expect(heldView.heldItems[0]).toMatchObject({
+      marketFamily: "spreads",
+      status: "held",
+      confidence: null,
+      expectedValue: null,
+      modelProbability: null,
+      noBetReason: "variant_market_price_only",
+    });
+  });
+
+  it("filters daily picks by market family and includeHeld at the route level", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: false,
+          main_recommendation_no_bet_reason: "low_confidence",
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.58,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.42,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+
+    const response = await app.request(
+      "/daily-picks?date=2026-04-24&marketFamily=spreads&includeHeld=true",
+      { headers: { host: "localhost" } },
+    );
+    const heldToggleResponse = await app.request(
+      "/daily-picks?date=2026-04-24&includeHeld=true",
+      { headers: { host: "localhost" } },
+    );
+    const defaultResponse = await app.request(
+      "/daily-picks?date=2026-04-24",
+      { headers: { host: "localhost" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+    );
+    expect(await response.json()).toMatchObject({
+      date: "2026-04-24",
+      coverage: {
+        held: 1,
+      },
+      items: [],
+      heldItems: [
+        {
+          marketFamily: "spreads",
+          confidence: null,
+          expectedValue: null,
+          modelProbability: null,
+          noBetReason: "variant_market_price_only",
+          status: "held",
+        },
+      ],
+    });
+    await expect(defaultResponse.json()).resolves.toMatchObject({
+      heldItems: [],
+    });
+    await expect(heldToggleResponse.json()).resolves.toMatchObject({
+      coverage: {
+        held: 2,
+      },
+      heldItems: expect.arrayContaining([
+        expect.objectContaining({
+          marketFamily: "moneyline",
+          noBetReason: "low_confidence",
+          status: "held",
+        }),
+        expect.objectContaining({
+          marketFamily: "spreads",
+          noBetReason: "variant_market_price_only",
+          status: "held",
+        }),
+      ]),
+    });
+
+    spy.mockRestore();
+  });
+
+  it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: false,
+          main_recommendation_no_bet_reason: "low_confidence",
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.45,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.55,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+              recommended_pick: "Chelsea -0.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.18,
+              expected_value: 0.4,
+              market_price: 0.45,
+              model_probability: 0.63,
+              market_probability: 0.45,
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.49,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.51,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+              recommended_pick: "Over 2.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.17,
+              expected_value: 0.3469,
+              market_price: 0.49,
+              model_probability: 0.66,
+              market_probability: 0.49,
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([
+      expect.objectContaining({
+        marketFamily: "totals",
+        selectionLabel: "Over 2.5",
+        status: "recommended",
+        expectedValue: 0.3469,
+        marketPrice: 0.49,
+        modelProbability: 0.66,
+        marketProbability: 0.49,
+        noBetReason: null,
+      }),
+      expect.objectContaining({
+        marketFamily: "spreads",
+        selectionLabel: "Chelsea -0.5",
+        status: "recommended",
+        expectedValue: 0.4,
+        marketPrice: 0.45,
+        modelProbability: 0.63,
+        marketProbability: 0.45,
+        noBetReason: null,
+      }),
+    ]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        status: "held",
+        noBetReason: "low_confidence",
+      }),
+    ]);
+  });
+
+  it("keeps recommended moneyline picks ahead of recommended variant picks in the default daily picks view", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [
+            {
+              market_family: "spreads",
+              selection_a_label: "Chelsea -0.5",
+              selection_a_price: 0.15,
+              selection_b_label: "Manchester City +0.5",
+              selection_b_price: 0.85,
+              line_value: -0.5,
+              source_name: "polymarket_spreads",
+              recommended_pick: "Chelsea -0.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.45,
+              expected_value: 3.0,
+              market_price: 0.15,
+              model_probability: 0.6,
+              market_probability: 0.15,
+            },
+          ],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      status: "recommended",
+    });
+    expect(view.items[1]).toMatchObject({
+      marketFamily: "spreads",
+      selectionLabel: "Chelsea -0.5",
+      status: "recommended",
+    });
+  });
+
+  it("does not graft opposite-side value recommendation metadata onto the moneyline pick", async () => {
+    setDailyPicksClock(new Date("2026-04-25T12:00:00Z"));
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-26T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "AWAY",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.22,
+          value_recommendation_expected_value: 0.51,
+          value_recommendation_market_price: 0.33,
+          value_recommendation_model_probability: 0.55,
+          value_recommendation_market_probability: 0.33,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-26",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      edge: null,
+      expectedValue: null,
+      marketPrice: null,
+      modelProbability: null,
+      marketProbability: null,
+    });
+  });
+
+  it("localizes team labels in daily picks when locale-specific translations exist", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      team_translations: [
+        {
+          id: "chelsea:ko:official",
+          team_id: "chelsea",
+          locale: "ko",
+          display_name: "첼시",
+          source_name: null,
+          is_primary: true,
+        },
+        {
+          id: "man-city:ko:official",
+          team_id: "man-city",
+          locale: "ko",
+          display_name: "맨체스터 시티",
+          source_name: null,
+          is_primary: true,
+        },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      locale: "ko",
+    });
+
+    expect(view.items[0]).toMatchObject({
+      homeTeam: "첼시",
+      awayTeam: "맨체스터 시티",
+    });
+  });
+
+  it("excludes matches whose kickoff window has already passed from daily picks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-24T20:30:00Z"));
+
+    try {
+      const supabase = buildTableSupabase({
+        matches: [
+          {
+            id: "match-ended",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-24T18:00:00Z",
+            final_result: "HOME",
+            home_score: 2,
+            away_score: 1,
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+          },
+          {
+            id: "match-upcoming",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-24T23:00:00Z",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+            home_team_id: "arsenal",
+            away_team_id: "fulham",
+          },
+        ],
+        teams: [
+          { id: "chelsea", name: "Chelsea" },
+          { id: "man-city", name: "Manchester City" },
+          { id: "arsenal", name: "Arsenal" },
+          { id: "fulham", name: "Fulham" },
+        ],
+        competitions: [
+          { id: "premier-league", name: "Premier League" },
+        ],
+        match_snapshots: [
+          { id: "snapshot-ended", match_id: "match-ended", checkpoint_type: "LINEUP_CONFIRMED" },
+          { id: "snapshot-upcoming", match_id: "match-upcoming", checkpoint_type: "T_MINUS_1H" },
+        ],
+        predictions: [
+          {
+            id: "prediction-ended",
+            match_id: "match-ended",
+            snapshot_id: "snapshot-ended",
+            recommended_pick: "HOME",
+            confidence_score: 0.99,
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.99,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: "HOME",
+            value_recommendation_recommended: true,
+            value_recommendation_edge: 0.82,
+            value_recommendation_expected_value: 639.67,
+            value_recommendation_market_price: 0.001,
+            value_recommendation_model_probability: 0.64,
+            value_recommendation_market_probability: 0.001,
+            value_recommendation_market_source: "prediction_market",
+            created_at: "2026-04-24T19:00:00Z",
+          },
+          {
+            id: "prediction-upcoming",
+            match_id: "match-upcoming",
+            snapshot_id: "snapshot-upcoming",
+            recommended_pick: "DRAW",
+            confidence_score: 0.71,
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.71,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: "DRAW",
+            value_recommendation_recommended: true,
+            value_recommendation_edge: 0.09,
+            value_recommendation_expected_value: 0.27,
+            value_recommendation_market_price: 0.41,
+            value_recommendation_model_probability: 0.52,
+            value_recommendation_market_probability: 0.43,
+            value_recommendation_market_source: "prediction_market",
+            created_at: "2026-04-24T19:30:00Z",
+          },
+        ],
+      });
+
+      const view = await loadDailyPicksView(supabase, {
+        date: "2026-04-24",
+      });
+
+      expect(view.items).toHaveLength(1);
+      expect(view.items[0]).toMatchObject({
+        matchId: "match-upcoming",
+        selectionLabel: "DRAW",
+        expectedValue: 0.27,
+      });
+      expect(view.items.map((item) => item.matchId)).not.toContain("match-ended");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores predictions whose snapshot points at a different match", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "different-match", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.coverage).toEqual({
+      moneyline: 0,
+      spreads: 0,
+      totals: 0,
+      held: 0,
+    });
+  });
+
+  it("ignores an impossible date filter instead of crashing", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+
+    const response = await app.request(
+      "/daily-picks?date=2026-99-99",
+      { headers: { host: "localhost" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      date: null,
+      items: [
+        {
+          matchId: "match-1",
+          marketFamily: "moneyline",
+        },
+      ],
+    });
+
+    spy.mockRestore();
+  });
+
+  it("prefers the latest enriched prediction row when multiple checkpoints exist", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-2", match_id: "match-1", checkpoint_type: "LINEUP_CONFIRMED" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.61,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.61,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.7,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-2",
+          match_id: "match-1",
+          snapshot_id: "snapshot-2",
+          recommended_pick: "DRAW",
+          confidence_score: 0.75,
+          main_recommendation_pick: "DRAW",
+          main_recommendation_confidence: 0.75,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "DRAW",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.2,
+          value_recommendation_expected_value: 0.36,
+          value_recommendation_market_price: 0.41,
+          value_recommendation_model_probability: 0.61,
+          value_recommendation_market_probability: 0.41,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          summary_payload: {
+            source_agreement_ratio: 0.84,
+          },
+          explanation_payload: {},
+          created_at: "2026-04-24T09:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "DRAW",
+      expectedValue: 0.36,
+      marketPrice: 0.41,
+      modelProbability: 0.61,
+      marketProbability: 0.41,
+    });
+  });
+
+  it("does not graft older enrichment onto a newer representative row", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        { id: "snapshot-2", match_id: "match-1", checkpoint_type: "LINEUP_CONFIRMED" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.61,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.61,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.12,
+          value_recommendation_expected_value: 0.28,
+          value_recommendation_market_price: 0.54,
+          value_recommendation_model_probability: 0.69,
+          value_recommendation_market_probability: 0.57,
+          value_recommendation_market_source: "prediction_market",
+          variant_markets_summary: [],
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-2",
+          match_id: "match-1",
+          snapshot_id: "snapshot-2",
+          recommended_pick: "DRAW",
+          confidence_score: 0.75,
+          main_recommendation_pick: "DRAW",
+          main_recommendation_confidence: 0.75,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: null,
+          value_recommendation_recommended: null,
+          value_recommendation_edge: null,
+          value_recommendation_expected_value: null,
+          value_recommendation_market_price: null,
+          value_recommendation_model_probability: null,
+          value_recommendation_market_probability: null,
+          value_recommendation_market_source: null,
+          variant_markets_summary: [],
+          created_at: "2026-04-24T09:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+    });
+
+    expect(view.items[0]).toMatchObject({
+      selectionLabel: "DRAW",
+      expectedValue: null,
+      marketPrice: null,
+      modelProbability: null,
+      marketProbability: null,
+    });
   });
 
   it("allows cross-origin reads from the deployed Pages app", async () => {
@@ -206,6 +1487,91 @@ describe("prediction API", () => {
     expect(response.headers.get("cache-control")).toBe(
       "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
     );
+  });
+
+  it("serves repeated matches requests from cache without querying Supabase", async () => {
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+    const secondResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves repeated daily picks requests from cache without querying Supabase", async () => {
+    setDailyPicksClock();
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/daily-picks?date=2026-04-24", {
+      headers: { host: "localhost" },
+    });
+    const secondResponse = await app.request("/daily-picks?date=2026-04-24", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
+    const selectedColumns: string[] = [];
+    const query = {
+      select: vi.fn((columns: string) => {
+        selectedColumns.push(columns);
+        return query;
+      }),
+      order: vi.fn(() => query),
+      limit: vi.fn(() => query),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      in: vi.fn(async () => ({ data: [], error: null })),
+    };
+    const supabase = {
+      from: vi.fn(() => query),
+    } as never;
+
+    await loadLatestPredictionFusionPolicyView(supabase);
+    await loadLatestPredictionModelRegistryView(supabase);
+    await loadLatestReviewAggregationView(supabase);
+    await loadLatestRolloutPromotionDecisionView(supabase);
+
+    expect(selectedColumns).not.toContain("*");
+    expect(selectedColumns).toContain("id, source_report_id, policy_payload, created_at");
+    expect(selectedColumns).toContain(
+      "id, model_family, training_window, feature_version, calibration_version, selection_metadata, training_metadata, created_at",
+    );
+    expect(selectedColumns).toContain("id, report_payload, created_at");
+    expect(selectedColumns).toContain("id, decision_payload, created_at");
   });
 
   it("surfaces query failures from the route helpers", async () => {
@@ -407,6 +1773,488 @@ describe("prediction API", () => {
       nextCursor: null,
       totalMatches: 0,
     });
+  });
+
+  it("derives settled draw verdicts from scorelines in the dashboard card view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T00:00:00Z"));
+
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 1,
+            review_count: 0,
+            predicted_count: 1,
+            evaluated_count: 1,
+            correct_count: 1,
+            incorrect_count: 0,
+            success_rate: 1,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-draw",
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            home_team: "Chelsea",
+            home_team_logo_url: null,
+            away_team: "Arsenal",
+            away_team_logo_url: null,
+            kickoff_at: "2026-04-20T19:00:00Z",
+            final_result: null,
+            home_score: 0,
+            away_score: 0,
+            representative_recommended_pick: "DRAW",
+            representative_confidence_score: 0.62,
+            summary_payload: null,
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.62,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
+            explanation_artifact_id: null,
+            explanation_artifact_uri: null,
+            has_prediction: true,
+            needs_review: false,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-draw",
+            kickoff_at: "2026-04-20T19:00:00Z",
+            final_result: null,
+            home_score: 0,
+            away_score: 0,
+            representative_recommended_pick: "DRAW",
+            representative_confidence_score: 0.62,
+            summary_payload: null,
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.62,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            has_prediction: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      limit: "1",
+      cursor: "0",
+    });
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.finalResult).toBe("DRAW");
+    expect(page.items[0]?.status).toBe("Review Ready");
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 1,
+      evaluatedCount: 1,
+      correctCount: 1,
+      incorrectCount: 0,
+      successRate: 1,
+    });
+  });
+
+  it("uses league summary rows instead of scanning every card for dashboard prediction summary", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 12,
+            review_count: 3,
+            predicted_count: 9,
+            evaluated_count: 6,
+            correct_count: 4,
+            incorrect_count: 2,
+            success_rate: 4 / 6,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "4",
+      cursor: "0",
+    });
+
+    expect(from).toHaveBeenCalledTimes(2);
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 9,
+      evaluatedCount: 6,
+      correctCount: 4,
+      incorrectCount: 2,
+      successRate: 4 / 6,
+    });
+  });
+
+  it("caps dashboard prediction coverage at the league match count", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 7,
+            review_count: 1,
+            predicted_count: 331,
+            evaluated_count: 12,
+            correct_count: 9,
+            incorrect_count: 3,
+            success_rate: 9 / 12,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 7,
+      evaluatedCount: 7,
+      correctCount: 7,
+      incorrectCount: 0,
+      successRate: 1,
+    });
+  });
+
+  it("keeps dashboard prediction summary scoped to the full league dataset", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 380,
+            review_count: 1,
+            predicted_count: 340,
+            evaluated_count: 333,
+            correct_count: 140,
+            incorrect_count: 193,
+            success_rate: 140 / 333,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const buildCard = (index: number) => ({
+      id: `match-${index}`,
+      league_id: "premier-league",
+      league_label: "Premier League",
+      league_emblem_url: null,
+      home_team: `Home ${index}`,
+      home_team_logo_url: null,
+      away_team: `Away ${index}`,
+      away_team_logo_url: null,
+      kickoff_at: "2026-04-30T19:00:00Z",
+      final_result: null,
+      home_score: null,
+      away_score: null,
+      representative_recommended_pick: "HOME",
+      representative_confidence_score: 0.62,
+      summary_payload: null,
+      main_recommendation_pick: "HOME",
+      main_recommendation_confidence: 0.62,
+      main_recommendation_recommended: true,
+      main_recommendation_no_bet_reason: null,
+      value_recommendation_pick: null,
+      value_recommendation_recommended: null,
+      value_recommendation_edge: null,
+      value_recommendation_expected_value: null,
+      value_recommendation_market_price: null,
+      value_recommendation_model_probability: null,
+      value_recommendation_market_probability: null,
+      value_recommendation_market_source: null,
+      variant_markets_summary: [],
+      explanation_artifact_id: null,
+      explanation_artifact_uri: null,
+      has_prediction: true,
+      needs_review: false,
+    });
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: Array.from({ length: 7 }, (_, index) => buildCard(index + 1)),
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      view: "upcoming",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(page.totalMatches).toBe(7);
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 340,
+      evaluatedCount: 333,
+      correctCount: 140,
+      incorrectCount: 193,
+      successRate: 140 / 333,
+    });
+  });
+
+  it("filters dashboard match cards by requested match view", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 12,
+            review_count: 3,
+            predicted_count: 9,
+            evaluated_count: 6,
+            correct_count: 4,
+            incorrect_count: 2,
+            success_rate: 4 / 6,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      view: "recent",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
+    expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 1);
+    expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
+  });
+
+  it("serves localized match cards from the dashboard card page without querying predictions", async () => {
+    const tableCalls: string[] = [];
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue({
+      from(tableName: string) {
+        tableCalls.push(tableName);
+        if (tableName === "predictions") {
+          throw new Error("predictions should not be queried for the card page");
+        }
+        if (tableName === "dashboard_league_summaries") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  league_id: "premier-league",
+                  league_label: "Premier League",
+                  league_emblem_url: null,
+                  match_count: 1,
+                  review_count: 0,
+                  predicted_count: 1,
+                  evaluated_count: 0,
+                  correct_count: 0,
+                  incorrect_count: 0,
+                  success_rate: null,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "dashboard_match_cards") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            range: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: "match-1",
+                  league_id: "premier-league",
+                  league_label: "Premier League",
+                  league_emblem_url: null,
+                  home_team: "Chelsea",
+                  home_team_logo_url: null,
+                  away_team: "Arsenal",
+                  away_team_logo_url: null,
+                  kickoff_at: "2026-04-20T19:00:00Z",
+                  final_result: null,
+                  home_score: null,
+                  away_score: null,
+                  representative_recommended_pick: "HOME",
+                  representative_confidence_score: 0.62,
+                  summary_payload: null,
+                  main_recommendation_pick: "HOME",
+                  main_recommendation_confidence: 0.62,
+                  main_recommendation_recommended: true,
+                  main_recommendation_no_bet_reason: null,
+                  value_recommendation_pick: null,
+                  value_recommendation_recommended: null,
+                  value_recommendation_edge: null,
+                  value_recommendation_expected_value: null,
+                  value_recommendation_market_price: null,
+                  value_recommendation_model_probability: null,
+                  value_recommendation_market_probability: null,
+                  value_recommendation_market_source: null,
+                  variant_markets_summary: [],
+                  explanation_artifact_id: null,
+                  explanation_artifact_uri: null,
+                  has_prediction: true,
+                  needs_review: false,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "matches") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: "match-1",
+                  home_team_id: "chelsea",
+                  away_team_id: "arsenal",
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "teams") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                { id: "chelsea", name: "Chelsea", crest_url: null },
+                { id: "arsenal", name: "Arsenal", crest_url: null },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "team_translations") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  team_id: "chelsea",
+                  locale: "ko",
+                  display_name: "첼시",
+                  source_name: null,
+                  is_primary: true,
+                },
+                {
+                  team_id: "arsenal",
+                  locale: "ko",
+                  display_name: "아스널",
+                  source_name: null,
+                  is_primary: true,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        throw new Error(`unexpected table: ${tableName}`);
+      },
+    } as never);
+
+    const response = await app.request("/matches?leagueId=premier-league&locale=ko&limit=1");
+
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      items: Array<{ homeTeam: string; awayTeam: string }>;
+    };
+    expect(payload.items[0].homeTeam).toBe("첼시");
+    expect(payload.items[0].awayTeam).toBe("아스널");
+    expect(tableCalls).not.toContain("predictions");
   });
 
   it("uses a league-scoped query when the caller already knows the selected league", async () => {
@@ -1099,6 +2947,9 @@ describe("prediction API", () => {
   });
 
   it("falls back when crest/emblem columns are not present yet", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-28T00:00:00Z"));
+
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
@@ -1213,6 +3064,372 @@ describe("prediction API", () => {
     ]);
 
     vi.useRealTimers();
+  });
+
+  it("does not request legacy team logo columns for daily picks", async () => {
+    setDailyPicksClock();
+    const selectedColumns = new Map<string, string[]>();
+    const rowsByTable: FakeTables = {
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea", crest_url: null },
+        { id: "man-city", name: "Manchester City", crest_url: null },
+      ],
+      competitions: [{ id: "premier-league", name: "Premier League" }],
+      predictions: [],
+    };
+    const rememberSelect = (tableName: string, columns: string) => {
+      selectedColumns.set(tableName, [
+        ...(selectedColumns.get(tableName) ?? []),
+        columns,
+      ]);
+    };
+    const buildQuery = (tableName: string, rows = rowsByTable[tableName] ?? []) => ({
+      select(columns: string) {
+        rememberSelect(tableName, columns);
+        return {
+          gte: (column: string, value: string) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => String(row[column] ?? "") >= value),
+            ).select(columns),
+          lt: (column: string, value: string) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => String(row[column] ?? "") < value),
+            ).select(columns),
+          in: async (column: string, values: unknown[]) => ({
+            data: rows.filter((row) => values.includes(row[column])),
+            error: null,
+          }),
+          order: async () => ({ data: rows, error: null }),
+        };
+      },
+    });
+    const supabase = {
+      from(tableName: string) {
+        return buildQuery(tableName);
+      },
+    } as never;
+
+    await loadDailyPicksView(supabase, { date: "2026-04-24" });
+
+    expect(selectedColumns.get("teams")).toEqual(["id, name, crest_url"]);
+    expect(selectedColumns.get("teams")?.[0]).not.toContain("logo_url");
+    vi.useRealTimers();
+  });
+
+  it("localizes match card team labels when team translations exist for the requested locale", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "chelsea", name: "Chelsea", crest_url: null },
+          { id: "man-city", name: "Manchester City", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const teamTranslations = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "chelsea:ko:official",
+            team_id: "chelsea",
+            locale: "ko",
+            display_name: "첼시",
+            source_name: null,
+            is_primary: true,
+          },
+          {
+            id: "man-city:ko:official",
+            team_id: "man-city",
+            locale: "ko",
+            display_name: "맨체스터 시티",
+            source_name: null,
+            is_primary: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "teams") return teams;
+      if (tableName === "team_translations") return teamTranslations;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      if (tableName === "post_match_reviews") return reviews;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+      locale: "ko",
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        homeTeam: "첼시",
+        awayTeam: "맨체스터 시티",
+      }),
+    ]);
+  });
+
+  it("uses english primary team translations when locale=en is requested", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "bayern",
+            away_team_id: "inter",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "bayern", name: "FC Bayern München", crest_url: null },
+          { id: "inter", name: "FC Internazionale Milano", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const teamTranslations = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "bayern:en:primary",
+            team_id: "bayern",
+            locale: "en",
+            display_name: "Bayern Munich",
+            source_name: null,
+            is_primary: true,
+          },
+          {
+            id: "inter:en:primary",
+            team_id: "inter",
+            locale: "en",
+            display_name: "Inter",
+            source_name: null,
+            is_primary: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "teams") return teams;
+      if (tableName === "team_translations") return teamTranslations;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      if (tableName === "post_match_reviews") return reviews;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+      locale: "en",
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        homeTeam: "Bayern Munich",
+        awayTeam: "Inter",
+      }),
+    ]);
+  });
+
+  it("falls back to english team translations when the requested locale is missing", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "bayern",
+            away_team_id: "inter",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "bayern", name: "FC Bayern München", crest_url: null },
+          { id: "inter", name: "FC Internazionale Milano", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const teamTranslations = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "bayern:en:official",
+            team_id: "bayern",
+            locale: "en",
+            display_name: "Bayern Munich",
+            source_name: null,
+            is_primary: true,
+          },
+          {
+            id: "inter:en:official",
+            team_id: "inter",
+            locale: "en",
+            display_name: "Inter",
+            source_name: null,
+            is_primary: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "teams") return teams;
+      if (tableName === "team_translations") return teamTranslations;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      if (tableName === "post_match_reviews") return reviews;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+      locale: "fr",
+    });
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        homeTeam: "Bayern Munich",
+        awayTeam: "Inter",
+      }),
+    ]);
   });
 
   it("uses the latest checkpoint order rather than prediction created_at order for card pick/confidence", async () => {
@@ -1357,6 +3574,104 @@ describe("prediction API", () => {
     expect(predictions.select).toHaveBeenCalledWith(
       expect.stringContaining("summary_payload"),
     );
+  });
+
+  it("hides value recommendations for settled matches in the dashboard match payload", async () => {
+    const matchesQuery = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            competition_id: "premier-league",
+            kickoff_at: "2026-04-27T19:00:00Z",
+            home_team_id: "chelsea",
+            away_team_id: "man-city",
+            final_result: "AWAY",
+            home_score: 1,
+            away_score: 2,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const competitions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "premier-league", name: "Premier League", emblem_url: null }],
+        error: null,
+      }),
+    };
+    const teams = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [
+          { id: "chelsea", name: "Chelsea", crest_url: null },
+          { id: "man-city", name: "Manchester City", crest_url: null },
+        ],
+        error: null,
+      }),
+    };
+    const predictions = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            match_id: "match-1",
+            snapshot_id: "snapshot-lineup",
+            recommended_pick: "AWAY",
+            confidence_score: 0.61,
+            created_at: "2026-04-27T12:00:00Z",
+            summary_payload: {},
+            main_recommendation_pick: "AWAY",
+            main_recommendation_confidence: 0.61,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: "AWAY",
+            value_recommendation_recommended: true,
+            value_recommendation_edge: 0.11,
+            value_recommendation_expected_value: 534.24,
+            value_recommendation_market_price: 0.001,
+            value_recommendation_model_probability: 0.54,
+            value_recommendation_market_probability: 0.001,
+            value_recommendation_market_source: "prediction_market",
+            variant_markets_summary: [],
+          },
+        ],
+        error: null,
+      }),
+    };
+    const snapshots = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({
+        data: [{ id: "snapshot-lineup", checkpoint_type: "LINEUP_CONFIRMED" }],
+        error: null,
+      }),
+    };
+    const reviews = {
+      select: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+
+    const from = vi.fn((tableName: string) => {
+      if (tableName === "matches") return matchesQuery;
+      if (tableName === "competitions") return competitions;
+      if (tableName === "post_match_reviews") return reviews;
+      if (tableName === "teams") return teams;
+      if (tableName === "predictions") return predictions;
+      if (tableName === "match_snapshots") return snapshots;
+      throw new Error(`unexpected table ${tableName}`);
+    });
+
+    const items = await loadMatchItems({ from } as never, {
+      leagueId: "premier-league",
+    });
+
+    expect(items[0]?.recommendedPick).toBe("AWAY");
+    expect(items[0]?.valueRecommendation).toBeNull();
   });
 
   it("prefers the most recent prediction when multiple rows share the same checkpoint", async () => {
@@ -1687,10 +4002,24 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        error: null,
+      }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(predictionsQuery)
-      .mockReturnValueOnce(snapshotsQuery);
+      .mockReturnValueOnce(snapshotsQuery)
+      .mockReturnValueOnce(matchQuery);
 
     const detail = await loadPredictionView({ from } as never, "match-1");
 
@@ -1788,10 +4117,24 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        error: null,
+      }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(predictionsQuery)
-      .mockReturnValueOnce(snapshotsQuery);
+      .mockReturnValueOnce(snapshotsQuery)
+      .mockReturnValueOnce(matchQuery);
 
     const detail = await loadPredictionView({ from } as never, "match-1");
 
@@ -1818,6 +4161,81 @@ describe("prediction API", () => {
         marketSlug: "spread-slug",
       },
     ]);
+  });
+
+  it("hides value recommendations in the detail view once a match is settled", async () => {
+    const predictionsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "prediction-lineup",
+            match_id: "match-1",
+            snapshot_id: "snapshot-lineup",
+            home_prob: 0.31,
+            draw_prob: 0.15,
+            away_prob: 0.54,
+            recommended_pick: "AWAY",
+            confidence_score: 0.61,
+            main_recommendation_pick: "AWAY",
+            main_recommendation_confidence: 0.61,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: "AWAY",
+            value_recommendation_recommended: true,
+            value_recommendation_edge: 0.11,
+            value_recommendation_expected_value: 534.24,
+            value_recommendation_market_price: 0.001,
+            value_recommendation_model_probability: 0.54,
+            value_recommendation_market_probability: 0.001,
+            value_recommendation_market_source: "prediction_market",
+            variant_markets_summary: [],
+            explanation_payload: {},
+            created_at: "2026-04-27T12:00:00Z",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const snapshotsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "snapshot-lineup",
+            checkpoint_type: "LINEUP_CONFIRMED",
+            captured_at: "2026-04-27T12:00:00Z",
+            lineup_status: "confirmed",
+            snapshot_quality: "complete",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: "AWAY",
+          home_score: 1,
+          away_score: 2,
+        },
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(predictionsQuery)
+      .mockReturnValueOnce(snapshotsQuery)
+      .mockReturnValueOnce(matchQuery);
+
+    const detail = await loadPredictionView({ from } as never, "match-1");
+
+    expect(detail.prediction?.recommendedPick).toBe("AWAY");
+    expect(detail.prediction?.valueRecommendation).toBeNull();
   });
 
   it("loads the latest persisted prediction source evaluation report when available", async () => {

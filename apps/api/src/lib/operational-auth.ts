@@ -2,30 +2,41 @@ import type { Context } from "hono";
 
 import type { AppBindings } from "../env";
 
-function readBearerToken(value: string | undefined): string | null {
+function readHeaderApiKey(value: string | undefined): string | null {
   if (!value) {
     return null;
   }
 
-  const [scheme, token] = value.trim().split(/\s+/, 2);
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readBearerToken(value: string | undefined): string | null {
+  const headerValue = readHeaderApiKey(value);
+  if (!headerValue) {
+    return null;
+  }
+
+  const [scheme, token] = headerValue.split(/\s+/, 2);
   if (scheme?.toLowerCase() !== "bearer" || !token) {
     return null;
   }
 
-  return token;
+  return readHeaderApiKey(token);
 }
 
 export function ensureOperationalReportsAccess(c: Context<AppBindings>) {
-  const expectedApiKey = c.env?.OPERATIONAL_REPORTS_API_KEY;
+  const expectedApiKey = readHeaderApiKey(c.env?.OPERATIONAL_REPORTS_API_KEY);
   if (!expectedApiKey) {
     return null;
   }
 
-  const requestApiKey =
-    c.req.header("x-operational-api-key") ??
-    readBearerToken(c.req.header("authorization") ?? undefined);
+  const requestApiKeys = [
+    readHeaderApiKey(c.req.header("x-operational-api-key")),
+    readBearerToken(c.req.header("authorization") ?? undefined),
+  ];
 
-  if (requestApiKey === expectedApiKey) {
+  if (requestApiKeys.some((requestApiKey) => requestApiKey === expectedApiKey)) {
     return null;
   }
 

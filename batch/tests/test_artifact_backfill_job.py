@@ -2,6 +2,37 @@ import json
 from types import SimpleNamespace
 
 import batch.src.jobs.backfill_artifact_pointers_job as artifact_backfill_job
+from batch.src.storage.artifact_store import archive_json_artifact
+
+
+def test_archive_json_artifact_can_use_supabase_storage_for_cached_egress():
+    class FakeSupabaseStorage:
+        bucket = "public-artifacts"
+
+        def archive_json(self, key: str, payload: dict) -> str:
+            assert key == "predictions/match_001/prediction_001.json"
+            assert payload == {"bullets": ["A"]}
+            return (
+                "https://example.supabase.co/storage/v1/object/public/"
+                "public-artifacts/predictions/match_001/prediction_001.json"
+            )
+
+    row = archive_json_artifact(
+        r2_client=None,
+        supabase_storage_client=FakeSupabaseStorage(),
+        artifact_id="prediction_artifact_prediction_001",
+        owner_type="prediction",
+        owner_id="prediction_001",
+        artifact_kind="prediction_explanation",
+        key="predictions/match_001/prediction_001.json",
+        payload={"bullets": ["A"]},
+    )
+
+    assert row["storage_backend"] == "supabase_storage"
+    assert row["bucket_name"] == "public-artifacts"
+    assert row["storage_uri"].startswith(
+        "https://example.supabase.co/storage/v1/object/public/public-artifacts/"
+    )
 
 
 def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_path, capsys):

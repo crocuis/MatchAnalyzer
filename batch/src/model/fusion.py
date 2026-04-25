@@ -7,6 +7,7 @@ MAIN_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.62
 MAIN_RECOMMENDATION_MIN_BUCKET_COUNT = 5
 MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP = 0.08
 VALUE_RECOMMENDATION_EV_THRESHOLD = 0.15
+VALUE_RECOMMENDATION_MIN_MARKET_PRICE = 0.05
 CURRENT_FUSED_CONFIDENCE_MIN = 0.45
 CURRENT_FUSED_SOURCE_AGREEMENT_MIN = 0.34
 CURRENT_FUSED_MAX_DIVERGENCE = 0.05
@@ -21,6 +22,7 @@ CENTROID_DRAW_NO_MARKET_BONUS = 0.15
 DEFAULT_FUSION_POLICY_ID = "latest"
 DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
     "by_checkpoint_market_segment",
+    "by_competition",
     "by_checkpoint",
     "by_market_segment",
     "overall",
@@ -309,6 +311,7 @@ def choose_fusion_weights(
     checkpoint: str,
     market_segment: str,
     allowed_variants: tuple[str, ...],
+    competition_id: str | None = None,
 ) -> dict[str, str | dict[str, float]] | None:
     if not isinstance(policy_payload, dict):
         return None
@@ -319,6 +322,20 @@ def choose_fusion_weights(
     weights_payload = policy_payload.get("weights")
     if not isinstance(weights_payload, dict):
         return None
+    if "by_competition" not in selection_order and isinstance(
+        weights_payload.get("by_competition"),
+        dict,
+    ):
+        insertion_index = (
+            selection_order.index("by_checkpoint_market_segment") + 1
+            if "by_checkpoint_market_segment" in selection_order
+            else 0
+        )
+        selection_order = [
+            *selection_order[:insertion_index],
+            "by_competition",
+            *selection_order[insertion_index:],
+        ]
 
     selected_weights: dict[str, float] | None = None
     matched_on: str | None = None
@@ -338,6 +355,10 @@ def choose_fusion_weights(
             market_segments = weights_payload.get(selector)
             if isinstance(market_segments, dict):
                 candidate_weights = market_segments.get(market_segment)
+        elif selector == "by_competition":
+            competitions = weights_payload.get(selector)
+            if isinstance(competitions, dict) and competition_id:
+                candidate_weights = competitions.get(competition_id)
         elif selector == "overall":
             candidate_weights = weights_payload.get("overall")
 
@@ -574,6 +595,7 @@ def build_value_recommendation(
     prediction_market_available: bool,
     market_prices: dict | None = None,
     threshold: float = VALUE_RECOMMENDATION_EV_THRESHOLD,
+    minimum_market_price: float = VALUE_RECOMMENDATION_MIN_MARKET_PRICE,
 ) -> dict | None:
     if not prediction_market_available:
         return None
@@ -583,7 +605,7 @@ def build_value_recommendation(
         outcome
         for outcome in ("home", "draw", "away")
         if isinstance(market_prices.get(outcome), (int, float))
-        and float(market_prices[outcome]) > 0
+        and float(market_prices[outcome]) >= minimum_market_price
         and isinstance(base_probs.get(outcome), (int, float))
         and isinstance(market_probs.get(outcome), (int, float))
     ]
