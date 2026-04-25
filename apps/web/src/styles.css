@@ -510,13 +510,43 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   display: none; /* Chrome, Safari, Opera */
 }
 .leagueTab {
-  padding: 8px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  max-width: 228px;
+  padding: 8px 14px;
   border-radius: 10px;
   font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
+  font-weight: 700;
+  color: #334155;
   white-space: nowrap;
   flex-shrink: 0;
+}
+.leagueTabEmblem,
+.leagueTabFallback {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+.leagueTabEmblem {
+  object-fit: contain;
+}
+.leagueTabFallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.leagueTabText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 @media (max-width: 640px) {
   .leagueTabList {
@@ -525,10 +555,18 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
     border-radius: 0;
     justify-content: flex-start;
   }
+  .leagueTab {
+    max-width: 184px;
+    padding-inline: 12px;
+  }
 }
 .leagueTab[aria-selected="true"] {
-  background: var(--bg-surface); color: var(--accent-primary);
+  background: var(--bg-surface); color: var(--text-primary);
   box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+}
+.leagueTab[aria-selected="true"] .leagueTabFallback {
+  background: rgba(79, 70, 229, 0.12);
+  color: var(--accent-primary);
 }
 .leagueSummary { justify-content: center; font-size: 0.9rem; color: var(--text-muted); display: flex; gap: 16px; }
 
@@ -1566,17 +1604,17 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   border: 1px solid rgba(244, 63, 94, 0.12);
 }
 .panelHeader {
-  display: flex; alignItems: center; gap: 8px; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
 }
 .warningIcon {
-  color: var(--accent-danger); fontWeight: 900; margin-right: 8px;
+  color: var(--accent-danger); font-weight: 900; margin-right: 8px;
 }
 .modalSection {
   display: flex;
   flex-direction: column;
 }
 .reportActionBtn {
-  margin-top: 4px; padding: 16px; fontSize: 16px;
+  margin-top: 4px; padding: 16px; font-size: 16px;
   display: flex; align-items: center; justify-content: center; gap: 10px;
 }
 
