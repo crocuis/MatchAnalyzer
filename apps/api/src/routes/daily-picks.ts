@@ -100,7 +100,7 @@ type BuildDailyPicksArgs = {
 };
 
 const DAILY_PICK_SELECTS: Record<string, string> = {
-  teams: "id, name, crest_url, logo_url",
+  teams: "id, name, crest_url",
   competitions: "id, name",
   match_snapshots: "id, match_id, checkpoint_type",
   predictions:

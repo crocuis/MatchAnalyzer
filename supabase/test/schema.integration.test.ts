@@ -347,7 +347,100 @@ describe("supabase schema integration", () => {
 
     expect(summaries.rows).toEqual([
       {
-        predicted_count: 2,
+        predicted_count: 1,
+        evaluated_count: 1,
+        correct_count: 1,
+        incorrect_count: 0,
+      },
+    ]);
+  });
+
+  it("excludes predictions captured after kickoff from dashboard summary outcomes", async () => {
+    const db = await createDb();
+
+    await db.exec(`
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      update matches
+      set final_result = 'HOME',
+          home_score = 2,
+          away_score = 1
+      where id = 'match_001';
+
+      insert into matches (id, competition_id, season, kickoff_at, home_team_id, away_team_id, final_result, home_score, away_score)
+      values ('match_002', 'epl', '2026-2027', '2026-08-16T15:00:00Z', 'arsenal', 'chelsea', 'DRAW', 1, 1);
+
+      insert into match_snapshots (id, match_id, checkpoint_type, captured_at, lineup_status, snapshot_quality)
+      values
+        ('snapshot_pre_kickoff', 'match_001', 'T_MINUS_24H', '2026-08-14T15:00:00Z', 'unknown', 'complete'),
+        ('snapshot_post_kickoff', 'match_002', 'T_MINUS_24H', '2026-08-16T16:00:00Z', 'unknown', 'complete');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended,
+        main_recommendation_no_bet_reason,
+        explanation_payload
+      )
+      values
+        (
+          'prediction_pre_kickoff',
+          'snapshot_pre_kickoff',
+          'match_001',
+          'model_v1',
+          0.5,
+          0.25,
+          0.25,
+          'HOME',
+          0.75,
+          'HOME',
+          0.75,
+          true,
+          null,
+          '{"main_recommendation":{"pick":"HOME","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
+        ),
+        (
+          'prediction_post_kickoff',
+          'snapshot_post_kickoff',
+          'match_002',
+          'model_v1',
+          0.3,
+          0.4,
+          0.3,
+          'DRAW',
+          0.75,
+          'DRAW',
+          0.75,
+          true,
+          null,
+          '{"main_recommendation":{"pick":"DRAW","confidence":0.75,"recommended":true,"no_bet_reason":null}}'::jsonb
+        );
+    `);
+
+    const summaries = await db.query<{
+      predicted_count: number;
+      evaluated_count: number;
+      correct_count: number;
+      incorrect_count: number;
+    }>(
+      `select predicted_count, evaluated_count, correct_count, incorrect_count
+       from dashboard_league_summaries
+       where league_id = 'epl'`,
+    );
+
+    expect(summaries.rows).toEqual([
+      {
+        predicted_count: 1,
         evaluated_count: 1,
         correct_count: 1,
         incorrect_count: 0,
