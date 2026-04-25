@@ -1022,10 +1022,15 @@ def build_snapshot_rows_from_matches(
     historical_rows = historical_matches or []
     lineup_contexts = lineup_context_by_match or {}
     for match in matches:
+        snapshot_captured_at = resolve_snapshot_captured_at(
+            match=match,
+            checkpoint=checkpoint,
+            captured_at=captured_at,
+        )
         history_fields = build_match_history_snapshot_fields(
             match,
             historical_rows,
-            as_of=captured_at,
+            as_of=snapshot_captured_at,
         )
         lineup_context = lineup_contexts.get(match["id"], {})
         snapshot = build_snapshot(
@@ -1033,7 +1038,7 @@ def build_snapshot_rows_from_matches(
             checkpoint=checkpoint,
             lineup_status=lineup_context.get("lineup_status", "unknown"),
             has_market_data=False,
-            captured_at=captured_at,
+            captured_at=snapshot_captured_at,
         )
         snapshot_rows.append(
             {
@@ -1064,3 +1069,35 @@ def build_snapshot_rows_from_matches(
             }
         )
     return snapshot_rows
+
+
+def parse_snapshot_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def resolve_snapshot_captured_at(
+    *,
+    match: dict[str, Any],
+    checkpoint: str,
+    captured_at: str | None,
+) -> str | None:
+    if match.get("final_result") is None:
+        return captured_at
+
+    kickoff_at = parse_snapshot_datetime(match.get("kickoff_at"))
+    observed_at = parse_snapshot_datetime(captured_at)
+    if kickoff_at is None or observed_at is None or observed_at < kickoff_at:
+        return captured_at
+
+    checkpoint_offsets = {
+        "T_MINUS_24H": timedelta(hours=24),
+        "T_MINUS_6H": timedelta(hours=6),
+        "T_MINUS_1H": timedelta(hours=1),
+        "LINEUP_CONFIRMED": timedelta(hours=1),
+    }
+    return (kickoff_at - checkpoint_offsets.get(checkpoint, timedelta(hours=24))).isoformat()

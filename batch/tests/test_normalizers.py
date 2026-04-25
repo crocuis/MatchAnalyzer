@@ -1389,6 +1389,26 @@ def test_build_match_history_snapshot_fields_excludes_results_observed_after_sna
     assert fields["form_delta"] is None
 
 
+def test_build_snapshot_rows_from_matches_backdates_completed_snapshots_to_checkpoint():
+    rows = build_snapshot_rows_from_matches(
+        [
+            {
+                "id": "match_001",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": "2026-08-15T15:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": "HOME",
+            }
+        ],
+        checkpoint="T_MINUS_6H",
+        captured_at="2026-08-16T00:00:00+00:00",
+    )
+
+    assert rows[0]["captured_at"] == "2026-08-15T09:00:00+00:00"
+
+
 def test_build_snapshot_rows_from_matches_uses_lineup_context_when_available():
     rows = build_snapshot_rows_from_matches(
         [

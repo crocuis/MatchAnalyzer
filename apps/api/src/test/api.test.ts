@@ -2830,6 +2830,68 @@ describe("prediction API", () => {
     vi.useRealTimers();
   });
 
+  it("does not request legacy team logo columns for daily picks", async () => {
+    setDailyPicksClock();
+    const selectedColumns = new Map<string, string[]>();
+    const rowsByTable: FakeTables = {
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea", crest_url: null },
+        { id: "man-city", name: "Manchester City", crest_url: null },
+      ],
+      competitions: [{ id: "premier-league", name: "Premier League" }],
+      predictions: [],
+    };
+    const rememberSelect = (tableName: string, columns: string) => {
+      selectedColumns.set(tableName, [
+        ...(selectedColumns.get(tableName) ?? []),
+        columns,
+      ]);
+    };
+    const buildQuery = (tableName: string, rows = rowsByTable[tableName] ?? []) => ({
+      select(columns: string) {
+        rememberSelect(tableName, columns);
+        return {
+          gte: (column: string, value: string) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => String(row[column] ?? "") >= value),
+            ).select(columns),
+          lt: (column: string, value: string) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => String(row[column] ?? "") < value),
+            ).select(columns),
+          in: async (column: string, values: unknown[]) => ({
+            data: rows.filter((row) => values.includes(row[column])),
+            error: null,
+          }),
+          order: async () => ({ data: rows, error: null }),
+        };
+      },
+    });
+    const supabase = {
+      from(tableName: string) {
+        return buildQuery(tableName);
+      },
+    } as never;
+
+    await loadDailyPicksView(supabase, { date: "2026-04-24" });
+
+    expect(selectedColumns.get("teams")).toEqual(["id, name, crest_url"]);
+    expect(selectedColumns.get("teams")?.[0]).not.toContain("logo_url");
+    vi.useRealTimers();
+  });
+
   it("localizes match card team labels when team translations exist for the requested locale", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
