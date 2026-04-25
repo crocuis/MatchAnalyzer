@@ -276,6 +276,47 @@ def fetch_espn_public_team_schedule(
     return {"team": team_data, "events": events}
 
 
+def build_espn_public_season_dates(season_year: str) -> str:
+    year = int(season_year)
+    return f"{year}0801-{year + 1}0630"
+
+
+def fetch_espn_public_season_events(
+    *,
+    competition_id: str,
+    season_year: str,
+) -> list[dict[str, Any]]:
+    league_slug = ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS.get(competition_id)
+    if not league_slug:
+        return []
+
+    params = {
+        "dates": build_espn_public_season_dates(season_year),
+        "limit": "1000",
+    }
+    url = (
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+        f"{league_slug}/scoreboard?{urlencode(params)}"
+    )
+    request = Request(url, headers={"User-Agent": "MatchAnalyzer/1.0"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+
+    events = [
+        _espn_public_event_to_schedule_event(
+            event,
+            fallback_competition_id=competition_id,
+        )
+        for event in payload.get("events", [])
+        if isinstance(event, dict)
+    ]
+    events.sort(key=lambda event: event.get("start_time", ""))
+    return events
+
+
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return football.get_daily_schedule(date=date)

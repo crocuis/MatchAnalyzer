@@ -1,7 +1,48 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import batch.src.jobs.backfill_fixture_season_job as season_job
+
+
+@pytest.fixture(autouse=True)
+def disable_public_season_fetch(monkeypatch):
+    monkeypatch.setattr(
+        season_job,
+        "fetch_espn_public_season_events",
+        lambda **_kwargs: [],
+    )
+
+
+def test_fetch_season_events_prefers_public_scoreboard(monkeypatch):
+    public_event = {
+        "id": "match_public_001",
+        "competition": {"id": "premier-league"},
+    }
+
+    class FailingFootball:
+        @staticmethod
+        def get_season_schedule(*, season_id: str):
+            raise AssertionError(f"unexpected sports-skills fallback: {season_id}")
+
+    monkeypatch.setattr(
+        season_job,
+        "fetch_espn_public_season_events",
+        lambda **kwargs: [public_event]
+        if kwargs == {"competition_id": "premier-league", "season_year": "2025"}
+        else [],
+    )
+    monkeypatch.setattr(
+        season_job,
+        "load_sports_skills_football",
+        lambda: FailingFootball,
+    )
+
+    assert season_job.fetch_season_events(
+        competition_id="premier-league",
+        season_id="premier-league-2025",
+    ) == [public_event]
 
 
 def test_backfill_fixture_season_job_collects_supported_competitions(

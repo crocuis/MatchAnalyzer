@@ -7,6 +7,7 @@ from batch.src.ingest.fetch_fixtures import (
     build_lineup_context_by_match,
     build_match_row_from_event,
     build_team_rows_from_event,
+    fetch_espn_public_season_events,
     filter_supported_events,
     load_sports_skills_football,
 )
@@ -35,6 +36,14 @@ SUPPORTED_COMPETITION_IDS = (
 
 
 def fetch_season_events(*, competition_id: str, season_id: str) -> list[dict]:
+    season_year = season_id.rsplit("-", 1)[-1]
+    public_events = fetch_espn_public_season_events(
+        competition_id=competition_id,
+        season_year=season_year,
+    )
+    if public_events:
+        return filter_supported_events(public_events)
+
     football = load_sports_skills_football()
     schedule = football.get_season_schedule(season_id=season_id)
     data = schedule.get("data", {}) if isinstance(schedule, dict) else {}
