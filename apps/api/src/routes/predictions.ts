@@ -14,6 +14,7 @@ import {
   normalizeValueRecommendation,
   normalizeValueRecommendationFromSummary,
 } from "../lib/prediction-lanes";
+import { ensureOperationalReportsAccess } from "../lib/operational-auth";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const predictions = new Hono<AppBindings>();
@@ -303,7 +304,9 @@ function normalizePredictionSourceEvaluationReport(
   };
 }
 
-function extractPredictionSourceEvaluationPayload(row: Record<string, unknown>) {
+function extractPredictionSourceEvaluationPayload(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   const nestedPayload =
     (isRecord(row.report_json) && row.report_json) ||
     (isRecord(row.report_payload) && row.report_payload) ||
@@ -484,7 +487,9 @@ function normalizePredictionFusionPolicyReport(
   };
 }
 
-function extractPredictionFusionPolicyPayload(row: Record<string, unknown>) {
+function extractPredictionFusionPolicyPayload(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   return isRecord(row.policy_payload)
     ? row.policy_payload
     : isRecord(row.policyPayload)
@@ -664,7 +669,9 @@ export async function loadPredictionSourceEvaluationHistoryView(
       Array.isArray(data) ? data : [],
       normalizePredictionSourceEvaluationReport,
     );
-    const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0]) ? data[0] : null;
+    const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0])
+      ? (data[0] as Record<string, unknown>)
+      : null;
     const latestPayload = latestRow ? extractPredictionSourceEvaluationPayload(latestRow) : null;
 
     return {
@@ -770,7 +777,9 @@ export async function loadPredictionFusionPolicyHistoryView(
     Array.isArray(data) ? data : [],
     normalizePredictionFusionPolicyReport,
   );
-  const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0]) ? data[0] : null;
+  const latestRow = Array.isArray(data) && data.length > 0 && isRecord(data[0])
+    ? (data[0] as Record<string, unknown>)
+    : null;
   const latestPayload = latestRow ? extractPredictionFusionPolicyPayload(latestRow) : null;
 
   return {
@@ -1031,6 +1040,10 @@ export async function loadPredictionView(
 }
 
 predictions.get("/source-evaluation/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1052,6 +1065,10 @@ predictions.get("/source-evaluation/latest", async (c) => {
 });
 
 predictions.get("/source-evaluation/history", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1081,6 +1098,10 @@ predictions.get("/source-evaluation/history", async (c) => {
 });
 
 predictions.get("/model-registry/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1102,6 +1123,10 @@ predictions.get("/model-registry/latest", async (c) => {
 });
 
 predictions.get("/fusion-policy/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1123,6 +1148,10 @@ predictions.get("/fusion-policy/latest", async (c) => {
 });
 
 predictions.get("/fusion-policy/history", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {

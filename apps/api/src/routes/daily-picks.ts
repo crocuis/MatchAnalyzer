@@ -166,7 +166,7 @@ async function readRows(
   if (result.error) {
     throw new Error(result.error.message);
   }
-  return Array.isArray(result.data) ? (result.data as DailyPickRow[]) : [];
+  return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
 }
 
 function readString(value: unknown): string | null {
@@ -197,7 +197,7 @@ async function readRowsByIds(
   if (result.error) {
     throw new Error(result.error.message);
   }
-  return Array.isArray(result.data) ? (result.data as DailyPickRow[]) : [];
+  return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
 }
 
 async function readMatches(

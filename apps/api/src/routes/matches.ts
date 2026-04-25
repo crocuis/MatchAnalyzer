@@ -435,18 +435,11 @@ function buildPredictionSummaryFromLeagueSummary(
   if (!league) {
     return null;
   }
-  const matchCountValue = "matchCount" in league
-    ? league.matchCount
-    : league.match_count;
-  const predictedCount = "predictedCount" in league
-    ? league.predictedCount
-    : league.predicted_count;
-  const evaluatedCountValue = "evaluatedCount" in league
-    ? league.evaluatedCount
-    : league.evaluated_count;
-  const correctCountValue = "correctCount" in league
-    ? league.correctCount
-    : league.correct_count;
+  const leagueRecord = league as Record<string, unknown>;
+  const matchCountValue = leagueRecord.matchCount ?? leagueRecord.match_count;
+  const predictedCount = leagueRecord.predictedCount ?? leagueRecord.predicted_count;
+  const evaluatedCountValue = leagueRecord.evaluatedCount ?? leagueRecord.evaluated_count;
+  const correctCountValue = leagueRecord.correctCount ?? leagueRecord.correct_count;
   const matchCount = Number(matchCountValue ?? Number.POSITIVE_INFINITY);
   const maximumCount = Number.isFinite(matchCount)
     ? Math.max(matchCount, 0)

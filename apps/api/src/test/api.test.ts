@@ -217,6 +217,63 @@ describe("prediction API", () => {
     });
   });
 
+  it("blocks sensitive prediction reports without an operational api key", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      undefined,
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
+  it("allows sensitive prediction reports with a valid operational api key", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      {
+        headers: {
+          "x-operational-api-key": "secret-key",
+        },
+      },
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      report: null,
+    });
+  });
+
+  it("allows sensitive prediction reports when either operational api key header is valid", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      {
+        headers: {
+          authorization: "Bearer secret-key",
+          "x-operational-api-key": "wrong-key",
+        },
+      },
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      report: null,
+    });
+  });
+
+  it("blocks sensitive rollout reports without an operational api key", async () => {
+    const response = await app.request(
+      "/rollouts/promotion/latest",
+      undefined,
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
   it("returns an empty daily picks payload when no supabase client is configured", async () => {
     setDailyPicksClock();
     const response = await app.request("/daily-picks");
@@ -2192,7 +2249,9 @@ describe("prediction API", () => {
     const response = await app.request("/matches?leagueId=premier-league&locale=ko&limit=1");
 
     expect(response.status).toBe(200);
-    const payload = await response.json();
+    const payload = await response.json() as {
+      items: Array<{ homeTeam: string; awayTeam: string }>;
+    };
     expect(payload.items[0].homeTeam).toBe("첼시");
     expect(payload.items[0].awayTeam).toBe("아스널");
     expect(tableCalls).not.toContain("predictions");

@@ -21,6 +21,22 @@ describe("buildApiUrl", () => {
 
     expect(buildApiUrl("/matches")).toBe("https://match-analyzer-api.workers.dev/matches");
   });
+
+  it("keeps operational reports on the same-origin proxy when a deploy api origin is set", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://match-analyzer-api.workers.dev");
+
+    const { buildApiUrl } = await import("../lib/api");
+
+    expect(buildApiUrl("/predictions/source-evaluation/latest")).toBe(
+      "/api/predictions/source-evaluation/latest",
+    );
+    expect(buildApiUrl("/reviews/aggregation/latest")).toBe(
+      "/api/reviews/aggregation/latest",
+    );
+    expect(buildApiUrl("/rollouts/promotion/latest")).toBe(
+      "/api/rollouts/promotion/latest",
+    );
+  });
 });
 
 describe("daily picks fetcher", () => {
