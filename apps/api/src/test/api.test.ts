@@ -99,6 +99,8 @@ function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
 describe("prediction API", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("returns a health payload", async () => {
@@ -1430,6 +1432,91 @@ describe("prediction API", () => {
     );
   });
 
+  it("serves repeated matches requests from cache without querying Supabase", async () => {
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+    const secondResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves repeated daily picks requests from cache without querying Supabase", async () => {
+    setDailyPicksClock();
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/daily-picks?date=2026-04-24", {
+      headers: { host: "localhost" },
+    });
+    const secondResponse = await app.request("/daily-picks?date=2026-04-24", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
+    const selectedColumns: string[] = [];
+    const query = {
+      select: vi.fn((columns: string) => {
+        selectedColumns.push(columns);
+        return query;
+      }),
+      order: vi.fn(() => query),
+      limit: vi.fn(() => query),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      in: vi.fn(async () => ({ data: [], error: null })),
+    };
+    const supabase = {
+      from: vi.fn(() => query),
+    } as never;
+
+    await loadLatestPredictionFusionPolicyView(supabase);
+    await loadLatestPredictionModelRegistryView(supabase);
+    await loadLatestReviewAggregationView(supabase);
+    await loadLatestRolloutPromotionDecisionView(supabase);
+
+    expect(selectedColumns).not.toContain("*");
+    expect(selectedColumns).toContain("id, source_report_id, policy_payload, created_at");
+    expect(selectedColumns).toContain(
+      "id, model_family, training_window, feature_version, calibration_version, selection_metadata, training_metadata, created_at",
+    );
+    expect(selectedColumns).toContain("id, report_payload, created_at");
+    expect(selectedColumns).toContain("id, decision_payload, created_at");
+  });
+
   it("surfaces query failures from the route helpers", async () => {
     const failingQuery = {
       select: vi.fn().mockReturnThis(),
@@ -1646,10 +1733,10 @@ describe("prediction API", () => {
             match_count: 1,
             review_count: 0,
             predicted_count: 1,
-            evaluated_count: 0,
-            correct_count: 0,
+            evaluated_count: 1,
+            correct_count: 1,
             incorrect_count: 0,
-            success_rate: null,
+            success_rate: 1,
           },
         ],
         error: null,
@@ -1744,6 +1831,194 @@ describe("prediction API", () => {
       incorrectCount: 0,
       successRate: 1,
     });
+  });
+
+  it("uses league summary rows instead of scanning every card for dashboard prediction summary", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 12,
+            review_count: 3,
+            predicted_count: 9,
+            evaluated_count: 6,
+            correct_count: 4,
+            incorrect_count: 2,
+            success_rate: 4 / 6,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "4",
+      cursor: "0",
+    });
+
+    expect(from).toHaveBeenCalledTimes(2);
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 9,
+      evaluatedCount: 6,
+      correctCount: 4,
+      incorrectCount: 2,
+      successRate: 4 / 6,
+    });
+  });
+
+  it("serves localized match cards from the dashboard card page without querying predictions", async () => {
+    const tableCalls: string[] = [];
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue({
+      from(tableName: string) {
+        tableCalls.push(tableName);
+        if (tableName === "predictions") {
+          throw new Error("predictions should not be queried for the card page");
+        }
+        if (tableName === "dashboard_league_summaries") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  league_id: "premier-league",
+                  league_label: "Premier League",
+                  league_emblem_url: null,
+                  match_count: 1,
+                  review_count: 0,
+                  predicted_count: 1,
+                  evaluated_count: 0,
+                  correct_count: 0,
+                  incorrect_count: 0,
+                  success_rate: null,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "dashboard_match_cards") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            range: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: "match-1",
+                  league_id: "premier-league",
+                  league_label: "Premier League",
+                  league_emblem_url: null,
+                  home_team: "Chelsea",
+                  home_team_logo_url: null,
+                  away_team: "Arsenal",
+                  away_team_logo_url: null,
+                  kickoff_at: "2026-04-20T19:00:00Z",
+                  final_result: null,
+                  home_score: null,
+                  away_score: null,
+                  representative_recommended_pick: "HOME",
+                  representative_confidence_score: 0.62,
+                  summary_payload: null,
+                  main_recommendation_pick: "HOME",
+                  main_recommendation_confidence: 0.62,
+                  main_recommendation_recommended: true,
+                  main_recommendation_no_bet_reason: null,
+                  value_recommendation_pick: null,
+                  value_recommendation_recommended: null,
+                  value_recommendation_edge: null,
+                  value_recommendation_expected_value: null,
+                  value_recommendation_market_price: null,
+                  value_recommendation_model_probability: null,
+                  value_recommendation_market_probability: null,
+                  value_recommendation_market_source: null,
+                  variant_markets_summary: [],
+                  explanation_artifact_id: null,
+                  explanation_artifact_uri: null,
+                  has_prediction: true,
+                  needs_review: false,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "matches") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: "match-1",
+                  home_team_id: "chelsea",
+                  away_team_id: "arsenal",
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "teams") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                { id: "chelsea", name: "Chelsea", crest_url: null },
+                { id: "arsenal", name: "Arsenal", crest_url: null },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (tableName === "team_translations") {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  team_id: "chelsea",
+                  locale: "ko",
+                  display_name: "첼시",
+                  source_name: null,
+                  is_primary: true,
+                },
+                {
+                  team_id: "arsenal",
+                  locale: "ko",
+                  display_name: "아스널",
+                  source_name: null,
+                  is_primary: true,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        throw new Error(`unexpected table: ${tableName}`);
+      },
+    } as never);
+
+    const response = await app.request("/matches?leagueId=premier-league&locale=ko&limit=1");
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.items[0].homeTeam).toBe("첼시");
+    expect(payload.items[0].awayTeam).toBe("아스널");
+    expect(tableCalls).not.toContain("predictions");
   });
 
   it("uses a league-scoped query when the caller already knows the selected league", async () => {

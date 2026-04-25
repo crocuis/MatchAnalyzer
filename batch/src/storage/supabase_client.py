@@ -45,11 +45,12 @@ class SupabaseClient:
         self,
         table_name: str,
         *,
+        columns: tuple[str, ...] | None,
         start: int,
         page_size: int,
         ordered: bool,
     ) -> list[dict]:
-        params = {"select": "*"}
+        params = {"select": ",".join(columns) if columns else "*"}
         if ordered:
             params["order"] = "id.asc"
         request = Request(
@@ -66,7 +67,12 @@ class SupabaseClient:
                 raise ValueError(f"Supabase read failed with status {response.status}")
             return json.loads(response.read().decode("utf-8"))
 
-    def _read_rows_remote(self, table_name: str) -> list[dict]:
+    def _read_rows_remote(
+        self,
+        table_name: str,
+        *,
+        columns: tuple[str, ...] | None,
+    ) -> list[dict]:
         rows: list[dict] = []
         start = 0
 
@@ -74,6 +80,7 @@ class SupabaseClient:
             try:
                 page = self._read_remote_rows_page(
                     table_name,
+                    columns=columns,
                     start=start,
                     page_size=REMOTE_READ_PAGE_SIZE,
                     ordered=True,
@@ -88,6 +95,7 @@ class SupabaseClient:
                 ):
                     fallback_page = self._read_remote_rows_page(
                         table_name,
+                        columns=columns,
                         start=0,
                         page_size=REMOTE_READ_PAGE_SIZE,
                         ordered=False,
@@ -213,14 +221,21 @@ class SupabaseClient:
         target.write_text(json.dumps(retained_rows, sort_keys=True))
         return len(rows) - len(retained_rows)
 
-    def read_rows(self, table: str) -> list[dict]:
+    def read_rows(self, table: str, columns: tuple[str, ...] | None = None) -> list[dict]:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
-            return self._read_rows_remote(table_name)
+            return self._read_rows_remote(table_name, columns=columns)
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
         target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
         if not target.exists():
             return []
         rows = json.loads(target.read_text())
+        if columns:
+            column_set = set(columns)
+            rows = [
+                {key: value for key, value in row.items() if key in column_set}
+                for row in rows
+                if isinstance(row, dict)
+            ]
         return sorted(rows, key=lambda row: row.get("id", ""))

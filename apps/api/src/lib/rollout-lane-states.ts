@@ -75,7 +75,7 @@ export async function loadRolloutLaneSummaries(
 ): Promise<{ shadow: RolloutLaneSummary | null; rollout: RolloutLaneSummary | null }> {
   const { data, error } = await supabase
     .from("rollout_lane_states")
-    .select("*")
+    .select("rollout_channel, lane_payload")
     .in("rollout_channel", ["shadow", "rollout"])
     .limit(4);
 

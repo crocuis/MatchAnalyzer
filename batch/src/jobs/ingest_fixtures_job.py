@@ -301,13 +301,19 @@ def main() -> None:
     if use_real_schedule:
         schedule = fetch_daily_schedule(use_real_schedule)
         events = filter_supported_events(schedule["data"]["events"])
+        captured_at = datetime.now(timezone.utc).isoformat()
         competition_rows = []
         team_rows = []
         payload = []
         for event in events:
             competition_rows.append(build_competition_row_from_event(event))
             team_rows.extend(build_team_rows_from_event(event))
-            payload.append(build_match_row_from_event(event))
+            payload.append(
+                build_match_row_from_event(
+                    event,
+                    result_observed_at=captured_at,
+                )
+            )
         archive_payload = {
             **schedule,
             "data": {
@@ -317,7 +323,6 @@ def main() -> None:
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
         lineup_context_by_match = build_lineup_context_by_match(events)
-        captured_at = datetime.now(timezone.utc).isoformat()
         historical_matches = client.read_rows("matches")
         existing_snapshot_rows = client.read_rows("match_snapshots")
         snapshot_rows_payload = build_sync_snapshot_rows(

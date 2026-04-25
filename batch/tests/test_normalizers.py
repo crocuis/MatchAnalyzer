@@ -10,6 +10,7 @@ import pytest
 import batch.src.ingest.fetch_fixtures as fetch_fixtures_module
 import batch.src.ingest.fetch_markets as fetch_markets_module
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
 from batch.src.ingest.fetch_fixtures import build_match_row_from_event
 from batch.src.ingest.fetch_fixtures import build_lineup_context_by_match
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
@@ -307,6 +308,36 @@ def test_build_match_row_uses_stale_scores_for_past_scheduled_events():
     assert row["final_result"] == "HOME"
     assert row["home_score"] == 3
     assert row["away_score"] == 2
+    assert row["result_observed_at"] is None
+
+
+def test_build_match_row_records_result_observed_at_for_completed_events():
+    row = build_match_row_from_event(
+        {
+            "id": "match_final",
+            "status": "closed",
+            "start_time": "2026-02-26T20:00:00Z",
+            "competition": {"id": "champions-league"},
+            "season": {"id": "champions-league-2026"},
+            "competitors": [
+                {
+                    "team": {"id": "home", "name": "Home"},
+                    "qualifier": "home",
+                    "score": 3,
+                },
+                {
+                    "team": {"id": "away", "name": "Away"},
+                    "qualifier": "away",
+                    "score": 2,
+                },
+            ],
+            "scores": {"home": 3, "away": 2},
+        },
+        result_observed_at="2026-02-26T22:30:00+00:00",
+    )
+
+    assert row["final_result"] == "HOME"
+    assert row["result_observed_at"] == "2026-02-26T22:30:00+00:00"
 
 
 def test_build_match_row_keeps_unplayed_zero_score_events_pending():
@@ -336,6 +367,7 @@ def test_build_match_row_keeps_unplayed_zero_score_events_pending():
     assert row["final_result"] is None
     assert row["home_score"] is None
     assert row["away_score"] is None
+    assert row["result_observed_at"] is None
 
 
 def test_build_competition_and_team_rows_preserve_asset_urls():
@@ -1314,6 +1346,47 @@ def test_build_snapshot_rows_from_matches_enriches_historical_strength_metrics()
     assert snapshot["away_points_last_5"] == 1
     assert snapshot["home_rest_days"] == 3
     assert snapshot["away_rest_days"] == 2
+
+
+def test_build_match_history_snapshot_fields_excludes_results_observed_after_snapshot():
+    match = {
+        "id": "target_match",
+        "kickoff_at": "2026-08-15T18:00:00+00:00",
+        "home_team_id": "arsenal",
+        "away_team_id": "chelsea",
+    }
+    historical_matches = [
+        {
+            "id": "delayed_home_result",
+            "kickoff_at": "2026-08-11T18:00:00+00:00",
+            "home_team_id": "arsenal",
+            "away_team_id": "everton",
+            "home_score": 2,
+            "away_score": 0,
+            "final_result": "HOME",
+            "result_observed_at": "2026-08-13T12:00:00+00:00",
+        },
+        {
+            "id": "visible_away_result",
+            "kickoff_at": "2026-08-10T18:00:00+00:00",
+            "home_team_id": "chelsea",
+            "away_team_id": "liverpool",
+            "home_score": 1,
+            "away_score": 1,
+            "final_result": "DRAW",
+            "result_observed_at": "2026-08-10T21:00:00+00:00",
+        },
+    ]
+
+    fields = build_match_history_snapshot_fields(
+        match,
+        historical_matches,
+        as_of="2026-08-12T12:00:00+00:00",
+    )
+
+    assert fields["home_points_last_5"] is None
+    assert fields["away_points_last_5"] == 1
+    assert fields["form_delta"] is None
 
 
 def test_build_snapshot_rows_from_matches_uses_lineup_context_when_available():

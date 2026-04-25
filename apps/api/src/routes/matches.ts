@@ -3,6 +3,10 @@ import { deriveMatchStatus } from "@match-analyzer/contracts";
 
 import type { AppBindings } from "../env";
 import {
+  API_EGRESS_CACHE_CONTROL,
+  cachedResponse,
+} from "../lib/edge-cache";
+import {
   normalizeMainRecommendation,
   normalizeMainRecommendationFromSummary,
   normalizeSummaryPayload,
@@ -411,6 +415,49 @@ function buildPredictionSummary(
   };
 }
 
+function buildPredictionSummaryFromLeagueSummary(
+  league: LeagueSummaryRow | {
+    predictedCount?: number | null;
+    evaluatedCount?: number | null;
+    correctCount?: number | null;
+    incorrectCount?: number | null;
+    successRate?: number | null;
+  } | null,
+): MatchPredictionSummary | null {
+  if (!league) {
+    return null;
+  }
+  const predictedCount = "predictedCount" in league
+    ? league.predictedCount
+    : league.predicted_count;
+  const evaluatedCountValue = "evaluatedCount" in league
+    ? league.evaluatedCount
+    : league.evaluated_count;
+  const correctCountValue = "correctCount" in league
+    ? league.correctCount
+    : league.correct_count;
+  const incorrectCountValue = "incorrectCount" in league
+    ? league.incorrectCount
+    : league.incorrect_count;
+  const successRateValue = "successRate" in league
+    ? league.successRate
+    : league.success_rate;
+  const evaluatedCount = Number(evaluatedCountValue ?? 0);
+  const correctCount = Number(correctCountValue ?? 0);
+  return {
+    predictedCount: Number(predictedCount ?? 0),
+    evaluatedCount,
+    correctCount,
+    incorrectCount: Number(incorrectCountValue ?? Math.max(evaluatedCount - correctCount, 0)),
+    successRate:
+      typeof successRateValue === "number"
+        ? successRateValue
+        : evaluatedCount > 0
+          ? correctCount / evaluatedCount
+          : null,
+  };
+}
+
 async function loadCompetitionLabels(
   supabase: ApiSupabaseClient,
   competitionIds: string[],
@@ -550,43 +597,7 @@ export async function loadDashboardMatchCardsPageView(
     throw new Error(`dashboard card query failed: ${error.message}`);
   }
 
-  const summaryCardsQuery: any = supabase
-    .from("dashboard_match_cards")
-    .select(
-      "id, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, has_prediction",
-    );
-  const scopedSummaryCardsQuery =
-    typeof summaryCardsQuery.eq === "function"
-      ? summaryCardsQuery.eq("league_id", selectedLeagueId)
-      : summaryCardsQuery;
-  const { data: summaryCardRows, error: summaryError } = await scopedSummaryCardsQuery;
-
-  if (summaryError) {
-    throw new Error(`dashboard summary query failed: ${summaryError.message}`);
-  }
-
-  const predictionSummaryRows = (summaryCardRows ?? []) as DashboardPredictionSummaryRow[];
-  const predictionSummary = buildPredictionSummary(
-    predictionSummaryRows.map((row) => ({
-      id: row.id,
-      kickoff_at: row.kickoff_at,
-      final_result: row.final_result,
-      home_score: row.home_score,
-      away_score: row.away_score,
-    })),
-    new Map(
-      predictionSummaryRows.map((row) => [
-        row.id,
-        row.has_prediction
-          ? {
-              mainRecommendation: normalizeDashboardMainRecommendation(row)!,
-              valueRecommendation: null,
-              variantMarkets: [],
-            }
-          : null,
-      ]),
-    ),
-  );
+  const predictionSummary = buildPredictionSummaryFromLeagueSummary(selectedLeague);
 
   const items = ((cardRows ?? []) as DashboardMatchCardRow[]).map((row) => {
     const mainRecommendation = normalizeDashboardMainRecommendation(row);
@@ -668,6 +679,66 @@ export async function loadDashboardMatchCardsPageView(
         ? String(offset + limit)
         : null,
     totalMatches: selectedLeague?.matchCount ?? 0,
+  };
+}
+
+async function localizeDashboardMatchCardItems(
+  supabase: ApiSupabaseClient,
+  items: MatchListItem[],
+  locale: string | null,
+): Promise<MatchListItem[]> {
+  if (!locale || items.length === 0) {
+    return items;
+  }
+
+  const matchIds = items.map((item) => item.id);
+  const { data, error } = await supabase
+    .from("matches")
+    .select("id, home_team_id, away_team_id")
+    .in("id", matchIds);
+
+  if (error) {
+    throw new Error(`localized match query failed: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    home_team_id: string;
+    away_team_id: string;
+  }>;
+  const matchById = new Map(rows.map((row) => [row.id, row]));
+  const teamIds = [
+    ...new Set(rows.flatMap((row) => [row.home_team_id, row.away_team_id])),
+  ];
+  const teamById = await loadTeamLabels(supabase, teamIds, locale);
+
+  return items.map((item) => {
+    const row = matchById.get(item.id);
+    if (!row) {
+      return item;
+    }
+    return {
+      ...item,
+      homeTeam: teamById.get(row.home_team_id)?.label ?? item.homeTeam,
+      homeTeamLogoUrl: teamById.get(row.home_team_id)?.crestUrl ?? item.homeTeamLogoUrl,
+      awayTeam: teamById.get(row.away_team_id)?.label ?? item.awayTeam,
+      awayTeamLogoUrl: teamById.get(row.away_team_id)?.crestUrl ?? item.awayTeamLogoUrl,
+    };
+  });
+}
+
+async function loadLocalizedDashboardMatchCardsPageView(
+  supabase: ApiSupabaseClient,
+  options: LoadMatchItemsOptions,
+): Promise<MatchListView> {
+  const view = await loadDashboardMatchCardsPageView(supabase, options);
+  return {
+    ...view,
+    items: await localizeDashboardMatchCardItems(
+      supabase,
+      view.items,
+      normalizeLocale(options.locale),
+    ),
   };
 }
 
@@ -1044,70 +1115,77 @@ export async function loadMatchItems(
 }
 
 matches.get("/", async (c) => {
-  const supabase = getSupabaseClient(c.env);
-  const leagueId = c.req.query("leagueId") ?? undefined;
-  const cursor = c.req.query("cursor") ?? undefined;
-  const limit = c.req.query("limit") ?? undefined;
-  const locale = normalizeLocale(c.req.query("locale"));
-  c.header(
-    "Cache-Control",
-    "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
-  );
+  return cachedResponse(c, async () => {
+    const supabase = getSupabaseClient(c.env);
+    const leagueId = c.req.query("leagueId") ?? undefined;
+    const cursor = c.req.query("cursor") ?? undefined;
+    const limit = c.req.query("limit") ?? undefined;
+    const locale = normalizeLocale(c.req.query("locale"));
 
-  if (!supabase) {
-    return c.json({
-      items: [],
-      leagues: [],
-      predictionSummary: null,
-      selectedLeagueId: null,
-      nextCursor: null,
-      totalMatches: 0,
-    });
-  }
-  try {
-    if (locale) {
-      return c.json(
-        await loadMatchPageView(supabase, {
-          leagueId,
-          cursor,
-          limit,
-          locale,
-        }),
-      );
-    }
-    return c.json(
-      await loadDashboardMatchCardsPageView(supabase, {
-        leagueId,
-        cursor,
-        limit,
-      }),
-    );
-  } catch (error) {
-    if (
-      error instanceof Error
-      && isMissingRelationError({ message: error.message })
-    ) {
-      return c.json(
-        await loadMatchPageView(supabase, {
-          leagueId,
-          cursor,
-          limit,
-          locale,
-        }),
-      );
-    }
-    return c.json(
-      {
+    if (!supabase) {
+      return c.json({
         items: [],
         leagues: [],
         predictionSummary: null,
         selectedLeagueId: null,
         nextCursor: null,
         totalMatches: 0,
-      },
-      500,
-    );
-  }
+      }, 200, {
+        "cache-control": API_EGRESS_CACHE_CONTROL,
+      });
+    }
+    try {
+      if (locale) {
+        return c.json(
+          await loadLocalizedDashboardMatchCardsPageView(supabase, {
+            leagueId,
+            cursor,
+            limit,
+            locale,
+          }),
+          200,
+          { "cache-control": API_EGRESS_CACHE_CONTROL },
+        );
+      }
+      return c.json(
+        await loadDashboardMatchCardsPageView(supabase, {
+          leagueId,
+          cursor,
+          limit,
+        }),
+        200,
+        { "cache-control": API_EGRESS_CACHE_CONTROL },
+      );
+    } catch (error) {
+      if (
+        error instanceof Error
+        && isMissingRelationError({ message: error.message })
+      ) {
+        return c.json(
+          await loadMatchPageView(supabase, {
+            leagueId,
+            cursor,
+            limit,
+            locale,
+          }),
+          200,
+          { "cache-control": API_EGRESS_CACHE_CONTROL },
+        );
+      }
+      return c.json(
+        {
+          items: [],
+          leagues: [],
+          predictionSummary: null,
+          selectedLeagueId: null,
+          nextCursor: null,
+          totalMatches: 0,
+        },
+        500,
+        { "cache-control": API_EGRESS_CACHE_CONTROL },
+      );
+    }
+  });
 });
 
 export default matches;
