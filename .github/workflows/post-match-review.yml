@@ -6,6 +6,7 @@ permissions:
 on:
   schedule:
     - cron: "45 * * * *"
+    - cron: "20 4 * * *"
   workflow_dispatch:
     inputs:
       target_date:
@@ -65,7 +66,7 @@ jobs:
       - name: Resolve LLM review settings
         shell: bash
         run: |
-          if [ "${{ github.event.inputs.enable_llm_review }}" = "true" ]; then
+          if [ "${{ github.event.schedule }}" = "20 4 * * *" ] || [ "${{ github.event.inputs.enable_llm_review }}" = "true" ]; then
             echo "LLM_REVIEW_ADVISORY_ENABLED=1" >> "$GITHUB_ENV"
           else
             echo "LLM_REVIEW_ADVISORY_ENABLED=0" >> "$GITHUB_ENV"

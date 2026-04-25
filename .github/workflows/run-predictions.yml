@@ -4,6 +4,8 @@ permissions:
   contents: read
 
 on:
+  schedule:
+    - cron: "30 3 * * *"
   workflow_dispatch:
     inputs:
       target_date:
@@ -72,7 +74,7 @@ jobs:
       - name: Resolve LLM advisory settings
         shell: bash
         run: |
-          if [ "${{ github.event.inputs.enable_llm_advisory }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.enable_llm_advisory }}" = "true" ]; then
             echo "LLM_PREDICTION_ADVISORY_ENABLED=1" >> "$GITHUB_ENV"
           else
             echo "LLM_PREDICTION_ADVISORY_ENABLED=0" >> "$GITHUB_ENV"
