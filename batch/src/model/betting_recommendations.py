@@ -108,17 +108,26 @@ def build_moneyline_candidate(
     if confidence is None:
         return None
 
+    signal_score = _moneyline_signal_score(
+        prediction,
+        match=match,
+        historical_matches=historical_matches,
+    )
+    pick = _adjust_low_signal_home_pick(
+        pick,
+        prediction=prediction,
+        match=match,
+        historical_matches=historical_matches,
+        signal_score=signal_score,
+    )
+
     return {
         "date": str(match.get("kickoff_at") or "")[:10],
         "match_id": str(match.get("id") or ""),
         "market_family": "moneyline",
         "selection_label": pick,
         "score": confidence,
-        "signal_score": _moneyline_signal_score(
-            prediction,
-            match=match,
-            historical_matches=historical_matches,
-        ),
+        "signal_score": signal_score,
         "confidence": confidence,
         "expected_value": _read_numeric(prediction.get("value_recommendation_expected_value")),
         "market_price": _resolve_moneyline_market_price(prediction, pick),
@@ -581,6 +590,51 @@ def _rolling_home_signal_score(
         + venue_ppg_delta
         + venue_goal_delta
     )
+
+
+def _adjust_low_signal_home_pick(
+    pick: str,
+    *,
+    prediction: dict,
+    match: dict,
+    historical_matches: list[dict] | None,
+    signal_score: float,
+) -> str:
+    if (
+        pick != "HOME"
+        or signal_score > 0.5
+        or not historical_matches
+        or not _has_moneyline_feature_context(prediction)
+    ):
+        return pick
+    kickoff_at = str(match.get("kickoff_at") or "")
+    home_team_id = str(match.get("home_team_id") or "")
+    away_team_id = str(match.get("away_team_id") or "")
+    if not kickoff_at or not home_team_id or not away_team_id:
+        return pick
+    home_recent = _team_recent_form(
+        historical_matches,
+        team_id=home_team_id,
+        kickoff_at=kickoff_at,
+    )
+    away_recent = _team_recent_form(
+        historical_matches,
+        team_id=away_team_id,
+        kickoff_at=kickoff_at,
+    )
+    goal_delta = home_recent["goal_difference_per_match"] - away_recent[
+        "goal_difference_per_match"
+    ]
+    if goal_delta <= 0:
+        return "AWAY"
+    return pick
+
+
+def _has_moneyline_feature_context(prediction: dict) -> bool:
+    payload = prediction.get("summary_payload")
+    if not isinstance(payload, dict):
+        payload = prediction.get("explanation_payload")
+    return isinstance(payload, dict) and isinstance(payload.get("feature_context"), dict)
 
 
 def _team_recent_form(
