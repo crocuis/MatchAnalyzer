@@ -188,11 +188,14 @@
     "summary": {
       "title": "League prediction summary",
       "caption": "Settled matches included in evaluation, regardless of bet recommendation",
+      "upcomingCaption": "Prediction coverage across the full league dataset",
+      "recentCaption": "Settled match hits and misses across the full league dataset",
       "predictionData": "Prediction data",
       "predictionDataValue": "{{count}} / {{total}}",
       "evaluated": "Evaluated",
       "correct": "Correct",
       "incorrect": "Incorrect",
+      "coverageRate": "Coverage",
       "successRate": "Success rate",
       "successRateValue": "{{rate}}% success rate",
       "noData": "—"

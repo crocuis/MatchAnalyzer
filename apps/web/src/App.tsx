@@ -282,9 +282,11 @@ export default function App() {
   const currentLeaguePage = selectedLeagueId
     ? leaguePages[selectedLeagueId]?.[activeMatchView]
     : undefined;
+  const selectedLeagueSummary = derivedLeagues.find((league) => league.id === selectedLeagueId);
   const totalMatches = currentLeaguePage?.totalMatches
-    ?? derivedLeagues.find((league) => league.id === selectedLeagueId)?.matchCount
+    ?? selectedLeagueSummary?.matchCount
     ?? 0;
+  const predictionSummaryTotalMatches = selectedLeagueSummary?.matchCount ?? totalMatches;
   const predictionSummary = currentLeaguePage?.predictionSummary ?? null;
   const hasMoreMatches = Boolean(currentLeaguePage?.nextCursor);
   const loadedMatches = useMemo(
@@ -603,6 +605,7 @@ export default function App() {
             matches={leagueMatches}
             currentLeagueId={selectedLeagueId}
             predictionSummary={predictionSummary}
+            predictionSummaryTotalMatches={predictionSummaryTotalMatches}
             totalMatches={totalMatches}
             onOpen={handleOpenMatch}
             onOpenDailyPicks={() => {

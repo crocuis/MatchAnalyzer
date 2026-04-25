@@ -469,6 +469,99 @@ describe("MatchTable", () => {
     }
   });
 
+  it("shows upcoming prediction coverage against the full league dataset", () => {
+    const matches: MatchCardRow[] = [
+      {
+        id: "future-001",
+        leagueId: "premier-league",
+        homeTeam: "Future Home",
+        awayTeam: "Future Away",
+        kickoffAt: "2026-04-30T19:00:00Z",
+        status: "Scheduled",
+        recommendedPick: null,
+        confidence: null,
+        needsReview: false,
+      },
+    ];
+    const predictionSummary: LeaguePredictionSummary = {
+      predictedCount: 340,
+      evaluatedCount: 333,
+      correctCount: 140,
+      incorrectCount: 193,
+      successRate: 140 / 333,
+    };
+
+    render(
+      <MatchTable
+        matches={matches}
+        currentLeagueId={null}
+        predictionSummary={predictionSummary}
+        predictionSummaryTotalMatches={380}
+        totalMatches={7}
+        panelId="league-matches-panel"
+        selectedMatchId={null}
+        onOpen={() => {}}
+        onOpenDailyPicks={() => {}}
+        onLoadMore={() => {}}
+      />,
+    );
+
+    const summary = screen.getByLabelText("League prediction summary");
+    expect(summary).toHaveTextContent("Prediction data");
+    expect(summary).toHaveTextContent("340 / 380");
+    expect(summary).not.toHaveTextContent("340 / 7");
+    expect(summary).not.toHaveTextContent("7 / 7");
+  });
+
+  it("emphasizes full-dataset hits and misses in the recent results view", () => {
+    const matches: MatchCardRow[] = [
+      {
+        id: "past-001",
+        leagueId: "premier-league",
+        homeTeam: "Past Home",
+        awayTeam: "Past Away",
+        kickoffAt: "2026-04-20T19:00:00Z",
+        status: "Review Ready",
+        finalResult: "HOME",
+        recommendedPick: "HOME",
+        confidence: 0.64,
+        needsReview: false,
+      },
+    ];
+    const predictionSummary: LeaguePredictionSummary = {
+      predictedCount: 340,
+      evaluatedCount: 333,
+      correctCount: 140,
+      incorrectCount: 193,
+      successRate: 140 / 333,
+    };
+
+    render(
+      <MatchTable
+        matches={matches}
+        currentLeagueId={null}
+        predictionSummary={predictionSummary}
+        predictionSummaryTotalMatches={380}
+        totalMatches={333}
+        panelId="league-matches-panel"
+        selectedMatchId={null}
+        onOpen={() => {}}
+        onOpenDailyPicks={() => {}}
+        onLoadMore={() => {}}
+        activeView="recent"
+      />,
+    );
+
+    const summary = screen.getByLabelText("League prediction summary");
+    expect(summary).toHaveTextContent("Correct");
+    expect(summary).toHaveTextContent("140");
+    expect(summary).toHaveTextContent("Incorrect");
+    expect(summary).toHaveTextContent("193");
+    expect(summary).toHaveTextContent("Evaluated");
+    expect(summary).toHaveTextContent("333");
+    expect(summary).not.toHaveTextContent("Prediction data");
+  });
+
   it("does not observe pagination when the active view is fully loaded", () => {
     const observe = vi.fn();
     const disconnect = vi.fn();
