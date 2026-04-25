@@ -349,8 +349,8 @@ describe("supabase schema integration", () => {
       {
         predicted_count: 2,
         evaluated_count: 2,
-        correct_count: 2,
-        incorrect_count: 0,
+        correct_count: 1,
+        incorrect_count: 1,
       },
     ]);
   });
