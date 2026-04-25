@@ -1670,6 +1670,18 @@ def main() -> None:
     teams_by_id = {
         str(row["id"]): row for row in read_optional_rows(client, "teams") if row.get("id")
     }
+    historical_performance_cache: dict[
+        tuple[str, str | None, str],
+        dict[str, dict[str, float | int]],
+    ] = {}
+    confidence_bucket_cache: dict[
+        tuple[str, str | None],
+        dict[str, dict[str, float | int]],
+    ] = {}
+    current_fused_candidates_cache: dict[
+        tuple[str, str | None, bool],
+        list[dict],
+    ] = {}
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -1746,29 +1758,48 @@ def main() -> None:
             if feature_context["prediction_market_available"]
             else "without_prediction_market"
         )
-        historical_performance = (
-            build_historical_source_performance_summary(
-                snapshot_rows=snapshot_rows,
-                market_by_snapshot=market_by_snapshot,
-                match_rows=match_rows,
-                checkpoint_type=signal_snapshot["checkpoint_type"],
-                target_date=snapshot_target_date,
-                market_segment=market_segment,
+        historical_performance = {}
+        if use_real_prediction_targets:
+            performance_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
+                market_segment,
             )
-            if use_real_prediction_targets
-            else {}
-        )
-        if use_real_prediction_targets and not historical_performance:
-            historical_performance = build_historical_source_performance_summary(
-                snapshot_rows=snapshot_rows,
-                market_by_snapshot=market_by_snapshot,
-                match_rows=match_rows,
-                checkpoint_type=signal_snapshot["checkpoint_type"],
-                target_date=snapshot_target_date,
-                market_segment="without_prediction_market"
-                if market_segment == "with_prediction_market"
-                else "with_prediction_market",
-            )
+            if performance_key not in historical_performance_cache:
+                historical_performance_cache[performance_key] = (
+                    build_historical_source_performance_summary(
+                        snapshot_rows=snapshot_rows,
+                        market_by_snapshot=market_by_snapshot,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                        market_segment=market_segment,
+                    )
+                )
+            historical_performance = historical_performance_cache[performance_key]
+            if not historical_performance:
+                fallback_segment = (
+                    "without_prediction_market"
+                    if market_segment == "with_prediction_market"
+                    else "with_prediction_market"
+                )
+                fallback_key = (
+                    signal_snapshot["checkpoint_type"],
+                    snapshot_target_date,
+                    fallback_segment,
+                )
+                if fallback_key not in historical_performance_cache:
+                    historical_performance_cache[fallback_key] = (
+                        build_historical_source_performance_summary(
+                            snapshot_rows=snapshot_rows,
+                            market_by_snapshot=market_by_snapshot,
+                            match_rows=match_rows,
+                            checkpoint_type=signal_snapshot["checkpoint_type"],
+                            target_date=snapshot_target_date,
+                            market_segment=fallback_segment,
+                        )
+                    )
+                historical_performance = historical_performance_cache[fallback_key]
         available_variants = (
             (
                 ("base_model", "bookmaker", "prediction_market")
@@ -1833,16 +1864,27 @@ def main() -> None:
             "historical_candidate_count": 0,
         }
         if use_real_prediction_targets:
-            historical_current_fused_candidates = build_historical_current_fused_candidates(
-                prediction_rows=prediction_rows,
-                snapshot_rows=snapshot_rows,
-                match_rows=match_rows,
-                checkpoint_type=signal_snapshot["checkpoint_type"],
-                target_date=snapshot_target_date,
-                prediction_market_available=bool(
-                    feature_context["prediction_market_available"]
-                ),
+            current_fused_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
+                bool(feature_context["prediction_market_available"]),
             )
+            if current_fused_key not in current_fused_candidates_cache:
+                current_fused_candidates_cache[current_fused_key] = (
+                    build_historical_current_fused_candidates(
+                        prediction_rows=prediction_rows,
+                        snapshot_rows=snapshot_rows,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                        prediction_market_available=bool(
+                            feature_context["prediction_market_available"]
+                        ),
+                    )
+                )
+            historical_current_fused_candidates = current_fused_candidates_cache[
+                current_fused_key
+            ]
             if current_fused_selector_history_ready(historical_current_fused_candidates):
                 selected_fused_probs = build_current_fused_probabilities(
                     [
@@ -1887,17 +1929,21 @@ def main() -> None:
                     "selected_source": selected_source,
                     "historical_candidate_count": len(historical_current_fused_candidates),
                 }
-        confidence_bucket_summary = (
-            build_confidence_bucket_summary(
-                snapshot_rows=snapshot_rows,
-                market_by_snapshot=market_by_snapshot,
-                match_rows=match_rows,
-                checkpoint_type=signal_snapshot["checkpoint_type"],
-                target_date=snapshot_target_date,
+        confidence_bucket_summary = {}
+        if use_real_prediction_targets:
+            confidence_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
             )
-            if use_real_prediction_targets
-            else {}
-        )
+            if confidence_key not in confidence_bucket_cache:
+                confidence_bucket_cache[confidence_key] = build_confidence_bucket_summary(
+                    snapshot_rows=snapshot_rows,
+                    market_by_snapshot=market_by_snapshot,
+                    match_rows=match_rows,
+                    checkpoint_type=signal_snapshot["checkpoint_type"],
+                    target_date=snapshot_target_date,
+                )
+            confidence_bucket_summary = confidence_bucket_cache[confidence_key]
         row["confidence_score"] = calibrate_confidence_from_buckets(
             raw_confidence_score,
             confidence_bucket_summary,
