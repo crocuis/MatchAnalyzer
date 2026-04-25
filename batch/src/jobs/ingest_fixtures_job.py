@@ -248,10 +248,7 @@ def hydrate_recent_historical_matches(
                             or event["id"] in hydrated_by_id
                         ):
                             continue
-                        historical_row = fixture_ingest.build_match_row_from_event(
-                            event,
-                            result_observed_at=datetime.now(timezone.utc).isoformat(),
-                        )
+                        historical_row = fixture_ingest.build_match_row_from_event(event)
                         if historical_row.get("final_result") is None:
                             continue
                         hydrated_by_id[historical_row["id"]] = historical_row

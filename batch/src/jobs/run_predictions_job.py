@@ -11,7 +11,10 @@ from batch.src.features.feature_builder import (
     build_feature_vector,
     feature_vector_to_model_input,
 )
-from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
+from batch.src.ingest.fetch_fixtures import (
+    build_match_history_snapshot_fields,
+    estimate_result_observed_at,
+)
 from batch.src.jobs.sample_data import (
     SAMPLE_MATCH_ID,
     SAMPLE_MODEL_VERSION_ID,
@@ -510,6 +513,10 @@ def snapshot_has_intervening_completed_match(
         result_observed_at = parse_iso_datetime(row.get("result_observed_at"))
         if result_observed_at is not None and captured_at < result_observed_at:
             return True
+        if result_observed_at is None:
+            estimated_observed_at = estimate_result_observed_at(row)
+            if estimated_observed_at is not None and captured_at < estimated_observed_at:
+                return True
         if result_observed_at is None and captured_at < kickoff_at:
             return True
     return False
@@ -543,7 +550,11 @@ def refresh_snapshot_long_signals_if_stale(
         and row.get("away_team_id")
         and row.get("final_result")
     ]
-    history_fields = build_match_history_snapshot_fields(match, historical_matches)
+    history_fields = build_match_history_snapshot_fields(
+        match,
+        historical_matches,
+        as_of=snapshot.get("captured_at"),
+    )
     return {
         **snapshot,
         **history_fields,

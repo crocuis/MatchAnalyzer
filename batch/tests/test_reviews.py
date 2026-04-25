@@ -3219,8 +3219,38 @@ def test_run_predictions_job_recomputes_stale_snapshot_signals_after_intervening
     [prediction] = state["predictions"]
     feature_context = prediction["explanation_payload"]["feature_context"]
 
-    assert feature_context["form_delta"] == 5
-    assert feature_context["rest_delta"] == -1
+    assert feature_context["form_delta"] == 2
+    assert feature_context["rest_delta"] == 2
+
+
+def test_snapshot_stale_fallback_treats_recent_missing_observed_at_as_untrusted():
+    snapshot = {
+        "id": "target_match_t_minus_24h",
+        "match_id": "target_match",
+        "captured_at": "2026-08-12T12:00:00+00:00",
+    }
+    target_match = {
+        "id": "target_match",
+        "kickoff_at": "2026-08-15T18:00:00+00:00",
+        "home_team_id": "arsenal",
+        "away_team_id": "chelsea",
+    }
+    match_rows = [
+        {
+            "id": "recent_completed_match",
+            "kickoff_at": "2026-08-11T18:00:00+00:00",
+            "home_team_id": "arsenal",
+            "away_team_id": "everton",
+            "final_result": "HOME",
+            "result_observed_at": None,
+        }
+    ]
+
+    assert run_predictions_job.snapshot_has_intervening_completed_match(
+        snapshot,
+        match=target_match,
+        match_rows=match_rows,
+    )
 
 
 def test_run_predictions_job_marks_absence_coverage_unavailable_for_non_premier_league(
