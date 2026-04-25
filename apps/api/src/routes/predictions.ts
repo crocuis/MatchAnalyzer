@@ -340,12 +340,17 @@ async function loadArtifactById(
     return null;
   }
 
+  const storageBackend =
+    typeof data.storage_backend === "string" ? data.storage_backend : null;
+  const storageUri =
+    storageBackend === "supabase_storage" ? null : data.storage_uri;
+
   return {
     id: data.id,
-    storageBackend: data.storage_backend,
+    storageBackend,
     bucketName: data.bucket_name,
     objectKey: data.object_key,
-    storageUri: data.storage_uri,
+    storageUri,
     contentType: data.content_type,
     sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : null,
     checksumSha256:
