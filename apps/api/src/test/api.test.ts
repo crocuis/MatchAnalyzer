@@ -1928,6 +1928,92 @@ describe("prediction API", () => {
     });
   });
 
+  it("caps dashboard prediction coverage at the active match view total", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 380,
+            review_count: 1,
+            predicted_count: 340,
+            evaluated_count: 333,
+            correct_count: 140,
+            incorrect_count: 193,
+            success_rate: 140 / 333,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const buildCard = (index: number) => ({
+      id: `match-${index}`,
+      league_id: "premier-league",
+      league_label: "Premier League",
+      league_emblem_url: null,
+      home_team: `Home ${index}`,
+      home_team_logo_url: null,
+      away_team: `Away ${index}`,
+      away_team_logo_url: null,
+      kickoff_at: "2026-04-30T19:00:00Z",
+      final_result: null,
+      home_score: null,
+      away_score: null,
+      representative_recommended_pick: "HOME",
+      representative_confidence_score: 0.62,
+      summary_payload: null,
+      main_recommendation_pick: "HOME",
+      main_recommendation_confidence: 0.62,
+      main_recommendation_recommended: true,
+      main_recommendation_no_bet_reason: null,
+      value_recommendation_pick: null,
+      value_recommendation_recommended: null,
+      value_recommendation_edge: null,
+      value_recommendation_expected_value: null,
+      value_recommendation_market_price: null,
+      value_recommendation_model_probability: null,
+      value_recommendation_market_probability: null,
+      value_recommendation_market_source: null,
+      variant_markets_summary: [],
+      explanation_artifact_id: null,
+      explanation_artifact_uri: null,
+      has_prediction: true,
+      needs_review: false,
+    });
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: Array.from({ length: 7 }, (_, index) => buildCard(index + 1)),
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      view: "upcoming",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(page.totalMatches).toBe(7);
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 7,
+      evaluatedCount: 7,
+      correctCount: 7,
+      incorrectCount: 0,
+      successRate: 1,
+    });
+  });
+
   it("filters dashboard match cards by requested match view", async () => {
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),

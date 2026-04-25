@@ -464,6 +464,29 @@ function buildPredictionSummaryFromLeagueSummary(
   };
 }
 
+function capPredictionSummary(
+  summary: MatchPredictionSummary | null,
+  maximumCount: number,
+): MatchPredictionSummary | null {
+  if (!summary) {
+    return null;
+  }
+
+  const boundedMaximum = Math.max(maximumCount, 0);
+  const predictedCount = Math.min(summary.predictedCount, boundedMaximum);
+  const evaluatedCount = Math.min(summary.evaluatedCount, predictedCount);
+  const correctCount = Math.min(summary.correctCount, evaluatedCount);
+  const incorrectCount = Math.max(evaluatedCount - correctCount, 0);
+
+  return {
+    predictedCount,
+    evaluatedCount,
+    correctCount,
+    incorrectCount,
+    successRate: evaluatedCount > 0 ? correctCount / evaluatedCount : null,
+  };
+}
+
 async function loadCompetitionLabels(
   supabase: ApiSupabaseClient,
   competitionIds: string[],
@@ -675,6 +698,10 @@ export async function loadDashboardMatchCardsPageView(
     };
   });
 
+  const totalMatches = options.view
+    ? offset + items.length + (hasNextPage ? 1 : 0)
+    : (selectedLeague?.matchCount ?? 0);
+
   return {
     items,
     leagues: leagues.map((league) => ({
@@ -684,15 +711,13 @@ export async function loadDashboardMatchCardsPageView(
       matchCount: league.matchCount,
       reviewCount: league.reviewCount,
     })),
-    predictionSummary,
+    predictionSummary: capPredictionSummary(predictionSummary, totalMatches),
     selectedLeagueId,
     nextCursor:
       selectedLeague && hasNextPage
         ? String(offset + limit)
         : null,
-    totalMatches: options.view
-      ? offset + items.length + (hasNextPage ? 1 : 0)
-      : (selectedLeague?.matchCount ?? 0),
+    totalMatches,
   };
 }
 
