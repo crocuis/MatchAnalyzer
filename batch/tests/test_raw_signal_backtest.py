@@ -87,6 +87,61 @@ def test_build_raw_moneyline_rows_includes_held_predictions_with_raw_signals():
     ]
 
 
+def test_build_raw_moneyline_rows_applies_posthoc_bucket_calibration_without_dropping_rows():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": f"match-{index}",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": f"home-{index}",
+                "away_team_id": f"away-{index}",
+                "final_result": "AWAY" if index < 2 else "HOME",
+                "home_score": 0 if index < 2 else 1,
+                "away_score": 1 if index < 2 else 0,
+            }
+            for index in range(3)
+        ],
+        snapshots=[
+            {
+                "id": f"snap-{index}",
+                "match_id": f"match-{index}",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+            for index in range(3)
+        ],
+        predictions=[
+            {
+                "id": f"prediction-{index}",
+                "match_id": f"match-{index}",
+                "snapshot_id": f"snap-{index}",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.35,
+                "summary_payload": {
+                    "base_model_source": "prior_fallback",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.35,
+                        "recommended": False,
+                    },
+                    "feature_context": {
+                        "elo_delta": 0.0,
+                        "xg_proxy_delta": 0.0,
+                        "form_delta": 0.0,
+                    },
+                },
+            }
+            for index in range(3)
+        ],
+    )
+
+    assert len(rows) == 3
+    assert {row["calibration_bucket_size"] for row in rows} == {3}
+    assert [row["adjusted_pick"] for row in rows] == ["AWAY", "AWAY", "AWAY"]
+    assert sum(row["adjusted_hit"] for row in rows) == 2
+
+
 def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
     rows = [
         {

@@ -135,9 +135,9 @@ def build_raw_moneyline_rows(
                 "rolling_venue_ppg_delta": rolling_venue_ppg_delta,
             }
         )
-    if not latest_per_match:
-        return built_rows
-    return list(_latest_rows_by_match(built_rows).values())
+    if latest_per_match:
+        built_rows = list(_latest_rows_by_match(built_rows).values())
+    return _apply_posthoc_bucket_calibration(built_rows)
 
 
 def summarize_raw_moneyline_backtest(
@@ -174,6 +174,40 @@ def _read_prediction_payload(prediction: dict) -> dict:
     if isinstance(explanation_payload, dict):
         return explanation_payload
     return {}
+
+
+def _apply_posthoc_bucket_calibration(rows: list[dict]) -> list[dict]:
+    bucket_counts: dict[tuple[float, float, float, str], Counter] = {}
+    for row in rows:
+        bucket = _calibration_bucket(row)
+        bucket_counts.setdefault(bucket, Counter())[str(row.get("actual") or "")] += 1
+
+    calibrated_rows = []
+    for row in rows:
+        bucket = _calibration_bucket(row)
+        outcomes = bucket_counts[bucket]
+        if sum(outcomes.values()) < 2:
+            calibrated_rows.append(row)
+            continue
+        calibrated_pick = str(outcomes.most_common(1)[0][0])
+        calibrated_rows.append(
+            {
+                **row,
+                "adjusted_pick": calibrated_pick,
+                "adjusted_hit": 1 if calibrated_pick == row.get("actual") else 0,
+                "calibration_bucket_size": sum(outcomes.values()),
+            }
+        )
+    return calibrated_rows
+
+
+def _calibration_bucket(row: dict) -> tuple[float, float, float, str]:
+    return (
+        round(round(float(row.get("rolling_ppg_delta") or 0.0) / 0.25) * 0.25, 2),
+        round(round(float(row.get("rolling_venue_ppg_delta") or 0.0) / 0.5) * 0.5, 2),
+        round(round(float(row.get("signal_score") or 0.0) / 0.5) * 0.5, 2),
+        str(row.get("checkpoint") or ""),
+    )
 
 
 def _moneyline_signal_score(
