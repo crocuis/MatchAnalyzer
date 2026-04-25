@@ -262,7 +262,7 @@ describe("supabase schema integration", () => {
     ).rejects.toThrow();
   });
 
-  it("excludes no-bet predictions from evaluated and hit totals for the summary view", async () => {
+  it("counts held predictions in league summary prediction coverage", async () => {
     const db = await createDb();
 
     await db.exec(`
@@ -347,9 +347,9 @@ describe("supabase schema integration", () => {
 
     expect(summaries.rows).toEqual([
       {
-        predicted_count: 1,
-        evaluated_count: 1,
-        correct_count: 1,
+        predicted_count: 2,
+        evaluated_count: 2,
+        correct_count: 2,
         incorrect_count: 0,
       },
     ]);
