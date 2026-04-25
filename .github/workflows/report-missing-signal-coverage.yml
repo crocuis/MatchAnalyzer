@@ -4,9 +4,8 @@ permissions:
   contents: read
 
 on:
-  workflow_run:
-    workflows: [ingest-fixtures, ingest-markets, run-predictions]
-    types: [completed]
+  schedule:
+    - cron: "10 5 * * *"
   workflow_dispatch:
     inputs:
       target_date:
@@ -16,21 +15,22 @@ on:
 
 jobs:
   report:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     concurrency:
       group: report-missing-signal-coverage
-      cancel-in-progress: false
+      cancel-in-progress: true
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: batch/requirements.txt
       - run: |
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
