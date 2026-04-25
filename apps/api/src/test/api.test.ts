@@ -1881,6 +1881,53 @@ describe("prediction API", () => {
     });
   });
 
+  it("caps dashboard prediction coverage at the league match count", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 7,
+            review_count: 1,
+            predicted_count: 331,
+            evaluated_count: 12,
+            correct_count: 9,
+            incorrect_count: 3,
+            success_rate: 9 / 12,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(page.predictionSummary).toEqual({
+      predictedCount: 7,
+      evaluatedCount: 7,
+      correctCount: 7,
+      incorrectCount: 0,
+      successRate: 1,
+    });
+  });
+
   it("filters dashboard match cards by requested match view", async () => {
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),

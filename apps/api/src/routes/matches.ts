@@ -424,6 +424,7 @@ function buildPredictionSummary(
 
 function buildPredictionSummaryFromLeagueSummary(
   league: LeagueSummaryRow | {
+    matchCount?: number | null;
     predictedCount?: number | null;
     evaluatedCount?: number | null;
     correctCount?: number | null;
@@ -434,6 +435,9 @@ function buildPredictionSummaryFromLeagueSummary(
   if (!league) {
     return null;
   }
+  const matchCountValue = "matchCount" in league
+    ? league.matchCount
+    : league.match_count;
   const predictedCount = "predictedCount" in league
     ? league.predictedCount
     : league.predicted_count;
@@ -443,25 +447,20 @@ function buildPredictionSummaryFromLeagueSummary(
   const correctCountValue = "correctCount" in league
     ? league.correctCount
     : league.correct_count;
-  const incorrectCountValue = "incorrectCount" in league
-    ? league.incorrectCount
-    : league.incorrect_count;
-  const successRateValue = "successRate" in league
-    ? league.successRate
-    : league.success_rate;
-  const evaluatedCount = Number(evaluatedCountValue ?? 0);
-  const correctCount = Number(correctCountValue ?? 0);
+  const matchCount = Number(matchCountValue ?? Number.POSITIVE_INFINITY);
+  const maximumCount = Number.isFinite(matchCount)
+    ? Math.max(matchCount, 0)
+    : Number.POSITIVE_INFINITY;
+  const predictedCountValue = Math.min(Number(predictedCount ?? 0), maximumCount);
+  const evaluatedCount = Math.min(Number(evaluatedCountValue ?? 0), predictedCountValue);
+  const correctCount = Math.min(Number(correctCountValue ?? 0), evaluatedCount);
+  const incorrectCount = Math.max(evaluatedCount - correctCount, 0);
   return {
-    predictedCount: Number(predictedCount ?? 0),
+    predictedCount: predictedCountValue,
     evaluatedCount,
     correctCount,
-    incorrectCount: Number(incorrectCountValue ?? Math.max(evaluatedCount - correctCount, 0)),
-    successRate:
-      typeof successRateValue === "number"
-        ? successRateValue
-        : evaluatedCount > 0
-          ? correctCount / evaluatedCount
-          : null,
+    incorrectCount,
+    successRate: evaluatedCount > 0 ? correctCount / evaluatedCount : null,
   };
 }
 
