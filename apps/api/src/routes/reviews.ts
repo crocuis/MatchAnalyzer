@@ -5,6 +5,7 @@ import {
   loadRolloutLaneSummaries,
   type RolloutLaneSummary as HistoryLaneSummary,
 } from "../lib/rollout-lane-states";
+import { ensureOperationalReportsAccess } from "../lib/operational-auth";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const reviews = new Hono<AppBindings>();
@@ -327,6 +328,10 @@ export async function loadReviewAggregationHistoryView(
 }
 
 reviews.get("/aggregation/history", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -373,6 +378,10 @@ reviews.get("/:matchId", async (c) => {
 });
 
 reviews.get("/aggregation/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {

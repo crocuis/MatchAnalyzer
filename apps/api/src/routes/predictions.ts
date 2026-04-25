@@ -14,6 +14,7 @@ import {
   normalizeValueRecommendation,
   normalizeValueRecommendationFromSummary,
 } from "../lib/prediction-lanes";
+import { ensureOperationalReportsAccess } from "../lib/operational-auth";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const predictions = new Hono<AppBindings>();
@@ -955,6 +956,10 @@ export async function loadPredictionView(
 }
 
 predictions.get("/source-evaluation/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -976,6 +981,10 @@ predictions.get("/source-evaluation/latest", async (c) => {
 });
 
 predictions.get("/source-evaluation/history", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1005,6 +1014,10 @@ predictions.get("/source-evaluation/history", async (c) => {
 });
 
 predictions.get("/model-registry/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1026,6 +1039,10 @@ predictions.get("/model-registry/latest", async (c) => {
 });
 
 predictions.get("/fusion-policy/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {
@@ -1047,6 +1064,10 @@ predictions.get("/fusion-policy/latest", async (c) => {
 });
 
 predictions.get("/fusion-policy/history", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
 
   if (!supabase) {

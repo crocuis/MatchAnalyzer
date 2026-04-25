@@ -131,6 +131,45 @@ describe("prediction API", () => {
     });
   });
 
+  it("blocks sensitive prediction reports without an operational api key", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      undefined,
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
+  it("allows sensitive prediction reports with a valid operational api key", async () => {
+    const response = await app.request(
+      "/predictions/source-evaluation/latest",
+      {
+        headers: {
+          "x-operational-api-key": "secret-key",
+        },
+      },
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      report: null,
+    });
+  });
+
+  it("blocks sensitive rollout reports without an operational api key", async () => {
+    const response = await app.request(
+      "/rollouts/promotion/latest",
+      undefined,
+      { OPERATIONAL_REPORTS_API_KEY: "secret-key" },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
   it("allows cross-origin reads from the deployed Pages app", async () => {
     const response = await app.request("/health", {
       headers: {

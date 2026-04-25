@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 
 import type { AppBindings } from "../env";
+import { ensureOperationalReportsAccess } from "../lib/operational-auth";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const rollouts = new Hono<AppBindings>();
@@ -134,6 +135,10 @@ export async function loadLatestRolloutPromotionDecisionView(
 }
 
 rollouts.get("/promotion/latest", async (c) => {
+  const forbidden = ensureOperationalReportsAccess(c);
+  if (forbidden) {
+    return forbidden;
+  }
   const supabase = getSupabaseClient(c.env);
   if (!supabase) {
     return c.json({ report: null });
