@@ -4155,6 +4155,39 @@ def test_build_training_dataset_includes_snapshots_without_bookmaker_rows():
     assert labels == ["HOME", "DRAW", "AWAY"]
 
 
+def test_build_training_dataset_uses_recent_historical_window(monkeypatch):
+    monkeypatch.setattr(run_predictions_job, "TRAINING_RECENT_SNAPSHOT_LIMIT", 2)
+    snapshot_rows = [
+        {
+            "id": f"hist_{index}_snapshot",
+            "match_id": f"hist_{index}",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": index,
+            "rest_delta": 0,
+        }
+        for index in range(4)
+    ]
+    match_rows = [
+        {
+            "id": f"hist_{index}",
+            "kickoff_at": f"2026-04-0{index + 1}T18:00:00+00:00",
+            "final_result": result,
+        }
+        for index, result in enumerate(("HOME", "DRAW", "AWAY", "HOME"))
+    ]
+
+    _features, labels = run_predictions_job.build_training_dataset(
+        snapshot_rows=snapshot_rows,
+        market_by_snapshot={},
+        match_rows=match_rows,
+        target_date="2026-04-05",
+        checkpoint_type="T_MINUS_24H",
+    )
+
+    assert labels == ["AWAY", "HOME"]
+
+
 def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_without_bookmaker():
     summary = run_predictions_job.build_confidence_bucket_summary(
         snapshot_rows=[

@@ -69,6 +69,8 @@ BOOKMAKER_FALLBACK_DRAW_MAX_PROBABILITY = 0.24
 BOOKMAKER_FALLBACK_NEUTRAL_ELO_MAX_ABS = 0.05
 BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
+TRAINING_RECENT_SNAPSHOT_LIMIT = 600
+TRAINED_BASELINE_UNAVAILABLE = object()
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
 VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
 PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
@@ -578,18 +580,26 @@ def build_historical_source_performance_summary(
     checkpoint_type: str,
     target_date: str | None,
     market_segment: str,
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] | None = None,
+    baseline_model_cache: dict[tuple[str, str], object] | None = None,
 ) -> dict[str, dict[str, float | int]]:
     if not target_date:
         return {}
     match_by_id = {row["id"]: row for row in match_rows}
     rows: list[dict] = []
-    historical_snapshots = [
-        snapshot
-        for snapshot in snapshot_rows
-        if snapshot.get("checkpoint_type") == checkpoint_type
-        and match_by_id.get(snapshot["match_id"], {}).get("final_result")
-        and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10] < target_date
-    ]
+    historical_snapshots = sorted(
+        [
+            snapshot
+            for snapshot in snapshot_rows
+            if snapshot.get("checkpoint_type") == checkpoint_type
+            and match_by_id.get(snapshot["match_id"], {}).get("final_result")
+            and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10]
+            < target_date
+        ],
+        key=lambda snapshot: match_by_id[snapshot["match_id"]]["kickoff_at"],
+    )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
     for snapshot in historical_snapshots:
         match = match_by_id[snapshot["match_id"]]
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -629,6 +639,8 @@ def build_historical_source_performance_summary(
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
             target_date=str(match["kickoff_at"])[:10],
+            training_dataset_cache=training_dataset_cache,
+            baseline_model_cache=baseline_model_cache,
         )
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
@@ -817,14 +829,22 @@ def build_training_dataset(
     features: list[list[float]] = []
     labels: list[str] = []
     match_by_id = {row["id"]: row for row in match_rows}
+    historical_snapshots = []
     for snapshot in snapshot_rows:
-        if snapshot.get("checkpoint_type") != checkpoint_type:
-            continue
         match = match_by_id.get(snapshot["match_id"])
-        if not match or not match.get("final_result"):
+        kickoff_at = str((match or {}).get("kickoff_at") or "")
+        if (
+            snapshot.get("checkpoint_type") != checkpoint_type
+            or not match
+            or not match.get("final_result")
+            or kickoff_at[:10] >= target_date
+        ):
             continue
-        if match.get("kickoff_at", "")[:10] >= target_date:
-            continue
+        historical_snapshots.append((kickoff_at, snapshot, match))
+    historical_snapshots = sorted(historical_snapshots, key=lambda row: row[0])[
+        -TRAINING_RECENT_SNAPSHOT_LIMIT:
+    ]
+    for _kickoff_at, snapshot, match in historical_snapshots:
         book_probs, prediction_market = build_market_probabilities(
             snapshot["id"],
             market_by_snapshot,
@@ -850,6 +870,32 @@ def build_training_dataset(
         features.append(feature_vector_to_model_input(feature_context))
         labels.append(match["final_result"])
     return features, labels
+
+
+def get_training_dataset(
+    *,
+    snapshot_rows: list[dict],
+    market_by_snapshot: dict[str, dict[str, dict]],
+    match_rows: list[dict],
+    target_date: str,
+    checkpoint_type: str,
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] | None,
+) -> tuple[list[list[float]], list[str]]:
+    cache_key = (checkpoint_type, target_date)
+    if training_dataset_cache is not None and cache_key in training_dataset_cache:
+        return training_dataset_cache[cache_key]
+    dataset = build_training_dataset(
+        snapshot_rows=snapshot_rows,
+        market_by_snapshot=market_by_snapshot,
+        match_rows=match_rows,
+        target_date=target_date,
+        checkpoint_type=checkpoint_type,
+    )
+    if training_dataset_cache is not None:
+        training_dataset_cache[cache_key] = dataset
+    return dataset
 
 
 def build_centroid_probabilities(
@@ -999,6 +1045,10 @@ def predict_base_probabilities(
     market_by_snapshot: dict[str, dict[str, dict]],
     match_rows: list[dict],
     target_date: str | None,
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] | None = None,
+    baseline_model_cache: dict[tuple[str, str], object] | None = None,
     ) -> tuple[dict, str, dict]:
     bookmaker_available = bool(feature_context.get("bookmaker_available", 1))
     if not target_date:
@@ -1021,12 +1071,13 @@ def predict_base_probabilities(
         )
 
     feature_input = feature_vector_to_model_input(feature_context)
-    features, labels = build_training_dataset(
+    features, labels = get_training_dataset(
         snapshot_rows=snapshot_rows,
         market_by_snapshot=market_by_snapshot,
         match_rows=match_rows,
         target_date=target_date,
         checkpoint_type=snapshot["checkpoint_type"],
+        training_dataset_cache=training_dataset_cache,
     )
     if not {"HOME", "DRAW", "AWAY"}.issubset(set(labels)):
         if not bookmaker_available:
@@ -1048,9 +1099,17 @@ def predict_base_probabilities(
         )
 
     centroid_probs = build_centroid_probabilities(features, labels, feature_input)
-    try:
-        model = train_baseline_model(features, labels)
-    except ValueError:
+    cache_key = (snapshot["checkpoint_type"], target_date)
+    if baseline_model_cache is not None and cache_key in baseline_model_cache:
+        model = baseline_model_cache[cache_key]
+    else:
+        try:
+            model = train_baseline_model(features, labels)
+        except ValueError:
+            model = TRAINED_BASELINE_UNAVAILABLE
+        if baseline_model_cache is not None:
+            baseline_model_cache[cache_key] = model
+    if model is TRAINED_BASELINE_UNAVAILABLE:
         return (
             centroid_probs,
             "centroid_fallback",
@@ -1099,8 +1158,12 @@ def build_confidence_bucket_summary(
             and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10] < target_date
         ],
         key=lambda snapshot: match_by_id[snapshot["match_id"]]["kickoff_at"],
-    )
+    )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
     records: list[dict] = []
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] = {}
+    baseline_model_cache: dict[tuple[str, str], object] = {}
     for snapshot in historical_snapshots:
         kickoff_date = match_by_id[snapshot["match_id"]]["kickoff_at"][:10]
         book_probs, prediction_market = build_market_probabilities(
@@ -1128,6 +1191,8 @@ def build_confidence_bucket_summary(
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
             target_date=kickoff_date,
+            training_dataset_cache=training_dataset_cache,
+            baseline_model_cache=baseline_model_cache,
         )
         scoring_context = {
             **feature_context,
@@ -1687,6 +1752,10 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
+    training_dataset_cache: dict[
+        tuple[str, str], tuple[list[list[float]], list[str]]
+    ] = {}
+    baseline_model_cache: dict[tuple[str, str], object] = {}
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -1723,6 +1792,8 @@ def main() -> None:
             market_by_snapshot=market_by_snapshot,
             match_rows=match_rows,
             target_date=snapshot_target_date,
+            training_dataset_cache=training_dataset_cache,
+            baseline_model_cache=baseline_model_cache,
         )
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
@@ -1779,6 +1850,8 @@ def main() -> None:
                         checkpoint_type=signal_snapshot["checkpoint_type"],
                         target_date=snapshot_target_date,
                         market_segment=market_segment,
+                        training_dataset_cache=training_dataset_cache,
+                        baseline_model_cache=baseline_model_cache,
                     )
                 )
             historical_performance = historical_performance_cache[performance_key]
@@ -1802,6 +1875,8 @@ def main() -> None:
                             checkpoint_type=signal_snapshot["checkpoint_type"],
                             target_date=snapshot_target_date,
                             market_segment=fallback_segment,
+                            training_dataset_cache=training_dataset_cache,
+                            baseline_model_cache=baseline_model_cache,
                         )
                     )
                 historical_performance = historical_performance_cache[fallback_key]
