@@ -5,7 +5,8 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 3 * * *"
+    # 12:00 Asia/Seoul
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       target_date:

@@ -50,7 +50,8 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     workflow = read_workflow("run-predictions.yml")
 
     assert "schedule:" in workflow
-    assert 'cron: "30 3 * * *"' in workflow
+    assert "# 12:00 Asia/Seoul" in workflow
+    assert 'cron: "0 3 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "target_match_ids:" in workflow
