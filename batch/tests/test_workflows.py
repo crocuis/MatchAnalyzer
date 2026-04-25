@@ -46,23 +46,44 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
     assert "python3 -c" in workflow
 
 
-def test_run_predictions_workflow_supports_manual_date_or_match_targets_only() -> None:
+def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() -> None:
     workflow = read_workflow("run-predictions.yml")
 
+    assert "schedule:" in workflow
+    assert 'cron: "30 3 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "target_match_ids:" in workflow
+    assert "enable_llm_advisory:" in workflow
+    assert "llm_provider:" in workflow
+    assert "llm_model:" in workflow
     assert "REAL_PREDICTION_DATE=" in workflow
     assert "REAL_PREDICTION_MATCH_IDS=" in workflow
-    assert "schedule:" not in workflow
+    assert "LLM_PREDICTION_ADVISORY_ENABLED=1" in workflow
+    assert "LLM_PROVIDER=$LLM_PROVIDER_INPUT" in workflow
+    assert "LLM_PREDICTION_MODEL=$LLM_MODEL_INPUT" in workflow
+    assert "NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}" in workflow
+    assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
+    assert '[ "${{ github.event_name }}" = "schedule" ]' in workflow
 
 
-def test_post_match_review_workflow_sets_real_review_date() -> None:
+def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() -> None:
     workflow = read_workflow("post-match-review.yml")
 
+    assert 'cron: "45 * * * *"' in workflow
+    assert 'cron: "20 4 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
+    assert "enable_llm_review:" in workflow
+    assert "llm_provider:" in workflow
+    assert "llm_model:" in workflow
     assert "REAL_REVIEW_DATE=" in workflow
+    assert "LLM_REVIEW_ADVISORY_ENABLED=1" in workflow
+    assert "LLM_PROVIDER=$LLM_PROVIDER_INPUT" in workflow
+    assert "LLM_REVIEW_MODEL=$LLM_MODEL_INPUT" in workflow
+    assert "NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}" in workflow
+    assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
+    assert '[ "${{ github.event.schedule }}" = "20 4 * * *" ]' in workflow
     assert "date -u -d 'yesterday' +%F" in workflow
 
 

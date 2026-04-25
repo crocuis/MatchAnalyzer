@@ -6,10 +6,28 @@ permissions:
 on:
   schedule:
     - cron: "45 * * * *"
+    - cron: "20 4 * * *"
   workflow_dispatch:
     inputs:
       target_date:
         description: "UTC date to review in YYYY-MM-DD format. Defaults to current UTC date."
+        required: false
+        type: string
+      enable_llm_review:
+        description: "Enable LLM post-match review advisory payload generation."
+        required: false
+        default: false
+        type: boolean
+      llm_provider:
+        description: "LLM provider to use when review advisory is enabled."
+        required: false
+        default: nvidia
+        type: choice
+        options:
+          - nvidia
+          - openrouter
+      llm_model:
+        description: "Optional provider model override. Leave blank to use the code default."
         required: false
         type: string
 
@@ -22,6 +40,10 @@ jobs:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       R2_BUCKET: workflow-artifacts
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_APP_URL: ${{ vars.OPENROUTER_APP_URL }}
+      OPENROUTER_APP_TITLE: ${{ vars.OPENROUTER_APP_TITLE }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -41,5 +63,22 @@ jobs:
             TARGET_DATE="$(date -u -d 'yesterday' +%F)"
           fi
           echo "REAL_REVIEW_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
+      - name: Resolve LLM review settings
+        shell: bash
+        run: |
+          if [ "${{ github.event.schedule }}" = "20 4 * * *" ] || [ "${{ github.event.inputs.enable_llm_review }}" = "true" ]; then
+            echo "LLM_REVIEW_ADVISORY_ENABLED=1" >> "$GITHUB_ENV"
+          else
+            echo "LLM_REVIEW_ADVISORY_ENABLED=0" >> "$GITHUB_ENV"
+          fi
+          LLM_PROVIDER_INPUT="${{ github.event.inputs.llm_provider }}"
+          if [ -z "$LLM_PROVIDER_INPUT" ]; then
+            LLM_PROVIDER_INPUT="nvidia"
+          fi
+          echo "LLM_PROVIDER=$LLM_PROVIDER_INPUT" >> "$GITHUB_ENV"
+          LLM_MODEL_INPUT="${{ github.event.inputs.llm_model }}"
+          if [ -n "$LLM_MODEL_INPUT" ]; then
+            echo "LLM_REVIEW_MODEL=$LLM_MODEL_INPUT" >> "$GITHUB_ENV"
+          fi
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_post_match_review_job

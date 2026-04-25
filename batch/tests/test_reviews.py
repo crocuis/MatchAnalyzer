@@ -159,6 +159,87 @@ def test_build_variant_markets_adds_recommendations_for_supported_half_lines():
     ]
 
 
+def test_build_variant_markets_adds_line_to_line_less_variant_labels():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": 1.5,
+                "selection_a_label": "Away",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Home",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-away-1pt5"},
+            },
+            {
+                "market_family": "totals",
+                "source_name": "polymarket_totals",
+                "line_value": 2.5,
+                "selection_a_label": "Over",
+                "selection_a_price": 0.49,
+                "selection_b_label": "Under",
+                "selection_b_price": 0.51,
+                "raw_payload": {"market_slug": "total-2pt5"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 2.2,
+            "home_xg_against_last_5": 0.9,
+            "away_xg_for_last_5": 1.1,
+            "away_xg_against_last_5": 1.8,
+        },
+        match={
+            "home_team_id": "home",
+            "away_team_id": "away",
+        },
+        teams_by_id={
+            "home": {"name": "Home"},
+            "away": {"name": "Away"},
+        },
+    )
+
+    assert variant_markets[0]["selection_a_label"] == "Away -1.5"
+    assert variant_markets[0]["selection_b_label"] == "Home +1.5"
+    assert variant_markets[1]["selection_a_label"] == "Over 2.5"
+    assert variant_markets[1]["selection_b_label"] == "Under 2.5"
+    assert variant_markets[1]["recommended_pick"] == "Over 2.5"
+
+
+def test_build_variant_markets_does_not_parse_numeric_team_names_as_spread_lines():
+    variant_markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "market_family": "spreads",
+                "source_name": "polymarket_spreads",
+                "line_value": 1.5,
+                "selection_a_label": "1. FC Heidenheim 1846",
+                "selection_a_price": 0.45,
+                "selection_b_label": "Borussia Dortmund",
+                "selection_b_price": 0.55,
+                "raw_payload": {"market_slug": "spread-home-1pt5"},
+            },
+        ],
+        snapshot={
+            "home_xg_for_last_5": 1.3,
+            "home_xg_against_last_5": 1.4,
+            "away_xg_for_last_5": 1.6,
+            "away_xg_against_last_5": 1.1,
+        },
+        match={
+            "home_team_id": "heidenheim",
+            "away_team_id": "dortmund",
+        },
+        teams_by_id={
+            "heidenheim": {"name": "1. FC Heidenheim 1846"},
+            "dortmund": {"name": "Borussia Dortmund"},
+        },
+    )
+
+    assert variant_markets[0]["selection_a_label"] == "1. FC Heidenheim 1846 +1.5"
+    assert variant_markets[0]["selection_b_label"] == "Borussia Dortmund -1.5"
+
+
 def test_build_variant_markets_adds_recommendations_for_integer_and_quarter_lines():
     variant_markets = run_predictions_job.build_variant_markets(
         [
@@ -552,6 +633,121 @@ def test_build_review_aggregation_report_comparison_tracks_family_deltas():
             "strengthHome": 1,
             "xgHome": 2,
         },
+    }
+
+
+def test_build_prediction_summary_payload_preserves_llm_advisory():
+    summary = run_predictions_job.build_prediction_summary_payload(
+        {
+            "bullets": ["HOME lean with market support."],
+            "llm_advisory": {
+                "schema_version": "prediction_llm_advisory.v1",
+                "status": "available",
+                "risk_flags": ["lineup_uncertainty"],
+            },
+            "main_recommendation": {
+                "pick": "HOME",
+                "recommended": True,
+            },
+        }
+    )
+
+    assert summary["llm_advisory"] == {
+        "schema_version": "prediction_llm_advisory.v1",
+        "status": "available",
+        "risk_flags": ["lineup_uncertainty"],
+    }
+    assert "main_recommendation" not in summary
+
+
+def test_read_persisted_available_llm_advisory_ignores_failed_status():
+    available = run_predictions_job.read_persisted_available_llm_advisory(
+        {
+            "llm_advisory": {
+                "schema_version": "prediction_llm_advisory.v1",
+                "status": "available",
+                "risk_flags": ["lineup_uncertainty"],
+            }
+        }
+    )
+    unavailable = run_predictions_job.read_persisted_available_llm_advisory(
+        {
+            "llm_advisory": {
+                "schema_version": "prediction_llm_advisory.v1",
+                "status": "unavailable",
+                "reason": "request_failed",
+            }
+        }
+    )
+
+    assert available == {
+        "schema_version": "prediction_llm_advisory.v1",
+        "status": "available",
+        "risk_flags": ["lineup_uncertainty"],
+    }
+    assert unavailable == {}
+
+
+def test_build_review_payload_adds_llm_review_when_builder_is_provided():
+    predictions = [
+        {
+            "id": "prediction-1",
+            "snapshot_id": "snapshot-1",
+            "match_id": "match-1",
+            "recommended_pick": "HOME",
+            "confidence_score": 0.72,
+            "home_prob": 0.58,
+            "draw_prob": 0.20,
+            "away_prob": 0.22,
+            "explanation_payload": {
+                "source_agreement_ratio": 0.67,
+                "feature_attribution": [
+                    {"signal_key": "strengthHome"},
+                ],
+            },
+        }
+    ]
+    match_rows = [
+        {
+            "id": "match-1",
+            "kickoff_at": "2026-04-25T14:00:00+00:00",
+            "final_result": "DRAW",
+        }
+    ]
+    market_rows = [
+        {
+            "id": "market-1",
+            "snapshot_id": "snapshot-1",
+            "source_type": "bookmaker",
+            "market_family": "moneyline_3way",
+            "home_prob": 0.50,
+            "draw_prob": 0.30,
+            "away_prob": 0.20,
+        }
+    ]
+
+    def fake_llm_review_builder(*, prediction, match_result, review):
+        assert prediction["id"] == "prediction-1"
+        assert match_result["final_result"] == "DRAW"
+        assert review["taxonomy"]["miss_family"] == "directional_miss"
+        return {
+            "schema_version": "post_match_llm_review.v1",
+            "status": "available",
+            "miss_reason_family": "draw_underweighted",
+        }
+
+    payload, skipped_predictions = build_review_payload(
+        predictions=predictions,
+        match_rows=match_rows,
+        market_rows=market_rows,
+        llm_review_builder=fake_llm_review_builder,
+    )
+
+    assert skipped_predictions == []
+    assert payload[0]["market_comparison_summary"]["llm_review"] == {
+        "schema_version": "post_match_llm_review.v1",
+        "status": "available",
+        "miss_reason_family": "draw_underweighted",
     }
 
 

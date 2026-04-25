@@ -3,6 +3,11 @@ import os
 from collections import Counter
 
 from batch.src.jobs.sample_data import SAMPLE_MATCH_ID, SAMPLE_RESULT_ROWS
+from batch.src.llm.advisory import (
+    NvidiaChatClient,
+    build_disabled_review_advisory,
+    request_post_match_review_advisory,
+)
 from batch.src.markets import index_market_rows_by_snapshot, select_market_row
 from batch.src.review.post_match_review import build_review
 from batch.src.rollout.promotion_policy import (
@@ -45,11 +50,44 @@ def is_no_bet_prediction(prediction: dict) -> bool:
     )
 
 
+def read_env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def build_post_match_llm_context(
+    *,
+    prediction: dict,
+    match_result: dict,
+    review: dict,
+) -> dict:
+    return {
+        "match": {
+            "id": match_result.get("id"),
+            "competition_id": match_result.get("competition_id"),
+            "kickoff_at": match_result.get("kickoff_at"),
+            "final_result": match_result.get("final_result"),
+        },
+        "prediction": {
+            "id": prediction.get("id"),
+            "recommended_pick": prediction.get("recommended_pick"),
+            "confidence_score": prediction.get("confidence_score"),
+            "home_prob": prediction.get("home_prob"),
+            "draw_prob": prediction.get("draw_prob"),
+            "away_prob": prediction.get("away_prob"),
+            "summary_payload": prediction.get("summary_payload"),
+            "explanation_payload": prediction.get("explanation_payload"),
+        },
+        "actual_outcome": match_result.get("final_result"),
+        "rule_based_review": review,
+    }
+
+
 def build_review_payload(
     predictions: list[dict],
     match_rows: list[dict],
     market_rows: list[dict],
     target_date: str | None = None,
+    llm_review_builder=None,
 ) -> tuple[list[dict], list[str]]:
     results_by_match = {
         row["id"]: row
@@ -84,6 +122,36 @@ def build_review_payload(
             continue
 
         if is_no_bet_prediction(prediction):
+            no_bet_review = {
+                "actual_outcome": match_result["final_result"],
+                "cause_tags": [],
+                "taxonomy": {
+                    "miss_family": "no_bet",
+                    "severity": "low",
+                    "consensus_level": "unknown",
+                    "market_signal": (
+                        "model_outperformed_market"
+                        if review_market is not None
+                        else "market_unavailable"
+                    ),
+                },
+                "attribution_summary": {
+                    "primary_signal": None,
+                    "secondary_signal": None,
+                },
+            }
+            no_bet_summary = {
+                "comparison_available": review_market is not None,
+                "market_outperformed_model": None,
+                "taxonomy": no_bet_review["taxonomy"],
+                "attribution_summary": no_bet_review["attribution_summary"],
+            }
+            if llm_review_builder is not None:
+                no_bet_summary["llm_review"] = llm_review_builder(
+                    prediction=prediction,
+                    match_result=match_result,
+                    review=no_bet_review,
+                )
             payload.append(
                 {
                     "id": f"{prediction['id']}_{match_result['final_result'].lower()}",
@@ -95,24 +163,7 @@ def build_review_payload(
                         f"{match_result['final_result'].lower()} result."
                     ),
                     "cause_tags": [],
-                    "market_comparison_summary": {
-                        "comparison_available": review_market is not None,
-                        "market_outperformed_model": None,
-                        "taxonomy": {
-                            "miss_family": "no_bet",
-                            "severity": "low",
-                            "consensus_level": "unknown",
-                            "market_signal": (
-                                "model_outperformed_market"
-                                if review_market is not None
-                                else "market_unavailable"
-                            ),
-                        },
-                        "attribution_summary": {
-                            "primary_signal": None,
-                            "secondary_signal": None,
-                        },
-                    },
+                    "market_comparison_summary": no_bet_summary,
                 }
             )
             continue
@@ -130,6 +181,18 @@ def build_review_payload(
                 else None
             ),
         )
+        market_comparison_summary = {
+            "comparison_available": review["market_comparison_available"],
+            "market_outperformed_model": review["market_outperformed_model"],
+            "taxonomy": review["taxonomy"],
+            "attribution_summary": review["attribution_summary"],
+        }
+        if llm_review_builder is not None:
+            market_comparison_summary["llm_review"] = llm_review_builder(
+                prediction=prediction,
+                match_result=match_result,
+                review=review,
+            )
         payload.append(
             {
                 "id": f"{prediction['id']}_{review['actual_outcome'].lower()}",
@@ -142,12 +205,7 @@ def build_review_payload(
                     else f"Prediction missed the actual {review['actual_outcome'].lower()} result."
                 ),
                 "cause_tags": review["cause_tags"],
-                "market_comparison_summary": {
-                    "comparison_available": review["market_comparison_available"],
-                    "market_outperformed_model": review["market_outperformed_model"],
-                    "taxonomy": review["taxonomy"],
-                    "attribution_summary": review["attribution_summary"],
-                },
+                "market_comparison_summary": market_comparison_summary,
             }
         )
     return payload, skipped_predictions
@@ -231,6 +289,7 @@ def run_review_job(
     *,
     target_date: str | None,
     supabase_storage_client=None,
+    llm_review_builder=None,
 ) -> dict:
     predictions = client.read_rows("predictions")
     market_rows = client.read_rows("market_probabilities")
@@ -257,6 +316,7 @@ def run_review_job(
             match_rows=match_rows,
             market_rows=market_rows,
             target_date=target_date,
+            llm_review_builder=llm_review_builder,
         )
         if not completed_predictions:
             return {
@@ -301,6 +361,7 @@ def run_review_job(
             predictions=predictions,
             match_rows=client.read_rows("matches"),
             market_rows=market_rows,
+            llm_review_builder=llm_review_builder,
         )
         expected_review_count = len(predictions)
     if not payload:
@@ -536,11 +597,63 @@ def main() -> None:
         secret_access_key=getattr(settings, "r2_secret_access_key", None),
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
+    review_llm_enabled = read_env_flag("LLM_REVIEW_ADVISORY_ENABLED")
+    llm_provider = getattr(settings, "llm_provider", "nvidia")
+    review_llm_api_key = (
+        getattr(settings, "openrouter_api_key", None)
+        if llm_provider == "openrouter"
+        else getattr(settings, "nvidia_api_key", None)
+    )
+    review_llm_base_url = (
+        getattr(settings, "openrouter_base_url", None)
+        if llm_provider == "openrouter"
+        else getattr(settings, "nvidia_base_url", None)
+    )
+    review_llm_client = (
+        NvidiaChatClient(
+            api_key=review_llm_api_key,
+            base_url=review_llm_base_url,
+            provider=llm_provider,
+            app_url=getattr(settings, "openrouter_app_url", None),
+            app_title=getattr(settings, "openrouter_app_title", None),
+            timeout_seconds=getattr(settings, "llm_timeout_seconds", 60),
+            thinking=getattr(settings, "llm_thinking_enabled", False),
+            reasoning_effort=getattr(settings, "llm_reasoning_effort", "low"),
+            top_p=getattr(settings, "llm_top_p", 0.95),
+            max_tokens=getattr(settings, "llm_max_tokens", 1024),
+            temperature=getattr(settings, "llm_temperature", 0.2),
+            requests_per_minute=getattr(settings, "llm_requests_per_minute", 40),
+            retry_count=getattr(settings, "llm_retry_count", 2),
+            retry_backoff_seconds=getattr(settings, "llm_retry_backoff_seconds", 3.0),
+        )
+        if review_llm_enabled and review_llm_api_key
+        else None
+    )
+
+    def llm_review_builder(*, prediction, match_result, review):
+        if review_llm_client is None:
+            return build_disabled_review_advisory(
+                provider=llm_provider,
+                model=getattr(settings, "llm_review_model", "deepseek-ai/deepseek-v4-flash"),
+                reason="missing_api_key",
+            )
+        return request_post_match_review_advisory(
+            client=review_llm_client,
+            model=getattr(settings, "llm_review_model", "deepseek-ai/deepseek-v4-flash"),
+            provider=llm_provider,
+            context=build_post_match_llm_context(
+                prediction=prediction,
+                match_result=match_result,
+                review=review,
+            ),
+        )
+
     result = run_review_job(
         client,
         r2_client,
         target_date=os.environ.get("REAL_REVIEW_DATE"),
         supabase_storage_client=build_supabase_storage_artifact_client(settings),
+        llm_review_builder=llm_review_builder if review_llm_enabled else None,
     )
     print(json.dumps(result, sort_keys=True))
 
