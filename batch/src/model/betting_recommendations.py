@@ -20,12 +20,6 @@ CHECKPOINT_PRIORITY = {
     "LINEUP_CONFIRMED": 3,
 }
 
-FAMILY_PRIORITY = {
-    "moneyline": 0,
-    "totals": 1,
-    "spreads": 2,
-}
-
 MONEYLINE_CONFIDENCE_THRESHOLD = 0.4
 VARIANT_MODEL_PROBABILITY_THRESHOLD = 0.8
 MIN_DAILY_RECOMMENDATIONS = 5
@@ -322,11 +316,9 @@ def select_daily_recommendations(
         ]
         filtered.sort(
             key=lambda row: (
-                FAMILY_PRIORITY.get(str(row.get("market_family") or ""), 99),
-                -(
-                    float(row.get("expected_value") or 0.0)
-                    + float(row.get("confidence") or 0.0)
-                ),
+                -float(row.get("score") or 0.0),
+                -float(row.get("expected_value") or 0.0),
+                -float(row.get("signal_score") or 0.0),
                 str(row.get("match_id") or ""),
             ),
         )
