@@ -4098,6 +4098,63 @@ def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing
     assert source_metadata["fusion_weights"] == {"base_model": 1.0}
 
 
+def test_build_training_dataset_includes_snapshots_without_bookmaker_rows():
+    snapshot_rows = [
+        {
+            "id": "hist_home_snapshot",
+            "match_id": "hist_home",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": 2,
+            "rest_delta": 0,
+        },
+        {
+            "id": "hist_draw_snapshot",
+            "match_id": "hist_draw",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": 0,
+            "rest_delta": 0,
+        },
+        {
+            "id": "hist_away_snapshot",
+            "match_id": "hist_away",
+            "checkpoint_type": "T_MINUS_24H",
+            "snapshot_quality": "partial",
+            "form_delta": -2,
+            "rest_delta": 0,
+        },
+    ]
+    match_rows = [
+        {
+            "id": "hist_home",
+            "kickoff_at": "2026-04-01T18:00:00+00:00",
+            "final_result": "HOME",
+        },
+        {
+            "id": "hist_draw",
+            "kickoff_at": "2026-04-02T18:00:00+00:00",
+            "final_result": "DRAW",
+        },
+        {
+            "id": "hist_away",
+            "kickoff_at": "2026-04-03T18:00:00+00:00",
+            "final_result": "AWAY",
+        },
+    ]
+
+    features, labels = run_predictions_job.build_training_dataset(
+        snapshot_rows=snapshot_rows,
+        market_by_snapshot={},
+        match_rows=match_rows,
+        target_date="2026-04-04",
+        checkpoint_type="T_MINUS_24H",
+    )
+
+    assert len(features) == 3
+    assert labels == ["HOME", "DRAW", "AWAY"]
+
+
 def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_without_bookmaker():
     summary = run_predictions_job.build_confidence_bucket_summary(
         snapshot_rows=[
