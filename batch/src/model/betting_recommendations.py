@@ -113,6 +113,7 @@ def build_moneyline_candidate(
         "market_family": "moneyline",
         "selection_label": pick,
         "score": confidence,
+        "signal_score": _moneyline_signal_score(prediction),
         "confidence": confidence,
         "expected_value": _read_numeric(prediction.get("value_recommendation_expected_value")),
         "market_price": _resolve_moneyline_market_price(prediction, pick),
@@ -327,6 +328,7 @@ def select_daily_recommendations(
                     float(row.get("expected_value") or 0.0)
                     + float(row.get("confidence") or 0.0)
                 ),
+                -float(row.get("signal_score") or 0.0),
                 str(row.get("match_id") or ""),
             ),
         )
@@ -493,6 +495,23 @@ def _resolve_moneyline_market_price(prediction: dict, pick: str) -> float | None
     if value_pick != pick:
         return None
     return _read_numeric(prediction.get("value_recommendation_market_price"))
+
+
+def _moneyline_signal_score(prediction: dict) -> float:
+    payload = prediction.get("summary_payload")
+    if not isinstance(payload, dict):
+        payload = prediction.get("explanation_payload")
+    if not isinstance(payload, dict):
+        return 0.0
+    feature_context = payload.get("feature_context")
+    if not isinstance(feature_context, dict):
+        return 0.0
+    signal_total = 0.0
+    for key in ("elo_delta", "xg_proxy_delta", "form_delta"):
+        value = _read_numeric(feature_context.get(key))
+        if value is not None:
+            signal_total += value
+    return round(signal_total, 4)
 
 
 def _net_profit(row: dict) -> float:

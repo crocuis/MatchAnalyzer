@@ -302,3 +302,36 @@ def test_select_daily_recommendations_matches_live_family_priority_before_score(
         "totals",
         "spreads",
     ]
+
+
+def test_select_daily_recommendations_uses_moneyline_signal_score_as_tiebreaker():
+    selected = select_daily_recommendations(
+        {
+            "2026-04-21": [
+                {
+                    "date": "2026-04-21",
+                    "match_id": "weak-signal",
+                    "market_family": "moneyline",
+                    "selection_label": "HOME",
+                    "score": 0.65,
+                    "confidence": 0.65,
+                    "signal_score": 0.1,
+                    "hit": 1,
+                },
+                {
+                    "date": "2026-04-21",
+                    "match_id": "strong-signal",
+                    "market_family": "moneyline",
+                    "selection_label": "HOME",
+                    "score": 0.65,
+                    "confidence": 0.65,
+                    "signal_score": 1.2,
+                    "hit": 1,
+                },
+            ]
+        },
+        min_daily_recommendations=1,
+        max_daily_recommendations=1,
+    )["2026-04-21"]
+
+    assert selected[0]["match_id"] == "strong-signal"
