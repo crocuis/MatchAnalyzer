@@ -597,7 +597,11 @@ def _event_has_stale_final_score(event: dict[str, Any]) -> bool:
     )
 
 
-def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
+def build_match_row_from_event(
+    event: dict[str, Any],
+    *,
+    result_observed_at: str | None = None,
+) -> dict[str, Any]:
     home_team = next(
         competitor["team"]
         for competitor in event["competitors"]
@@ -632,6 +636,7 @@ def build_match_row_from_event(event: dict[str, Any]) -> dict[str, Any]:
         "final_result": final_result,
         "home_score": home_score,
         "away_score": away_score,
+        "result_observed_at": result_observed_at if final_result is not None else None,
     }
 
 

@@ -307,6 +307,36 @@ def test_build_match_row_uses_stale_scores_for_past_scheduled_events():
     assert row["final_result"] == "HOME"
     assert row["home_score"] == 3
     assert row["away_score"] == 2
+    assert row["result_observed_at"] is None
+
+
+def test_build_match_row_records_result_observed_at_for_completed_events():
+    row = build_match_row_from_event(
+        {
+            "id": "match_final",
+            "status": "closed",
+            "start_time": "2026-02-26T20:00:00Z",
+            "competition": {"id": "champions-league"},
+            "season": {"id": "champions-league-2026"},
+            "competitors": [
+                {
+                    "team": {"id": "home", "name": "Home"},
+                    "qualifier": "home",
+                    "score": 3,
+                },
+                {
+                    "team": {"id": "away", "name": "Away"},
+                    "qualifier": "away",
+                    "score": 2,
+                },
+            ],
+            "scores": {"home": 3, "away": 2},
+        },
+        result_observed_at="2026-02-26T22:30:00+00:00",
+    )
+
+    assert row["final_result"] == "HOME"
+    assert row["result_observed_at"] == "2026-02-26T22:30:00+00:00"
 
 
 def test_build_match_row_keeps_unplayed_zero_score_events_pending():
@@ -336,6 +366,7 @@ def test_build_match_row_keeps_unplayed_zero_score_events_pending():
     assert row["final_result"] is None
     assert row["home_score"] is None
     assert row["away_score"] is None
+    assert row["result_observed_at"] is None
 
 
 def test_build_competition_and_team_rows_preserve_asset_urls():

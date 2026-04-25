@@ -78,15 +78,20 @@ def main() -> None:
     competition_rows = []
     team_rows = []
     payload = []
+    captured_at = datetime.now(timezone.utc).isoformat()
     for event in all_events:
         competition_rows.append(build_competition_row_from_event(event))
         team_rows.extend(build_team_rows_from_event(event))
-        payload.append(build_match_row_from_event(event))
+        payload.append(
+            build_match_row_from_event(
+                event,
+                result_observed_at=captured_at,
+            )
+        )
     competition_rows = dedupe_rows(competition_rows)
     team_rows = dedupe_rows(team_rows)
     payload = dedupe_rows(payload)
 
-    captured_at = datetime.now(timezone.utc).isoformat()
     historical_matches = client.read_rows("matches")
     lineup_context_by_match = (
         build_lineup_context_by_match(all_events) if lineup_context_enabled else {}

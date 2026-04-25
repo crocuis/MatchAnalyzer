@@ -16,7 +16,6 @@ from batch.src.jobs.sample_data import (
     SAMPLE_MATCH_ID,
     SAMPLE_MODEL_VERSION_ID,
     SAMPLE_MODEL_VERSION_ROW,
-    SAMPLE_PREDICTION_CONTEXT,
 )
 from batch.src.markets import index_market_rows_by_snapshot, select_market_row
 from batch.src.model.evaluate_walk_forward import (
@@ -66,6 +65,28 @@ BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
 VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
+PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
+    "snapshot_quality",
+    "lineup_status",
+    "home_elo",
+    "away_elo",
+    "home_xg_for_last_5",
+    "home_xg_against_last_5",
+    "away_xg_for_last_5",
+    "away_xg_against_last_5",
+    "home_matches_last_7d",
+    "away_matches_last_7d",
+    "home_points_last_5",
+    "away_points_last_5",
+    "home_rest_days",
+    "away_rest_days",
+    "home_lineup_score",
+    "away_lineup_score",
+    "home_absence_count",
+    "away_absence_count",
+    "lineup_strength_delta",
+    "lineup_source_summary",
+)
 
 
 def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
@@ -452,17 +473,65 @@ def resolve_bookmaker_context(
     return {}, False
 
 
-def enrich_snapshot_with_match_history(
+def snapshot_has_intervening_completed_match(
     snapshot: dict,
     *,
+    match: dict | None,
+    match_rows: list[dict],
+) -> bool:
+    if not match:
+        return False
+    captured_at = parse_iso_datetime(snapshot.get("captured_at"))
+    target_kickoff = parse_iso_datetime(match.get("kickoff_at"))
+    if captured_at is None or target_kickoff is None:
+        return False
+    target_team_ids = {
+        str(match.get("home_team_id") or ""),
+        str(match.get("away_team_id") or ""),
+    } - {""}
+    if not target_team_ids:
+        return False
+
+    for row in match_rows:
+        if row.get("id") == match.get("id") or not row.get("final_result"):
+            continue
+        kickoff_at = parse_iso_datetime(row.get("kickoff_at"))
+        if kickoff_at is None or kickoff_at >= target_kickoff:
+            continue
+        row_team_ids = {
+            str(row.get("home_team_id") or ""),
+            str(row.get("away_team_id") or ""),
+        } - {""}
+        if not target_team_ids & row_team_ids:
+            continue
+        result_observed_at = parse_iso_datetime(row.get("result_observed_at"))
+        if result_observed_at is not None and captured_at < result_observed_at:
+            return True
+        if result_observed_at is None and captured_at < kickoff_at:
+            return True
+    return False
+
+
+def refresh_snapshot_long_signals_if_stale(
+    snapshot: dict,
+    *,
+    match: dict | None,
     match_rows: list[dict],
 ) -> dict:
-    match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
-    match = match_by_id.get(snapshot.get("match_id"))
-    if not match:
+    if not snapshot_has_intervening_completed_match(
+        snapshot,
+        match=match,
+        match_rows=match_rows,
+    ):
         return snapshot
-    if not match.get("kickoff_at") or not match.get("home_team_id") or not match.get("away_team_id"):
+    if (
+        not match
+        or not match.get("kickoff_at")
+        or not match.get("home_team_id")
+        or not match.get("away_team_id")
+    ):
         return snapshot
+
     historical_matches = [
         row
         for row in match_rows
@@ -472,11 +541,10 @@ def enrich_snapshot_with_match_history(
         and row.get("final_result")
     ]
     history_fields = build_match_history_snapshot_fields(match, historical_matches)
-    enriched_snapshot = {**snapshot}
-    for key, value in history_fields.items():
-        if enriched_snapshot.get(key) is None:
-            enriched_snapshot[key] = value
-    return enriched_snapshot
+    return {
+        **snapshot,
+        **history_fields,
+    }
 
 
 def resolve_absence_reason_key(match: dict | None) -> str:
@@ -510,12 +578,13 @@ def build_historical_source_performance_summary(
     ]
     for snapshot in historical_snapshots:
         match = match_by_id[snapshot["match_id"]]
-        enriched_snapshot = enrich_snapshot_with_match_history(
+        signal_snapshot = refresh_snapshot_long_signals_if_stale(
             snapshot,
+            match=match,
             match_rows=match_rows,
         )
         book_probs, prediction_market = build_market_probabilities(
-            enriched_snapshot["id"],
+            signal_snapshot["id"],
             market_by_snapshot,
             kickoff_at=str(match.get("kickoff_at") or ""),
         )
@@ -526,7 +595,7 @@ def build_historical_source_performance_summary(
         if not book_probs:
             continue
         feature_context = build_snapshot_context(
-            enriched_snapshot,
+            signal_snapshot,
             book_probs,
             prediction_market,
             bookmaker_available=bookmaker_available,
@@ -539,7 +608,7 @@ def build_historical_source_performance_summary(
         if historical_segment != market_segment:
             continue
         base_probs, _base_model_source, _model_selection = predict_base_probabilities(
-            snapshot=enriched_snapshot,
+            snapshot=signal_snapshot,
             feature_context=feature_context,
             book_probs=book_probs,
             snapshot_rows=snapshot_rows,
@@ -663,14 +732,11 @@ def build_source_metadata(
     }
 
 
-def build_snapshot_context(
-    snapshot: dict,
+def build_market_signal_input(
     book_probs: dict,
     prediction_market: dict | None,
-    *,
-    bookmaker_available: bool = True,
 ) -> dict:
-    feature_input = {
+    return {
         "book_home_prob": book_probs["home"],
         "book_draw_prob": book_probs["draw"],
         "book_away_prob": book_probs["away"],
@@ -684,41 +750,44 @@ def build_snapshot_context(
         if prediction_market
         else book_probs["away"],
         "prediction_market_available": prediction_market is not None,
-        "snapshot_quality": snapshot.get("snapshot_quality", "complete"),
-        "lineup_status": snapshot.get("lineup_status", "unknown"),
-        "home_elo": snapshot.get("home_elo"),
-        "away_elo": snapshot.get("away_elo"),
-        "home_xg_for_last_5": snapshot.get("home_xg_for_last_5"),
-        "home_xg_against_last_5": snapshot.get("home_xg_against_last_5"),
-        "away_xg_for_last_5": snapshot.get("away_xg_for_last_5"),
-        "away_xg_against_last_5": snapshot.get("away_xg_against_last_5"),
-        "home_matches_last_7d": snapshot.get("home_matches_last_7d"),
-        "away_matches_last_7d": snapshot.get("away_matches_last_7d"),
-        "home_points_last_5": snapshot.get("home_points_last_5"),
-        "away_points_last_5": snapshot.get("away_points_last_5"),
-        "home_rest_days": snapshot.get("home_rest_days"),
-        "away_rest_days": snapshot.get("away_rest_days"),
-        "home_lineup_score": snapshot.get("home_lineup_score"),
-        "away_lineup_score": snapshot.get("away_lineup_score"),
-        "home_absence_count": snapshot.get("home_absence_count"),
-        "away_absence_count": snapshot.get("away_absence_count"),
-        "lineup_strength_delta": snapshot.get("lineup_strength_delta"),
-        "lineup_source_summary": snapshot.get("lineup_source_summary"),
     }
+
+
+def build_persisted_snapshot_signal_input(snapshot: dict) -> dict:
+    feature_input = {
+        field: snapshot.get(field)
+        for field in PERSISTED_SNAPSHOT_SIGNAL_FIELDS
+    }
+    feature_input["snapshot_quality"] = snapshot.get("snapshot_quality", "complete")
+    feature_input["lineup_status"] = snapshot.get("lineup_status", "unknown")
     if snapshot.get("form_delta") is not None:
         feature_input["form_delta"] = snapshot["form_delta"]
     elif (
         snapshot.get("home_points_last_5") is None
         or snapshot.get("away_points_last_5") is None
     ):
-        feature_input["form_delta"] = SAMPLE_PREDICTION_CONTEXT["form_delta"]
+        feature_input["form_delta"] = 0
     if snapshot.get("rest_delta") is not None:
         feature_input["rest_delta"] = snapshot["rest_delta"]
     elif (
         snapshot.get("home_rest_days") is None
         or snapshot.get("away_rest_days") is None
     ):
-        feature_input["rest_delta"] = SAMPLE_PREDICTION_CONTEXT["rest_delta"]
+        feature_input["rest_delta"] = 0
+    return feature_input
+
+
+def build_snapshot_context(
+    snapshot: dict,
+    book_probs: dict,
+    prediction_market: dict | None,
+    *,
+    bookmaker_available: bool = True,
+) -> dict:
+    feature_input = {
+        **build_market_signal_input(book_probs, prediction_market),
+        **build_persisted_snapshot_signal_input(snapshot),
+    }
     feature_vector = build_feature_vector(feature_input)
     feature_vector["bookmaker_available"] = int(bookmaker_available)
     return feature_vector
@@ -749,12 +818,13 @@ def build_training_dataset(
         )
         if not book_probs:
             continue
-        enriched_snapshot = enrich_snapshot_with_match_history(
+        signal_snapshot = refresh_snapshot_long_signals_if_stale(
             snapshot,
+            match=match,
             match_rows=match_rows,
         )
         feature_context = build_snapshot_context(
-            enriched_snapshot,
+            signal_snapshot,
             book_probs,
             prediction_market,
         )
@@ -1587,16 +1657,16 @@ def main() -> None:
     }
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
+        signal_snapshot = refresh_snapshot_long_signals_if_stale(
+            snapshot,
+            match=match,
+            match_rows=match_rows,
+        )
         snapshot_target_date = (
             use_real_predictions or str(match.get("kickoff_at") or "")[:10] or None
         )
-        enriched_snapshot = (
-            enrich_snapshot_with_match_history(snapshot, match_rows=match_rows)
-            if use_real_prediction_targets
-            else snapshot
-        )
         book_probs, prediction_market = build_market_probabilities(
-            enriched_snapshot["id"],
+            signal_snapshot["id"],
             market_by_snapshot,
             kickoff_at=str(match.get("kickoff_at") or ""),
         )
@@ -1608,13 +1678,13 @@ def main() -> None:
             skipped_snapshots.append(snapshot["id"])
             continue
         feature_context = build_snapshot_context(
-            enriched_snapshot,
+            signal_snapshot,
             book_probs,
             prediction_market,
             bookmaker_available=bookmaker_available,
         )
         base_probs, base_model_source, model_selection = predict_base_probabilities(
-            snapshot=enriched_snapshot,
+            snapshot=signal_snapshot,
             feature_context=feature_context,
             book_probs=book_probs,
             snapshot_rows=snapshot_rows,
@@ -1666,7 +1736,7 @@ def main() -> None:
                 snapshot_rows=snapshot_rows,
                 market_by_snapshot=market_by_snapshot,
                 match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
+                checkpoint_type=signal_snapshot["checkpoint_type"],
                 target_date=snapshot_target_date,
                 market_segment=market_segment,
             )
@@ -1678,7 +1748,7 @@ def main() -> None:
                 snapshot_rows=snapshot_rows,
                 market_by_snapshot=market_by_snapshot,
                 match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
+                checkpoint_type=signal_snapshot["checkpoint_type"],
                 target_date=snapshot_target_date,
                 market_segment="without_prediction_market"
                 if market_segment == "with_prediction_market"
@@ -1703,7 +1773,7 @@ def main() -> None:
                 if latest_fusion_policy
                 else None
             ),
-            checkpoint=enriched_snapshot["checkpoint_type"],
+            checkpoint=signal_snapshot["checkpoint_type"],
             market_segment=market_segment,
             allowed_variants=available_variants,
             competition_id=str(match.get("competition_id") or ""),
@@ -1729,8 +1799,8 @@ def main() -> None:
         ):
             source_weights = {"base_model": 1.0}
         row = build_prediction_row(
-            match_id=enriched_snapshot["match_id"],
-            checkpoint=enriched_snapshot["checkpoint_type"],
+            match_id=signal_snapshot["match_id"],
+            checkpoint=signal_snapshot["checkpoint_type"],
             base_probs=base_probs,
             book_probs=book_probs,
             market_probs=prediction_market_probs,
@@ -1752,7 +1822,7 @@ def main() -> None:
                 prediction_rows=prediction_rows,
                 snapshot_rows=snapshot_rows,
                 match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
+                checkpoint_type=signal_snapshot["checkpoint_type"],
                 target_date=snapshot_target_date,
                 prediction_market_available=bool(
                     feature_context["prediction_market_available"]
@@ -1763,16 +1833,16 @@ def main() -> None:
                     [
                         *historical_current_fused_candidates,
                         {
-                            "snapshot_id": enriched_snapshot["id"],
+                            "snapshot_id": signal_snapshot["id"],
                             "kickoff_at": next(
                                 (
                                     str(match.get("kickoff_at") or "")
                                     for match in match_rows
-                                    if match.get("id") == enriched_snapshot["match_id"]
+                                    if match.get("id") == signal_snapshot["match_id"]
                                 ),
                                 "",
                             ),
-                            "checkpoint": enriched_snapshot["checkpoint_type"],
+                            "checkpoint": signal_snapshot["checkpoint_type"],
                             "prediction_market_available": bool(
                                 feature_context["prediction_market_available"]
                             ),
@@ -1784,7 +1854,7 @@ def main() -> None:
                             "context": scoring_context,
                         },
                     ]
-                )[enriched_snapshot["id"]]
+                )[signal_snapshot["id"]]
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]
@@ -1807,7 +1877,7 @@ def main() -> None:
                 snapshot_rows=snapshot_rows,
                 market_by_snapshot=market_by_snapshot,
                 match_rows=match_rows,
-                checkpoint_type=enriched_snapshot["checkpoint_type"],
+                checkpoint_type=signal_snapshot["checkpoint_type"],
                 target_date=snapshot_target_date,
             )
             if use_real_prediction_targets
@@ -1831,7 +1901,7 @@ def main() -> None:
         )
         variant_markets = build_variant_markets(
             variant_rows_by_snapshot.get(snapshot["id"], []),
-            snapshot=enriched_snapshot,
+            snapshot=signal_snapshot,
             match=match,
             teams_by_id=teams_by_id,
         )
@@ -1848,17 +1918,17 @@ def main() -> None:
                 variant_markets = preserved_variant_markets
                 preserved_market_enrichment = True
         feature_metadata = build_feature_metadata(
-            enriched_snapshot,
+            signal_snapshot,
             feature_context,
             absence_reason_key=resolve_absence_reason_key(
                 next(
-                    (match for match in match_rows if match.get("id") == enriched_snapshot["match_id"]),
+                    (match for match in match_rows if match.get("id") == signal_snapshot["match_id"]),
                     None,
                 )
             ),
         )
         source_metadata = build_source_metadata(
-            snapshot_id=enriched_snapshot["id"],
+            snapshot_id=signal_snapshot["id"],
             market_by_snapshot=market_by_snapshot,
             base_probs=base_probs,
             book_probs=book_probs,
@@ -1912,7 +1982,7 @@ def main() -> None:
             ),
         }
         summary_payload = build_prediction_summary_payload(explanation_payload)
-        model_selection_by_checkpoint[enriched_snapshot["checkpoint_type"]] = model_selection
+        model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
         artifact_id = f"prediction_artifact_{prediction_id}"
         artifact_payload.append(
             archive_json_artifact(
@@ -1925,8 +1995,8 @@ def main() -> None:
                 payload=explanation_payload,
                 summary_payload={
                     "match_id": row["match_id"],
-                    "snapshot_id": enriched_snapshot["id"],
-                    "checkpoint_type": enriched_snapshot["checkpoint_type"],
+                    "snapshot_id": signal_snapshot["id"],
+                    "checkpoint_type": signal_snapshot["checkpoint_type"],
                 },
                 metadata={
                     "model_version_id": SAMPLE_MODEL_VERSION_ID,
@@ -1936,7 +2006,7 @@ def main() -> None:
         payload.append(
             {
                 "id": prediction_id,
-                "snapshot_id": enriched_snapshot["id"],
+                "snapshot_id": signal_snapshot["id"],
                 "match_id": row["match_id"],
                 "model_version_id": SAMPLE_MODEL_VERSION_ID,
                 "home_prob": row["home_prob"],
@@ -1981,7 +2051,7 @@ def main() -> None:
         feature_snapshot_payload.append(
             build_prediction_feature_snapshot_row(
                 prediction_id=prediction_id,
-                snapshot=enriched_snapshot,
+                snapshot=signal_snapshot,
                 match_id=row["match_id"],
                 model_version_id=SAMPLE_MODEL_VERSION_ID,
                 feature_context=feature_context,

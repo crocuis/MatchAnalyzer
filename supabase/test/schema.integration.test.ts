@@ -38,6 +38,12 @@ describe("supabase schema integration", () => {
     const matches = await db.query<{ count: number }>(
       "select count(*)::int as count from matches",
     );
+    const matchResultObservedColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'matches'
+         and column_name = 'result_observed_at'`,
+    );
     const crestColumns = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.columns
@@ -151,6 +157,7 @@ describe("supabase schema integration", () => {
     expect(teams.rows[0]?.count).toBe(2);
     expect(teamTranslationsTables.rows[0]?.count).toBe(1);
     expect(matches.rows[0]?.count).toBe(1);
+    expect(matchResultObservedColumns.rows[0]?.count).toBe(1);
     expect(crestColumns.rows[0]?.count).toBe(1);
     expect(emblemColumns.rows[0]?.count).toBe(1);
     expect(featureSnapshotTables.rows[0]?.count).toBe(1);
