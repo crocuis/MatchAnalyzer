@@ -28,6 +28,9 @@ def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> 
     assert "while IFS= read -r TARGET_DATE; do" in workflow
     assert 'REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job' in workflow
     assert "REAL_PREDICTION_MATCH_IDS" in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
+    assert "--clubelo-date-stride-days 1" in workflow
     assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
     assert 'echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"' in workflow
     assert 'if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then' in workflow
@@ -43,6 +46,9 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
     assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
     assert "REAL_MARKET_DATE=" in workflow
     assert "REAL_PREDICTION_MATCH_IDS" in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$CHANGED_MATCH_IDS"' in workflow
+    assert "--clubelo-date-stride-days 1" in workflow
     assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
     assert "<<'PY'" not in workflow
     assert "python3 -c" in workflow
@@ -71,6 +77,11 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     assert "DAILY_PICK_SYNC_ENABLED=0" in workflow
     assert "DAILY_PICK_SYNC_ENABLED=1" in workflow
     assert "DAILY_PICK_SYNC_DATE=" in workflow
+    assert "Backfill external prediction signals" in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
+    assert '--kickoff-date "$REAL_PREDICTION_DATE"' in workflow
+    assert "--clubelo-date-stride-days 1" in workflow
     assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
     assert "if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}" in workflow
 

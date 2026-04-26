@@ -47,6 +47,8 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
     build_clubelo_contexts_by_snapshot_id,
     build_external_signal_snapshot_updates,
     bucket_date,
+    filter_backfill_scope,
+    parse_match_id_filter,
     snapshot_as_of_date,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
@@ -2783,6 +2785,36 @@ def test_fixture_ingest_uses_fixture_date_for_external_signal_context():
 def test_bucket_date_uses_latest_prior_stride_boundary():
     assert bucket_date("2026-04-26", stride_days=7) <= "2026-04-26"
     assert bucket_date("2026-04-26", stride_days=1) == "2026-04-26"
+
+
+def test_parse_match_id_filter_trims_empty_values():
+    assert parse_match_id_filter(" match_001,,match_002 ") == {
+        "match_001",
+        "match_002",
+    }
+
+
+def test_filter_backfill_scope_limits_snapshots_by_match_ids_and_kickoff_date():
+    snapshots, matches = filter_backfill_scope(
+        snapshots=[
+            {"id": "snapshot_001", "match_id": "match_001"},
+            {"id": "snapshot_002", "match_id": "match_002"},
+            {"id": "snapshot_003", "match_id": "match_003"},
+        ],
+        matches=[
+            {"id": "match_001", "kickoff_at": "2026-04-25T12:00:00Z"},
+            {"id": "match_002", "kickoff_at": "2026-04-26T12:00:00Z"},
+            {"id": "match_003", "kickoff_at": "2026-04-27T12:00:00Z"},
+        ],
+        match_ids={"match_001"},
+        kickoff_date="2026-04-26",
+    )
+
+    assert [snapshot["id"] for snapshot in snapshots] == [
+        "snapshot_001",
+        "snapshot_002",
+    ]
+    assert [match["id"] for match in matches] == ["match_001", "match_002"]
 
 
 def test_clubelo_backfill_uses_snapshot_as_of_context(monkeypatch):

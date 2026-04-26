@@ -87,5 +87,10 @@ jobs:
             echo "No unique changed fixture matches remained after dedupe; skipping prediction refresh."
             exit 0
           fi
-          REAL_PREDICTION_MATCH_IDS="$(IFS=,; echo "${CHANGED_MATCH_IDS[*]}")" \
+          REAL_PREDICTION_MATCH_IDS="$(IFS=,; echo "${CHANGED_MATCH_IDS[*]}")"
+          python3 -m batch.src.jobs.backfill_external_prediction_signals_job \
+            --apply \
+            --match-ids "$REAL_PREDICTION_MATCH_IDS" \
+            --clubelo-date-stride-days 1
+          REAL_PREDICTION_MATCH_IDS="$REAL_PREDICTION_MATCH_IDS" \
             python3 -m batch.src.jobs.run_predictions_job

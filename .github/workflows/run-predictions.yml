@@ -94,6 +94,16 @@ jobs:
             echo "LLM_PREDICTION_MODEL=$LLM_MODEL_INPUT" >> "$GITHUB_ENV"
           fi
       - run: python3 -m pip install -r batch/requirements.txt
+      - name: Backfill external prediction signals
+        shell: bash
+        run: |
+          BACKFILL_ARGS=(--apply --clubelo-date-stride-days 1)
+          if [ -n "${REAL_PREDICTION_MATCH_IDS:-}" ]; then
+            BACKFILL_ARGS+=(--match-ids "$REAL_PREDICTION_MATCH_IDS")
+          else
+            BACKFILL_ARGS+=(--kickoff-date "$REAL_PREDICTION_DATE")
+          fi
+          python3 -m batch.src.jobs.backfill_external_prediction_signals_job "${BACKFILL_ARGS[@]}"
       - run: python3 -m batch.src.jobs.run_predictions_job
       - name: Sync daily pick snapshot
         if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}

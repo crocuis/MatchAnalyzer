@@ -57,5 +57,9 @@ jobs:
             echo "No changed market matches detected; skipping prediction refresh."
             exit 0
           fi
+          python3 -m batch.src.jobs.backfill_external_prediction_signals_job \
+            --apply \
+            --match-ids "$CHANGED_MATCH_IDS" \
+            --clubelo-date-stride-days 1
           REAL_PREDICTION_MATCH_IDS="$CHANGED_MATCH_IDS" \
             python3 -m batch.src.jobs.run_predictions_job

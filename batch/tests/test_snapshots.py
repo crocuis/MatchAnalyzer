@@ -6,7 +6,7 @@ import pytest
 
 from batch.src.domain import MatchSnapshot, SnapshotQuality
 from batch.src.features.build_snapshots import build_snapshot
-from batch.src.features.feature_builder import build_feature_vector
+from batch.src.features.feature_builder import build_feature_metadata, build_feature_vector
 
 
 def normalize_sql(sql: str) -> str:
@@ -465,6 +465,58 @@ def test_build_feature_vector_prefers_external_rating_and_understat_xg_when_avai
 
     assert round(features["elo_delta"], 2) == 0.5
     assert round(features["xg_proxy_delta"], 2) == 1.2
+
+
+def test_feature_metadata_treats_external_rating_and_understat_as_resolved_signals():
+    snapshot = {
+        "form_delta": 2,
+        "rest_delta": 1,
+        "home_points_last_5": 10,
+        "away_points_last_5": 8,
+        "home_rest_days": 5,
+        "away_rest_days": 4,
+        "home_elo": None,
+        "away_elo": None,
+        "external_home_elo": 1810,
+        "external_away_elo": 1760,
+        "home_xg_for_last_5": None,
+        "home_xg_against_last_5": None,
+        "away_xg_for_last_5": None,
+        "away_xg_against_last_5": None,
+        "understat_home_xg_for_last_5": 1.8,
+        "understat_home_xg_against_last_5": 0.9,
+        "understat_away_xg_for_last_5": 1.1,
+        "understat_away_xg_against_last_5": 1.4,
+        "external_signal_source_summary": "clubelo+understat",
+        "home_matches_last_7d": 1,
+        "away_matches_last_7d": 2,
+        "home_lineup_score": 1.1,
+        "away_lineup_score": 0.8,
+        "home_absence_count": 1,
+        "away_absence_count": 2,
+        "lineup_strength_delta": 0.3,
+        "lineup_source_summary": "api",
+        "book_home_prob": 0.52,
+        "book_draw_prob": 0.24,
+        "book_away_prob": 0.24,
+        "market_home_prob": 0.49,
+        "market_draw_prob": 0.25,
+        "market_away_prob": 0.26,
+        "prediction_market_available": True,
+    }
+
+    features = build_feature_vector(snapshot)
+    metadata = build_feature_metadata(snapshot, features)
+
+    reason_keys = {
+        reason["reason_key"] for reason in metadata["missing_signal_reasons"]
+    }
+    assert "rating_context_missing" not in reason_keys
+    assert "xg_context_missing" not in reason_keys
+    assert "home_elo" not in metadata["missing_fields"]
+    assert "away_elo" not in metadata["missing_fields"]
+    assert "home_xg_for_last_5" not in metadata["missing_fields"]
+    assert "away_xg_against_last_5" not in metadata["missing_fields"]
 
 
 def test_build_feature_vector_prefers_explicit_lineup_strength_delta():

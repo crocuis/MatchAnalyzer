@@ -62,6 +62,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "network calls. Use 1 for exact daily lookups."
         ),
     )
+    parser.add_argument(
+        "--match-ids",
+        default=None,
+        help="Comma-separated match ids to backfill before targeted prediction refreshes.",
+    )
+    parser.add_argument(
+        "--kickoff-date",
+        default=None,
+        help="UTC kickoff date in YYYY-MM-DD format to scope scheduled daily backfills.",
+    )
     return parser.parse_args(argv)
 
 
@@ -128,6 +138,48 @@ def bucket_date(value: str, *, stride_days: int) -> str:
     parsed = date.fromisoformat(value)
     bucket_ordinal = parsed.toordinal() - (parsed.toordinal() % stride_days)
     return date.fromordinal(bucket_ordinal).isoformat()
+
+
+def parse_match_id_filter(raw_match_ids: str | None) -> set[str]:
+    if not raw_match_ids:
+        return set()
+    return {
+        match_id.strip()
+        for match_id in raw_match_ids.split(",")
+        if match_id.strip()
+    }
+
+
+def match_kickoff_date(match: dict[str, Any]) -> str | None:
+    kickoff_at = parse_datetime(match.get("kickoff_at"))
+    return kickoff_at.date().isoformat() if kickoff_at is not None else None
+
+
+def filter_backfill_scope(
+    *,
+    snapshots: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+    match_ids: set[str] | None = None,
+    kickoff_date: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    target_match_ids = set(match_ids or set())
+    if kickoff_date:
+        target_match_ids.update(
+            str(match.get("id") or "")
+            for match in matches
+            if match_kickoff_date(match) == kickoff_date
+        )
+    target_match_ids.discard("")
+    if not target_match_ids:
+        return snapshots, matches
+    return (
+        [
+            snapshot
+            for snapshot in snapshots
+            if str(snapshot.get("match_id") or "") in target_match_ids
+        ],
+        [match for match in matches if str(match.get("id") or "") in target_match_ids],
+    )
 
 
 def snapshot_has_external_signals(snapshot: dict[str, Any]) -> bool:
@@ -387,6 +439,8 @@ def external_signal_columns_available(client: SupabaseClient) -> bool:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.kickoff_date is not None:
+        date.fromisoformat(args.kickoff_date)
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
     if args.apply and not external_signal_columns_available(client):
@@ -395,11 +449,18 @@ def main(argv: list[str] | None = None) -> None:
             "supabase/migrations/202604260001_external_prediction_signals.sql first"
         )
     snapshots = client.read_rows("match_snapshots")
+    matches = client.read_rows("matches")
+    snapshots, matches = filter_backfill_scope(
+        snapshots=snapshots,
+        matches=matches,
+        match_ids=parse_match_id_filter(args.match_ids),
+        kickoff_date=args.kickoff_date,
+    )
     if args.limit is not None:
         snapshots = snapshots[:args.limit]
     updates, metadata = build_external_signal_snapshot_updates(
         snapshots=snapshots,
-        matches=client.read_rows("matches"),
+        matches=matches,
         teams=client.read_rows("teams"),
         missing_only=args.missing_only,
         clubelo_date_stride_days=args.clubelo_date_stride_days,

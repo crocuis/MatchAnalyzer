@@ -63,6 +63,23 @@ OPTIONAL_EXTERNAL_SIGNAL_FIELDS: tuple[str, ...] = (
     "understat_away_xg_against_last_5",
     "external_signal_source_summary",
 )
+CANONICAL_RATING_SIGNAL_FIELDS: tuple[str, ...] = ("home_elo", "away_elo")
+EXTERNAL_RATING_SIGNAL_FIELDS: tuple[str, ...] = (
+    "external_home_elo",
+    "external_away_elo",
+)
+CANONICAL_XG_SIGNAL_FIELDS: tuple[str, ...] = (
+    "home_xg_for_last_5",
+    "home_xg_against_last_5",
+    "away_xg_for_last_5",
+    "away_xg_against_last_5",
+)
+UNDERSTAT_XG_SIGNAL_FIELDS: tuple[str, ...] = (
+    "understat_home_xg_for_last_5",
+    "understat_home_xg_against_last_5",
+    "understat_away_xg_for_last_5",
+    "understat_away_xg_against_last_5",
+)
 
 MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     (
@@ -79,18 +96,13 @@ MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] 
     ),
     (
         "rating_context_missing",
-        ("home_elo", "away_elo"),
+        CANONICAL_RATING_SIGNAL_FIELDS,
         "Team rating seed was missing for this snapshot.",
         "Backfill historical result windows or ClubElo before building snapshots so ratings can be materialized.",
     ),
     (
         "xg_context_missing",
-        (
-            "home_xg_for_last_5",
-            "home_xg_against_last_5",
-            "away_xg_for_last_5",
-            "away_xg_against_last_5",
-        ),
+        CANONICAL_XG_SIGNAL_FIELDS,
         "Recent xG trend signals were not available in the snapshot.",
         "Persist rolling goals/xG proxies or Understat xG for both teams during snapshot sync.",
     ),
@@ -124,6 +136,15 @@ ABSENCE_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] 
 MISSING_SIGNAL_REASON_TAXONOMY: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     MISSING_SIGNAL_REASON_GROUPS + ABSENCE_SIGNAL_REASON_GROUPS
 )
+
+
+def _alternate_resolved_signal_fields(snapshot: dict) -> set[str]:
+    resolved_fields: set[str] = set()
+    if all(snapshot.get(field) is not None for field in EXTERNAL_RATING_SIGNAL_FIELDS):
+        resolved_fields.update(CANONICAL_RATING_SIGNAL_FIELDS)
+    if all(snapshot.get(field) is not None for field in UNDERSTAT_XG_SIGNAL_FIELDS):
+        resolved_fields.update(CANONICAL_XG_SIGNAL_FIELDS)
+    return resolved_fields
 
 
 def build_feature_vector(snapshot: dict) -> dict:
@@ -288,6 +309,7 @@ def build_feature_metadata(
     *,
     absence_reason_key: str = "absence_feed_missing",
 ) -> dict:
+    alternate_resolved_fields = _alternate_resolved_signal_fields(snapshot)
     available_fields = sorted(
         field
         for field in RAW_SIGNAL_FIELDS
@@ -296,7 +318,9 @@ def build_feature_metadata(
     missing_fields = sorted(
         field
         for field in RAW_SIGNAL_FIELDS
-        if snapshot.get(field) is None and field not in OPTIONAL_EXTERNAL_SIGNAL_FIELDS
+        if snapshot.get(field) is None
+        and field not in OPTIONAL_EXTERNAL_SIGNAL_FIELDS
+        and field not in alternate_resolved_fields
     )
     populated_feature_fields = sorted(
         field
