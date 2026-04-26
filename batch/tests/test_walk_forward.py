@@ -54,7 +54,7 @@ def test_train_baseline_model_rejects_classes_with_fewer_than_three_samples():
 
     with pytest.raises(
         ValueError,
-        match="train_baseline_model requires at least 3 samples per class for calibration",
+        match="train_baseline_model requires at least 3 samples per class for isotonic calibration",
     ):
         train_baseline_model(features, labels)
 
