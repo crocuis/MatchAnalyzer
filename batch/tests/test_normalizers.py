@@ -13,6 +13,7 @@ from batch.src.ingest.external_signals import build_clubelo_context_by_match
 from batch.src.ingest.external_signals import build_understat_context_by_match
 from batch.src.ingest.external_signals import merge_external_signal_contexts
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_context_by_match
 from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_contexts_from_events
 from batch.src.ingest.fetch_fixtures import build_bsd_lineup_contexts_from_payloads
 from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
@@ -61,6 +62,7 @@ from batch.src.jobs.ingest_fixtures_job import (
     resolve_external_signal_as_of_date,
     should_backfill_real_fixture_team_assets,
     should_hydrate_real_fixture_history,
+    main as run_ingest_fixtures_job,
 )
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
@@ -2663,6 +2665,31 @@ def test_bsd_event_signal_contexts_capture_event_xg_fields():
     }
 
 
+def test_bsd_event_signal_context_by_match_skips_distant_future_events(monkeypatch):
+    def fail_fetch(*args, **kwargs):
+        raise AssertionError("distant future events should not query BSD events")
+
+    monkeypatch.setattr(fetch_fixtures_module, "fetch_bsd_events", fail_fetch)
+
+    contexts = build_bsd_event_signal_context_by_match(
+        "bsd-key",
+        [
+            {
+                "id": "match_future",
+                "start_time": (
+                    datetime.now(timezone.utc) + timedelta(days=7)
+                ).isoformat(),
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+    )
+
+    assert contexts == {}
+
+
 def test_match_bsd_events_to_schedule_events_uses_kickoff_and_team_names():
     rows = match_bsd_events_to_schedule_events(
         [
@@ -2859,6 +2886,117 @@ def test_snapshot_as_of_date_rewinds_posthoc_captured_settled_snapshots():
 
 def test_fixture_ingest_uses_fixture_date_for_external_signal_context():
     assert resolve_external_signal_as_of_date("2026-04-24") == "2026-04-24"
+
+
+def test_real_fixture_schedule_mode_skips_detail_signal_sync(monkeypatch, capsys):
+    event = {
+        "id": "match_001",
+        "competition": {
+            "id": "premier-league",
+            "name": "Premier League",
+            "emblem": "https://example.test/pl.png",
+        },
+        "season": {"id": "premier-league-2026"},
+        "start_time": "2026-05-03T11:30:00Z",
+        "status": "scheduled",
+        "venue": {"country": "England"},
+        "competitors": [
+            {
+                "qualifier": "home",
+                "team": {
+                    "id": "arsenal",
+                    "name": "Arsenal",
+                    "crest": "https://example.test/arsenal.png",
+                },
+            },
+            {
+                "qualifier": "away",
+                "team": {
+                    "id": "chelsea",
+                    "name": "Chelsea",
+                    "crest": "https://example.test/chelsea.png",
+                },
+            },
+        ],
+    }
+    upserts = []
+
+    def fail_detail_sync(*args, **kwargs):
+        raise AssertionError("schedule mode should not run detail signal sync")
+
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            pass
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            if table_name in {"competitions", "teams"}:
+                return []
+            raise AssertionError(f"schedule mode should not read {table_name}")
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            upserts.append((table_name, rows))
+            return len(rows)
+
+    class FakeR2Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def archive_json(self, _key: str, _payload: dict) -> str:
+            return "r2://fixtures/2026-05-03.json"
+
+    monkeypatch.setenv("REAL_FIXTURE_DATE", "2026-05-03")
+    monkeypatch.setenv("REAL_FIXTURE_SYNC_MODE", "schedule")
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.fetch_daily_schedule",
+        lambda _target_date: {"data": {"events": [event]}},
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.build_lineup_context_by_match",
+        fail_detail_sync,
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.build_bsd_lineup_context_by_match",
+        fail_detail_sync,
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.build_bsd_event_signal_context_by_match",
+        fail_detail_sync,
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.build_external_signal_context_by_match",
+        fail_detail_sync,
+    )
+    monkeypatch.setattr("batch.src.jobs.ingest_fixtures_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr("batch.src.jobs.ingest_fixtures_job.R2Client", FakeR2Client)
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+                "bsd_api_key": "bsd-key",
+                "r2_bucket": "workflow-artifacts",
+                "r2_access_key_id": None,
+                "r2_secret_access_key": None,
+                "r2_s3_endpoint": None,
+            },
+        )(),
+    )
+
+    run_ingest_fixtures_job()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["fixture_rows"] == 1
+    assert payload["snapshot_rows"] == 0
+    assert payload["changed_match_ids"] == []
+    assert [table_name for table_name, _rows in upserts] == [
+        "competitions",
+        "teams",
+        "team_translations",
+        "matches",
+    ]
 
 
 def test_bucket_date_uses_latest_prior_stride_boundary():
