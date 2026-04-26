@@ -7,15 +7,17 @@
 - `T-1H`: 시작까지 70분 이내인 경기를 대상으로 15분마다 실행한다.
 - `LINEUP_CONFIRMED`: 라인업 상태가 `unknown`에서 `confirmed`로 바뀐 경기를 10분마다 감지해 큐에 적재한다.
 
-# 현재 구현된 자동화 매핑 (샘플/스모크 전용)
+# 현재 구현된 자동화 매핑
 
-- fixtures ingestion: 매시 `00분`에 실행하며, 기준 UTC 날짜 결과 갱신과 `+7일`부터 `+14일`까지의 예정 경기 선행 동기화를 함께 수행한다.
-- market ingestion: 매시 `15분`에 실행한다.
-- prediction refresh: fixtures/markets ingest 결과에서 실제로 변경된 `match_id` 가 있을 때만 즉시 후속 실행한다.
+- fixtures ingestion: UTC `01:00`, `13:00`에 실행하며, 기준 UTC 날짜와 `+7일`부터 `+14일`까지의 예정 경기 선행 동기화를 함께 수행한다.
+- market ingestion: 8시간마다 실행하며, 실제로 변경된 `match_id`가 있을 때만 prediction을 즉시 갱신한다.
+- match result sync: 2시간마다 실행하며, 킥오프 후 2시간이 지난 미종료 경기만 결과 동기화 대상으로 선별한다.
+- prediction checkpoint sync: 매시 `05분`에 실행하며, `T-72H` 예열, `T-24H`, `T-6H`, `T-1H` 윈도우를 막 지난 경기만 선별한다. `T-72H` 예열은 기존 `T_MINUS_24H` snapshot/prediction을 재사용하며 데일리 픽은 갱신하지 않는다.
+- daily pick refresh: prediction checkpoint sync에서 `T-24H`, `T-6H`, `T-1H` prediction이 갱신된 경기 날짜만 다시 계산하고 API artifact를 내보낸다.
 - 수동 prediction workflow: 필요할 때 `target_date` 또는 `target_match_ids` 로 직접 실행한다.
-- post-match review: 매시 `45분`에 실행한다.
+- post-match review: 하루 1회 실행하며, 별도 result sync가 변경 날짜만 즉시 후속 갱신한다.
 
-세부 checkpoint 분기와 `LINEUP_CONFIRMED` 전용 감지 로직은 현재 별도 워크플로로 분리하지 않았고, prediction batch 내부 분기 또는 후속 전용 작업으로 확장할 계획이다.
+`LINEUP_CONFIRMED` 전용 감지 로직은 현재 별도 워크플로로 분리하지 않았고, 기존 fixture ingestion에서 라인업 confirmed 상태가 감지될 때 snapshot으로 적재한다.
 
 현재 GitHub Actions 자동화는 샘플/스모크 파이프라인 기준이다. 실제 운영 데이터 소스나 운영용 Supabase 프로젝트에 그대로 연결하는 것을 전제로 하지 않는다.
 

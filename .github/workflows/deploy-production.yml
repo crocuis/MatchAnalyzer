@@ -8,6 +8,7 @@ on:
     workflows: [test]
     types:
       - completed
+    branches: [main]
   workflow_dispatch:
 
 concurrency:

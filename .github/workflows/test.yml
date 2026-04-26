@@ -35,6 +35,4 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: python3 -m pip install -r batch/requirements.txt
       - run: npm test
-      - run: npm --workspace apps/api run test
-      - run: npm --workspace apps/web run test
       - run: python3 -m pytest

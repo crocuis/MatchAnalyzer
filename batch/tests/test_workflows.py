@@ -11,6 +11,8 @@ def read_workflow(name: str) -> str:
 def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     workflow = read_workflow("ingest-fixtures.yml")
 
+    assert 'cron: "0 1,13 * * *"' in workflow
+    assert 'cron: "0 */6 * * *"' not in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
@@ -41,6 +43,8 @@ def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> 
 def test_ingest_markets_workflow_sets_real_market_date() -> None:
     workflow = read_workflow("ingest-markets.yml")
 
+    assert 'cron: "15 */8 * * *"' in workflow
+    assert 'cron: "15 */4 * * *"' not in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
@@ -54,12 +58,12 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
     assert "python3 -c" in workflow
 
 
-def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() -> None:
+def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run() -> None:
     workflow = read_workflow("run-predictions.yml")
 
-    assert "schedule:" in workflow
-    assert "# 12:00 Asia/Seoul" in workflow
-    assert 'cron: "0 3 * * *"' in workflow
+    assert "schedule:" not in workflow
+    assert "# 12:00 Asia/Seoul" not in workflow
+    assert 'cron: "0 3 * * *"' not in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "target_match_ids:" in workflow
@@ -76,7 +80,7 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     assert "R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}" in workflow
     assert "R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}" in workflow
     assert "R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}" in workflow
-    assert '[ "${{ github.event_name }}" = "schedule" ]' in workflow
+    assert '[ "${{ github.event_name }}" = "schedule" ]' not in workflow
     assert "DAILY_PICK_SYNC_ENABLED=0" in workflow
     assert "DAILY_PICK_SYNC_ENABLED=1" in workflow
     assert "DAILY_PICK_SYNC_DATE=" in workflow
@@ -91,10 +95,29 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     assert "if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}" in workflow
 
 
+def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick_dates() -> None:
+    workflow = read_workflow("sync-prediction-checkpoints.yml")
+
+    assert 'cron: "5 * * * *"' in workflow
+    assert "PREDICTION_SYNC_LOOKBACK_MINUTES:" in workflow
+    assert "github.event.inputs.lookback_minutes || '60'" in workflow
+    assert "LLM_PREDICTION_ADVISORY_ENABLED:" in workflow
+    assert "python3 -m batch.src.jobs.sync_prediction_checkpoints_job" in workflow
+    assert "SYNC_TARGET_MATCH_IDS" in workflow
+    assert "SYNC_DAILY_PICK_DATES" in workflow
+    assert "No due prediction checkpoints detected; skipping prediction refresh." in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$SYNC_TARGET_MATCH_IDS"' in workflow
+    assert "REAL_PREDICTION_MATCH_IDS=\"$SYNC_TARGET_MATCH_IDS\"" in workflow
+    assert "No daily-pick prediction checkpoints changed; skipping daily pick refresh." in workflow
+    assert "DAILY_PICK_SYNC_DATE=\"$TARGET_DATE\"" in workflow
+    assert "DAILY_PICK_ARTIFACT_DATE=\"$TARGET_DATE\"" in workflow
+
+
 def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() -> None:
     workflow = read_workflow("post-match-review.yml")
 
-    assert 'cron: "45 */6 * * *"' in workflow
+    assert 'cron: "45 */6 * * *"' not in workflow
     assert 'cron: "20 4 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
@@ -150,6 +173,7 @@ def test_deploy_production_workflow_waits_for_main_ci_and_runs_ordered_deploy_st
 
     assert "workflow_run:" in workflow
     assert "workflows: [test]" in workflow
+    assert "branches: [main]" in workflow
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "environment: production" in workflow
     assert "npm install" in workflow
@@ -158,6 +182,33 @@ def test_deploy_production_workflow_waits_for_main_ci_and_runs_ordered_deploy_st
     assert "npm run deploy:api" in workflow
     assert "npm run deploy:web" in workflow
     assert "Smoke check production endpoints" in workflow
+
+
+def test_test_workflow_avoids_duplicate_workspace_runs_without_lockfile_cache() -> None:
+    workflow = read_workflow("test.yml")
+
+    assert 'cache: "npm"' not in workflow
+    assert "npm test" in workflow
+    assert "npm --workspace apps/api run test" not in workflow
+    assert "npm --workspace apps/web run test" not in workflow
+
+
+def test_sync_match_results_workflow_runs_every_two_hours_and_reviews_changed_dates() -> None:
+    workflow = read_workflow("sync-match-results.yml")
+
+    assert 'cron: "35 */2 * * *"' in workflow
+    assert "RESULT_SYNC_DELAY_HOURS:" in workflow
+    assert "github.event.inputs.delay_hours || '2'" in workflow
+    assert "RESULT_SYNC_LOOKBACK_HOURS:" in workflow
+    assert "github.event.inputs.lookback_hours || '48'" in workflow
+    assert "python3 -m batch.src.jobs.sync_match_results_job" in workflow
+    assert "SYNC_CHANGED_DATES" in workflow
+    assert "No changed match results detected; skipping review refresh." in workflow
+    assert "REAL_REVIEW_DATE=\"$TARGET_DATE\"" in workflow
+    assert 'LLM_REVIEW_ADVISORY_ENABLED: "0"' in workflow
+    assert "python3 -m batch.src.jobs.run_post_match_review_job" in workflow
+    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
+    assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
 
 
 def test_deploy_production_workflow_documents_required_production_secrets() -> None:

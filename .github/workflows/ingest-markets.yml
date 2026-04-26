@@ -5,7 +5,8 @@ permissions:
 
 on:
   schedule:
-    - cron: "15 */4 * * *"
+    # Every 8 hours. Manual dispatch remains available for urgent market refreshes.
+    - cron: "15 */8 * * *"
   workflow_dispatch:
     inputs:
       target_date:

@@ -1,0 +1,131 @@
+import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import batch.src.jobs.sync_prediction_checkpoints_job as sync_job
+
+
+def _match(match_id: str, kickoff_at: str) -> dict:
+    return {
+        "id": match_id,
+        "competition_id": "premier-league",
+        "season": "premier-league-2026",
+        "kickoff_at": kickoff_at,
+        "home_team_id": "arsenal",
+        "away_team_id": "chelsea",
+        "final_result": None,
+    }
+
+
+def test_select_due_prediction_targets_uses_checkpoint_windows_and_daily_pick_subset():
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+
+    targets = sync_job.select_due_prediction_targets(
+        [
+            _match("warmup", "2026-04-29T11:30:00+00:00"),
+            _match("day_before", "2026-04-27T11:45:00+00:00"),
+            _match("six_hours", "2026-04-26T17:30:00+00:00"),
+            _match("one_hour", "2026-04-26T12:45:00+00:00"),
+            _match("too_early", "2026-04-27T13:45:00+00:00"),
+            {
+                **_match("settled", "2026-04-26T12:45:00+00:00"),
+                "final_result": "HOME",
+            },
+        ],
+        now=now,
+        lookback_minutes=90,
+    )
+
+    assert [(target.match_id, target.checkpoint) for target in targets] == [
+        ("one_hour", "T_MINUS_1H"),
+        ("six_hours", "T_MINUS_6H"),
+        ("day_before", "T_MINUS_24H"),
+        ("warmup", "T_MINUS_24H"),
+    ]
+    assert [target.match_id for target in targets if target.refresh_daily_pick] == [
+        "one_hour",
+        "six_hours",
+        "day_before",
+    ]
+
+
+def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(monkeypatch):
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+    state = {
+        "matches": [
+            _match("day_before", "2026-04-27T11:45:00+00:00"),
+            _match("six_hours", "2026-04-26T17:30:00+00:00"),
+        ],
+        "match_snapshots": [
+            {
+                "id": "six_hours_t_minus_24h",
+                "match_id": "six_hours",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-25T17:30:00+00:00",
+                "lineup_status": "unknown",
+                "snapshot_quality": "complete",
+                "external_home_elo": 0.1,
+                "external_away_elo": -0.1,
+                "external_signal_source_summary": "clubelo",
+            }
+        ],
+        "teams": [
+            {"id": "arsenal", "name": "Arsenal"},
+            {"id": "chelsea", "name": "Chelsea"},
+        ],
+    }
+    upserts = []
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            assert table_name == "match_snapshots"
+            upserts.append(rows)
+            state[table_name] = [*state[table_name], *rows]
+            return len(rows)
+
+    result = sync_job.sync_prediction_checkpoints(
+        FakeClient(),
+        now=now,
+        lookback_minutes=90,
+    )
+
+    assert result["target_match_ids"] == ["day_before", "six_hours"]
+    assert result["daily_pick_dates"] == ["2026-04-26", "2026-04-27"]
+    assert result["target_count"] == 2
+    assert result["snapshot_rows"] == 2
+    rows_by_id = {row["id"]: row for row in upserts[0]}
+    assert rows_by_id["day_before_t_minus_24h"]["checkpoint_type"] == "T_MINUS_24H"
+    assert rows_by_id["six_hours_t_minus_6h"]["checkpoint_type"] == "T_MINUS_6H"
+    assert rows_by_id["six_hours_t_minus_6h"]["external_signal_source_summary"] == "clubelo"
+
+
+def test_main_prints_prediction_checkpoint_sync_result(monkeypatch, capsys):
+    class FakeClient:
+        def __init__(self, _url: str, _key: str) -> None:
+            pass
+
+    monkeypatch.setattr(
+        sync_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(sync_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        sync_job,
+        "sync_prediction_checkpoints",
+        lambda client, **kwargs: {
+            "target_match_ids": ["day_before"],
+            "daily_pick_dates": ["2026-04-27"],
+        },
+    )
+    monkeypatch.setenv("PREDICTION_SYNC_NOW", "2026-04-26T12:00:00+00:00")
+
+    sync_job.main()
+
+    assert json.loads(capsys.readouterr().out) == {
+        "daily_pick_dates": ["2026-04-27"],
+        "target_match_ids": ["day_before"],
+    }

@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "45 */6 * * *"
+    # Daily settled review for yesterday; manual dispatch covers ad-hoc catch-up.
     - cron: "20 4 * * *"
   workflow_dispatch:
     inputs:
