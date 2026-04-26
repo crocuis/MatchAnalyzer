@@ -171,7 +171,7 @@ def select_real_prediction_inputs(
         else {
             row["id"]
             for row in match_rows
-            if target_date and str(row.get("kickoff_at") or "")[:10] <= target_date
+            if target_date and row.get("kickoff_at", "").startswith(target_date)
         }
     )
     selected_snapshots = [
