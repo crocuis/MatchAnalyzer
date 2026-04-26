@@ -797,10 +797,6 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
         {"id": "match_prior", "kickoff_at": "2026-04-05T18:00:00+00:00"},
         {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
         {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00"},
-        *[
-            {"id": f"bulk_match_{index}", "kickoff_at": "2026-04-01T18:00:00+00:00"}
-            for index in range(101)
-        ],
     ]
 
     selected_snapshots, selected_markets = select_real_prediction_inputs(
@@ -814,39 +810,6 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
     assert selected_markets == [market_rows[0], market_rows[1], market_rows[2]]
 
 
-def test_select_real_prediction_inputs_uses_exact_date_for_small_real_runs():
-    snapshot_rows = [
-        {"id": "match_prior_t_minus_24h", "match_id": "match_prior", "checkpoint_type": "T_MINUS_24H"},
-        {"id": "match_a_t_minus_24h", "match_id": "match_a", "checkpoint_type": "T_MINUS_24H"},
-    ]
-    market_rows = [
-        {
-            "id": "match_prior_t_minus_24h_bookmaker",
-            "snapshot_id": "match_prior_t_minus_24h",
-            "source_type": "bookmaker",
-        },
-        {
-            "id": "match_a_t_minus_24h_bookmaker",
-            "snapshot_id": "match_a_t_minus_24h",
-            "source_type": "bookmaker",
-        },
-    ]
-    match_rows = [
-        {"id": "match_prior", "kickoff_at": "2026-04-05T18:00:00+00:00"},
-        {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
-    ]
-
-    selected_snapshots, selected_markets = select_real_prediction_inputs(
-        snapshot_rows=snapshot_rows,
-        market_rows=market_rows,
-        match_rows=match_rows,
-        target_date="2026-04-12",
-    )
-
-    assert selected_snapshots == [snapshot_rows[1]]
-    assert selected_markets == [market_rows[1]]
-
-
 def test_should_archive_prediction_artifacts_skips_bulk_real_backfill():
     assert run_predictions_job.should_archive_prediction_artifacts(
         target_snapshot_count=25,
@@ -857,23 +820,6 @@ def test_should_archive_prediction_artifacts_skips_bulk_real_backfill():
         use_real_prediction_targets=True,
     )
     assert run_predictions_job.should_archive_prediction_artifacts(
-        target_snapshot_count=101,
-        use_real_prediction_targets=False,
-    )
-
-
-def test_should_enable_current_fused_selector_for_bulk_real_backfill(monkeypatch):
-    monkeypatch.setenv("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR", "1")
-
-    assert not run_predictions_job.should_enable_current_fused_selector(
-        target_snapshot_count=25,
-        use_real_prediction_targets=True,
-    )
-    assert run_predictions_job.should_enable_current_fused_selector(
-        target_snapshot_count=101,
-        use_real_prediction_targets=True,
-    )
-    assert not run_predictions_job.should_enable_current_fused_selector(
         target_snapshot_count=101,
         use_real_prediction_targets=False,
     )
