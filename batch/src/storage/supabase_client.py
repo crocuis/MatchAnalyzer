@@ -8,6 +8,47 @@ from urllib.request import Request, urlopen
 
 REMOTE_READ_PAGE_SIZE = 1000
 
+REMOTE_READ_DEFAULT_COLUMNS = {
+    "prediction_feature_snapshots": (
+        "id",
+        "prediction_id",
+        "snapshot_id",
+        "match_id",
+        "model_version_id",
+        "checkpoint_type",
+        "feature_context",
+        "feature_metadata",
+        "created_at",
+    ),
+    "predictions": (
+        "id",
+        "snapshot_id",
+        "match_id",
+        "created_at",
+        "model_version_id",
+        "home_prob",
+        "draw_prob",
+        "away_prob",
+        "recommended_pick",
+        "confidence_score",
+        "explanation_artifact_id",
+        "summary_payload",
+        "main_recommendation_pick",
+        "main_recommendation_confidence",
+        "main_recommendation_recommended",
+        "main_recommendation_no_bet_reason",
+        "value_recommendation_pick",
+        "value_recommendation_recommended",
+        "value_recommendation_edge",
+        "value_recommendation_expected_value",
+        "value_recommendation_market_price",
+        "value_recommendation_model_probability",
+        "value_recommendation_market_probability",
+        "value_recommendation_market_source",
+        "variant_markets_summary",
+    ),
+}
+
 
 def validate_table_name(table: str) -> str:
     if not table or "/" in table or "\\" in table or ".." in table:
@@ -224,6 +265,7 @@ class SupabaseClient:
     def read_rows(self, table: str, columns: tuple[str, ...] | None = None) -> list[dict]:
         table_name = validate_table_name(table)
         if not self._use_file_backend():
+            columns = columns or REMOTE_READ_DEFAULT_COLUMNS.get(table_name)
             return self._read_rows_remote(table_name, columns=columns)
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]

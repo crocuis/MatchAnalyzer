@@ -219,6 +219,46 @@ describe("supabase schema integration", () => {
     expect(bsdEventSignalColumns.rows[0]?.count).toBe(4);
   });
 
+  it("keeps query performance indexes for dashboard projections", async () => {
+    const db = await createDb();
+
+    const indexes = await db.query<{ tablename: string; indexname: string }>(
+      `select tablename, indexname
+       from pg_indexes
+       where schemaname = 'public'
+         and indexname in (
+           'matches_competition_kickoff_idx',
+           'predictions_match_created_idx',
+           'prediction_feature_snapshots_match_id_idx'
+         )
+       order by tablename, indexname`,
+    );
+
+    expect(indexes.rows).toEqual([
+      {
+        tablename: "matches",
+        indexname: "matches_competition_kickoff_idx",
+      },
+      {
+        tablename: "prediction_feature_snapshots",
+        indexname: "prediction_feature_snapshots_match_id_idx",
+      },
+      {
+        tablename: "predictions",
+        indexname: "predictions_match_created_idx",
+      },
+    ]);
+
+    const redundantIndexes = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from pg_indexes
+       where schemaname = 'public'
+         and indexname in ('matches_competition_id_idx', 'predictions_match_id_idx')`,
+    );
+
+    expect(redundantIndexes.rows[0]?.count).toBe(0);
+  });
+
   it("exposes dashboard league counts through the summary view", async () => {
     const db = await createDb();
 
