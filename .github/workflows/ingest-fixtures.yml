@@ -5,7 +5,8 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    # 10:00 and 22:00 Asia/Seoul. Keep this below 3/day unless freshness needs change.
+    - cron: "0 1,13 * * *"
   workflow_dispatch:
     inputs:
       target_date:
