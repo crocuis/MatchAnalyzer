@@ -715,6 +715,10 @@ function buildVariantPick(
   ) {
     const reliabilityHoldReason = resolveReliabilityHoldReason(base);
     const status = reliabilityHoldReason === null ? "recommended" : "held";
+    const reasonLabels =
+      reliabilityHoldReason === null
+        ? [rawFamily, "variantRecommendation"]
+        : [rawFamily, "heldByRecommendationGate", reliabilityHoldReason];
     return {
       ...base,
       id: `${base.matchId}:${rawFamily}:${variant.recommendedPick}`,
@@ -732,10 +736,7 @@ function buildVariantPick(
       validationMetadata: base.validationMetadata,
       status,
       noBetReason: reliabilityHoldReason,
-      reasonLabels:
-        status === "held"
-          ? [rawFamily, "heldByRecommendationGate", reliabilityHoldReason]
-          : [rawFamily, "variantRecommendation"],
+      reasonLabels,
     };
   }
 
@@ -922,7 +923,7 @@ dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
     const supabase = getSupabaseClient(c.env);
     const marketFamilyQuery = c.req.query("marketFamily");
-    const marketFamily =
+    const marketFamily: LoadDailyPicksOptions["marketFamily"] =
       marketFamilyQuery === "moneyline"
       || marketFamilyQuery === "spreads"
       || marketFamilyQuery === "totals"

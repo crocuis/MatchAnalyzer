@@ -140,10 +140,10 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   border-radius: 32px;
   padding: 1.5px;
   background: linear-gradient(
-    135deg, 
-    rgba(79, 70, 229, 0.4), 
-    rgba(129, 140, 248, 0.2), 
-    rgba(192, 132, 252, 0.4), 
+    135deg,
+    rgba(79, 70, 229, 0.4),
+    rgba(129, 140, 248, 0.2),
+    rgba(192, 132, 252, 0.4),
     rgba(79, 70, 229, 0.4)
   );
   background-size: 300% 300%;
