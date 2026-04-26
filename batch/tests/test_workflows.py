@@ -68,8 +68,11 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     assert "NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}" in workflow
     assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
     assert '[ "${{ github.event_name }}" = "schedule" ]' in workflow
+    assert "DAILY_PICK_SYNC_ENABLED=0" in workflow
+    assert "DAILY_PICK_SYNC_ENABLED=1" in workflow
     assert "DAILY_PICK_SYNC_DATE=" in workflow
     assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
+    assert "if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}" in workflow
 
 
 def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() -> None:

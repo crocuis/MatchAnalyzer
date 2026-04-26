@@ -44,6 +44,7 @@ from batch.src.jobs.ingest_markets_job import (
     select_real_market_snapshots,
 )
 from batch.src.jobs.backfill_external_prediction_signals_job import (
+    build_clubelo_contexts_by_snapshot_id,
     build_external_signal_snapshot_updates,
     bucket_date,
     snapshot_as_of_date,
@@ -54,6 +55,7 @@ from batch.src.jobs.ingest_fixtures_job import (
     build_team_translation_rows,
     collect_changed_fixture_match_ids,
     prepare_sync_asset_rows,
+    resolve_external_signal_as_of_date,
     should_backfill_real_fixture_team_assets,
     should_hydrate_real_fixture_history,
 )
@@ -2774,9 +2776,68 @@ def test_snapshot_as_of_date_rewinds_posthoc_captured_settled_snapshots():
     )
 
 
+def test_fixture_ingest_uses_fixture_date_for_external_signal_context():
+    assert resolve_external_signal_as_of_date("2026-04-24") == "2026-04-24"
+
+
 def test_bucket_date_uses_latest_prior_stride_boundary():
     assert bucket_date("2026-04-26", stride_days=7) <= "2026-04-26"
     assert bucket_date("2026-04-26", stride_days=1) == "2026-04-26"
+
+
+def test_clubelo_backfill_uses_snapshot_as_of_context(monkeypatch):
+    requested_dates: list[str] = []
+
+    def fake_fetch_clubelo_ratings(as_of_date: str):
+        requested_dates.append(as_of_date)
+        return [
+            {"Club": "Chelsea", "Elo": "1800" if as_of_date == "2026-04-23" else "1810"},
+            {"Club": "Arsenal", "Elo": "1750" if as_of_date == "2026-04-23" else "1760"},
+        ]
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_external_prediction_signals_job.fetch_clubelo_ratings",
+        fake_fetch_clubelo_ratings,
+    )
+
+    contexts = build_clubelo_contexts_by_snapshot_id(
+        snapshots=[
+            {
+                "id": "snapshot_early",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-23T18:00:00+00:00",
+            },
+            {
+                "id": "snapshot_late",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_1H",
+                "captured_at": "2026-04-24T17:00:00+00:00",
+            },
+        ],
+        matches_by_id={
+            "match_001": {
+                "id": "match_001",
+                "kickoff_at": "2026-04-24T18:00:00+00:00",
+            }
+        },
+        events_by_match_id={
+            "match_001": {
+                "id": "match_001",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        },
+        date_stride_days=1,
+    )
+
+    assert requested_dates == ["2026-04-23", "2026-04-24"]
+    assert contexts["snapshot_early"]["external_home_elo"] == 1800.0
+    assert contexts["snapshot_early"]["external_away_elo"] == 1750.0
+    assert contexts["snapshot_late"]["external_home_elo"] == 1810.0
+    assert contexts["snapshot_late"]["external_away_elo"] == 1760.0
 
 
 def test_build_external_signal_snapshot_updates_merges_clubelo_and_understat(
@@ -2858,6 +2919,69 @@ def test_build_external_signal_snapshot_updates_merges_clubelo_and_understat(
             "understat_away_xg_for_last_5": 1.2,
             "understat_away_xg_against_last_5": 0.7,
             "external_signal_source_summary": "clubelo+understat",
+        }
+    ]
+
+
+def test_external_signal_snapshot_updates_preserve_existing_partial_fields(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_external_prediction_signals_job.fetch_clubelo_ratings",
+        lambda as_of_date: [
+            {"Club": "Chelsea", "Elo": "1810"},
+            {"Club": "Arsenal", "Elo": "1760"},
+        ],
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_external_prediction_signals_job.fetch_understat_league_data",
+        lambda league, season_start_year: {},
+    )
+
+    updates, _metadata = build_external_signal_snapshot_updates(
+        snapshots=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-24T18:00:00+00:00",
+                "understat_home_xg_for_last_5": 2.0,
+                "understat_home_xg_against_last_5": 1.0,
+                "understat_away_xg_for_last_5": 1.2,
+                "understat_away_xg_against_last_5": 0.7,
+                "external_signal_source_summary": "understat",
+            }
+        ],
+        matches=[
+            {
+                "id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T18:00:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "arsenal",
+            }
+        ],
+        teams=[
+            {"id": "chelsea", "name": "Chelsea"},
+            {"id": "arsenal", "name": "Arsenal"},
+        ],
+    )
+
+    assert updates == [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_24H",
+            "captured_at": "2026-04-24T18:00:00+00:00",
+            "lineup_status": None,
+            "snapshot_quality": None,
+            "external_home_elo": 1810.0,
+            "external_away_elo": 1760.0,
+            "understat_home_xg_for_last_5": 2.0,
+            "understat_home_xg_against_last_5": 1.0,
+            "understat_away_xg_for_last_5": 1.2,
+            "understat_away_xg_against_last_5": 0.7,
+            "external_signal_source_summary": "understat+clubelo",
         }
     ]
 

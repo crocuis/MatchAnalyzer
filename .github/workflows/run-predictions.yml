@@ -67,6 +67,7 @@ jobs:
           TARGET_MATCH_IDS="${{ github.event.inputs.target_match_ids }}"
           if [ -n "$TARGET_MATCH_IDS" ]; then
             echo "REAL_PREDICTION_MATCH_IDS=$TARGET_MATCH_IDS" >> "$GITHUB_ENV"
+            echo "DAILY_PICK_SYNC_ENABLED=0" >> "$GITHUB_ENV"
             exit 0
           fi
           TARGET_DATE="${{ github.event.inputs.target_date }}"
@@ -74,6 +75,7 @@ jobs:
             TARGET_DATE="$(date -u +%F)"
           fi
           echo "REAL_PREDICTION_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
+          echo "DAILY_PICK_SYNC_ENABLED=1" >> "$GITHUB_ENV"
       - name: Resolve LLM advisory settings
         shell: bash
         run: |
@@ -94,6 +96,7 @@ jobs:
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_predictions_job
       - name: Sync daily pick snapshot
+        if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}
         run: |
           DAILY_PICK_SYNC_DATE="${REAL_PREDICTION_DATE:-$(date -u +%F)}" \
             python3 -m batch.src.jobs.run_daily_pick_tracking_job

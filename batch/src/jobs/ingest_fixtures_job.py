@@ -213,6 +213,10 @@ def should_backfill_real_fixture_team_assets() -> bool:
     }
 
 
+def resolve_external_signal_as_of_date(fixture_date: str) -> str:
+    return fixture_date
+
+
 def hydrate_recent_historical_matches(
     match_rows: list[dict],
     historical_matches: list[dict],
@@ -343,7 +347,7 @@ def main() -> None:
             archive_payload["bsd_lineup_context_by_match"] = bsd_lineup_context_by_match
         external_signal_context_by_match = build_external_signal_context_by_match(
             events,
-            as_of_date=datetime.now(timezone.utc).date().isoformat(),
+            as_of_date=resolve_external_signal_as_of_date(use_real_schedule),
         )
         if external_signal_context_by_match:
             archive_payload["external_signal_context_by_match"] = (
