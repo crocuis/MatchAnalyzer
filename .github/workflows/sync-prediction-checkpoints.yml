@@ -48,6 +48,8 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_APP_URL: ${{ vars.OPENROUTER_APP_URL }}
       OPENROUTER_APP_TITLE: ${{ vars.OPENROUTER_APP_TITLE }}
+      BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
+      BSD_LINEUP_LOOKAHEAD_HOURS: 48
       PREDICTION_SYNC_LOOKBACK_MINUTES: ${{ github.event.inputs.lookback_minutes || '60' }}
       LLM_PREDICTION_ADVISORY_ENABLED: ${{ github.event.inputs.enable_llm_advisory == 'true' && '1' || '0' }}
       LLM_PROVIDER: ${{ github.event.inputs.llm_provider || 'nvidia' }}

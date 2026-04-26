@@ -2149,6 +2149,171 @@ describe("prediction API", () => {
     expect(supabase.from).toHaveBeenCalledTimes(1);
   });
 
+  it("falls back to persisted daily pick tracking rows when the date artifact is unavailable", async () => {
+    const supabase = buildTableSupabase({
+      daily_pick_items: [
+        {
+          id: "daily_pick_item_1",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "moneyline",
+          selection_label: "HOME",
+          confidence: 0.82,
+          score: 0.82,
+          status: "recommended",
+          validation_metadata: {
+            confidence_reliability: "validated",
+            sample_count: 80,
+          },
+          reason_labels: ["mainRecommendation"],
+        },
+      ],
+      daily_pick_runs: [
+        {
+          id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          generated_at: "2026-04-24T03:00:00Z",
+        },
+      ],
+      daily_pick_results: [],
+      daily_pick_performance_summary: [
+        {
+          id: "all",
+          sample_count: 80,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.64,
+        },
+      ],
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "league-1",
+          kickoff_at: "2026-04-24T12:00:00Z",
+          home_team_id: "team-home",
+          away_team_id: "team-away",
+        },
+      ],
+      teams: [
+        { id: "team-home", name: "Arsenal", crest_url: "home.png" },
+        { id: "team-away", name: "Chelsea", crest_url: "away.png" },
+      ],
+      competitions: [
+        { id: "league-1", name: "Premier League" },
+      ],
+    });
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("tracked-fallback");
+    const body = await response.json() as {
+      generatedAt: string;
+      validation: { sampleCount: number };
+      coverage: Record<string, number>;
+      items: Array<{
+        matchId: string;
+        status: string;
+        confidenceReliability: string | null;
+      }>;
+    };
+    expect(body.generatedAt).toBe("2026-04-24T03:00:00Z");
+    expect(body.validation.sampleCount).toBe(80);
+    expect(body.coverage).toEqual({
+      moneyline: 1,
+      spreads: 0,
+      totals: 0,
+      held: 0,
+    });
+    expect(body.items).toEqual([
+      expect.objectContaining({
+        matchId: "match-1",
+        status: "recommended",
+        confidenceReliability: "validated",
+      }),
+    ]);
+  });
+
+  it("falls back to computed daily picks when tracking tables are unavailable", async () => {
+    setDailyPicksClock();
+    const baseSupabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: validatedDailyPickSummary(),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+      daily_pick_performance_summary: [
+        {
+          id: "all",
+          sample_count: 76,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.6422,
+        },
+      ],
+    });
+    const baseFrom = baseSupabase.from.bind(baseSupabase);
+    const missingTrackingQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'relation "daily_pick_items" does not exist' },
+      }),
+    };
+    const supabase: MockSupabaseClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "daily_pick_items"
+          ? missingTrackingQuery
+          : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("fallback");
+    const body = await response.json() as {
+      items: Array<{ matchId: string; marketFamily: string }>;
+    };
+    expect(body.items).toEqual([
+      expect.objectContaining({
+        matchId: "match-1",
+        marketFamily: "moneyline",
+      }),
+    ]);
+  });
+
   it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
     const selectedColumns: string[] = [];
     const query = {

@@ -63,6 +63,7 @@ class Settings:
     llm_retry_count: int = DEFAULT_NVIDIA_RETRY_COUNT
     llm_retry_backoff_seconds: float = DEFAULT_NVIDIA_RETRY_BACKOFF_SECONDS
     odds_api_key: str | None = None
+    odds_api_io_bookmakers: str = "Bet365,Unibet"
     bsd_api_key: str | None = None
 
     @property
@@ -181,5 +182,6 @@ def load_settings() -> Settings:
             env("LLM_RETRY_BACKOFF_SECONDS") or DEFAULT_NVIDIA_RETRY_BACKOFF_SECONDS
         ),
         odds_api_key=env("ODDS_API_KEY"),
+        odds_api_io_bookmakers=env("ODDS_API_IO_BOOKMAKERS") or "Bet365,Unibet",
         bsd_api_key=env("BSD_API_KEY"),
     )

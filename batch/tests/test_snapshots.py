@@ -124,6 +124,30 @@ def test_external_signal_migration_adds_clubelo_and_understat_columns():
     assert "external_signal_source_summary text" in migration
 
 
+def test_market_probability_family_backfill_migration_repairs_existing_tables():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260426085800_add_market_probabilities_market_family.sql"
+        ).read_text()
+    )
+
+    assert "alter table public.market_probabilities" in migration
+    assert "add column if not exists market_family text not null default 'moneyline_3way'" in migration
+
+
+def test_bsd_event_signal_migration_adds_snapshot_xg_columns():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260426085900_add_bsd_event_snapshot_signals.sql"
+        ).read_text()
+    )
+
+    assert "bsd_actual_home_xg numeric" in migration
+    assert "bsd_actual_away_xg numeric" in migration
+    assert "bsd_home_xg_live numeric" in migration
+    assert "bsd_away_xg_live numeric" in migration
+
+
 def test_prediction_feature_snapshot_migration_captures_context_and_metadata():
     migration = normalize_sql(
         Path(
@@ -436,7 +460,7 @@ def test_build_feature_vector_prefers_explicit_strength_and_schedule_fields():
     assert features["fixture_congestion_delta"] == 2
 
 
-def test_build_feature_vector_prefers_external_rating_and_understat_xg_when_available():
+def test_build_feature_vector_keeps_internal_and_external_signals_separate():
     features = build_feature_vector(
         {
             "form_delta": 2,
@@ -464,7 +488,15 @@ def test_build_feature_vector_prefers_external_rating_and_understat_xg_when_avai
     )
 
     assert round(features["elo_delta"], 2) == 0.5
+    assert round(features["internal_elo_delta"], 2) == 0.0
+    assert round(features["external_elo_delta"], 2) == 0.5
+    assert round(features["rating_delta_disagreement"], 2) == 0.5
     assert round(features["xg_proxy_delta"], 2) == 1.2
+    assert round(features["canonical_xg_delta"], 2) == 0.0
+    assert round(features["understat_xg_delta"], 2) == 1.2
+    assert round(features["xg_delta_disagreement"], 2) == 1.2
+    assert features["external_rating_available"] == 1
+    assert features["understat_xg_available"] == 1
 
 
 def test_feature_metadata_treats_external_rating_and_understat_as_resolved_signals():

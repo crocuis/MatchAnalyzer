@@ -23,6 +23,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      ODDS_API_IO_BOOKMAKERS: Bet365,Unibet
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 8

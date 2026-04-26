@@ -127,11 +127,17 @@ type BuildDailyPicksArgs = {
 };
 
 const DAILY_PICK_SELECTS: Record<string, string> = {
+  matches: "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result",
   teams: "id, name, crest_url",
   competitions: "id, name",
   match_snapshots: "id, match_id, checkpoint_type",
   predictions:
     "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
+  daily_pick_runs: "id, pick_date, generated_at, status",
+  daily_pick_items:
+    "id, run_id, pick_date, match_id, prediction_id, market_family, selection_label, line_value, market_price, model_probability, market_probability, expected_value, edge, confidence, score, status, validation_metadata, reason_labels, created_at",
+  daily_pick_results:
+    "id, pick_item_id, result_status",
   daily_pick_performance_summary:
     "id, sample_count, hit_rate, wilson_lower_bound",
 };
@@ -228,6 +234,23 @@ async function readRowsByIds(
     .from(tableName)
     .select(DAILY_PICK_SELECTS[tableName] ?? columnName)
     .in(columnName, ids);
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+  return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
+}
+
+async function readRowsByColumnValue(
+  supabase: ApiSupabaseClient,
+  tableName: string,
+  columnName: string,
+  value: string,
+): Promise<DailyPickRow[]> {
+  const result = await supabase
+    .from(tableName)
+    .select(DAILY_PICK_SELECTS[tableName] ?? "id")
+    .eq(columnName, value)
+    .order("id");
   if (result.error) {
     throw new Error(result.error.message);
   }
@@ -919,6 +942,241 @@ async function loadDailyPicksArtifactView(
   };
 }
 
+async function loadTrackedDailyPicksView(
+  supabase: ApiSupabaseClient,
+  options: LoadDailyPicksOptions,
+): Promise<DailyPicksView | null> {
+  const normalizedOptions = {
+    ...options,
+    date: resolveRequestedDate(options.date),
+  };
+  if (!normalizedOptions.date || normalizedOptions.includeHeld === true) {
+    return null;
+  }
+
+  const pickRows = await readRowsByColumnValue(
+    supabase,
+    "daily_pick_items",
+    "pick_date",
+    normalizedOptions.date,
+  );
+  if (pickRows.length === 0) {
+    return null;
+  }
+
+  const matchIds = [...new Set(pickRows.flatMap((row) => {
+    const matchId = readString(row.match_id);
+    return matchId ? [matchId] : [];
+  }))];
+  const [matches, results, runs, performanceSummary] = await Promise.all([
+    readRowsByIds(supabase, "matches", matchIds),
+    readRowsByIds(
+      supabase,
+      "daily_pick_results",
+      pickRows.flatMap((row) => {
+        const id = readString(row.id);
+        return id ? [id] : [];
+      }),
+      "pick_item_id",
+    ),
+    readRowsByColumnValue(supabase, "daily_pick_runs", "pick_date", normalizedOptions.date),
+    readDailyPickPerformanceSummary(supabase),
+  ]);
+  const matchesById = new Map(
+    matches.flatMap((row) => {
+      const id = readString(row.id);
+      return id ? [[id, row] as const] : [];
+    }),
+  );
+  const teamIds = [...new Set(matches.flatMap((row) => {
+    const ids = [readString(row.home_team_id), readString(row.away_team_id)].filter(
+      (value): value is string => value !== null,
+    );
+    return ids;
+  }))];
+  const competitionIds = [...new Set(matches.flatMap((row) => {
+    const id = readString(row.competition_id);
+    return id ? [id] : [];
+  }))];
+  const [teams, competitions, teamTranslations] = await Promise.all([
+    readRowsByIds(supabase, "teams", teamIds),
+    readRowsByIds(supabase, "competitions", competitionIds),
+    loadPreferredTeamTranslations(supabase, teamIds, normalizedOptions.locale),
+  ]);
+  const teamsById = new Map(
+    teams.flatMap((row) => {
+      const id = readString(row.id);
+      return id ? [[id, row] as const] : [];
+    }),
+  );
+  const competitionsById = new Map(
+    competitions.flatMap((row) => {
+      const id = readString(row.id);
+      return id ? [[id, row] as const] : [];
+    }),
+  );
+  const resultsByItemId = new Map(
+    results.flatMap((row) => {
+      const itemId = readString(row.pick_item_id);
+      return itemId ? [[itemId, row] as const] : [];
+    }),
+  );
+
+  const scoredItems = pickRows.flatMap((row) => {
+    const match = matchesById.get(readString(row.match_id) ?? "");
+    if (!match) {
+      return [];
+    }
+    const item = buildTrackedDailyPickItem({
+      pick: row,
+      match,
+      teamsById,
+      teamTranslations,
+      competitionsById,
+      result: resultsByItemId.get(readString(row.id) ?? ""),
+    });
+    if (!item) {
+      return [];
+    }
+    if (
+      normalizedOptions.leagueId
+      && item.leagueId !== normalizedOptions.leagueId
+    ) {
+      return [];
+    }
+    if (
+      normalizedOptions.marketFamily
+      && normalizedOptions.marketFamily !== "all"
+      && item.marketFamily !== normalizedOptions.marketFamily
+    ) {
+      return [];
+    }
+    return [{ item, score: readNumber(row.score) ?? 0 }];
+  });
+
+  const sortedItems = scoredItems
+    .sort((left, right) => (
+      right.score - left.score
+      || compareDailyPicks(left.item, right.item)
+    ))
+    .map((row) => row.item);
+  const visibleItems = sortedItems.slice(0, 10);
+
+  return {
+    generatedAt: readString(runs[0]?.generated_at) ?? new Date().toISOString(),
+    date: normalizedOptions.date,
+    target: EMPTY_VIEW.target,
+    validation: performanceSummary ?? EMPTY_VIEW.validation,
+    coverage: {
+      moneyline: sortedItems.filter((item) => item.marketFamily === "moneyline").length,
+      spreads: sortedItems.filter((item) => item.marketFamily === "spreads").length,
+      totals: sortedItems.filter((item) => item.marketFamily === "totals").length,
+      held: 0,
+    },
+    items: visibleItems,
+    heldItems: [],
+  };
+}
+
+function readTrackedStatus(
+  pick: DailyPickRow,
+  result?: DailyPickRow,
+): DailyPickItem["status"] {
+  const resultStatus = readString(result?.result_status);
+  if (
+    resultStatus === "pending"
+    || resultStatus === "hit"
+    || resultStatus === "miss"
+    || resultStatus === "void"
+  ) {
+    return resultStatus;
+  }
+  const pickStatus = readString(pick.status);
+  return pickStatus === "held" ? "held" : "recommended";
+}
+
+function buildTrackedDailyPickItem({
+  pick,
+  match,
+  teamsById,
+  teamTranslations,
+  competitionsById,
+  result,
+}: {
+  pick: DailyPickRow;
+  match: DailyPickRow;
+  teamsById: Map<string, DailyPickRow>;
+  teamTranslations: Map<string, string>;
+  competitionsById: Map<string, DailyPickRow>;
+  result?: DailyPickRow;
+}): DailyPickItem | null {
+  const marketFamily = readString(pick.market_family);
+  if (
+    marketFamily !== "moneyline"
+    && marketFamily !== "spreads"
+    && marketFamily !== "totals"
+  ) {
+    return null;
+  }
+  const matchId = readString(match.id);
+  const selectionLabel = readString(pick.selection_label);
+  if (!matchId || !selectionLabel) {
+    return null;
+  }
+  const leagueId = readString(match.competition_id) ?? "unknown";
+  const homeTeamId = readString(match.home_team_id);
+  const awayTeamId = readString(match.away_team_id);
+  const homeTeam = homeTeamId ? teamsById.get(homeTeamId) : undefined;
+  const awayTeam = awayTeamId ? teamsById.get(awayTeamId) : undefined;
+  const competition = competitionsById.get(leagueId);
+  const validationMetadata = readRecord(pick.validation_metadata);
+
+  return {
+    id: readString(pick.id) ?? `${matchId}:${marketFamily}:${selectionLabel}`,
+    matchId,
+    predictionId: readString(pick.prediction_id),
+    leagueId,
+    leagueLabel: readString(competition?.name) ?? leagueId,
+    homeTeamId,
+    homeTeam:
+      (homeTeamId ? teamTranslations.get(homeTeamId) : undefined)
+      ?? readString(homeTeam?.name)
+      ?? homeTeamId
+      ?? "unknown",
+    homeTeamLogoUrl: readString(homeTeam?.crest_url) ?? readString(homeTeam?.logo_url),
+    awayTeamId,
+    awayTeam:
+      (awayTeamId ? teamTranslations.get(awayTeamId) : undefined)
+      ?? readString(awayTeam?.name)
+      ?? awayTeamId
+      ?? "unknown",
+    awayTeamLogoUrl: readString(awayTeam?.crest_url) ?? readString(awayTeam?.logo_url),
+    kickoffAt: readString(match.kickoff_at) ?? "",
+    marketFamily,
+    selectionLabel,
+    confidence: readNumber(pick.confidence),
+    edge: readNumber(pick.edge),
+    expectedValue: readNumber(pick.expected_value),
+    marketPrice: readNumber(pick.market_price),
+    modelProbability: readNumber(pick.model_probability),
+    marketProbability: readNumber(pick.market_probability),
+    sourceAgreementRatio:
+      readNumber(validationMetadata?.source_agreement_ratio)
+      ?? readNumber(validationMetadata?.sourceAgreementRatio),
+    confidenceReliability:
+      readString(validationMetadata?.confidence_reliability)
+      ?? readString(validationMetadata?.confidenceReliability)
+      ?? "validated",
+    highConfidenceEligible: true,
+    validationMetadata,
+    status: readTrackedStatus(pick, result),
+    noBetReason: null,
+    reasonLabels: Array.isArray(pick.reason_labels)
+      ? pick.reason_labels.filter((value): value is string => typeof value === "string")
+      : [],
+  };
+}
+
 dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
     const supabase = getSupabaseClient(c.env);
@@ -945,6 +1203,22 @@ dailyPicks.get("/", async (c) => {
       return c.json(artifactView, 200, {
         "cache-control": API_ARTIFACT_CACHE_CONTROL,
         "x-match-analyzer-artifact": "hit",
+      });
+    }
+
+    let trackedView: DailyPicksView | null = null;
+    if (supabase) {
+      try {
+        trackedView = await loadTrackedDailyPicksView(supabase, options);
+      } catch {
+        trackedView = null;
+      }
+    }
+
+    if (trackedView) {
+      return c.json(trackedView, 200, {
+        "cache-control": API_SHORT_CACHE_CONTROL,
+        "x-match-analyzer-artifact": "tracked-fallback",
       });
     }
 

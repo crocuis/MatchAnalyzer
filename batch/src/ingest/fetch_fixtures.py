@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -718,6 +719,63 @@ def build_bsd_lineup_contexts_from_payloads(
     return contexts
 
 
+def build_bsd_event_signal_contexts_from_events(
+    schedule_events: list[dict[str, Any]],
+    bsd_events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    matched = match_bsd_events_to_schedule_events(schedule_events, bsd_events)
+    contexts: dict[str, dict[str, Any]] = {}
+    for match_id, bsd_event in matched.items():
+        row = {
+            "bsd_actual_home_xg": _read_optional_float(
+                bsd_event.get("actual_home_xg")
+            ),
+            "bsd_actual_away_xg": _read_optional_float(
+                bsd_event.get("actual_away_xg")
+            ),
+            "bsd_home_xg_live": _read_optional_float(bsd_event.get("home_xg_live")),
+            "bsd_away_xg_live": _read_optional_float(bsd_event.get("away_xg_live")),
+        }
+        if any(value is not None for value in row.values()):
+            contexts[str(match_id)] = row
+    return contexts
+
+
+def build_bsd_event_signal_context_by_match(
+    api_key: str,
+    events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    dates = sorted(
+        {
+            event_date
+            for event in events
+            if (event_date := _schedule_event_utc_date(event)) is not None
+        }
+    )
+    if not dates:
+        return {}
+    bsd_events: list[dict[str, Any]] = []
+    for event_date in dates:
+        bsd_events.extend(
+            fetch_bsd_events(
+                api_key,
+                date_from=event_date,
+                date_to=event_date,
+                tz="UTC",
+            )
+        )
+    return build_bsd_event_signal_contexts_from_events(events, bsd_events)
+
+
+def _read_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def merge_lineup_contexts(
     base_contexts: dict[str, dict[str, Any]],
     preferred_contexts: dict[str, dict[str, Any]],
@@ -828,8 +886,19 @@ def _should_fetch_lineup_context(event: dict[str, Any]) -> bool:
     if kickoff_at.tzinfo is None:
         return True
     return kickoff_at.astimezone(timezone.utc) <= datetime.now(timezone.utc) + timedelta(
-        hours=LINEUP_CONTEXT_LOOKAHEAD_HOURS
+        hours=_lineup_context_lookahead_hours()
     )
+
+
+def _lineup_context_lookahead_hours() -> int:
+    raw_value = os.environ.get("BSD_LINEUP_LOOKAHEAD_HOURS")
+    if raw_value is None:
+        return LINEUP_CONTEXT_LOOKAHEAD_HOURS
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return LINEUP_CONTEXT_LOOKAHEAD_HOURS
+    return max(parsed, LINEUP_CONTEXT_LOOKAHEAD_HOURS)
 
 
 def competition_emblem_url(competition_id: str) -> str | None:
@@ -1385,6 +1454,10 @@ def build_snapshot_rows_from_matches(
                 "understat_away_xg_against_last_5": external_context.get(
                     "understat_away_xg_against_last_5"
                 ),
+                "bsd_actual_home_xg": external_context.get("bsd_actual_home_xg"),
+                "bsd_actual_away_xg": external_context.get("bsd_actual_away_xg"),
+                "bsd_home_xg_live": external_context.get("bsd_home_xg_live"),
+                "bsd_away_xg_live": external_context.get("bsd_away_xg_live"),
                 "external_signal_source_summary": external_context.get(
                     "external_signal_source_summary"
                 ),
