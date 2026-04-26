@@ -125,6 +125,11 @@ describe("supabase schema integration", () => {
        from information_schema.views
        where table_name = 'dashboard_match_cards'`,
     );
+    const matchCardViews = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.views
+       where table_name = 'match_cards'`,
+    );
     const artifactTables = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.tables
@@ -176,6 +181,7 @@ describe("supabase schema integration", () => {
     expect(artifactPointerColumns.rows[0]?.count).toBe(8);
     expect(dashboardLeagueSummaryViews.rows[0]?.count).toBe(1);
     expect(dashboardMatchCardViews.rows[0]?.count).toBe(1);
+    expect(matchCardViews.rows[0]?.count).toBe(1);
     expect(artifactTables.rows[0]?.count).toBe(1);
     expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
     expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
@@ -445,7 +451,7 @@ describe("supabase schema integration", () => {
     ]);
   });
 
-  it("exposes dashboard match cards with sort metadata and review flags", async () => {
+  it("exposes match card projections with sort metadata and review flags", async () => {
     const db = await createDb();
 
     await db.exec(`
@@ -568,7 +574,7 @@ describe("supabase schema integration", () => {
          value_recommendation_pick,
          summary_payload,
          explanation_artifact_id
-       from dashboard_match_cards
+       from match_cards
        where id = 'match_001'`,
     );
 

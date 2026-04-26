@@ -309,6 +309,22 @@ def test_dashboard_league_summary_no_bet_fix_migration_reapplies_summary_view():
     assert "incorrect_count" in migration
 
 
+def test_match_card_projection_migration_separates_dashboard_alias():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260426054347_split_match_card_projection.sql"
+        ).read_text()
+    )
+
+    assert "create or replace view match_cards with (security_invoker = true) as" in migration
+    assert "from matches join competitions on competitions.id = matches.competition_id" in migration
+    assert "join teams as teams_home on teams_home.id = matches.home_team_id" in migration
+    assert "join teams as teams_away on teams_away.id = matches.away_team_id" in migration
+    assert "create or replace view dashboard_match_cards with (security_invoker = true) as select" in migration
+    assert "from match_cards" in migration
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as" in migration
+
+
 def test_seed_links_competition_teams_and_match():
     seed = normalize_sql(Path("supabase/seed.sql").read_text())
 

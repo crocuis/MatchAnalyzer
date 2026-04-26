@@ -2399,7 +2399,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("filters dashboard match cards by requested match view", async () => {
+  it("filters match card projections by requested match view", async () => {
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -2443,7 +2443,7 @@ describe("prediction API", () => {
     expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
   });
 
-  it("serves localized match cards from the dashboard card page without querying predictions", async () => {
+  it("serves localized match cards from the projection view without querying predictions", async () => {
     const tableCalls: string[] = [];
     vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue({
       from(tableName: string) {
@@ -2473,7 +2473,7 @@ describe("prediction API", () => {
             }),
           };
         }
-        if (tableName === "dashboard_match_cards") {
+        if (tableName === "match_cards") {
           return {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
