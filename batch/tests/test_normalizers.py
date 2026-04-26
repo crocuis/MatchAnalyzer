@@ -3417,6 +3417,43 @@ def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
     ]
 
 
+def test_supabase_client_uses_narrow_default_remote_columns_for_heavy_tables(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    requested_urls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, payload: list[dict], status: int = 200) -> None:
+            self.payload = payload
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        requested_urls.append(request.full_url)
+        return FakeResponse([])
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    client.read_rows("predictions")
+    client.read_rows("prediction_feature_snapshots")
+
+    assert "select=%2A" not in requested_urls[0]
+    assert "explanation_payload" not in requested_urls[0]
+    assert "explanation_artifact_id" in requested_urls[0]
+    assert "summary_payload" in requested_urls[0]
+    assert "select=%2A" not in requested_urls[1]
+    assert "source_metadata" not in requested_urls[1]
+    assert "feature_metadata" in requested_urls[1]
+
+
 def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
 
