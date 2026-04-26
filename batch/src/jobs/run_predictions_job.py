@@ -86,6 +86,10 @@ TRAINED_BASELINE_UNAVAILABLE = object()
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
 VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
 BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT = 100
+ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.55
+ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT = 5
+ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE = 0.70
+ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND = 0.30
 PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
     "snapshot_quality",
     "lineup_status",
@@ -304,6 +308,52 @@ def build_current_validation_candidate(
             if value_recommendation
             else None
         ),
+    }
+
+
+def apply_adaptive_recommendation_gate(
+    main_recommendation: dict,
+    eligibility: dict,
+) -> dict:
+    validation_metadata = eligibility.get("validation_metadata") or {}
+    confidence = float(main_recommendation.get("confidence") or 0.0)
+    sample_count = int(validation_metadata.get("sample_count") or 0)
+    hit_rate = float(validation_metadata.get("hit_rate") or 0.0)
+    wilson_lower_bound = float(validation_metadata.get("wilson_lower_bound") or 0.0)
+    reasons = []
+    if confidence < ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD:
+        reasons.append("below_adaptive_confidence_threshold")
+    if sample_count < ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT:
+        reasons.append("insufficient_sample")
+    if hit_rate < ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE:
+        reasons.append("below_target_hit_rate")
+    if wilson_lower_bound < ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND:
+        reasons.append("below_wilson_lower_bound")
+
+    existing_no_bet_reason = main_recommendation.get("no_bet_reason")
+    recommended = not reasons
+    return {
+        **main_recommendation,
+        "recommended": recommended,
+        "no_bet_reason": (
+            None
+            if recommended
+            else existing_no_bet_reason or reasons[0]
+        ),
+        "adaptive_validation_gate": {
+            "recommended": recommended,
+            "reasons": reasons,
+            "confidence_threshold": ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD,
+            "minimum_sample_count": ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT,
+            "target_hit_rate": ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE,
+            "minimum_wilson_lower_bound": ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND,
+            "sample_count": sample_count,
+            "hit_rate": hit_rate,
+            "wilson_lower_bound": wilson_lower_bound,
+            "strict_high_confidence_eligible": bool(
+                eligibility.get("high_confidence_eligible")
+            ),
+        },
     }
 
 
@@ -2430,6 +2480,12 @@ def main() -> None:
                 explanation_payload,
                 eligibility,
             )
+            main_recommendation = apply_adaptive_recommendation_gate(
+                main_recommendation,
+                eligibility,
+            )
+            explanation_payload["main_recommendation"] = main_recommendation
+            explanation_payload["no_bet_reason"] = main_recommendation["no_bet_reason"]
         if llm_advisory is not None:
             explanation_payload["llm_advisory"] = llm_advisory
         summary_payload = build_prediction_summary_payload(explanation_payload)

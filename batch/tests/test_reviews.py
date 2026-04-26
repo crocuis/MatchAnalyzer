@@ -22,6 +22,12 @@ from batch.src.model.predict_matches import build_prediction_row, build_source_a
 from batch.src.review.post_match_review import build_review
 
 
+def prediction_for_match(predictions: list[dict], match_id: str) -> dict:
+    matches = [prediction for prediction in predictions if prediction["match_id"] == match_id]
+    assert len(matches) == 1
+    return matches[0]
+
+
 def test_build_review_tags_large_home_miss():
     review = build_review(
         prediction={
@@ -823,6 +829,66 @@ def test_should_archive_prediction_artifacts_skips_bulk_real_backfill():
         target_snapshot_count=101,
         use_real_prediction_targets=False,
     )
+
+
+def test_apply_adaptive_recommendation_gate_requires_validation_support():
+    recommendation = {
+        "pick": "HOME",
+        "confidence": 0.68,
+        "recommended": True,
+        "no_bet_reason": None,
+    }
+    eligibility = {
+        "high_confidence_eligible": False,
+        "validation_metadata": {
+            "sample_count": 12,
+            "hit_rate": 0.75,
+            "wilson_lower_bound": 0.35,
+        },
+    }
+
+    gated = run_predictions_job.apply_adaptive_recommendation_gate(
+        recommendation,
+        eligibility,
+    )
+
+    assert gated["recommended"] is True
+    assert gated["no_bet_reason"] is None
+    assert gated["adaptive_validation_gate"] == {
+        "recommended": True,
+        "reasons": [],
+        "confidence_threshold": 0.55,
+        "minimum_sample_count": 5,
+        "target_hit_rate": 0.7,
+        "minimum_wilson_lower_bound": 0.3,
+        "sample_count": 12,
+        "hit_rate": 0.75,
+        "wilson_lower_bound": 0.35,
+        "strict_high_confidence_eligible": False,
+    }
+
+
+def test_apply_adaptive_recommendation_gate_holds_weak_segments():
+    gated = run_predictions_job.apply_adaptive_recommendation_gate(
+        {
+            "pick": "HOME",
+            "confidence": 0.68,
+            "recommended": True,
+            "no_bet_reason": None,
+        },
+        {
+            "high_confidence_eligible": False,
+            "validation_metadata": {
+                "sample_count": 4,
+                "hit_rate": 0.75,
+                "wilson_lower_bound": 0.35,
+            },
+        },
+    )
+
+    assert gated["recommended"] is False
+    assert gated["no_bet_reason"] == "insufficient_sample"
+    assert gated["adaptive_validation_gate"]["reasons"] == ["insufficient_sample"]
 
 
 def test_select_real_prediction_inputs_prefers_explicit_match_ids_over_date():
@@ -2473,7 +2539,7 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
 
     run_predictions_job.main()
 
-    [prediction] = state["predictions"]
+    prediction = prediction_for_match(state["predictions"], "target_match")
 
     assert prediction["recommended_pick"] == "DRAW"
     assert prediction["draw_prob"] > prediction["home_prob"]
@@ -2706,14 +2772,15 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
 
     run_predictions_job.main()
 
-    [prediction] = state["predictions"]
+    prediction = prediction_for_match(state["predictions"], "target_match")
     explanation_payload = prediction["summary_payload"]
 
     assert explanation_payload["base_model_source"] == "trained_baseline"
     assert explanation_payload["base_model_probs"]["home"] > 0.5
     assert explanation_payload["base_model_probs"]["home"] > explanation_payload["base_model_probs"]["draw"]
     assert explanation_payload["confidence_calibration"]
-    assert prediction["main_recommendation_recommended"] is True
+    assert prediction["main_recommendation_recommended"] is False
+    assert prediction["main_recommendation_no_bet_reason"] == "insufficient_sample"
     assert prediction["main_recommendation_pick"] == "HOME"
     assert prediction["value_recommendation_pick"] == "HOME"
     assert prediction["value_recommendation_recommended"] is True
@@ -3831,7 +3898,7 @@ def test_run_predictions_job_marks_centroid_fallback_and_applies_penalty(monkeyp
 
     run_predictions_job.main()
 
-    [prediction] = state["predictions"]
+    prediction = prediction_for_match(state["predictions"], "target_match")
     explanation_payload = prediction["summary_payload"]
 
     assert explanation_payload["base_model_source"] == "centroid_fallback"
