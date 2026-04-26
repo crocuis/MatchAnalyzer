@@ -278,6 +278,7 @@ def settle_daily_pick_items(
     items: list[dict],
     matches: list[dict],
     teams: list[dict],
+    existing_results: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     matches_by_id = {
         str(row.get("id") or ""): row
@@ -287,10 +288,21 @@ def settle_daily_pick_items(
     teams_by_id = {
         str(row.get("id") or ""): row for row in teams if row.get("id") is not None
     }
+    pending_result_item_ids = {
+        str(row.get("pick_item_id") or "")
+        for row in (existing_results or [])
+        if row.get("result_status") == "pending"
+    }
     selected_items = [
         row
         for row in items
-        if str(row.get("pick_date") or "") == settle_date
+        if (
+            str(row.get("pick_date") or "") == settle_date
+            or (
+                str(row.get("pick_date") or "") < settle_date
+                and str(row.get("id") or "") in pending_result_item_ids
+            )
+        )
         and row.get("status") == "recommended"
     ]
 
@@ -302,20 +314,24 @@ def settle_daily_pick_items(
         )
         for row in selected_items
     ]
-    run_ids = sorted(
-        {str(row.get("run_id") or "") for row in selected_items if row.get("run_id")}
-    )
+    run_dates_by_id = {
+        str(row.get("run_id") or ""): str(row.get("pick_date") or settle_date)
+        for row in selected_items
+        if row.get("run_id")
+    }
     runs = [
         {
             "id": run_id,
-            "pick_date": settle_date,
+            "pick_date": run_dates_by_id[run_id],
             "status": "settled",
             "metadata": {
-                "settled_item_count": len(results),
+                "settled_item_count": sum(
+                    1 for row in selected_items if str(row.get("run_id") or "") == run_id
+                ),
                 "settled_at": datetime.now(timezone.utc).isoformat(),
             },
         }
-        for run_id in run_ids
+        for run_id in sorted(run_dates_by_id)
     ]
     return results, runs
 
@@ -533,30 +549,41 @@ def run_job(
     }
 
     if sync_date:
-        matches = read_rows(client, "matches")
-        snapshots = read_rows(client, "match_snapshots")
-        predictions = read_rows(client, "predictions")
-        run, items = sync_daily_picks_for_date(
-            pick_date=sync_date,
-            matches=matches,
-            snapshots=snapshots,
-            predictions=predictions,
+        existing_runs = read_rows(client, "daily_pick_runs")
+        run_id = build_daily_pick_run_id(sync_date)
+        existing_run = next(
+            (row for row in existing_runs if str(row.get("id") or "") == run_id),
+            None,
         )
-        replace_existing_daily_pick_items(client, str(run["id"]))
-        client.upsert_rows("daily_pick_runs", [run])
-        if items:
-            client.upsert_rows("daily_pick_items", items)
-        result["synced_items"] = len(items)
+        if existing_run and existing_run.get("status") == "settled":
+            result["sync_skipped"] = "settled_run_exists"
+        else:
+            matches = read_rows(client, "matches")
+            snapshots = read_rows(client, "match_snapshots")
+            predictions = read_rows(client, "predictions")
+            run, items = sync_daily_picks_for_date(
+                pick_date=sync_date,
+                matches=matches,
+                snapshots=snapshots,
+                predictions=predictions,
+            )
+            replace_existing_daily_pick_items(client, str(run["id"]))
+            client.upsert_rows("daily_pick_runs", [run])
+            if items:
+                client.upsert_rows("daily_pick_items", items)
+            result["synced_items"] = len(items)
 
     if settle_date:
         items = read_rows(client, "daily_pick_items")
         matches = read_rows(client, "matches")
         teams = read_rows(client, "teams")
+        existing_results = read_rows(client, "daily_pick_results")
         settlement_rows, settled_runs = settle_daily_pick_items(
             settle_date=settle_date,
             items=items,
             matches=matches,
             teams=teams,
+            existing_results=existing_results,
         )
         if settlement_rows:
             client.upsert_rows("daily_pick_results", settlement_rows)

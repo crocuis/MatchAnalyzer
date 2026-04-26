@@ -163,6 +163,7 @@ def filter_backfill_scope(
     kickoff_date: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     target_match_ids = set(match_ids or set())
+    has_explicit_filter = bool(target_match_ids) or kickoff_date is not None
     if kickoff_date:
         target_match_ids.update(
             str(match.get("id") or "")
@@ -171,6 +172,8 @@ def filter_backfill_scope(
         )
     target_match_ids.discard("")
     if not target_match_ids:
+        if has_explicit_filter:
+            return [], []
         return snapshots, matches
     return (
         [
@@ -453,7 +456,7 @@ def main(argv: list[str] | None = None) -> None:
     snapshots, matches = filter_backfill_scope(
         snapshots=snapshots,
         matches=matches,
-        match_ids=parse_match_id_filter(args.match_ids),
+        match_ids=parse_match_id_filter(args.match_ids) if args.match_ids else None,
         kickoff_date=args.kickoff_date,
     )
     if args.limit is not None:

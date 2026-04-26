@@ -277,7 +277,7 @@ def build_current_validation_candidate(
     value_recommendation: dict | None,
 ) -> dict:
     return {
-        "model_version_id": SAMPLE_MODEL_VERSION_ID,
+        "model_version_id": row.get("model_version_id") or SAMPLE_MODEL_VERSION_ID,
         "league_id": match.get("competition_id") or "unknown",
         "market_type": "moneyline",
         "calibrated_confidence_score": row["confidence_score"],

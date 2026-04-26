@@ -2817,6 +2817,27 @@ def test_filter_backfill_scope_limits_snapshots_by_match_ids_and_kickoff_date():
     assert [match["id"] for match in matches] == ["match_001", "match_002"]
 
 
+def test_filter_backfill_scope_stays_empty_when_explicit_filter_matches_nothing():
+    snapshots, matches = filter_backfill_scope(
+        snapshots=[{"id": "snapshot_001", "match_id": "match_001"}],
+        matches=[{"id": "match_001", "kickoff_at": "2026-04-25T12:00:00Z"}],
+        kickoff_date="2026-04-26",
+    )
+
+    assert snapshots == []
+    assert matches == []
+
+
+def test_filter_backfill_scope_without_filters_keeps_full_scope():
+    snapshots, matches = filter_backfill_scope(
+        snapshots=[{"id": "snapshot_001", "match_id": "match_001"}],
+        matches=[{"id": "match_001", "kickoff_at": "2026-04-25T12:00:00Z"}],
+    )
+
+    assert [snapshot["id"] for snapshot in snapshots] == ["snapshot_001"]
+    assert [match["id"] for match in matches] == ["match_001"]
+
+
 def test_clubelo_backfill_uses_snapshot_as_of_context(monkeypatch):
     requested_dates: list[str] = []
 

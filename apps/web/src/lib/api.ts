@@ -331,7 +331,7 @@ export interface PredictionModelRegistryReport {
 }
 
 function isLocalDevHost(): boolean {
-  const hostname = globalThis.location?.hostname ?? "";
+  const hostname = (globalThis.location?.hostname ?? "").replace(/^\[(.*)\]$/, "$1");
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 

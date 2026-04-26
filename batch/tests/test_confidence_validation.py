@@ -1,6 +1,7 @@
 from batch.src.jobs.evaluate_confidence_validation_job import (
     build_confidence_validation_report,
 )
+from batch.src.jobs.run_predictions_job import build_current_validation_candidate
 from batch.src.model.confidence_validation import (
     build_prediction_validation_record,
     evaluate_high_confidence_eligibility,
@@ -99,6 +100,21 @@ def test_high_confidence_eligibility_accepts_validated_segment():
     assert decision["confidence_reliability"] == "validated"
     assert decision["validation_metadata"]["hit_rate"] == 0.9
     assert decision["validation_metadata"]["confidence_bucket"] == "0.8-0.9"
+
+
+def test_current_validation_candidate_uses_runtime_model_version_id():
+    candidate = build_current_validation_candidate(
+        row={
+            "model_version_id": "model-v2",
+            "confidence_score": 0.82,
+        },
+        match={"competition_id": "premier-league"},
+        value_recommendation={"market_probability": 0.58},
+    )
+
+    assert candidate["model_version_id"] == "model-v2"
+    assert candidate["league_id"] == "premier-league"
+    assert candidate["market_probability"] == 0.58
 
 
 def test_build_prediction_validation_record_uses_settled_match_outcome():
