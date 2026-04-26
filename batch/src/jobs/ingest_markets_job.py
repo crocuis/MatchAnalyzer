@@ -40,6 +40,10 @@ MATCH_SNAPSHOT_PERSISTED_FIELDS = {
     "understat_home_xg_against_last_5",
     "understat_away_xg_for_last_5",
     "understat_away_xg_against_last_5",
+    "bsd_actual_home_xg",
+    "bsd_actual_away_xg",
+    "bsd_home_xg_live",
+    "bsd_away_xg_live",
     "external_signal_source_summary",
     "home_matches_last_7d",
     "away_matches_last_7d",
@@ -329,6 +333,9 @@ def main() -> None:
     existing_market_rows = client.read_rows("market_probabilities")
     existing_variant_rows = read_optional_rows(client, "market_variants")
     use_real_schedule = os.environ.get("REAL_MARKET_DATE")
+    odds_api_io_events = []
+    odds_api_io_odds = []
+    odds_api_io_market_rows = []
 
     if use_real_schedule:
         match_rows = client.read_rows("matches")
@@ -352,9 +359,6 @@ def main() -> None:
             )
         schedule = fetch_daily_schedule(use_real_schedule)
         payload = build_market_rows_from_schedule(schedule, snapshot_rows)
-        odds_api_io_events = []
-        odds_api_io_odds = []
-        odds_api_io_market_rows = []
         odds_api_key = getattr(settings, "odds_api_key", None)
         if odds_api_key:
             odds_api_io_events = fetch_odds_api_io_events(odds_api_key)
@@ -366,6 +370,7 @@ def main() -> None:
             odds_api_io_odds = fetch_odds_api_io_multi_odds(
                 odds_api_key,
                 odds_api_io_event_ids,
+                bookmakers=getattr(settings, "odds_api_io_bookmakers", "Bet365,Unibet"),
             )
             odds_api_io_market_rows = build_odds_api_io_market_rows(
                 odds_api_io_odds,
@@ -573,6 +578,9 @@ def main() -> None:
                 "inserted_rows": inserted,
                 "variant_rows": variant_inserted,
                 "team_translation_rows": team_translation_inserted,
+                "odds_api_io_events": len(odds_api_io_events),
+                "odds_api_io_odds": len(odds_api_io_odds),
+                "odds_api_io_market_rows": len(odds_api_io_market_rows),
                 "changed_match_ids": changed_match_ids,
                 "payload": payload,
                 "variant_payload": prediction_market_variant_rows,

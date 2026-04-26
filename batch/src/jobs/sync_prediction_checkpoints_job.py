@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
+from batch.src.ingest.fetch_fixtures import (
+    build_bsd_lineup_context_by_match,
+    build_snapshot_rows_from_matches,
+    merge_lineup_contexts,
+)
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -17,6 +21,10 @@ EXTERNAL_SIGNAL_FIELDS = (
     "understat_home_xg_against_last_5",
     "understat_away_xg_for_last_5",
     "understat_away_xg_against_last_5",
+    "bsd_actual_home_xg",
+    "bsd_actual_away_xg",
+    "bsd_home_xg_live",
+    "bsd_away_xg_live",
     "external_signal_source_summary",
 )
 LINEUP_SIGNAL_FIELDS = (
@@ -174,15 +182,20 @@ def build_due_snapshot_rows(
     matches: list[dict],
     existing_snapshots: list[dict],
     captured_at: str,
+    lineup_context_updates_by_match: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict]:
     matches_by_id = {str(row.get("id") or ""): row for row in matches if row.get("id")}
     context_by_match = latest_snapshot_contexts_by_match(existing_snapshots)
+    lineup_context_updates = lineup_context_updates_by_match or {}
     rows: list[dict] = []
     for target in targets:
         match = matches_by_id.get(target.match_id)
         if match is None:
             continue
-        context = context_by_match.get(target.match_id, {})
+        context = merge_lineup_contexts(
+            {target.match_id: context_by_match.get(target.match_id, {})},
+            {target.match_id: lineup_context_updates.get(target.match_id, {})},
+        ).get(target.match_id, {})
         rows.extend(
             build_snapshot_rows_from_matches(
                 [match],
@@ -196,11 +209,81 @@ def build_due_snapshot_rows(
     return rows
 
 
+def build_bsd_lineup_events_for_targets(
+    *,
+    targets: list[PredictionSyncTarget],
+    matches: list[dict],
+    teams: list[dict],
+) -> list[dict[str, Any]]:
+    teams_by_id = {str(team.get("id") or ""): team for team in teams if team.get("id")}
+    matches_by_id = {str(row.get("id") or ""): row for row in matches if row.get("id")}
+    events: list[dict[str, Any]] = []
+    for target in targets:
+        match = matches_by_id.get(target.match_id)
+        if match is None:
+            continue
+        home_team = teams_by_id.get(str(match.get("home_team_id") or ""), {})
+        away_team = teams_by_id.get(str(match.get("away_team_id") or ""), {})
+        events.append(
+            {
+                "id": target.match_id,
+                "start_time": target.kickoff_at.isoformat(),
+                "status": "scheduled",
+                "competition": {"id": match.get("competition_id")},
+                "season": {"id": match.get("season")},
+                "competitors": [
+                    {
+                        "qualifier": "home",
+                        "team": {
+                            "id": match.get("home_team_id"),
+                            "name": home_team.get("name")
+                            or match.get("home_team_name")
+                            or match.get("home_team_id"),
+                        },
+                    },
+                    {
+                        "qualifier": "away",
+                        "team": {
+                            "id": match.get("away_team_id"),
+                            "name": away_team.get("name")
+                            or match.get("away_team_name")
+                            or match.get("away_team_id"),
+                        },
+                    },
+                ],
+            }
+        )
+    return events
+
+
+def refresh_bsd_lineup_contexts_for_targets(
+    *,
+    api_key: str | None,
+    targets: list[PredictionSyncTarget],
+    matches: list[dict],
+    teams: list[dict],
+) -> dict[str, dict[str, Any]]:
+    if not api_key or not targets:
+        return {}
+    events = build_bsd_lineup_events_for_targets(
+        targets=targets,
+        matches=matches,
+        teams=teams,
+    )
+    if not events:
+        return {}
+    try:
+        return build_bsd_lineup_context_by_match(api_key, events)
+    except OSError:
+        return {}
+
+
 def sync_prediction_checkpoints(
     client: SupabaseClient,
     *,
     now: datetime | None = None,
     lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
+    bsd_api_key: str | None = None,
 ) -> dict:
     observed_at = now or datetime.now(timezone.utc)
     matches = client.read_rows("matches")
@@ -210,11 +293,19 @@ def sync_prediction_checkpoints(
         now=observed_at,
         lookback_minutes=lookback_minutes,
     )
+    teams = client.read_rows("teams") if bsd_api_key and targets else []
+    bsd_lineup_contexts = refresh_bsd_lineup_contexts_for_targets(
+        api_key=bsd_api_key,
+        targets=targets,
+        matches=matches,
+        teams=teams,
+    )
     snapshot_rows = build_due_snapshot_rows(
         targets=targets,
         matches=matches,
         existing_snapshots=existing_snapshots,
         captured_at=observed_at.isoformat(),
+        lineup_context_updates_by_match=bsd_lineup_contexts,
     )
     upserted_rows = (
         client.upsert_rows("match_snapshots", snapshot_rows)
@@ -235,6 +326,7 @@ def sync_prediction_checkpoints(
         "target_count": len(targets),
         "snapshot_rows": len(snapshot_rows),
         "upserted_rows": upserted_rows,
+        "bsd_lineup_contexts": len(bsd_lineup_contexts),
         "lookback_minutes": lookback_minutes,
         "targets": [
             {
@@ -259,6 +351,7 @@ def main() -> None:
             "PREDICTION_SYNC_LOOKBACK_MINUTES",
             DEFAULT_LOOKBACK_MINUTES,
         ),
+        bsd_api_key=getattr(settings, "bsd_api_key", None),
     )
     print(json.dumps(result, sort_keys=True))
 

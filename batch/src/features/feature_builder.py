@@ -5,7 +5,13 @@ FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
     "form_delta",
     "rest_delta",
     "elo_delta",
+    "internal_elo_delta",
+    "external_elo_delta",
+    "rating_delta_disagreement",
     "xg_proxy_delta",
+    "canonical_xg_delta",
+    "understat_xg_delta",
+    "xg_delta_disagreement",
     "fixture_congestion_delta",
     "lineup_strength_delta",
     "market_gap_home",
@@ -17,6 +23,8 @@ FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
     "book_market_entropy_gap",
     "sources_agree",
     "prediction_market_available",
+    "external_rating_available",
+    "understat_xg_available",
     "snapshot_quality_complete",
     "lineup_confirmed",
 )
@@ -40,6 +48,10 @@ RAW_SIGNAL_FIELDS: tuple[str, ...] = (
     "understat_home_xg_against_last_5",
     "understat_away_xg_for_last_5",
     "understat_away_xg_against_last_5",
+    "bsd_actual_home_xg",
+    "bsd_actual_away_xg",
+    "bsd_home_xg_live",
+    "bsd_away_xg_live",
     "external_signal_source_summary",
     "home_matches_last_7d",
     "away_matches_last_7d",
@@ -61,6 +73,10 @@ OPTIONAL_EXTERNAL_SIGNAL_FIELDS: tuple[str, ...] = (
     "understat_home_xg_against_last_5",
     "understat_away_xg_for_last_5",
     "understat_away_xg_against_last_5",
+    "bsd_actual_home_xg",
+    "bsd_actual_away_xg",
+    "bsd_home_xg_live",
+    "bsd_away_xg_live",
     "external_signal_source_summary",
 )
 CANONICAL_RATING_SIGNAL_FIELDS: tuple[str, ...] = ("home_elo", "away_elo")
@@ -195,54 +211,69 @@ def build_feature_vector(snapshot: dict) -> dict:
     market_entropy = -sum(
         value * math.log(value) for value in market_probs.values() if value > 0.0
     )
-    home_elo = (
-        snapshot.get("external_home_elo")
-        if snapshot.get("external_home_elo") is not None
-        else snapshot.get("home_elo")
+    internal_elo_delta = _rating_delta(
+        snapshot.get("home_elo"),
+        snapshot.get("away_elo"),
     )
-    away_elo = (
-        snapshot.get("external_away_elo")
-        if snapshot.get("external_away_elo") is not None
-        else snapshot.get("away_elo")
+    external_elo_delta = _rating_delta(
+        snapshot.get("external_home_elo"),
+        snapshot.get("external_away_elo"),
     )
-    if home_elo is not None and away_elo is not None:
-        elo_delta = (float(home_elo) - float(away_elo)) / 100.0
+    fallback_elo_delta = (form_delta * 0.06) + (book_attack_edge * 1.0) + (
+        rest_delta * 0.02
+    )
+    if external_elo_delta is not None:
+        elo_delta = external_elo_delta
+    elif internal_elo_delta is not None:
+        elo_delta = internal_elo_delta
     else:
-        elo_delta = (form_delta * 0.06) + (book_attack_edge * 1.0) + (rest_delta * 0.02)
+        elo_delta = fallback_elo_delta
+    external_rating_available = int(external_elo_delta is not None)
+    internal_elo_feature = internal_elo_delta if internal_elo_delta is not None else 0.0
+    external_elo_feature = external_elo_delta if external_elo_delta is not None else 0.0
+    rating_delta_disagreement = (
+        external_elo_delta - internal_elo_delta
+        if external_elo_delta is not None and internal_elo_delta is not None
+        else 0.0
+    )
 
-    xg_fields = (
+    canonical_xg_delta = _xg_delta(
+        snapshot,
+        (
+            "home_xg_for_last_5",
+            "home_xg_against_last_5",
+            "away_xg_for_last_5",
+            "away_xg_against_last_5",
+        ),
+    )
+    understat_xg_delta = _xg_delta(
+        snapshot,
         (
             "understat_home_xg_for_last_5",
             "understat_home_xg_against_last_5",
             "understat_away_xg_for_last_5",
             "understat_away_xg_against_last_5",
-        )
-        if all(
-            snapshot.get(key) is not None
-            for key in (
-                "understat_home_xg_for_last_5",
-                "understat_home_xg_against_last_5",
-                "understat_away_xg_for_last_5",
-                "understat_away_xg_against_last_5",
-            )
-        )
-        else (
-            "home_xg_for_last_5",
-            "home_xg_against_last_5",
-            "away_xg_for_last_5",
-            "away_xg_against_last_5",
-        )
+        ),
     )
-    if all(snapshot.get(key) is not None for key in xg_fields):
-        home_xg_balance = float(snapshot[xg_fields[0]]) - float(snapshot[xg_fields[1]])
-        away_xg_balance = float(snapshot[xg_fields[2]]) - float(snapshot[xg_fields[3]])
-        xg_proxy_delta = home_xg_balance - away_xg_balance
+    fallback_xg_delta = (
+        (book_attack_edge * 1.2)
+        + (market_attack_edge * 1.0)
+        + (form_delta * 0.04)
+    )
+    if understat_xg_delta is not None:
+        xg_proxy_delta = understat_xg_delta
+    elif canonical_xg_delta is not None:
+        xg_proxy_delta = canonical_xg_delta
     else:
-        xg_proxy_delta = (
-            (book_attack_edge * 1.2)
-            + (market_attack_edge * 1.0)
-            + (form_delta * 0.04)
-        )
+        xg_proxy_delta = fallback_xg_delta
+    understat_xg_available = int(understat_xg_delta is not None)
+    canonical_xg_feature = canonical_xg_delta if canonical_xg_delta is not None else 0.0
+    understat_xg_feature = understat_xg_delta if understat_xg_delta is not None else 0.0
+    xg_delta_disagreement = (
+        understat_xg_delta - canonical_xg_delta
+        if understat_xg_delta is not None and canonical_xg_delta is not None
+        else 0.0
+    )
 
     if (
         snapshot.get("home_matches_last_7d") is not None
@@ -277,7 +308,13 @@ def build_feature_vector(snapshot: dict) -> dict:
         "form_delta": form_delta,
         "rest_delta": rest_delta,
         "elo_delta": elo_delta,
+        "internal_elo_delta": internal_elo_feature,
+        "external_elo_delta": external_elo_feature,
+        "rating_delta_disagreement": rating_delta_disagreement,
         "xg_proxy_delta": xg_proxy_delta,
+        "canonical_xg_delta": canonical_xg_feature,
+        "understat_xg_delta": understat_xg_feature,
+        "xg_delta_disagreement": xg_delta_disagreement,
         "fixture_congestion_delta": fixture_congestion_delta,
         "home_lineup_score": snapshot.get("home_lineup_score"),
         "away_lineup_score": snapshot.get("away_lineup_score"),
@@ -292,11 +329,27 @@ def build_feature_vector(snapshot: dict) -> dict:
         "book_market_entropy_gap": book_entropy - market_entropy,
         "sources_agree": int(book_favorite == market_favorite),
         "prediction_market_available": snapshot.get("prediction_market_available", True),
+        "external_rating_available": external_rating_available,
+        "understat_xg_available": understat_xg_available,
         "snapshot_quality_complete": int(
             snapshot.get("snapshot_quality", "complete") == "complete"
         ),
         "lineup_confirmed": int(snapshot.get("lineup_status") == "confirmed"),
     }
+
+
+def _rating_delta(home_value: object, away_value: object) -> float | None:
+    if home_value is None or away_value is None:
+        return None
+    return (float(home_value) - float(away_value)) / 100.0
+
+
+def _xg_delta(snapshot: dict, fields: tuple[str, str, str, str]) -> float | None:
+    if not all(snapshot.get(key) is not None for key in fields):
+        return None
+    home_xg_balance = float(snapshot[fields[0]]) - float(snapshot[fields[1]])
+    away_xg_balance = float(snapshot[fields[2]]) - float(snapshot[fields[3]])
+    return home_xg_balance - away_xg_balance
 
 
 def feature_vector_to_model_input(feature_vector: dict) -> list[float]:

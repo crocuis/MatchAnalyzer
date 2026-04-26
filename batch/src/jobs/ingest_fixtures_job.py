@@ -3,9 +3,13 @@ import os
 from datetime import datetime, timezone
 
 from batch.src.ingest import fetch_fixtures as fixture_ingest
-from batch.src.ingest.external_signals import build_external_signal_context_by_match
+from batch.src.ingest.external_signals import (
+    build_external_signal_context_by_match,
+    merge_external_signal_contexts,
+)
 from batch.src.ingest.fetch_fixtures import (
     build_competition_row_from_event,
+    build_bsd_event_signal_context_by_match,
     build_bsd_lineup_context_by_match,
     build_fixture_row,
     build_lineup_context_by_match,
@@ -339,15 +343,28 @@ def main() -> None:
             if bsd_api_key
             else {}
         )
+        bsd_event_signal_context_by_match = (
+            build_bsd_event_signal_context_by_match(bsd_api_key, events)
+            if bsd_api_key
+            else {}
+        )
         lineup_context_by_match = merge_lineup_contexts(
             lineup_context_by_match,
             bsd_lineup_context_by_match,
         )
         if bsd_lineup_context_by_match:
             archive_payload["bsd_lineup_context_by_match"] = bsd_lineup_context_by_match
+        if bsd_event_signal_context_by_match:
+            archive_payload["bsd_event_signal_context_by_match"] = (
+                bsd_event_signal_context_by_match
+            )
         external_signal_context_by_match = build_external_signal_context_by_match(
             events,
             as_of_date=resolve_external_signal_as_of_date(use_real_schedule),
+        )
+        external_signal_context_by_match = merge_external_signal_contexts(
+            external_signal_context_by_match,
+            bsd_event_signal_context_by_match,
         )
         if external_signal_context_by_match:
             archive_payload["external_signal_context_by_match"] = (

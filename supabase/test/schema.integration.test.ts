@@ -168,6 +168,23 @@ describe("supabase schema integration", () => {
        where table_name = 'daily_pick_items'
          and column_name = 'league_id'`,
     );
+    const marketFamilyColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'market_probabilities'
+         and column_name = 'market_family'`,
+    );
+    const bsdEventSignalColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'match_snapshots'
+         and column_name in (
+           'bsd_actual_home_xg',
+           'bsd_actual_away_xg',
+           'bsd_home_xg_live',
+           'bsd_away_xg_live'
+         )`,
+    );
     const droppedLegacyPayloadColumns = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.columns
@@ -198,6 +215,8 @@ describe("supabase schema integration", () => {
     expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
     expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
     expect(dailyPickLeagueColumns.rows[0]?.count).toBe(0);
+    expect(marketFamilyColumns.rows[0]?.count).toBe(1);
+    expect(bsdEventSignalColumns.rows[0]?.count).toBe(4);
   });
 
   it("exposes dashboard league counts through the summary view", async () => {

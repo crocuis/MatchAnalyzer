@@ -13,6 +13,7 @@ from batch.src.ingest.external_signals import build_clubelo_context_by_match
 from batch.src.ingest.external_signals import build_understat_context_by_match
 from batch.src.ingest.external_signals import merge_external_signal_contexts
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_contexts_from_events
 from batch.src.ingest.fetch_fixtures import build_bsd_lineup_contexts_from_payloads
 from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
 from batch.src.ingest.fetch_fixtures import build_match_row_from_event
@@ -1277,6 +1278,10 @@ def test_build_snapshot_rows_from_matches_uses_real_match_ids():
             "understat_home_xg_against_last_5": None,
             "understat_away_xg_for_last_5": None,
             "understat_away_xg_against_last_5": None,
+            "bsd_actual_home_xg": None,
+            "bsd_actual_away_xg": None,
+            "bsd_home_xg_live": None,
+            "bsd_away_xg_live": None,
             "external_signal_source_summary": None,
             "home_matches_last_7d": None,
             "away_matches_last_7d": None,
@@ -2187,6 +2192,17 @@ def test_build_lineup_context_by_match_skips_events_more_than_one_hour_away(monk
     assert contexts == {}
 
 
+def test_lineup_context_lookahead_can_be_extended_for_bsd_projection(monkeypatch):
+    monkeypatch.setenv("BSD_LINEUP_LOOKAHEAD_HOURS", "48")
+    event = {
+        "id": "match_two_hours_away",
+        "status": "not_started",
+        "start_time": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    }
+
+    assert fetch_fixtures_module._should_fetch_lineup_context(event) is True
+
+
 def test_build_lineup_context_by_match_normalizes_missing_player_team_aliases(monkeypatch):
     class FakeFootball:
         @staticmethod
@@ -2417,6 +2433,7 @@ def test_load_settings_reads_required_environment_variables(monkeypatch):
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "service-key")
     monkeypatch.setenv("R2_BUCKET", "raw-payloads")
     monkeypatch.setenv("ODDS_API_KEY", "odds-key")
+    monkeypatch.setenv("ODDS_API_IO_BOOKMAKERS", "Bet365,Unibet")
     monkeypatch.setenv("BSD_API_KEY", "bsd-key")
 
     settings = load_settings()
@@ -2426,6 +2443,7 @@ def test_load_settings_reads_required_environment_variables(monkeypatch):
     assert settings.r2_bucket == "raw-payloads"
     assert settings.rollout_ramp_sequence == (25, 50, 100)
     assert settings.odds_api_key == "odds-key"
+    assert settings.odds_api_io_bookmakers == "Bet365,Unibet"
     assert settings.bsd_api_key == "bsd-key"
 
 
@@ -2491,6 +2509,33 @@ def test_build_odds_api_io_market_rows_averages_bookmaker_moneyline_quotes():
         "bookmakers": ["Bet365", "Unibet"],
         "quote_count": 2,
     }
+
+
+def test_fetch_odds_api_io_multi_odds_uses_free_plan_bookmaker_defaults(monkeypatch):
+    captured_params = []
+
+    def fake_fetch_json(
+        api_key,
+        path,
+        params,
+        *,
+        base_url=fetch_markets_module.ODDS_API_IO_BASE_URL,
+    ):
+        del api_key, base_url
+        captured_params.append((path, params))
+        return []
+
+    monkeypatch.setattr(fetch_markets_module, "fetch_odds_api_io_json", fake_fetch_json)
+
+    rows = fetch_markets_module.fetch_odds_api_io_multi_odds("api-key", ["event-1"])
+
+    assert rows == []
+    assert captured_params == [
+        (
+            "odds/multi",
+            {"eventIds": "event-1", "bookmakers": "Bet365,Unibet"},
+        )
+    ]
 
 
 def test_build_odds_api_io_market_rows_skips_ambiguous_same_kickoff_matches():
@@ -2581,6 +2626,40 @@ def test_bsd_lineup_contexts_convert_projected_lineups_to_snapshot_signals():
         "away_lineup_score": 1.1318,
         "lineup_strength_delta": 0.0,
         "lineup_source_summary": "bsd_predicted_lineups",
+    }
+
+
+def test_bsd_event_signal_contexts_capture_event_xg_fields():
+    contexts = build_bsd_event_signal_contexts_from_events(
+        schedule_events=[
+            {
+                "id": "match_001",
+                "start_time": "2026-04-25T11:30:00Z",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+        bsd_events=[
+            {
+                "id": 123,
+                "event_date": "2026-04-25T11:30:00Z",
+                "home_team": "Chelsea",
+                "away_team": "Arsenal",
+                "actual_home_xg": "1.7",
+                "actual_away_xg": 0.9,
+                "home_xg_live": "1.3",
+                "away_xg_live": "0.6",
+            }
+        ],
+    )
+
+    assert contexts["match_001"] == {
+        "bsd_actual_home_xg": 1.7,
+        "bsd_actual_away_xg": 0.9,
+        "bsd_home_xg_live": 1.3,
+        "bsd_away_xg_live": 0.6,
     }
 
 

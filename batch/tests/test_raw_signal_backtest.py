@@ -1,4 +1,5 @@
 from batch.src.model.raw_signal_backtest import (
+    _is_daily_pick_candidate,
     build_raw_moneyline_rows,
     summarize_raw_moneyline_backtest,
 )
@@ -148,6 +149,89 @@ def test_build_raw_moneyline_rows_adds_external_snapshot_signals_to_signal_score
     assert rows[0]["understat_xg_delta"] == 1.2
     assert rows[0]["external_signal_source_summary"] == "clubelo+understat"
     assert rows[0]["signal_score"] == 2.2
+
+
+def test_build_raw_moneyline_rows_uses_split_feature_signals_without_double_counting():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": "match-1",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 0,
+            },
+        ],
+        snapshots=[
+            {
+                "id": "snap-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+                "external_home_elo": 1900,
+                "external_away_elo": 1700,
+                "understat_home_xg_for_last_5": 2.0,
+                "understat_home_xg_against_last_5": 0.8,
+                "understat_away_xg_for_last_5": 0.8,
+                "understat_away_xg_against_last_5": 1.4,
+                "external_signal_source_summary": "clubelo+understat",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snap-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.61,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.61,
+                        "recommended": True,
+                    },
+                    "feature_context": {
+                        "internal_elo_delta": 0.4,
+                        "external_elo_delta": 1.0,
+                        "canonical_xg_delta": 0.2,
+                        "understat_xg_delta": 0.8,
+                        "form_delta": 0.1,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert rows[0]["external_elo_delta"] == 2.0
+    assert rows[0]["understat_xg_delta"] == 1.8
+    assert rows[0]["internal_elo_delta"] == 0.4
+    assert rows[0]["canonical_xg_delta"] == 0.2
+    assert rows[0]["external_rating_available"] == 1
+    assert rows[0]["understat_xg_available"] == 1
+    assert rows[0]["signal_score"] == 2.5
+
+
+def test_daily_pick_candidate_requires_pre_match_external_signal():
+    assert not _is_daily_pick_candidate(
+        {
+            "external_signal_source_summary": "bsd_events",
+            "bsd_actual_home_xg": 1.7,
+            "bsd_actual_away_xg": 0.9,
+            "external_rating_available": 0,
+            "understat_xg_available": 0,
+        }
+    )
+    assert _is_daily_pick_candidate(
+        {
+            "external_signal_source_summary": "",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+        }
+    )
 
 
 def test_build_raw_moneyline_rows_keeps_settled_outcomes_out_of_raw_adjustment():
@@ -393,6 +477,8 @@ def test_summarize_raw_moneyline_backtest_separates_full_and_eligible_prequentia
             "prequential_hit": 1,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
             "confidence": 0.6,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
@@ -436,6 +522,8 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
             "prequential_hit": 1 if index < 39 else 0,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
             "confidence": 0.6,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
@@ -476,6 +564,8 @@ def test_daily_pick_reliability_holds_when_wilson_bound_is_weak():
             "prequential_hit": 1 if index < 38 else 0,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
             "confidence": 0.6,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,

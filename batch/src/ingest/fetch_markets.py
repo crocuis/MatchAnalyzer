@@ -15,6 +15,7 @@ POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
 POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
 ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
 ODDS_API_IO_MULTI_ODDS_CHUNK_SIZE = 10
+DEFAULT_ODDS_API_IO_BOOKMAKERS = "Bet365,Unibet"
 BETMAN_BUYABLE_GAMES_URL = "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do"
 BETMAN_GAME_INFO_URL = "https://m.betman.co.kr/buyPsblGame/gameInfoInq.do"
 BETMAN_URLOPEN_MAX_ATTEMPTS = 3
@@ -109,7 +110,7 @@ def fetch_odds_api_io_multi_odds(
     api_key: str,
     event_ids: list[str],
     *,
-    bookmakers: str | None = None,
+    bookmakers: str | None = DEFAULT_ODDS_API_IO_BOOKMAKERS,
     base_url: str = ODDS_API_IO_BASE_URL,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []

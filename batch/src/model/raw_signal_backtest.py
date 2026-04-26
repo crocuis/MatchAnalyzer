@@ -110,6 +110,16 @@ def build_raw_moneyline_rows(
             if isinstance(payload.get("feature_context"), dict)
             else {}
         )
+        external_rating_available = _feature_flag_or_snapshot(
+            feature_context,
+            "external_rating_available",
+            external_signals,
+        )
+        understat_xg_available = _feature_flag_or_snapshot(
+            feature_context,
+            "understat_xg_available",
+            external_signals,
+        )
         built_rows.append(
             {
                 "prediction_id": str(prediction.get("id") or ""),
@@ -152,9 +162,27 @@ def build_raw_moneyline_rows(
                 ),
                 "base_model_source": str(payload.get("base_model_source") or ""),
                 "lineup_confirmed": int(feature_context.get("lineup_confirmed") or 0),
+                "internal_elo_delta": round(
+                    float(feature_context.get("internal_elo_delta") or 0.0),
+                    4,
+                ),
+                "canonical_xg_delta": round(
+                    float(feature_context.get("canonical_xg_delta") or 0.0),
+                    4,
+                ),
+                "rating_delta_disagreement": round(
+                    float(feature_context.get("rating_delta_disagreement") or 0.0),
+                    4,
+                ),
+                "xg_delta_disagreement": round(
+                    float(feature_context.get("xg_delta_disagreement") or 0.0),
+                    4,
+                ),
                 "rolling_ppg_delta": rolling_ppg_delta,
                 "rolling_venue_ppg_delta": rolling_venue_ppg_delta,
                 **external_signals,
+                "external_rating_available": external_rating_available,
+                "understat_xg_available": understat_xg_available,
                 **probability_signals,
                 **rolling_prior_signals,
             }
@@ -240,6 +268,15 @@ def summarize_raw_moneyline_backtest(
             "checkpoint": dict(Counter(str(row.get("checkpoint") or "") for row in rows)),
             "prediction_market_available": dict(
                 Counter(bool(row.get("prediction_market_available")) for row in rows)
+            ),
+            "external_rating_available": dict(
+                Counter(bool(row.get("external_rating_available")) for row in rows)
+            ),
+            "understat_xg_available": dict(
+                Counter(bool(row.get("understat_xg_available")) for row in rows)
+            ),
+            "external_signal_source_summary": dict(
+                Counter(str(row.get("external_signal_source_summary") or "") for row in rows)
             ),
         },
     }
@@ -488,6 +525,18 @@ def _prequential_bucket_candidates(row: dict) -> list[tuple[str, tuple]]:
                 round(float(row.get("understat_xg_delta") or 0.0) / 0.25) * 0.25,
             ),
         ),
+        (
+            "split_signal_shape",
+            (
+                "split_signal_shape",
+                bool(row.get("external_rating_available")),
+                bool(row.get("understat_xg_available")),
+                round(float(row.get("internal_elo_delta") or 0.0) / 0.25) * 0.25,
+                round(float(row.get("external_elo_delta") or 0.0) / 0.25) * 0.25,
+                round(float(row.get("canonical_xg_delta") or 0.0) / 0.25) * 0.25,
+                round(float(row.get("understat_xg_delta") or 0.0) / 0.25) * 0.25,
+            ),
+        ),
         ("checkpoint", ("checkpoint", checkpoint)),
     ]
 
@@ -515,7 +564,20 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
 
 
 def _is_daily_pick_candidate(row: dict) -> bool:
-    return bool(str(row.get("external_signal_source_summary") or ""))
+    return bool(
+        row.get("external_rating_available")
+        or row.get("understat_xg_available")
+    )
+
+
+def _feature_flag_or_snapshot(
+    feature_context: dict,
+    key: str,
+    external_signals: dict,
+) -> int:
+    if key in feature_context and feature_context.get(key) is not None:
+        return int(bool(_read_numeric(feature_context.get(key))))
+    return int(bool(external_signals.get(key)))
 
 
 def _top_bucket_outcome(outcomes: Counter) -> tuple[str | None, int]:
@@ -748,7 +810,9 @@ def _moneyline_signal_score(
     if not isinstance(feature_context, dict):
         return 0.0
     signal_total = 0.0
-    for key in ("elo_delta", "xg_proxy_delta", "form_delta"):
+    signal_total += _feature_or_legacy(feature_context, "internal_elo_delta", "elo_delta")
+    signal_total += _feature_or_legacy(feature_context, "canonical_xg_delta", "xg_proxy_delta")
+    for key in ("form_delta",):
         value = _read_numeric(feature_context.get(key))
         if value is not None:
             signal_total += value
@@ -757,17 +821,47 @@ def _moneyline_signal_score(
         historical_matches=historical_matches,
     )
     external_signals = _snapshot_external_signals(snapshot or {})
-    signal_total += float(external_signals.get("external_elo_delta") or 0.0)
-    signal_total += float(external_signals.get("understat_xg_delta") or 0.0)
+    signal_total += _feature_or_snapshot_signal(
+        feature_context,
+        "external_elo_delta",
+        external_signals,
+    )
+    signal_total += _feature_or_snapshot_signal(
+        feature_context,
+        "understat_xg_delta",
+        external_signals,
+    )
     return round(signal_total, 4)
+
+
+def _feature_or_legacy(feature_context: dict, feature_key: str, legacy_key: str) -> float:
+    value = _read_numeric(feature_context.get(feature_key))
+    if value is not None:
+        return value
+    legacy_value = _read_numeric(feature_context.get(legacy_key))
+    return float(legacy_value or 0.0)
+
+
+def _feature_or_snapshot_signal(
+    feature_context: dict,
+    signal_key: str,
+    external_signals: dict,
+) -> float:
+    value = _read_numeric(feature_context.get(signal_key))
+    if value is not None:
+        return value
+    return float(external_signals.get(signal_key) or 0.0)
 
 
 def _snapshot_external_signals(snapshot: dict) -> dict:
     home_external_elo = _read_numeric(snapshot.get("external_home_elo"))
     away_external_elo = _read_numeric(snapshot.get("external_away_elo"))
+    external_rating_available = (
+        home_external_elo is not None and away_external_elo is not None
+    )
     external_elo_delta = (
         round((home_external_elo - away_external_elo) / 100.0, 4)
-        if home_external_elo is not None and away_external_elo is not None
+        if external_rating_available
         else 0.0
     )
     xg_values = [
@@ -776,7 +870,8 @@ def _snapshot_external_signals(snapshot: dict) -> dict:
         _read_numeric(snapshot.get("understat_away_xg_for_last_5")),
         _read_numeric(snapshot.get("understat_away_xg_against_last_5")),
     ]
-    if all(value is not None for value in xg_values):
+    understat_xg_available = all(value is not None for value in xg_values)
+    if understat_xg_available:
         understat_xg_delta = round(
             (float(xg_values[0]) - float(xg_values[1]))
             - (float(xg_values[2]) - float(xg_values[3])),
@@ -787,6 +882,8 @@ def _snapshot_external_signals(snapshot: dict) -> dict:
     return {
         "external_elo_delta": external_elo_delta,
         "understat_xg_delta": understat_xg_delta,
+        "external_rating_available": int(external_rating_available),
+        "understat_xg_available": int(understat_xg_available),
         "external_signal_source_summary": str(
             snapshot.get("external_signal_source_summary") or ""
         ),
