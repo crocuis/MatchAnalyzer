@@ -2002,6 +2002,144 @@ describe("prediction API", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it("serves daily picks from a date artifact before rebuilding from Supabase tables", async () => {
+    const artifactPayload = {
+      generatedAt: "2026-04-24T03:00:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      validation: {
+        hitRate: 0.75,
+        sampleCount: 80,
+        wilsonLowerBound: 0.64,
+        confidenceReliability: "settled_daily_picks",
+        modelScope: "daily_pick_settled",
+      },
+      coverage: {
+        moneyline: 1,
+        spreads: 1,
+        totals: 0,
+        held: 0,
+      },
+      items: [
+        {
+          id: "daily_pick_item_1",
+          matchId: "match-1",
+          predictionId: "prediction-1",
+          leagueId: "league-1",
+          leagueLabel: "Premier League",
+          homeTeamId: "team-home",
+          homeTeam: "Arsenal",
+          homeTeamLogoUrl: null,
+          awayTeamId: "team-away",
+          awayTeam: "Chelsea",
+          awayTeamLogoUrl: null,
+          kickoffAt: "2026-04-24T12:00:00Z",
+          marketFamily: "moneyline",
+          selectionLabel: "HOME",
+          confidence: 0.8,
+          edge: null,
+          expectedValue: null,
+          marketPrice: null,
+          modelProbability: null,
+          marketProbability: null,
+          sourceAgreementRatio: null,
+          confidenceReliability: "validated",
+          highConfidenceEligible: true,
+          validationMetadata: { sample_count: 80 },
+          status: "recommended",
+          noBetReason: null,
+          reasonLabels: ["mainRecommendation"],
+        },
+        {
+          id: "daily_pick_item_2",
+          matchId: "match-2",
+          predictionId: "prediction-2",
+          leagueId: "league-1",
+          leagueLabel: "Premier League",
+          homeTeamId: "team-2-home",
+          homeTeam: "Inter",
+          homeTeamLogoUrl: null,
+          awayTeamId: "team-2-away",
+          awayTeam: "Milan",
+          awayTeamLogoUrl: null,
+          kickoffAt: "2026-04-24T14:00:00Z",
+          marketFamily: "spreads",
+          selectionLabel: "Inter -0.5",
+          confidence: null,
+          edge: 0.12,
+          expectedValue: 0.18,
+          marketPrice: 0.55,
+          modelProbability: 0.68,
+          marketProbability: 0.55,
+          sourceAgreementRatio: null,
+          confidenceReliability: "validated",
+          highConfidenceEligible: true,
+          validationMetadata: { sample_count: 80 },
+          status: "recommended",
+          noBetReason: null,
+          reasonLabels: ["spreads", "variantRecommendation"],
+        },
+      ],
+      heldItems: [],
+    };
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "daily_picks_view_2026-04-24",
+          owner_type: "daily_picks",
+          owner_id: "2026-04-24",
+          artifact_kind: "daily_picks_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "daily-picks/2026-04-24/view.json",
+          storage_uri: "https://artifacts.example/daily-picks/2026-04-24/view.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-24T03:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const supabase = {
+      from: vi.fn(() => artifactQuery),
+    } as never;
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(artifactPayload)),
+    );
+
+    const response = await app.request(
+      "/daily-picks?date=2026-04-24&marketFamily=spreads",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+    );
+    const body = await response.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].marketFamily).toBe("spreads");
+    expect(body.coverage).toEqual({
+      moneyline: 0,
+      spreads: 1,
+      totals: 0,
+      held: 0,
+    });
+    expect(supabase.from).toHaveBeenCalledTimes(1);
+  });
+
   it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
     const selectedColumns: string[] = [];
     const query = {

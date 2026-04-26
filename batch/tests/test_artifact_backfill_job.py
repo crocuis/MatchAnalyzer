@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import batch.src.jobs.backfill_artifact_pointers_job as artifact_backfill_job
+from batch.src.jobs.export_daily_pick_artifacts_job import build_daily_picks_view
 from batch.src.jobs.export_match_artifacts_job import (
     build_prediction_view,
     build_review_view,
@@ -213,3 +214,68 @@ def test_export_match_artifacts_builds_prediction_and_review_views():
     assert prediction_view["checkpoints"][0]["label"] == "T_MINUS_24H"
     assert review_view["review"]["summary"] == "Hit"
     assert review_view["review"]["artifact"]["id"] == "review_artifact_001"
+
+
+def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
+    view = build_daily_picks_view(
+        pick_date="2026-04-24",
+        run={
+            "id": "daily_pick_run_2026-04-24",
+            "pick_date": "2026-04-24",
+            "generated_at": "2026-04-24T03:00:00Z",
+        },
+        items=[
+            {
+                "id": "daily_pick_item_001",
+                "pick_date": "2026-04-24",
+                "match_id": "match_001",
+                "prediction_id": "prediction_001",
+                "market_family": "spreads",
+                "selection_label": "Home -0.5",
+                "market_price": 0.55,
+                "model_probability": 0.67,
+                "market_probability": 0.55,
+                "expected_value": 0.18,
+                "edge": 0.12,
+                "score": 0.18,
+                "validation_metadata": {"sample_count": 80, "hit_rate": 0.75},
+                "reason_labels": ["spreads", "variantRecommendation"],
+            }
+        ],
+        matches_by_id={
+            "match_001": {
+                "id": "match_001",
+                "competition_id": "league_001",
+                "home_team_id": "team_home",
+                "away_team_id": "team_away",
+                "kickoff_at": "2026-04-24T12:00:00Z",
+            }
+        },
+        teams_by_id={
+            "team_home": {"id": "team_home", "name": "Inter", "crest_url": "home.png"},
+            "team_away": {"id": "team_away", "name": "Milan", "crest_url": "away.png"},
+        },
+        competitions_by_id={
+            "league_001": {"id": "league_001", "name": "Serie A"},
+        },
+        results_by_item_id={
+            "daily_pick_item_001": {
+                "pick_item_id": "daily_pick_item_001",
+                "result_status": "hit",
+            }
+        },
+        performance_summary={
+            "id": "all",
+            "sample_count": 80,
+            "hit_rate": 0.75,
+            "wilson_lower_bound": 0.64,
+        },
+    )
+
+    assert view["date"] == "2026-04-24"
+    assert view["validation"]["sampleCount"] == 80
+    assert view["coverage"]["spreads"] == 1
+    assert view["items"][0]["matchId"] == "match_001"
+    assert view["items"][0]["homeTeamId"] == "team_home"
+    assert view["items"][0]["status"] == "hit"
+    assert view["items"][0]["highConfidenceEligible"] is True

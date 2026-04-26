@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import type { AppBindings } from "../env";
 import {
-  API_EGRESS_CACHE_CONTROL,
+  loadLatestStoredArtifact,
+  loadStoredArtifactJson,
+} from "../lib/artifact-cache";
+import {
+  API_ARTIFACT_CACHE_CONTROL,
+  API_SHORT_CACHE_CONTROL,
   cachedResponse,
 } from "../lib/edge-cache";
 import {
@@ -17,6 +22,7 @@ import {
 } from "../lib/team-translations";
 
 const dailyPicks = new Hono<AppBindings>();
+const DAILY_PICKS_ARTIFACT_KIND = "daily_picks_view";
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
@@ -26,8 +32,10 @@ export type DailyPickItem = {
   predictionId: string | null;
   leagueId: string;
   leagueLabel: string;
+  homeTeamId?: string | null;
   homeTeam: string;
   homeTeamLogoUrl: string | null;
+  awayTeamId?: string | null;
   awayTeam: string;
   awayTeamLogoUrl: string | null;
   kickoffAt: string;
@@ -796,6 +804,120 @@ function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
   );
 }
 
+function isDailyPicksView(value: unknown): value is DailyPicksView {
+  const record = readRecord(value);
+  return Boolean(
+    record
+      && Array.isArray(record.items)
+      && Array.isArray(record.heldItems)
+      && readRecord(record.coverage)
+      && readRecord(record.target)
+      && readRecord(record.validation),
+  );
+}
+
+function filterDailyPickItems(
+  items: DailyPickItem[],
+  options: LoadDailyPicksOptions,
+) {
+  return items.filter((item) => {
+    if (options.leagueId && item.leagueId !== options.leagueId) {
+      return false;
+    }
+    if (
+      options.marketFamily
+      && options.marketFamily !== "all"
+      && item.marketFamily !== options.marketFamily
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function recomputeCoverage(items: DailyPickItem[], heldItems: DailyPickItem[]) {
+  const allCandidates = [...items, ...heldItems];
+  return {
+    moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
+    spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
+    totals: allCandidates.filter((item) => item.marketFamily === "totals").length,
+    held: heldItems.length,
+  };
+}
+
+async function localizeDailyPickItems(
+  supabase: ApiSupabaseClient,
+  items: DailyPickItem[],
+  locale: string | null | undefined,
+) {
+  const teamIds = [...new Set(items.flatMap((item) => {
+    const ids = [item.homeTeamId, item.awayTeamId].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return ids;
+  }))];
+  const translations = await loadPreferredTeamTranslations(supabase, teamIds, locale);
+  if (translations.size === 0) {
+    return items;
+  }
+  return items.map((item) => ({
+    ...item,
+    homeTeam:
+      (item.homeTeamId ? translations.get(item.homeTeamId) : undefined)
+      ?? item.homeTeam,
+    awayTeam:
+      (item.awayTeamId ? translations.get(item.awayTeamId) : undefined)
+      ?? item.awayTeam,
+  }));
+}
+
+async function loadDailyPicksArtifactView(
+  supabase: ApiSupabaseClient,
+  bindings: AppBindings["Bindings"],
+  options: LoadDailyPicksOptions,
+): Promise<DailyPicksView | null> {
+  const date = resolveRequestedDate(options.date);
+  if (!date || options.includeHeld === true) {
+    return null;
+  }
+  let loaded: unknown = null;
+  try {
+    const row = await loadLatestStoredArtifact(supabase, {
+      ownerType: "daily_picks",
+      ownerId: date,
+      artifactKind: DAILY_PICKS_ARTIFACT_KIND,
+    });
+    loaded = row ? await loadStoredArtifactJson(row, bindings) : null;
+  } catch {
+    return null;
+  }
+  if (!isDailyPicksView(loaded)) {
+    return null;
+  }
+  const filteredItems = filterDailyPickItems(loaded.items, options).slice(0, 10);
+  const filteredHeldItems = options.includeHeld
+    ? filterDailyPickItems(loaded.heldItems, options).slice(0, 10)
+    : [];
+  const localizedItems = await localizeDailyPickItems(
+    supabase,
+    filteredItems,
+    options.locale,
+  );
+  const localizedHeldItems = await localizeDailyPickItems(
+    supabase,
+    filteredHeldItems,
+    options.locale,
+  );
+
+  return {
+    ...loaded,
+    date,
+    coverage: recomputeCoverage(localizedItems, localizedHeldItems),
+    items: localizedItems,
+    heldItems: localizedHeldItems,
+  };
+}
+
 dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
     const supabase = getSupabaseClient(c.env);
@@ -807,16 +929,29 @@ dailyPicks.get("/", async (c) => {
         ? marketFamilyQuery
         : "all";
 
-    const view = await loadDailyPicksView(supabase, {
+    const options = {
       date: c.req.query("date") ?? undefined,
       leagueId: c.req.query("leagueId") ?? null,
       marketFamily,
       includeHeld: c.req.query("includeHeld") === "true",
       locale: normalizeLocale(c.req.query("locale")),
-    });
+    };
+    const artifactView = supabase
+      ? await loadDailyPicksArtifactView(supabase, c.env, options)
+      : null;
+
+    if (artifactView) {
+      return c.json(artifactView, 200, {
+        "cache-control": API_ARTIFACT_CACHE_CONTROL,
+        "x-match-analyzer-artifact": "hit",
+      });
+    }
+
+    const view = await loadDailyPicksView(supabase, options);
 
     return c.json(view, 200, {
-      "cache-control": API_EGRESS_CACHE_CONTROL,
+      "cache-control": API_SHORT_CACHE_CONTROL,
+      "x-match-analyzer-artifact": "fallback",
     });
   });
 });
