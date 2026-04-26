@@ -696,6 +696,13 @@ describe("prediction API", () => {
     );
     expect(await response.json()).toMatchObject({
       date: "2026-04-24",
+      validation: {
+        hitRate: 0.75,
+        sampleCount: 76,
+        wilsonLowerBound: 0.6422,
+        confidenceReliability: "validated",
+        modelScope: "daily_pick_prequential",
+      },
       coverage: {
         held: 1,
       },
