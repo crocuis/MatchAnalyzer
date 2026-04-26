@@ -330,7 +330,15 @@ export interface PredictionModelRegistryReport {
   };
 }
 
+function isLocalDevHost(): boolean {
+  const hostname = globalThis.location?.hostname ?? "";
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
 function resolveApiBasePath(): string {
+  if (isLocalDevHost()) {
+    return "/api";
+  }
   const deployApiOrigin =
     import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
   return deployApiOrigin || "/api";

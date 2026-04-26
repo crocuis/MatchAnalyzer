@@ -20,14 +20,25 @@ describe("buildApiUrl", () => {
 
   it("uses the configured deploy api origin when VITE_API_BASE_URL is set", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://match-analyzer-api.workers.dev");
+    vi.stubGlobal("location", { hostname: "dashboard.example.com" });
 
     const { buildApiUrl } = await import("../lib/api");
 
     expect(buildApiUrl("/matches")).toBe("https://match-analyzer-api.workers.dev/matches");
   });
 
+  it("keeps localhost development reads on the same-origin api proxy", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://match-analyzer-api.workers.dev");
+    vi.stubGlobal("location", { hostname: "localhost" });
+
+    const { buildApiUrl } = await import("../lib/api");
+
+    expect(buildApiUrl("/daily-picks")).toBe("/api/daily-picks");
+  });
+
   it("keeps operational reports on the same-origin proxy when a deploy api origin is set", async () => {
     vi.stubEnv("VITE_API_BASE_URL", "https://match-analyzer-api.workers.dev");
+    vi.stubGlobal("location", { hostname: "dashboard.example.com" });
 
     const { buildApiUrl } = await import("../lib/api");
 
