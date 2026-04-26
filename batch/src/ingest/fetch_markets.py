@@ -8,10 +8,13 @@ import time
 import unicodedata
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
 POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
+ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
+ODDS_API_IO_MULTI_ODDS_CHUNK_SIZE = 10
 BETMAN_BUYABLE_GAMES_URL = "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do"
 BETMAN_GAME_INFO_URL = "https://m.betman.co.kr/buyPsblGame/gameInfoInq.do"
 BETMAN_URLOPEN_MAX_ATTEMPTS = 3
@@ -51,6 +54,81 @@ def load_sports_skills_polymarket():
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return football.get_daily_schedule(date=date)
+
+
+def fetch_odds_api_io_json(
+    api_key: str,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> Any:
+    query = {
+        "apiKey": api_key,
+        **{
+            key: value
+            for key, value in (params or {}).items()
+            if value not in {None, ""}
+        },
+    }
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}?{urlencode(query)}"
+    request = Request(url=url, headers={"User-Agent": "MatchAnalyzer/1.0"})
+    with urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _extract_odds_api_io_list(payload: Any, *keys: str) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [entry for entry in value if isinstance(entry, dict)]
+    return []
+
+
+def fetch_odds_api_io_events(
+    api_key: str,
+    *,
+    sport: str = "football",
+    limit: int = 200,
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> list[dict[str, Any]]:
+    payload = fetch_odds_api_io_json(
+        api_key,
+        "events",
+        {"sport": sport, "limit": limit},
+        base_url=base_url,
+    )
+    return _extract_odds_api_io_list(payload, "events", "results", "data")
+
+
+def fetch_odds_api_io_multi_odds(
+    api_key: str,
+    event_ids: list[str],
+    *,
+    bookmakers: str | None = None,
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    deduped_event_ids = [event_id for event_id in dict.fromkeys(event_ids) if event_id]
+    for index in range(0, len(deduped_event_ids), ODDS_API_IO_MULTI_ODDS_CHUNK_SIZE):
+        chunk = deduped_event_ids[index:index + ODDS_API_IO_MULTI_ODDS_CHUNK_SIZE]
+        payload = fetch_odds_api_io_json(
+            api_key,
+            "odds/multi",
+            {
+                "eventIds": ",".join(chunk),
+                "bookmakers": bookmakers,
+            },
+            base_url=base_url,
+        )
+        rows.extend(
+            _extract_odds_api_io_list(payload, "odds", "events", "results", "data")
+        )
+    return rows
 
 
 def fetch_betman_json(
@@ -450,6 +528,255 @@ def decimal_odds_to_probability(odds: Any) -> float | None:
     if value is None or value <= 1.0:
         return None
     return round(1.0 / value, 6)
+
+
+def _odds_api_io_event_id(event: dict[str, Any]) -> str:
+    return str(event.get("id") or event.get("eventId") or event.get("event_id") or "")
+
+
+def _odds_api_io_event_date(event: dict[str, Any]) -> str | None:
+    value = (
+        event.get("date")
+        or event.get("startTime")
+        or event.get("start_time")
+        or event.get("commence_time")
+        or event.get("commenceTime")
+    )
+    return str(value) if value else None
+
+
+def _odds_api_io_team_name(event: dict[str, Any], side: str) -> str:
+    candidates = (
+        event.get(side),
+        event.get(f"{side}_team"),
+        event.get(f"{side}Team"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            name = candidate.get("name") or candidate.get("displayName")
+            if name:
+                return str(name)
+        if candidate:
+            return str(candidate)
+    return ""
+
+
+def _snapshot_team_aliases(snapshot: dict[str, Any], key: str) -> list[str]:
+    aliases = snapshot.get(key)
+    if isinstance(aliases, list):
+        return [str(alias) for alias in aliases if str(alias or "").strip()]
+    value = snapshot.get(key.replace("_aliases", "_name"))
+    return [str(value)] if str(value or "").strip() else []
+
+
+def _team_name_matches(candidate: str, aliases: list[str]) -> bool:
+    normalized_candidate = normalize_market_text(candidate)
+    if not normalized_candidate:
+        return False
+    for alias in aliases:
+        normalized_alias = normalize_market_text(alias)
+        if not normalized_alias:
+            continue
+        if normalized_candidate == normalized_alias:
+            return True
+        if overlap_score(candidate, alias) >= 0.75:
+            return True
+    return False
+
+
+def _select_odds_api_io_snapshot(
+    event: dict[str, Any],
+    snapshot_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    event_date = _odds_api_io_event_date(event)
+    if not event_date:
+        return None
+    try:
+        event_kickoff = parse_utc_minute(event_date)
+    except ValueError:
+        return None
+    home_name = _odds_api_io_team_name(event, "home")
+    away_name = _odds_api_io_team_name(event, "away")
+    candidates: list[dict[str, Any]] = []
+    for snapshot in snapshot_rows:
+        kickoff_at = str(snapshot.get("kickoff_at") or "")
+        if not kickoff_at:
+            continue
+        try:
+            snapshot_kickoff = parse_utc_minute(kickoff_at)
+        except ValueError:
+            continue
+        if snapshot_kickoff != event_kickoff:
+            continue
+        if not _team_name_matches(
+            home_name,
+            _snapshot_team_aliases(snapshot, "home_team_aliases"),
+        ):
+            continue
+        if not _team_name_matches(
+            away_name,
+            _snapshot_team_aliases(snapshot, "away_team_aliases"),
+        ):
+            continue
+        candidates.append(snapshot)
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def _odds_api_io_market_name(market: dict[str, Any]) -> str:
+    return normalize_market_text(
+        str(
+            market.get("name")
+            or market.get("key")
+            or market.get("market")
+            or market.get("marketType")
+            or ""
+        )
+    )
+
+
+def _extract_odds_api_io_moneyline_quotes(
+    event: dict[str, Any],
+) -> list[dict[str, Any]]:
+    bookmakers = event.get("bookmakers") or {}
+    entries: list[tuple[str, Any]] = []
+    if isinstance(bookmakers, dict):
+        entries = [(str(name), markets) for name, markets in bookmakers.items()]
+    elif isinstance(bookmakers, list):
+        entries = [
+            (
+                str(
+                    bookmaker.get("name")
+                    or bookmaker.get("title")
+                    or bookmaker.get("key")
+                    or ""
+                ),
+                bookmaker.get("markets") or bookmaker.get("odds") or [],
+            )
+            for bookmaker in bookmakers
+            if isinstance(bookmaker, dict)
+        ]
+
+    quotes: list[dict[str, Any]] = []
+    for bookmaker_name, markets in entries:
+        if isinstance(markets, dict):
+            markets = markets.get("markets") or markets.get("odds") or []
+        if not isinstance(markets, list):
+            continue
+        for market in markets:
+            if not isinstance(market, dict):
+                continue
+            market_name = _odds_api_io_market_name(market)
+            if market_name not in {"ml", "moneyline", "match result", "1x2", "h2h"}:
+                continue
+            odds_entries = market.get("odds")
+            if isinstance(odds_entries, dict):
+                odds_entries = [odds_entries]
+            if not isinstance(odds_entries, list):
+                continue
+            for odds in odds_entries:
+                if not isinstance(odds, dict):
+                    continue
+                home_price = decimal_odds_to_probability(odds.get("home"))
+                draw_price = decimal_odds_to_probability(odds.get("draw"))
+                away_price = decimal_odds_to_probability(odds.get("away"))
+                if None in (home_price, draw_price, away_price):
+                    continue
+                quotes.append(
+                    {
+                        "bookmaker": bookmaker_name,
+                        "market": market.get("name") or market.get("key") or "ML",
+                        "home_decimal": odds.get("home"),
+                        "draw_decimal": odds.get("draw"),
+                        "away_decimal": odds.get("away"),
+                        "home_price": home_price,
+                        "draw_price": draw_price,
+                        "away_price": away_price,
+                        "updated_at": market.get("updatedAt") or market.get("updated_at"),
+                    }
+                )
+    return quotes
+
+
+def _odds_api_io_observed_at(
+    event: dict[str, Any],
+    quotes: list[dict[str, Any]],
+    fallback: str,
+) -> str:
+    values = [
+        str(quote.get("updated_at"))
+        for quote in quotes
+        if str(quote.get("updated_at") or "").strip()
+    ]
+    values.extend(
+        str(event.get(key))
+        for key in ("updatedAt", "updated_at", "lastUpdated", "date")
+        if str(event.get(key) or "").strip()
+    )
+    if not values:
+        return fallback
+    return max(values)
+
+
+def build_odds_api_io_market_rows(
+    odds_events: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in odds_events:
+        snapshot = _select_odds_api_io_snapshot(event, snapshot_rows)
+        if snapshot is None:
+            continue
+        quotes = _extract_odds_api_io_moneyline_quotes(event)
+        if not quotes:
+            continue
+        home_price = round(
+            sum(float(quote["home_price"]) for quote in quotes) / len(quotes),
+            6,
+        )
+        draw_price = round(
+            sum(float(quote["draw_price"]) for quote in quotes) / len(quotes),
+            6,
+        )
+        away_price = round(
+            sum(float(quote["away_price"]) for quote in quotes) / len(quotes),
+            6,
+        )
+        normalized = normalize_market_probabilities(home_price, draw_price, away_price)
+        rows.append(
+            {
+                "id": f"{snapshot['id']}_bookmaker",
+                "snapshot_id": snapshot["id"],
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": normalized["home_prob"],
+                "draw_prob": normalized["draw_prob"],
+                "away_prob": normalized["away_prob"],
+                "home_price": home_price,
+                "draw_price": draw_price,
+                "away_price": away_price,
+                "raw_payload": {
+                    "provider": "odds-api.io",
+                    "event_id": _odds_api_io_event_id(event),
+                    "bookmakers": sorted(
+                        {
+                            str(quote.get("bookmaker") or "")
+                            for quote in quotes
+                            if str(quote.get("bookmaker") or "").strip()
+                        }
+                    ),
+                    "quote_count": len(quotes),
+                },
+                "observed_at": _odds_api_io_observed_at(
+                    event,
+                    quotes,
+                    str(snapshot.get("kickoff_at") or ""),
+                ),
+            }
+        )
+    return rows
 
 
 def expand_betman_comp_schedules(comp_schedules: dict[str, Any] | None) -> list[dict[str, Any]]:

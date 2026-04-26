@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { ClientValidationPanel } from "./components/ClientValidationPanel";
 import DailyPicksModal from "./components/DailyPicksModal";
+import DailyPicksTeaser from "./components/DailyPicksTeaser";
 import FullReportView from "./components/FullReportView";
 import LeagueTabs from "./components/LeagueTabs";
 import MatchDetailModal from "./components/MatchDetailModal";
@@ -579,6 +580,15 @@ export default function App() {
           <p className="dashboardSubtitle">{t("header.subtitle")}</p>
         </header>
 
+        <DailyPicksTeaser
+          onOpen={() => {
+            setDailyPicksLeagueId(null);
+            setReportMatchId(null);
+            setIsModalOpen(false);
+            setIsDailyPicksModalOpen(true);
+          }}
+        />
+
         {derivedLeagues.length > 0 ? (
           <LeagueTabs
             leagues={derivedLeagues}
@@ -608,12 +618,6 @@ export default function App() {
             predictionSummaryTotalMatches={predictionSummaryTotalMatches}
             totalMatches={totalMatches}
             onOpen={handleOpenMatch}
-            onOpenDailyPicks={() => {
-              setDailyPicksLeagueId(null);
-              setReportMatchId(null);
-              setIsModalOpen(false);
-              setIsDailyPicksModalOpen(true);
-            }}
             onLoadMore={handleLoadMore}
             activeView={activeMatchView}
             onSelectView={handleSelectMatchView}

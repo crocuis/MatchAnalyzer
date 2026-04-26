@@ -13,6 +13,7 @@ def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
+    assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
     assert "REAL_FIXTURE_DATE=" in workflow
 
 
@@ -27,6 +28,9 @@ def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> 
     assert "while IFS= read -r TARGET_DATE; do" in workflow
     assert 'REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job' in workflow
     assert "REAL_PREDICTION_MATCH_IDS" in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
+    assert "--clubelo-date-stride-days 1" in workflow
     assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
     assert 'echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"' in workflow
     assert 'if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then' in workflow
@@ -39,8 +43,12 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
+    assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
     assert "REAL_MARKET_DATE=" in workflow
     assert "REAL_PREDICTION_MATCH_IDS" in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$CHANGED_MATCH_IDS"' in workflow
+    assert "--clubelo-date-stride-days 1" in workflow
     assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
     assert "<<'PY'" not in workflow
     assert "python3 -c" in workflow
@@ -50,7 +58,8 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     workflow = read_workflow("run-predictions.yml")
 
     assert "schedule:" in workflow
-    assert 'cron: "30 3 * * *"' in workflow
+    assert "# 12:00 Asia/Seoul" in workflow
+    assert 'cron: "0 3 * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "target_match_ids:" in workflow
@@ -64,7 +73,22 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     assert "LLM_PREDICTION_MODEL=$LLM_MODEL_INPUT" in workflow
     assert "NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}" in workflow
     assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
+    assert "R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}" in workflow
+    assert "R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}" in workflow
+    assert "R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}" in workflow
     assert '[ "${{ github.event_name }}" = "schedule" ]' in workflow
+    assert "DAILY_PICK_SYNC_ENABLED=0" in workflow
+    assert "DAILY_PICK_SYNC_ENABLED=1" in workflow
+    assert "DAILY_PICK_SYNC_DATE=" in workflow
+    assert "DAILY_PICK_ARTIFACT_DATE=" in workflow
+    assert "Backfill external prediction signals" in workflow
+    assert "backfill_external_prediction_signals_job" in workflow
+    assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
+    assert '--kickoff-date "$REAL_PREDICTION_DATE"' in workflow
+    assert "--clubelo-date-stride-days 1" in workflow
+    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
+    assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
+    assert "if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}" in workflow
 
 
 def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() -> None:
@@ -83,8 +107,15 @@ def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() ->
     assert "LLM_REVIEW_MODEL=$LLM_MODEL_INPUT" in workflow
     assert "NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}" in workflow
     assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
+    assert "R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}" in workflow
+    assert "R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}" in workflow
+    assert "R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}" in workflow
     assert '[ "${{ github.event.schedule }}" = "20 4 * * *" ]' in workflow
     assert "date -u -d 'yesterday' +%F" in workflow
+    assert 'DAILY_PICK_SETTLE_DATE="$REAL_REVIEW_DATE"' in workflow
+    assert 'DAILY_PICK_ARTIFACT_DATE="$REAL_REVIEW_DATE"' in workflow
+    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
+    assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
 
 
 def test_report_missing_signal_coverage_workflow_runs_daily() -> None:

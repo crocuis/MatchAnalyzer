@@ -12,6 +12,12 @@ import {
   normalizeValueRecommendationFromSummary,
 } from "../lib/prediction-lanes";
 import { ensureOperationalReportsAccess } from "../lib/operational-auth";
+import { loadMatchArtifactJson } from "../lib/artifact-cache";
+import {
+  API_ARTIFACT_CACHE_CONTROL,
+  API_SHORT_CACHE_CONTROL,
+  cachedResponse,
+} from "../lib/edge-cache";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const predictions = new Hono<AppBindings>();
@@ -101,6 +107,8 @@ type PredictionFusionPolicyHistoryView = {
   shadow: HistoryLaneSummary | null;
   rollout: HistoryLaneSummary | null;
 };
+
+type PredictionValidationMetadata = Record<string, unknown>;
 
 const predictionSourceEvaluationTables = [
   "prediction_source_evaluation_reports",
@@ -519,6 +527,14 @@ function normalizeHistoryLaneSummary(value: unknown): HistoryLaneSummary | null 
   }
 
   return summary;
+}
+
+function normalizeValidationMetadata(summaryPayload: unknown): PredictionValidationMetadata | null {
+  if (!isRecord(summaryPayload)) {
+    return null;
+  }
+  const metadata = summaryPayload.validation_metadata ?? summaryPayload.validationMetadata;
+  return isRecord(metadata) ? metadata : null;
 }
 
 function normalizeHistoryEntry<T>(
@@ -963,6 +979,9 @@ export async function loadPredictionView(
         Number(latestPrediction.confidence_score),
       )
     : null;
+  const validationMetadata = latestPrediction
+    ? normalizeValidationMetadata(latestPrediction.summary_payload)
+    : null;
   const valueRecommendation = latestPrediction && settledOutcome === null
     ? normalizeValueRecommendationFromSummary(
         {
@@ -1011,6 +1030,7 @@ export async function loadPredictionView(
           confidence: mainRecommendation?.recommended
             ? mainRecommendation.confidence ?? null
             : null,
+          validationMetadata,
           mainRecommendation,
           valueRecommendation,
           variantMarkets,
@@ -1180,7 +1200,23 @@ predictions.get("/:matchId", async (c) => {
     });
   }
   try {
-    return c.json(await loadPredictionView(supabase, matchId));
+    return cachedResponse(c, async () => {
+      const artifactPayload = await loadMatchArtifactJson(supabase, c.env, {
+        matchId,
+        artifactKind: "prediction_view",
+      });
+      if (artifactPayload) {
+        return c.json(artifactPayload, 200, {
+          "cache-control": API_ARTIFACT_CACHE_CONTROL,
+          "x-match-analyzer-artifact": "hit",
+        });
+      }
+
+      return c.json(await loadPredictionView(supabase, matchId), 200, {
+        "cache-control": API_SHORT_CACHE_CONTROL,
+        "x-match-analyzer-artifact": "fallback",
+      });
+    });
   } catch {
     return c.json(
       {

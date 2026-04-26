@@ -1,0 +1,638 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from collections import defaultdict
+from datetime import datetime, timezone
+from hashlib import sha256
+from typing import Iterable
+
+from batch.src.model.betting_recommendations import (
+    choose_latest_prediction,
+    settle_variant_candidate,
+)
+from batch.src.model.confidence_validation import wilson_lower_bound
+from batch.src.settings import load_settings
+from batch.src.storage.supabase_client import SupabaseClient
+
+
+MAX_DAILY_RECOMMENDATIONS = 10
+TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
+
+
+def build_daily_pick_run_id(pick_date: str) -> str:
+    return f"daily_pick_run_{pick_date}"
+
+
+def sync_daily_picks_for_date(
+    *,
+    pick_date: str,
+    matches: list[dict],
+    snapshots: list[dict],
+    predictions: list[dict],
+) -> tuple[dict, list[dict]]:
+    snapshots_by_id = {
+        str(row.get("id") or ""): row
+        for row in snapshots
+        if row.get("id") is not None
+    }
+    predictions_by_match: dict[str, list[dict]] = defaultdict(list)
+    for row in predictions:
+        match_id = str(row.get("match_id") or "")
+        if match_id:
+            predictions_by_match[match_id].append(row)
+
+    candidates: list[dict] = []
+    for match in matches:
+        kickoff_at = str(match.get("kickoff_at") or "")
+        if kickoff_at[:10] != pick_date:
+            continue
+        match_id = str(match.get("id") or "")
+        if not match_id:
+            continue
+        representative = choose_latest_prediction(
+            predictions_by_match.get(match_id) or [],
+            snapshots_by_id=snapshots_by_id,
+        )
+        if representative is None:
+            continue
+        candidates.extend(
+            build_recommended_pick_candidates(
+                pick_date=pick_date,
+                match=match,
+                prediction=representative,
+            )
+        )
+
+    candidates.sort(
+        key=lambda row: (
+            -float(row.get("score") or 0.0),
+            -float(row.get("expected_value") or 0.0),
+            -float(row.get("edge") or 0.0),
+            str(row.get("match_id") or ""),
+            str(row.get("market_family") or ""),
+        )
+    )
+    run_id = build_daily_pick_run_id(pick_date)
+    selected_items = [
+        {
+            **row,
+            "run_id": run_id,
+            "id": build_daily_pick_item_id(run_id, row),
+        }
+        for row in candidates[:MAX_DAILY_RECOMMENDATIONS]
+    ]
+    model_version_id = next(
+        (
+            str(row.get("model_version_id"))
+            for row in selected_items
+            if row.get("model_version_id") is not None
+        ),
+        None,
+    )
+    run = {
+        "id": run_id,
+        "pick_date": pick_date,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "model_version_id": model_version_id,
+        "metadata": {
+            "candidate_count": len(candidates),
+            "selected_count": len(selected_items),
+            "ranking": "expected_value_edge_probability_confidence",
+        },
+    }
+    return run, selected_items
+
+
+def build_recommended_pick_candidates(
+    *,
+    pick_date: str,
+    match: dict,
+    prediction: dict,
+) -> list[dict]:
+    summary = prediction.get("summary_payload")
+    summary_payload = summary if isinstance(summary, dict) else {}
+    if summary_payload.get("high_confidence_eligible") is not True:
+        return []
+
+    match_id = str(match.get("id") or "")
+    base = {
+        "pick_date": pick_date,
+        "match_id": match_id,
+        "prediction_id": prediction.get("id"),
+        "model_version_id": prediction.get("model_version_id"),
+        "status": "recommended",
+        "validation_metadata": summary_payload.get("validation_metadata") or {},
+    }
+
+    candidates: list[dict] = []
+    moneyline_candidate = build_moneyline_pick_candidate(base=base, prediction=prediction)
+    if moneyline_candidate is not None:
+        candidates.append(moneyline_candidate)
+
+    for variant in read_variant_markets(prediction.get("variant_markets_summary")):
+        candidate = build_variant_pick_candidate(base=base, variant=variant)
+        if candidate is not None:
+            candidates.append(candidate)
+
+    return candidates
+
+
+def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | None:
+    if prediction.get("main_recommendation_recommended") is False:
+        return None
+    selection_label = str(
+        prediction.get("main_recommendation_pick")
+        or prediction.get("recommended_pick")
+        or ""
+    ).upper()
+    if selection_label not in {"HOME", "DRAW", "AWAY"}:
+        return None
+
+    confidence = _read_numeric(
+        prediction.get("main_recommendation_confidence")
+        or prediction.get("confidence_score")
+    )
+    if confidence is None:
+        return None
+
+    value_pick = str(prediction.get("value_recommendation_pick") or "").upper()
+    value_aligned = value_pick == selection_label
+    market_price = (
+        _read_numeric(prediction.get("value_recommendation_market_price"))
+        if value_aligned
+        else None
+    )
+    model_probability = (
+        _read_numeric(prediction.get("value_recommendation_model_probability"))
+        if value_aligned
+        else None
+    )
+    market_probability = (
+        _read_numeric(prediction.get("value_recommendation_market_probability"))
+        if value_aligned
+        else None
+    )
+    edge = (
+        _read_numeric(prediction.get("value_recommendation_edge"))
+        if value_aligned
+        else None
+    )
+    expected_value = (
+        _read_numeric(prediction.get("value_recommendation_expected_value"))
+        if value_aligned
+        else None
+    )
+    return {
+        **base,
+        "market_family": "moneyline",
+        "selection_label": selection_label,
+        "line_value": None,
+        "market_price": market_price,
+        "model_probability": model_probability,
+        "market_probability": market_probability,
+        "expected_value": expected_value,
+        "edge": edge,
+        "confidence": confidence,
+        "score": recommendation_score(
+            expected_value=expected_value,
+            edge=edge,
+            model_probability=model_probability,
+            market_probability=market_probability,
+            confidence=confidence,
+        ),
+        "reason_labels": ["mainRecommendation"],
+    }
+
+
+def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
+    market_family = _read_text(
+        variant.get("market_family") or variant.get("marketFamily")
+    )
+    if market_family not in {"spreads", "totals"}:
+        return None
+    if variant.get("recommended") is not True:
+        return None
+
+    selection_label = _read_text(
+        variant.get("recommended_pick") or variant.get("recommendedPick")
+    )
+    if selection_label is None:
+        return None
+    expected_value = _read_numeric(
+        _first_present(variant, "expected_value", "expectedValue")
+    )
+    edge = _read_numeric(variant.get("edge"))
+    model_probability = _read_numeric(
+        _first_present(variant, "model_probability", "modelProbability")
+    )
+    market_probability = _read_numeric(
+        _first_present(variant, "market_probability", "marketProbability")
+    )
+    market_price = _read_numeric(
+        _first_present(variant, "market_price", "marketPrice")
+    )
+    return {
+        **base,
+        "market_family": market_family,
+        "selection_label": selection_label,
+        "line_value": _read_numeric(_first_present(variant, "line_value", "lineValue")),
+        "market_price": market_price,
+        "model_probability": model_probability,
+        "market_probability": market_probability,
+        "expected_value": expected_value,
+        "edge": edge,
+        "confidence": None,
+        "score": recommendation_score(
+            expected_value=expected_value,
+            edge=edge,
+            model_probability=model_probability,
+            market_probability=market_probability,
+            confidence=None,
+        ),
+        "reason_labels": [market_family, "variantRecommendation"],
+    }
+
+
+def recommendation_score(
+    *,
+    expected_value: float | None,
+    edge: float | None,
+    model_probability: float | None,
+    market_probability: float | None,
+    confidence: float | None,
+) -> float:
+    if expected_value is not None:
+        return expected_value
+    if edge is not None:
+        return edge
+    if model_probability is not None and market_probability is not None:
+        return model_probability - market_probability
+    return confidence or model_probability or 0.0
+
+
+def settle_daily_pick_items(
+    *,
+    settle_date: str,
+    items: list[dict],
+    matches: list[dict],
+    teams: list[dict],
+    existing_results: list[dict] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    matches_by_id = {
+        str(row.get("id") or ""): row
+        for row in matches
+        if row.get("id") is not None
+    }
+    teams_by_id = {
+        str(row.get("id") or ""): row for row in teams if row.get("id") is not None
+    }
+    pending_result_item_ids = {
+        str(row.get("pick_item_id") or "")
+        for row in (existing_results or [])
+        if row.get("result_status") == "pending"
+    }
+    selected_items = [
+        row
+        for row in items
+        if (
+            str(row.get("pick_date") or "") == settle_date
+            or (
+                str(row.get("pick_date") or "") < settle_date
+                and str(row.get("id") or "") in pending_result_item_ids
+            )
+        )
+        and row.get("status") == "recommended"
+    ]
+
+    results = [
+        settle_daily_pick_item(
+            item=row,
+            match=matches_by_id.get(str(row.get("match_id") or "")),
+            teams_by_id=teams_by_id,
+        )
+        for row in selected_items
+    ]
+    run_dates_by_id = {
+        str(row.get("run_id") or ""): str(row.get("pick_date") or settle_date)
+        for row in selected_items
+        if row.get("run_id")
+    }
+    runs = [
+        {
+            "id": run_id,
+            "pick_date": run_dates_by_id[run_id],
+            "status": "settled",
+            "metadata": {
+                "settled_item_count": sum(
+                    1 for row in selected_items if str(row.get("run_id") or "") == run_id
+                ),
+                "settled_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+        for run_id in sorted(run_dates_by_id)
+    ]
+    return results, runs
+
+
+def settle_daily_pick_item(
+    *,
+    item: dict,
+    match: dict | None,
+    teams_by_id: dict[str, dict],
+) -> dict:
+    item_id = str(item.get("id") or "")
+    pending = {
+        "id": f"daily_pick_result_{item_id}",
+        "pick_item_id": item_id,
+        "result_status": "pending",
+        "settled_at": datetime.now(timezone.utc).isoformat(),
+        "final_result": None,
+        "home_score": None,
+        "away_score": None,
+        "profit": None,
+        "metadata": {},
+    }
+    if match is None:
+        return {**pending, "metadata": {"reason": "match_not_found"}}
+
+    final_result = _read_text(match.get("final_result"))
+    home_score = _read_int(match.get("home_score"))
+    away_score = _read_int(match.get("away_score"))
+    base = {
+        **pending,
+        "final_result": final_result,
+        "home_score": home_score,
+        "away_score": away_score,
+    }
+    market_family = str(item.get("market_family") or "")
+    selection_label = str(item.get("selection_label") or "")
+
+    if market_family == "moneyline":
+        if final_result not in {"HOME", "DRAW", "AWAY"}:
+            return {**base, "metadata": {"reason": "final_result_missing"}}
+        hit = selection_label.upper() == final_result
+        return {
+            **base,
+            "result_status": "hit" if hit else "miss",
+            "profit": _moneyline_profit(item, hit),
+            "metadata": {"selection_label": selection_label},
+        }
+
+    if market_family in {"spreads", "totals"}:
+        profit = settle_variant_candidate(
+            market_family=market_family,
+            selection_label=selection_label,
+            line_value=_read_numeric(item.get("line_value")),
+            market_price=_read_numeric(item.get("market_price")),
+            match=match,
+            teams_by_id=teams_by_id,
+        )
+        if profit is None:
+            return {**base, "metadata": {"reason": "variant_settlement_incomplete"}}
+        if profit > 0:
+            result_status = "hit"
+        elif profit == 0:
+            result_status = "void"
+        else:
+            result_status = "miss"
+        return {
+            **base,
+            "result_status": result_status,
+            "profit": profit,
+            "metadata": {"selection_label": selection_label},
+        }
+
+    return {**base, "metadata": {"reason": "unknown_market_family"}}
+
+
+def build_performance_summaries(
+    *,
+    items: list[dict],
+    results: list[dict],
+) -> list[dict]:
+    items_by_id = {str(row.get("id") or ""): row for row in items}
+    joined = [
+        {
+            **result,
+            "market_family": str(
+                (items_by_id.get(str(result.get("pick_item_id") or "")) or {}).get(
+                    "market_family"
+                )
+                or ""
+            ),
+        }
+        for result in results
+    ]
+
+    summaries = [
+        summarize_result_rows("all", "all", None, joined),
+    ]
+    for market_family in sorted(TRACKED_MARKET_FAMILIES):
+        summaries.append(
+            summarize_result_rows(
+                f"market:{market_family}",
+                "market",
+                market_family,
+                [
+                    row
+                    for row in joined
+                    if row.get("market_family") == market_family
+                ],
+            )
+        )
+    return summaries
+
+
+def summarize_result_rows(
+    summary_id: str,
+    scope: str,
+    scope_value: str | None,
+    rows: list[dict],
+) -> dict:
+    hit_count = sum(1 for row in rows if row.get("result_status") == "hit")
+    miss_count = sum(1 for row in rows if row.get("result_status") == "miss")
+    void_count = sum(1 for row in rows if row.get("result_status") == "void")
+    pending_count = sum(1 for row in rows if row.get("result_status") == "pending")
+    sample_count = hit_count + miss_count
+    hit_rate = round(hit_count / sample_count, 4) if sample_count else None
+    return {
+        "id": summary_id,
+        "scope": scope,
+        "scope_value": scope_value,
+        "sample_count": sample_count,
+        "hit_count": hit_count,
+        "miss_count": miss_count,
+        "void_count": void_count,
+        "pending_count": pending_count,
+        "hit_rate": hit_rate,
+        "wilson_lower_bound": (
+            wilson_lower_bound(hit_count, sample_count) if sample_count else None
+        ),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def read_variant_markets(value: object) -> list[dict]:
+    if isinstance(value, list):
+        return [row for row in value if isinstance(row, dict)]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return read_variant_markets(parsed)
+    return []
+
+
+def build_daily_pick_item_id(run_id: str, row: dict) -> str:
+    raw = "|".join(
+        (
+            run_id,
+            str(row.get("match_id") or ""),
+            str(row.get("market_family") or ""),
+            str(row.get("selection_label") or ""),
+            str(row.get("line_value") or ""),
+        )
+    )
+    digest = sha256(raw.encode("utf-8")).hexdigest()[:16]
+    return f"daily_pick_item_{digest}"
+
+
+def _moneyline_profit(item: dict, hit: bool) -> float | None:
+    market_price = _read_numeric(item.get("market_price"))
+    if market_price in {None, 0.0}:
+        return None
+    return round((1.0 / market_price) - 1.0, 4) if hit else -1.0
+
+
+def _read_numeric(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        if isinstance(value, bool):
+            return None
+        return float(value)
+    return None
+
+
+def _read_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _read_text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _first_present(row: dict, *keys: str) -> object:
+    for key in keys:
+        if key in row:
+            return row[key]
+    return None
+
+
+def read_rows(client: SupabaseClient, table_name: str) -> list[dict]:
+    return client.read_rows(table_name)
+
+
+def run_job(
+    *,
+    sync_date: str | None,
+    settle_date: str | None,
+    client: SupabaseClient,
+) -> dict:
+    result = {
+        "synced_items": 0,
+        "settled_results": 0,
+        "summary_rows": 0,
+    }
+
+    if sync_date:
+        existing_runs = read_rows(client, "daily_pick_runs")
+        run_id = build_daily_pick_run_id(sync_date)
+        existing_run = next(
+            (row for row in existing_runs if str(row.get("id") or "") == run_id),
+            None,
+        )
+        if existing_run and existing_run.get("status") == "settled":
+            result["sync_skipped"] = "settled_run_exists"
+        else:
+            matches = read_rows(client, "matches")
+            snapshots = read_rows(client, "match_snapshots")
+            predictions = read_rows(client, "predictions")
+            run, items = sync_daily_picks_for_date(
+                pick_date=sync_date,
+                matches=matches,
+                snapshots=snapshots,
+                predictions=predictions,
+            )
+            replace_existing_daily_pick_items(client, str(run["id"]))
+            client.upsert_rows("daily_pick_runs", [run])
+            if items:
+                client.upsert_rows("daily_pick_items", items)
+            result["synced_items"] = len(items)
+
+    if settle_date:
+        items = read_rows(client, "daily_pick_items")
+        matches = read_rows(client, "matches")
+        teams = read_rows(client, "teams")
+        existing_results = read_rows(client, "daily_pick_results")
+        settlement_rows, settled_runs = settle_daily_pick_items(
+            settle_date=settle_date,
+            items=items,
+            matches=matches,
+            teams=teams,
+            existing_results=existing_results,
+        )
+        if settlement_rows:
+            client.upsert_rows("daily_pick_results", settlement_rows)
+        if settled_runs:
+            client.upsert_rows("daily_pick_runs", settled_runs)
+
+        all_items = read_rows(client, "daily_pick_items")
+        all_results = read_rows(client, "daily_pick_results")
+        summaries = build_performance_summaries(items=all_items, results=all_results)
+        client.upsert_rows("daily_pick_performance_summary", summaries)
+        result["settled_results"] = len(settlement_rows)
+        result["summary_rows"] = len(summaries)
+
+    return result
+
+
+def replace_existing_daily_pick_items(client: SupabaseClient, run_id: str) -> None:
+    existing_items = [
+        row
+        for row in read_rows(client, "daily_pick_items")
+        if str(row.get("run_id") or "") == run_id
+    ]
+    existing_item_ids = [
+        str(row.get("id"))
+        for row in existing_items
+        if row.get("id") is not None
+    ]
+    client.delete_rows("daily_pick_results", "pick_item_id", existing_item_ids)
+    client.delete_rows("daily_pick_items", "run_id", [run_id])
+
+
+def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Sync and settle daily pick tracking rows.")
+    parser.add_argument("--sync-date", default=os.environ.get("DAILY_PICK_SYNC_DATE"))
+    parser.add_argument("--settle-date", default=os.environ.get("DAILY_PICK_SETTLE_DATE"))
+    return parser.parse_args(argv)
+
+
+def main(argv: Iterable[str] | None = None) -> None:
+    args = parse_args(argv)
+    settings = load_settings()
+    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    result = run_job(
+        sync_date=args.sync_date,
+        settle_date=args.settle_date,
+        client=client,
+    )
+    print(json.dumps(result, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

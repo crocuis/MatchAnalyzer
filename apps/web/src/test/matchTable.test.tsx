@@ -89,7 +89,6 @@ describe("MatchTable", () => {
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
-          onOpenDailyPicks={() => {}}
           onLoadMore={() => {}}
         />,
       );
@@ -158,7 +157,6 @@ describe("MatchTable", () => {
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
-          onOpenDailyPicks={() => {}}
           onLoadMore={() => {}}
         />,
       );
@@ -237,7 +235,6 @@ describe("MatchTable", () => {
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
-          onOpenDailyPicks={() => {}}
           onLoadMore={() => {}}
         />,
       );
@@ -345,8 +342,8 @@ describe("MatchTable", () => {
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
-          onOpenDailyPicks={() => {}}
           onLoadMore={onLoadMore}
+
         />,
       );
 
@@ -453,8 +450,8 @@ describe("MatchTable", () => {
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
-          onOpenDailyPicks={() => {}}
           onLoadMore={onLoadMore}
+
           activeView="recent"
         />,
       );
@@ -501,7 +498,6 @@ describe("MatchTable", () => {
         panelId="league-matches-panel"
         selectedMatchId={null}
         onOpen={() => {}}
-        onOpenDailyPicks={() => {}}
         onLoadMore={() => {}}
       />,
     );
@@ -516,7 +512,7 @@ describe("MatchTable", () => {
     expect(summary).not.toHaveTextContent("7 / 7");
   });
 
-  it("renders the shared prediction summary and Daily Picks before the view tabs", () => {
+  it("renders the shared prediction summary before the view tabs", () => {
     const matches: MatchCardRow[] = [
       {
         id: "future-001",
@@ -548,18 +544,14 @@ describe("MatchTable", () => {
         panelId="league-matches-panel"
         selectedMatchId={null}
         onOpen={() => {}}
-        onOpenDailyPicks={() => {}}
         onLoadMore={() => {}}
       />,
     );
 
     const summaries = screen.getAllByLabelText("League prediction summary");
-    const dailyPicks = screen.getByLabelText("Daily Picks");
     const tabList = screen.getByRole("tablist", { name: "Match views" });
 
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.compareDocumentPosition(dailyPicks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(dailyPicks.compareDocumentPosition(tabList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(summaries[0]?.compareDocumentPosition(tabList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -596,7 +588,6 @@ describe("MatchTable", () => {
         panelId="league-matches-panel"
         selectedMatchId={null}
         onOpen={() => {}}
-        onOpenDailyPicks={() => {}}
         onLoadMore={() => {}}
         activeView="recent"
       />,
@@ -711,8 +702,8 @@ describe("MatchTable", () => {
           panelId="league-matches-panel"
           selectedMatchId={null}
           onOpen={() => {}}
-          onOpenDailyPicks={() => {}}
           onLoadMore={onLoadMore}
+
         />,
       );
 

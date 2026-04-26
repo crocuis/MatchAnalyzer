@@ -85,6 +85,7 @@ BENCH_PLAYER_WEIGHT = 0.02
 RECENT_EVENT_LIMIT = 3
 RECENCY_WEIGHTS = (1.0, 0.7, 0.4)
 LINEUP_CONTEXT_LOOKAHEAD_HOURS = 1
+BSD_API_BASE_URL = "https://sports.bzzoiro.com/api"
 
 
 def normalize_kickoff_at(value: str) -> str:
@@ -324,6 +325,102 @@ def fetch_daily_schedule(date: str) -> dict[str, Any]:
     return football.get_daily_schedule(date=date)
 
 
+def fetch_bsd_json(
+    api_key: str,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    base_url: str = BSD_API_BASE_URL,
+) -> Any:
+    query = urlencode(
+        {
+            key: value
+            for key, value in (params or {}).items()
+            if value not in {None, ""}
+        }
+    )
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    if query:
+        url = f"{url}?{query}"
+    request = Request(
+        url,
+        headers={
+            "Authorization": f"Token {api_key}",
+            "User-Agent": "MatchAnalyzer/1.0",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_bsd_paginated(
+    api_key: str,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    base_url: str = BSD_API_BASE_URL,
+) -> list[dict[str, Any]]:
+    payload = fetch_bsd_json(api_key, path, params, base_url=base_url)
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    rows: list[dict[str, Any]] = []
+    while isinstance(payload, dict):
+        page_rows = payload.get("results")
+        if isinstance(page_rows, list):
+            rows.extend(row for row in page_rows if isinstance(row, dict))
+        next_url = payload.get("next")
+        if not next_url:
+            break
+        request = Request(
+            str(next_url),
+            headers={
+                "Authorization": f"Token {api_key}",
+                "User-Agent": "MatchAnalyzer/1.0",
+            },
+        )
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    return rows
+
+
+def fetch_bsd_events(
+    api_key: str,
+    *,
+    date_from: str,
+    date_to: str,
+    tz: str = "UTC",
+    base_url: str = BSD_API_BASE_URL,
+) -> list[dict[str, Any]]:
+    return fetch_bsd_paginated(
+        api_key,
+        "events/",
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "tz": tz,
+            "limit": 200,
+        },
+        base_url=base_url,
+    )
+
+
+def fetch_bsd_predicted_lineup(
+    api_key: str,
+    event_id: int | str,
+    *,
+    base_url: str = BSD_API_BASE_URL,
+) -> dict[str, Any] | None:
+    try:
+        payload = fetch_bsd_json(
+            api_key,
+            f"predicted-lineup/{event_id}/",
+            base_url=base_url,
+        )
+    except OSError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def fetch_event_lineups(event_id: str) -> dict[str, Any]:
     football = load_sports_skills_football()
     return unwrap_sports_skills_data(football.get_event_lineups(event_id=event_id))
@@ -393,6 +490,22 @@ def _player_lineup_weight(player: dict[str, Any]) -> float:
 
 def _normalized_player_name(name: str) -> str:
     return " ".join(name.lower().split())
+
+
+def _normalize_bsd_position(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    mapping = {
+        "G": "Goalkeeper",
+        "GK": "Goalkeeper",
+        "D": "Defender",
+        "DEF": "Defender",
+        "M": "Midfielder",
+        "MID": "Midfielder",
+        "F": "Forward",
+        "FW": "Forward",
+        "ST": "Forward",
+    }
+    return mapping.get(normalized, str(value or "").strip().title())
 
 
 def _normalize_missing_players_team_name(name: str) -> str:
@@ -472,6 +585,207 @@ def _lineup_score(
         + (FORMATION_BONUS if formation_known else 0.0)
     )
     return round(score, 4)
+
+
+def _bsd_players_to_lineup(team_payload: dict[str, Any]) -> dict[str, Any]:
+    def normalize_players(players: Any) -> list[dict[str, Any]]:
+        if not isinstance(players, list):
+            return []
+        normalized = []
+        for player in players:
+            if not isinstance(player, dict):
+                continue
+            normalized.append(
+                {
+                    "name": str(player.get("name") or player.get("player_name") or ""),
+                    "position": _normalize_bsd_position(player.get("position")),
+                }
+            )
+        return normalized
+
+    return {
+        "formation": team_payload.get("predicted_formation"),
+        "starting": normalize_players(team_payload.get("starters")),
+        "bench": normalize_players(team_payload.get("substitutes")),
+    }
+
+
+def _bsd_unavailable_count(team_payload: dict[str, Any]) -> int | None:
+    players = team_payload.get("unavailable_players")
+    if isinstance(players, list):
+        return len(players)
+    return None
+
+
+def _bsd_event_date(value: dict[str, Any]) -> str | None:
+    raw = value.get("event_date") or value.get("date") or value.get("start_time")
+    return str(raw) if raw else None
+
+
+def _schedule_event_date(value: dict[str, Any]) -> str | None:
+    raw = value.get("start_time") or value.get("event_date") or value.get("date")
+    return str(raw) if raw else None
+
+
+def _event_team_name(event: dict[str, Any], qualifier: str) -> str:
+    if qualifier in {"home", "away"}:
+        key = f"{qualifier}_team"
+        if event.get(key):
+            return str(event[key])
+    for competitor in event.get("competitors", []):
+        if competitor.get("qualifier") == qualifier:
+            return str(competitor.get("team", {}).get("name") or "")
+    return ""
+
+
+def _lineup_team_key(value: str) -> str:
+    return " ".join(
+        "".join(character.lower() if character.isalnum() else " " for character in value)
+        .split()
+    )
+
+
+def _lineup_event_key(event: dict[str, Any]) -> tuple[datetime, str, str] | None:
+    raw_date = _bsd_event_date(event) or _schedule_event_date(event)
+    if not raw_date:
+        return None
+    try:
+        kickoff = datetime.fromisoformat(raw_date.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        ).replace(second=0, microsecond=0)
+    except ValueError:
+        return None
+    return (
+        kickoff,
+        _lineup_team_key(_event_team_name(event, "home")),
+        _lineup_team_key(_event_team_name(event, "away")),
+    )
+
+
+def match_bsd_events_to_schedule_events(
+    schedule_events: list[dict[str, Any]],
+    bsd_events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    schedule_by_key: dict[tuple[datetime, str, str], list[dict[str, Any]]] = {}
+    for event in schedule_events:
+        key = _lineup_event_key(event)
+        if key is not None:
+            schedule_by_key.setdefault(key, []).append(event)
+
+    matched: dict[str, dict[str, Any]] = {}
+    for bsd_event in bsd_events:
+        key = _lineup_event_key(bsd_event)
+        if key is None:
+            continue
+        candidates = schedule_by_key.get(key, [])
+        if len(candidates) != 1:
+            continue
+        event_id = str(candidates[0].get("id") or "")
+        if event_id:
+            matched[event_id] = bsd_event
+    return matched
+
+
+def build_bsd_lineup_contexts_from_payloads(
+    lineup_payloads_by_match_id: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
+    for match_id, payload in lineup_payloads_by_match_id.items():
+        lineups = payload.get("lineups") if isinstance(payload, dict) else None
+        if not isinstance(lineups, dict):
+            continue
+        home_payload = lineups.get("home") if isinstance(lineups.get("home"), dict) else {}
+        away_payload = lineups.get("away") if isinstance(lineups.get("away"), dict) else {}
+        home_lineup = _bsd_players_to_lineup(home_payload)
+        away_lineup = _bsd_players_to_lineup(away_payload)
+        home_score = _lineup_score(home_lineup)
+        away_score = _lineup_score(away_lineup)
+        home_absence_count = _bsd_unavailable_count(home_payload)
+        away_absence_count = _bsd_unavailable_count(away_payload)
+        home_starters = len(home_lineup.get("starting", []))
+        away_starters = len(away_lineup.get("starting", []))
+        contexts[str(match_id)] = {
+            "lineup_status": (
+                "projected" if home_starters >= 11 and away_starters >= 11 else "unknown"
+            ),
+            "home_absence_count": home_absence_count,
+            "away_absence_count": away_absence_count,
+            "home_lineup_score": home_score,
+            "away_lineup_score": away_score,
+            "lineup_strength_delta": round(home_score - away_score, 4),
+            "lineup_source_summary": "bsd_predicted_lineups",
+        }
+    return contexts
+
+
+def merge_lineup_contexts(
+    base_contexts: dict[str, dict[str, Any]],
+    preferred_contexts: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    merged = {match_id: dict(context) for match_id, context in base_contexts.items()}
+    for match_id, preferred in preferred_contexts.items():
+        base = merged.get(match_id, {})
+        if base.get("lineup_status") == "confirmed":
+            continue
+        source_parts = [
+            part
+            for part in (
+                str(base.get("lineup_source_summary") or ""),
+                str(preferred.get("lineup_source_summary") or ""),
+            )
+            if part and part != "none"
+        ]
+        merged[match_id] = {
+            **base,
+            **preferred,
+            "lineup_source_summary": "+".join(dict.fromkeys(source_parts)) or "none",
+        }
+    return merged
+
+
+def _schedule_event_utc_date(event: dict[str, Any]) -> str | None:
+    raw_date = _schedule_event_date(event)
+    if not raw_date:
+        return None
+    try:
+        return datetime.fromisoformat(
+            raw_date.replace("Z", "+00:00")
+        ).astimezone(timezone.utc).date().isoformat()
+    except ValueError:
+        return None
+
+
+def build_bsd_lineup_context_by_match(
+    api_key: str,
+    events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    target_events = [event for event in events if _should_fetch_lineup_context(event)]
+    dates = sorted(
+        {
+            event_date
+            for event in target_events
+            if (event_date := _schedule_event_utc_date(event)) is not None
+        }
+    )
+    if not dates:
+        return {}
+    bsd_events: list[dict[str, Any]] = []
+    for event_date in dates:
+        bsd_events.extend(
+            fetch_bsd_events(
+                api_key,
+                date_from=event_date,
+                date_to=event_date,
+                tz="UTC",
+            )
+        )
+    bsd_by_match_id = match_bsd_events_to_schedule_events(target_events, bsd_events)
+    lineup_payloads = {
+        match_id: lineup
+        for match_id, bsd_event in bsd_by_match_id.items()
+        if (lineup := fetch_bsd_predicted_lineup(api_key, bsd_event["id"])) is not None
+    }
+    return build_bsd_lineup_contexts_from_payloads(lineup_payloads)
 
 
 def _derived_absence_count(
@@ -1017,10 +1331,12 @@ def build_snapshot_rows_from_matches(
     captured_at: str | None = None,
     historical_matches: list[dict[str, Any]] | None = None,
     lineup_context_by_match: dict[str, dict[str, Any]] | None = None,
+    external_signal_context_by_match: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     snapshot_rows = []
     historical_rows = historical_matches or []
     lineup_contexts = lineup_context_by_match or {}
+    external_contexts = external_signal_context_by_match or {}
     for match in matches:
         snapshot_captured_at = resolve_snapshot_captured_at(
             match=match,
@@ -1033,6 +1349,7 @@ def build_snapshot_rows_from_matches(
             as_of=snapshot_captured_at,
         )
         lineup_context = lineup_contexts.get(match["id"], {})
+        external_context = external_contexts.get(match["id"], {})
         snapshot = build_snapshot(
             match_id=match["id"],
             checkpoint=checkpoint,
@@ -1050,10 +1367,27 @@ def build_snapshot_rows_from_matches(
                 "snapshot_quality": snapshot.quality.value,
                 "home_elo": history_fields["home_elo"],
                 "away_elo": history_fields["away_elo"],
+                "external_home_elo": external_context.get("external_home_elo"),
+                "external_away_elo": external_context.get("external_away_elo"),
                 "home_xg_for_last_5": history_fields["home_xg_for_last_5"],
                 "home_xg_against_last_5": history_fields["home_xg_against_last_5"],
                 "away_xg_for_last_5": history_fields["away_xg_for_last_5"],
                 "away_xg_against_last_5": history_fields["away_xg_against_last_5"],
+                "understat_home_xg_for_last_5": external_context.get(
+                    "understat_home_xg_for_last_5"
+                ),
+                "understat_home_xg_against_last_5": external_context.get(
+                    "understat_home_xg_against_last_5"
+                ),
+                "understat_away_xg_for_last_5": external_context.get(
+                    "understat_away_xg_for_last_5"
+                ),
+                "understat_away_xg_against_last_5": external_context.get(
+                    "understat_away_xg_against_last_5"
+                ),
+                "external_signal_source_summary": external_context.get(
+                    "external_signal_source_summary"
+                ),
                 "home_matches_last_7d": history_fields["home_matches_last_7d"],
                 "away_matches_last_7d": history_fields["away_matches_last_7d"],
                 "home_points_last_5": history_fields["home_points_last_5"],

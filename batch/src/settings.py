@@ -62,6 +62,8 @@ class Settings:
     llm_requests_per_minute: int = DEFAULT_NVIDIA_REQUESTS_PER_MINUTE
     llm_retry_count: int = DEFAULT_NVIDIA_RETRY_COUNT
     llm_retry_backoff_seconds: float = DEFAULT_NVIDIA_RETRY_BACKOFF_SECONDS
+    odds_api_key: str | None = None
+    bsd_api_key: str | None = None
 
     @property
     def supabase_service_key(self) -> str:
@@ -178,4 +180,6 @@ def load_settings() -> Settings:
         llm_retry_backoff_seconds=float(
             env("LLM_RETRY_BACKOFF_SECONDS") or DEFAULT_NVIDIA_RETRY_BACKOFF_SECONDS
         ),
+        odds_api_key=env("ODDS_API_KEY"),
+        bsd_api_key=env("BSD_API_KEY"),
     )

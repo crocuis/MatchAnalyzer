@@ -61,30 +61,288 @@ def test_build_raw_moneyline_rows_includes_held_predictions_with_raw_signals():
         ],
     )
 
-    assert rows == [
-        {
-            "prediction_id": "prediction-1",
-            "match_id": "match-1",
-            "date": "2026-04-21",
-            "checkpoint": "T_MINUS_24H",
-            "pick": "HOME",
-            "adjusted_pick": "AWAY",
-            "actual": "AWAY",
-            "hit": 0,
-            "adjusted_hit": 1,
-            "recommended": False,
-            "no_bet_reason": "low_confidence",
-            "confidence": 0.61,
-            "signal_score": -6.8,
-            "source_agreement_ratio": 1.0,
-            "max_abs_divergence": 0.0,
-            "prediction_market_available": False,
-            "base_model_source": "trained_baseline",
-            "lineup_confirmed": 0,
-            "rolling_ppg_delta": -3.0,
-            "rolling_venue_ppg_delta": -3.0,
-        }
-    ]
+    assert len(rows) == 1
+    assert rows[0] | {
+        "prediction_id": "prediction-1",
+        "match_id": "match-1",
+        "date": "2026-04-21",
+        "checkpoint": "T_MINUS_24H",
+        "pick": "HOME",
+        "heuristic_pick": "AWAY",
+        "adjusted_pick": "AWAY",
+        "actual": "AWAY",
+        "hit": 0,
+        "heuristic_hit": 1,
+        "adjusted_hit": 1,
+        "recommended": False,
+        "no_bet_reason": "low_confidence",
+        "confidence": 0.61,
+        "signal_score": -6.8,
+        "source_agreement_ratio": 1.0,
+        "max_abs_divergence": 0.0,
+        "prediction_market_available": False,
+        "base_model_source": "trained_baseline",
+        "lineup_confirmed": 0,
+        "rolling_ppg_delta": -3.0,
+        "rolling_venue_ppg_delta": -3.0,
+    } == rows[0]
+    assert rows[0]["prequential_pick"] == "HOME"
+    assert rows[0]["prequential_hit"] == 0
+    assert rows[0]["prequential_strategy"] == "raw_fallback"
+
+
+def test_build_raw_moneyline_rows_adds_external_snapshot_signals_to_signal_score():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": "match-1",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 0,
+            },
+        ],
+        snapshots=[
+            {
+                "id": "snap-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+                "external_home_elo": 1800,
+                "external_away_elo": 1700,
+                "understat_home_xg_for_last_5": 1.8,
+                "understat_home_xg_against_last_5": 0.9,
+                "understat_away_xg_for_last_5": 1.1,
+                "understat_away_xg_against_last_5": 1.4,
+                "external_signal_source_summary": "clubelo+understat",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snap-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.61,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.61,
+                        "recommended": True,
+                    },
+                    "feature_context": {
+                        "elo_delta": 0.0,
+                        "xg_proxy_delta": 0.0,
+                        "form_delta": 0.0,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert rows[0]["external_elo_delta"] == 1.0
+    assert rows[0]["understat_xg_delta"] == 1.2
+    assert rows[0]["external_signal_source_summary"] == "clubelo+understat"
+    assert rows[0]["signal_score"] == 2.2
+
+
+def test_build_raw_moneyline_rows_keeps_settled_outcomes_out_of_raw_adjustment():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": f"match-{index}",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": f"home-{index}",
+                "away_team_id": f"away-{index}",
+                "final_result": "AWAY" if index < 2 else "HOME",
+                "home_score": 0 if index < 2 else 1,
+                "away_score": 1 if index < 2 else 0,
+            }
+            for index in range(3)
+        ],
+        snapshots=[
+            {
+                "id": f"snap-{index}",
+                "match_id": f"match-{index}",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+            for index in range(3)
+        ],
+        predictions=[
+            {
+                "id": f"prediction-{index}",
+                "match_id": f"match-{index}",
+                "snapshot_id": f"snap-{index}",
+                "recommended_pick": "DRAW",
+                "confidence_score": 0.35,
+                "summary_payload": {
+                    "base_model_source": "prior_fallback",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "DRAW",
+                        "confidence": 0.35,
+                        "recommended": False,
+                    },
+                    "feature_context": {
+                        "elo_delta": 0.0,
+                        "xg_proxy_delta": 0.0,
+                        "form_delta": 0.0,
+                    },
+                },
+            }
+            for index in range(3)
+        ],
+    )
+
+    assert len(rows) == 3
+    assert "calibration_bucket_size" not in rows[0]
+    assert [row["adjusted_pick"] for row in rows] == ["DRAW", "DRAW", "DRAW"]
+    assert sum(row["adjusted_hit"] for row in rows) == 0
+
+
+def test_build_raw_moneyline_rows_uses_only_prior_rows_for_prequential_calibration():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": f"match-{index}",
+                "kickoff_at": f"2026-04-{index + 1:02d}T19:00:00Z",
+                "home_team_id": f"home-{index}",
+                "away_team_id": f"away-{index}",
+                "final_result": "AWAY",
+                "home_score": 0,
+                "away_score": 1,
+            }
+            for index in range(21)
+        ],
+        snapshots=[
+            {
+                "id": f"snap-{index}",
+                "match_id": f"match-{index}",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+            for index in range(21)
+        ],
+        predictions=[
+            {
+                "id": f"prediction-{index}",
+                "match_id": f"match-{index}",
+                "snapshot_id": f"snap-{index}",
+                "recommended_pick": "DRAW",
+                "confidence_score": 0.35,
+                "summary_payload": {
+                    "base_model_source": "prior_fallback",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "DRAW",
+                        "confidence": 0.35,
+                        "recommended": False,
+                    },
+                    "feature_context": {
+                        "elo_delta": 0.0,
+                        "xg_proxy_delta": 0.0,
+                        "form_delta": 0.0,
+                    },
+                },
+            }
+            for index in range(21)
+        ],
+        latest_per_match=False,
+    )
+
+    rows_by_id = {row["prediction_id"]: row for row in rows}
+
+    assert rows_by_id["prediction-0"]["prequential_strategy"] == "raw_fallback"
+    assert rows_by_id["prediction-0"]["prequential_pick"] == "DRAW"
+    assert rows_by_id["prediction-20"]["prequential_strategy"] == "bucket_calibrated"
+    assert rows_by_id["prediction-20"]["prequential_bucket_sample"] == 20
+    assert rows_by_id["prediction-20"]["prequential_pick"] == "AWAY"
+    assert rows_by_id["prediction-20"]["prequential_hit"] == 1
+
+
+def test_build_raw_moneyline_rows_adds_probability_and_prior_signals():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": "prior-1",
+                "kickoff_at": "2026-04-01T19:00:00Z",
+                "competition_id": "league-1",
+                "home_team_id": "home",
+                "away_team_id": "other",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 0,
+            },
+            {
+                "id": "prior-2",
+                "kickoff_at": "2026-04-02T19:00:00Z",
+                "competition_id": "league-1",
+                "home_team_id": "other",
+                "away_team_id": "away",
+                "final_result": "AWAY",
+                "home_score": 0,
+                "away_score": 2,
+            },
+            {
+                "id": "match-1",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "competition_id": "league-1",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            },
+        ],
+        snapshots=[
+            {
+                "id": "snap-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snap-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.5,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline",
+                    "base_model_probs": {"home": 0.52, "draw": 0.28, "away": 0.2},
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.5,
+                        "recommended": False,
+                    },
+                    "feature_context": {
+                        "elo_delta": 0.0,
+                        "xg_proxy_delta": 0.0,
+                        "form_delta": 0.0,
+                    },
+                },
+            }
+        ],
+    )
+
+    row = rows[0]
+
+    assert row["probability_source"] == "base_model_probs"
+    assert row["probability_favorite_pick"] == "HOME"
+    assert row["probability_favorite_probability"] == 0.52
+    assert row["probability_favorite_margin"] == 0.24
+    assert row["league_prior_sample"] == 2
+    assert row["team_home_venue_sample"] == 1
+    assert row["team_away_venue_sample"] == 1
+    assert row["team_venue_win_rate_delta"] == 0.1363
 
 
 def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
@@ -92,6 +350,7 @@ def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
         {
             "date": f"2026-04-{index + 1:02d}",
             "adjusted_hit": 1 if index < 8 else 0,
+            "prequential_hit": 1 if index < 8 else 0,
             "confidence": 0.6,
             "signal_score": 5.0,
             "source_agreement_ratio": 1.0,
@@ -104,6 +363,7 @@ def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
         {
             "date": f"2026-05-{index + 1:02d}",
             "adjusted_hit": 0,
+            "prequential_hit": 0,
             "confidence": 0.4,
             "signal_score": 0.0,
             "source_agreement_ratio": 0.5,
@@ -117,8 +377,122 @@ def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
 
     assert summary["all_raw"]["evaluated_bets"] == 20
     assert summary["all_raw"]["live_betting_hit_rate"] == 0.4
+    assert summary["all_prequential"]["evaluated_bets"] == 20
+    assert summary["overall_prequential_target"]["target_hit_rate"] == 0.58
+    assert summary["overall_prequential_target"]["meets_point_target"] is False
+    assert summary["overall_prequential_target"]["additional_hits_needed"] == 4
     assert summary["best_by_minimum_sample"]["10"]["live_betting_hit_rate"] == 0.8
     assert summary["best_by_minimum_sample"]["10"]["evaluated_bets"] == 10
+
+
+def test_summarize_raw_moneyline_backtest_separates_full_and_eligible_prequential_rates():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1,
+            "prequential_quality_candidate": True,
+            "external_signal_source_summary": "clubelo",
+            "confidence": 0.6,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(6)
+    ]
+    rows.extend(
+        {
+            "date": f"2026-05-{index + 1:02d}",
+            "adjusted_hit": 1,
+            "prequential_hit": 0,
+            "prequential_quality_candidate": False,
+            "confidence": 0.3,
+            "signal_score": 0.0,
+            "source_agreement_ratio": 0.5,
+            "max_abs_divergence": 0.2,
+            "base_model_source": "prior_fallback",
+        }
+        for index in range(4)
+    )
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["all_prequential"]["evaluated_bets"] == 10
+    assert summary["all_prequential"]["coverage"] == 1.0
+    assert summary["all_prequential"]["live_betting_hit_rate"] == 0.6
+    assert summary["all_prequential_full"] == summary["all_prequential"]
+    assert summary["eligible_prequential"]["evaluated_bets"] == 6
+    assert summary["eligible_prequential"]["coverage"] == 0.6
+    assert summary["eligible_prequential"]["live_betting_hit_rate"] == 1.0
+    assert summary["daily_pick_prequential"] == summary["eligible_prequential"]
+
+
+def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 39 else 0,
+            "prequential_quality_candidate": True,
+            "external_signal_source_summary": "clubelo",
+            "confidence": 0.6,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(50)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["daily_pick_prequential"]["evaluated_bets"] == 50
+    assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.78
+    assert summary["daily_pick_reliability"]["high_confidence_eligible"] is True
+    assert summary["daily_pick_reliability"]["decision"] == "bet"
+    assert summary["daily_pick_reliability"]["confidence_reliability"] == "validated"
+    assert summary["daily_pick_reliability"]["validation_metadata"] == {
+        "model_scope": "daily_pick_prequential",
+        "sample_count": 50,
+        "hit_count": 39,
+        "hit_rate": 0.78,
+        "coverage": 1.0,
+        "wilson_lower_bound": 0.6476,
+        "minimum_sample_count": 50,
+        "target_hit_rate": 0.74,
+        "minimum_wilson_lower_bound": 0.64,
+        "eligibility_filter": (
+            "prequential_quality_candidate_with_external_pre_match_signal"
+        ),
+    }
+
+
+def test_daily_pick_reliability_holds_when_wilson_bound_is_weak():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 38 else 0,
+            "prequential_quality_candidate": True,
+            "external_signal_source_summary": "clubelo",
+            "confidence": 0.6,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(50)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["daily_pick_reliability"]["high_confidence_eligible"] is False
+    assert summary["daily_pick_reliability"]["decision"] == "held"
+    assert (
+        summary["daily_pick_reliability"]["confidence_reliability"]
+        == "below_wilson_lower_bound"
+    )
 
 
 def test_summarize_raw_moneyline_backtest_can_select_strong_home_form():

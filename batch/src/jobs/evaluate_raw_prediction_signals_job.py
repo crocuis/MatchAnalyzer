@@ -10,6 +10,9 @@ from batch.src.model.raw_signal_backtest import (
     build_raw_moneyline_rows,
     summarize_raw_moneyline_backtest,
 )
+from batch.src.jobs.backfill_external_prediction_signals_job import (
+    build_external_signal_snapshot_updates,
+)
 from batch.src.settings import load_settings
 from batch.src.storage.rollout_state import read_optional_rows
 from batch.src.storage.supabase_client import SupabaseClient
@@ -35,6 +38,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="minimum_samples",
         help="Minimum sample size for threshold search. May be repeated.",
     )
+    parser.add_argument(
+        "--external-signal-backfill",
+        action="store_true",
+        help="Merge ClubElo/Understat signal updates into snapshots in memory before evaluating.",
+    )
+    parser.add_argument(
+        "--clubelo-date-stride-days",
+        type=int,
+        default=7,
+        help="ClubElo date bucketing when --external-signal-backfill is enabled.",
+    )
     return parser.parse_args(argv)
 
 
@@ -46,6 +60,29 @@ def main(argv: list[str] | None = None) -> None:
     snapshots = read_optional_rows(client, "match_snapshots")
     predictions = read_optional_rows(client, "predictions")
     stored_artifacts = read_optional_rows(client, "stored_artifacts")
+    external_signal_metadata = {}
+    if args.external_signal_backfill:
+        updates, external_signal_metadata = build_external_signal_snapshot_updates(
+            snapshots=snapshots,
+            matches=matches,
+            teams=read_optional_rows(client, "teams"),
+            missing_only=False,
+            clubelo_date_stride_days=args.clubelo_date_stride_days,
+        )
+        updates_by_id = {
+            str(row.get("id") or ""): row for row in updates if row.get("id")
+        }
+        snapshots = [
+            {
+                **snapshot,
+                **updates_by_id.get(str(snapshot.get("id") or ""), {}),
+            }
+            for snapshot in snapshots
+        ]
+        external_signal_metadata = {
+            **external_signal_metadata,
+            "candidate_updates": len(updates),
+        }
 
     payload_source = args.payload_source
     artifact_payloads_loaded = 0
@@ -93,6 +130,8 @@ def main(argv: list[str] | None = None) -> None:
                 "raw_rows": len(raw_rows),
                 "artifact_payloads_loaded": artifact_payloads_loaded,
                 "artifact_payloads_missing": artifact_payloads_missing,
+                "external_signal_backfill": bool(args.external_signal_backfill),
+                "external_signal_metadata": external_signal_metadata,
             },
             sort_keys=True,
         )

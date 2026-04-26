@@ -1,2 +1,3 @@
 SUPABASE_URL=https://<your-project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<your-supabase-service-role-key>
+MATCH_ANALYZER_ARTIFACT_BASE_URL=http://localhost:8788

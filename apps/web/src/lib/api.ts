@@ -330,7 +330,15 @@ export interface PredictionModelRegistryReport {
   };
 }
 
+function isLocalDevHost(): boolean {
+  const hostname = (globalThis.location?.hostname ?? "").replace(/^\[(.*)\]$/, "$1");
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
 function resolveApiBasePath(): string {
+  if (isLocalDevHost()) {
+    return "/api";
+  }
   const deployApiOrigin =
     import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "") ?? "";
   return deployApiOrigin || "/api";
@@ -380,7 +388,7 @@ export interface LeaguePredictionSummary {
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
-export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss";
+export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss" | "void";
 
 export interface DailyPickItem {
   id: string;
@@ -402,6 +410,9 @@ export interface DailyPickItem {
   modelProbability: number | null;
   marketProbability: number | null;
   sourceAgreementRatio: number | null;
+  confidenceReliability: string | null;
+  highConfidenceEligible: boolean | null;
+  validationMetadata: Record<string, unknown> | null;
   status: DailyPickStatus;
   noBetReason: string | null;
   reasonLabels: string[];
@@ -415,6 +426,13 @@ export interface DailyPicksResponse {
     maxDailyRecommendations: number;
     hitRate: number;
     roi: number;
+  };
+  validation: {
+    hitRate: number | null;
+    sampleCount: number;
+    wilsonLowerBound: number | null;
+    confidenceReliability: string | null;
+    modelScope: string | null;
   };
   coverage: Record<DailyPickMarketFamily | "held", number>;
   items: DailyPickItem[];

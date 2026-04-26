@@ -6,7 +6,7 @@ import pytest
 
 from batch.src.domain import MatchSnapshot, SnapshotQuality
 from batch.src.features.build_snapshots import build_snapshot
-from batch.src.features.feature_builder import build_feature_vector
+from batch.src.features.feature_builder import build_feature_metadata, build_feature_vector
 
 
 def normalize_sql(sql: str) -> str:
@@ -110,6 +110,18 @@ def test_migration_constrains_core_snapshot_and_probability_fields():
     assert "unique (id, match_id)" in migration
     assert "foreign key (snapshot_id, match_id) references match_snapshots(id, match_id)" in migration
     assert "foreign key (prediction_id, match_id) references predictions(id, match_id)" in migration
+
+
+def test_external_signal_migration_adds_clubelo_and_understat_columns():
+    migration = normalize_sql(
+        Path("supabase/migrations/202604260001_external_prediction_signals.sql").read_text()
+    )
+
+    assert "external_home_elo numeric" in migration
+    assert "external_away_elo numeric" in migration
+    assert "understat_home_xg_for_last_5 numeric" in migration
+    assert "understat_away_xg_against_last_5 numeric" in migration
+    assert "external_signal_source_summary text" in migration
 
 
 def test_prediction_feature_snapshot_migration_captures_context_and_metadata():
@@ -297,6 +309,36 @@ def test_dashboard_league_summary_no_bet_fix_migration_reapplies_summary_view():
     assert "incorrect_count" in migration
 
 
+def test_match_card_projection_migration_separates_dashboard_alias():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260426054347_split_match_card_projection.sql"
+        ).read_text()
+    )
+
+    assert "create or replace view match_cards with (security_invoker = true) as" in migration
+    assert "from matches join competitions on competitions.id = matches.competition_id" in migration
+    assert "join teams as teams_home on teams_home.id = matches.home_team_id" in migration
+    assert "join teams as teams_away on teams_away.id = matches.away_team_id" in migration
+    assert "create or replace view dashboard_match_cards with (security_invoker = true) as select" in migration
+    assert "from match_cards" in migration
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as" in migration
+
+
+def test_projection_ssot_boundary_migration_removes_redundant_pick_league():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260426054938_normalize_projection_ssot_boundaries.sql"
+        ).read_text()
+    )
+
+    assert "alter table public.daily_pick_items drop column if exists league_id" in migration
+    assert "create or replace view league_prediction_summaries with (security_invoker = true) as" in migration
+    assert "from match_cards" in migration
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as select" in migration
+    assert "from league_prediction_summaries" in migration
+
+
 def test_seed_links_competition_teams_and_match():
     seed = normalize_sql(Path("supabase/seed.sql").read_text())
 
@@ -392,6 +434,89 @@ def test_build_feature_vector_prefers_explicit_strength_and_schedule_fields():
     assert round(features["elo_delta"], 2) == 1.4
     assert round(features["xg_proxy_delta"], 2) == 1.2
     assert features["fixture_congestion_delta"] == 2
+
+
+def test_build_feature_vector_prefers_external_rating_and_understat_xg_when_available():
+    features = build_feature_vector(
+        {
+            "form_delta": 2,
+            "rest_delta": 1,
+            "book_home_prob": 0.52,
+            "book_draw_prob": 0.24,
+            "book_away_prob": 0.24,
+            "market_home_prob": 0.49,
+            "market_draw_prob": 0.25,
+            "market_away_prob": 0.26,
+            "home_elo": 1500,
+            "away_elo": 1500,
+            "external_home_elo": 1810,
+            "external_away_elo": 1760,
+            "home_xg_for_last_5": 1.0,
+            "home_xg_against_last_5": 1.0,
+            "away_xg_for_last_5": 1.0,
+            "away_xg_against_last_5": 1.0,
+            "understat_home_xg_for_last_5": 1.8,
+            "understat_home_xg_against_last_5": 0.9,
+            "understat_away_xg_for_last_5": 1.1,
+            "understat_away_xg_against_last_5": 1.4,
+            "prediction_market_available": True,
+        }
+    )
+
+    assert round(features["elo_delta"], 2) == 0.5
+    assert round(features["xg_proxy_delta"], 2) == 1.2
+
+
+def test_feature_metadata_treats_external_rating_and_understat_as_resolved_signals():
+    snapshot = {
+        "form_delta": 2,
+        "rest_delta": 1,
+        "home_points_last_5": 10,
+        "away_points_last_5": 8,
+        "home_rest_days": 5,
+        "away_rest_days": 4,
+        "home_elo": None,
+        "away_elo": None,
+        "external_home_elo": 1810,
+        "external_away_elo": 1760,
+        "home_xg_for_last_5": None,
+        "home_xg_against_last_5": None,
+        "away_xg_for_last_5": None,
+        "away_xg_against_last_5": None,
+        "understat_home_xg_for_last_5": 1.8,
+        "understat_home_xg_against_last_5": 0.9,
+        "understat_away_xg_for_last_5": 1.1,
+        "understat_away_xg_against_last_5": 1.4,
+        "external_signal_source_summary": "clubelo+understat",
+        "home_matches_last_7d": 1,
+        "away_matches_last_7d": 2,
+        "home_lineup_score": 1.1,
+        "away_lineup_score": 0.8,
+        "home_absence_count": 1,
+        "away_absence_count": 2,
+        "lineup_strength_delta": 0.3,
+        "lineup_source_summary": "api",
+        "book_home_prob": 0.52,
+        "book_draw_prob": 0.24,
+        "book_away_prob": 0.24,
+        "market_home_prob": 0.49,
+        "market_draw_prob": 0.25,
+        "market_away_prob": 0.26,
+        "prediction_market_available": True,
+    }
+
+    features = build_feature_vector(snapshot)
+    metadata = build_feature_metadata(snapshot, features)
+
+    reason_keys = {
+        reason["reason_key"] for reason in metadata["missing_signal_reasons"]
+    }
+    assert "rating_context_missing" not in reason_keys
+    assert "xg_context_missing" not in reason_keys
+    assert "home_elo" not in metadata["missing_fields"]
+    assert "away_elo" not in metadata["missing_fields"]
+    assert "home_xg_for_last_5" not in metadata["missing_fields"]
+    assert "away_xg_against_last_5" not in metadata["missing_fields"]
 
 
 def test_build_feature_vector_prefers_explicit_lineup_strength_delta():
