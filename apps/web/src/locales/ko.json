@@ -63,7 +63,8 @@
       "held": "보류",
       "pending": "대기",
       "hit": "적중",
-      "miss": "미적중"
+      "miss": "미적중",
+      "void": "무효"
     },
     "noBetReasons": {
       "low_confidence": "신뢰도 부족",

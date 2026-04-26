@@ -388,7 +388,7 @@ export interface LeaguePredictionSummary {
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
-export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss";
+export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss" | "void";
 
 export interface DailyPickItem {
   id: string;

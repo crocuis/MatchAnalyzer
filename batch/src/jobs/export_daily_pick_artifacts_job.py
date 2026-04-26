@@ -83,7 +83,7 @@ def resolve_result_status(
 ) -> str:
     result = results_by_item_id.get(str(item.get("id") or ""))
     status = read_text(result.get("result_status") if result else None)
-    if status in {"hit", "miss", "pending"}:
+    if status in {"hit", "miss", "pending", "void"}:
         return status
     return read_text(item.get("status")) or "recommended"
 

@@ -63,7 +63,8 @@
       "held": "Held",
       "pending": "Pending",
       "hit": "Hit",
-      "miss": "Miss"
+      "miss": "Miss",
+      "void": "Void"
     },
     "noBetReasons": {
       "low_confidence": "Low confidence",

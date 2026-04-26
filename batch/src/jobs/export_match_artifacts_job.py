@@ -36,6 +36,13 @@ def read_number(value: Any) -> float | None:
     return value if isinstance(value, (int, float)) else None
 
 
+def first_present(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row and row[key] is not None:
+            return row[key]
+    return None
+
+
 def artifact_pointer(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return None
@@ -97,20 +104,20 @@ def normalize_variant_markets(value: Any) -> list[dict[str, Any]]:
         {
             "marketFamily": row.get("market_family") or row.get("marketFamily"),
             "sourceName": row.get("source_name") or row.get("sourceName"),
-            "lineValue": row.get("line_value") or row.get("lineValue"),
+            "lineValue": first_present(row, "line_value", "lineValue"),
             "selectionALabel": row.get("selection_a_label") or row.get("selectionALabel"),
-            "selectionAPrice": row.get("selection_a_price") or row.get("selectionAPrice"),
+            "selectionAPrice": first_present(row, "selection_a_price", "selectionAPrice"),
             "selectionBLabel": row.get("selection_b_label") or row.get("selectionBLabel"),
-            "selectionBPrice": row.get("selection_b_price") or row.get("selectionBPrice"),
+            "selectionBPrice": first_present(row, "selection_b_price", "selectionBPrice"),
             "marketSlug": row.get("market_slug") or row.get("marketSlug"),
             "recommendedPick": row.get("recommended_pick") or row.get("recommendedPick"),
             "recommended": row.get("recommended"),
             "noBetReason": row.get("no_bet_reason") or row.get("noBetReason"),
             "edge": row.get("edge"),
-            "expectedValue": row.get("expected_value") or row.get("expectedValue"),
-            "marketPrice": row.get("market_price") or row.get("marketPrice"),
-            "modelProbability": row.get("model_probability") or row.get("modelProbability"),
-            "marketProbability": row.get("market_probability") or row.get("marketProbability"),
+            "expectedValue": first_present(row, "expected_value", "expectedValue"),
+            "marketPrice": first_present(row, "market_price", "marketPrice"),
+            "modelProbability": first_present(row, "model_probability", "modelProbability"),
+            "marketProbability": first_present(row, "market_probability", "marketProbability"),
         }
         for row in value
         if isinstance(row, dict)

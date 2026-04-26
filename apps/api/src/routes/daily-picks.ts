@@ -51,7 +51,7 @@ export type DailyPickItem = {
   confidenceReliability: string | null;
   highConfidenceEligible: boolean | null;
   validationMetadata: Record<string, unknown> | null;
-  status: "recommended" | "held" | "pending" | "hit" | "miss";
+  status: "recommended" | "held" | "pending" | "hit" | "miss" | "void";
   noBetReason: string | null;
   reasonLabels: string[];
 };

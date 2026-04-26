@@ -151,6 +151,7 @@ def test_export_match_artifacts_builds_prediction_and_review_views():
                     {
                         "market_family": "totals",
                         "source_name": "betman_totals",
+                        "line_value": 0,
                         "selection_a_label": "Under 2.5",
                         "selection_b_label": "Over 2.5",
                     }
@@ -211,6 +212,7 @@ def test_export_match_artifacts_builds_prediction_and_review_views():
 
     assert prediction_view["prediction"]["recommendedPick"] == "HOME"
     assert prediction_view["prediction"]["variantMarkets"][0]["marketFamily"] == "totals"
+    assert prediction_view["prediction"]["variantMarkets"][0]["lineValue"] == 0
     assert prediction_view["checkpoints"][0]["label"] == "T_MINUS_24H"
     assert review_view["review"]["summary"] == "Hit"
     assert review_view["review"]["artifact"]["id"] == "review_artifact_001"
@@ -261,7 +263,7 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
         results_by_item_id={
             "daily_pick_item_001": {
                 "pick_item_id": "daily_pick_item_001",
-                "result_status": "hit",
+                "result_status": "void",
             }
         },
         performance_summary={
@@ -277,5 +279,5 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
     assert view["coverage"]["spreads"] == 1
     assert view["items"][0]["matchId"] == "match_001"
     assert view["items"][0]["homeTeamId"] == "team_home"
-    assert view["items"][0]["status"] == "hit"
+    assert view["items"][0]["status"] == "void"
     assert view["items"][0]["highConfidenceEligible"] is True
