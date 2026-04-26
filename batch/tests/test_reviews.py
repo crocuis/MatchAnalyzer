@@ -2701,6 +2701,13 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     assert prediction["variant_markets_summary"] == []
     assert explanation_payload["raw_confidence_score"] >= explanation_payload["calibrated_confidence_score"]
     assert explanation_payload["source_agreement_ratio"] >= 0.5
+    assert explanation_payload["high_confidence_eligible"] is False
+    assert explanation_payload["confidence_reliability"] in {
+        "below_high_confidence_threshold",
+        "insufficient_sample",
+    }
+    assert explanation_payload["validation_metadata"]["market_type"] == "moneyline"
+    assert "sample_count" in explanation_payload["validation_metadata"]
     assert explanation_payload["feature_metadata"]["available_signal_count"] >= 9
     assert "home_elo" in explanation_payload["feature_metadata"]["missing_fields"]
     missing_reason_keys = {

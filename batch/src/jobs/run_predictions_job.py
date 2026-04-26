@@ -50,6 +50,12 @@ from batch.src.model.evaluate_prediction_sources import (
     derive_variant_weights,
     summarize_variant_metrics,
 )
+from batch.src.model.confidence_validation import (
+    attach_validation_metadata,
+    build_prediction_validation_record,
+    evaluate_high_confidence_eligibility,
+    summarize_validation_segments,
+)
 from batch.src.model.train_baseline import train_baseline_model
 from batch.src.settings import load_settings
 from batch.src.storage.artifact_store import (
@@ -246,6 +252,42 @@ def read_prediction_payload(prediction: dict | None) -> dict:
     if isinstance(explanation_payload, dict):
         return explanation_payload
     return {}
+
+
+def build_validation_records(
+    *,
+    prediction_rows: list[dict],
+    match_by_id: dict[str, dict],
+) -> list[dict]:
+    records = []
+    for prediction in prediction_rows:
+        match = match_by_id.get(str(prediction.get("match_id") or ""))
+        if not match:
+            continue
+        record = build_prediction_validation_record(prediction, match)
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def build_current_validation_candidate(
+    *,
+    row: dict,
+    match: dict,
+    value_recommendation: dict | None,
+) -> dict:
+    return {
+        "model_version_id": SAMPLE_MODEL_VERSION_ID,
+        "league_id": match.get("competition_id") or "unknown",
+        "market_type": "moneyline",
+        "calibrated_confidence_score": row["confidence_score"],
+        "confidence_score": row["confidence_score"],
+        "market_probability": (
+            value_recommendation.get("market_probability")
+            if value_recommendation
+            else None
+        ),
+    }
 
 
 def read_persisted_value_recommendation(prediction: dict | None) -> dict | None:
@@ -1913,6 +1955,11 @@ def main() -> None:
     model_selection_by_checkpoint: dict[str, dict] = {}
     skipped_snapshots = []
     match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
+    validation_records = build_validation_records(
+        prediction_rows=prediction_rows,
+        match_by_id=match_by_id,
+    )
+    validation_segment_cache: dict[str | None, dict[str, dict]] = {}
     teams_by_id = {
         str(row["id"]): row for row in read_optional_rows(client, "teams") if row.get("id")
     }
@@ -2335,6 +2382,25 @@ def main() -> None:
                 preserved_market_enrichment=preserved_market_enrichment,
             ),
         }
+        if use_real_prediction_targets:
+            if snapshot_target_date not in validation_segment_cache:
+                validation_segment_cache[snapshot_target_date] = summarize_validation_segments(
+                    validation_records,
+                    validated_as_of=snapshot_target_date,
+                )
+            eligibility = evaluate_high_confidence_eligibility(
+                build_current_validation_candidate(
+                    row=row,
+                    match=match,
+                    value_recommendation=value_recommendation,
+                ),
+                validation_segment_cache[snapshot_target_date],
+                validated_as_of=snapshot_target_date,
+            )
+            explanation_payload = attach_validation_metadata(
+                explanation_payload,
+                eligibility,
+            )
         if llm_advisory is not None:
             explanation_payload["llm_advisory"] = llm_advisory
         summary_payload = build_prediction_summary_payload(explanation_payload)

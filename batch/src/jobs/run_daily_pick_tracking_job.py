@@ -113,7 +113,7 @@ def build_recommended_pick_candidates(
 ) -> list[dict]:
     summary = prediction.get("summary_payload")
     summary_payload = summary if isinstance(summary, dict) else {}
-    if summary_payload.get("high_confidence_eligible") is False:
+    if summary_payload.get("high_confidence_eligible") is not True:
         return []
 
     match_id = str(match.get("id") or "")

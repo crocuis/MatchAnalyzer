@@ -96,6 +96,23 @@ function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
   vi.setSystemTime(now);
 }
 
+function validatedDailyPickSummary(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    source_agreement_ratio: 0.8,
+    confidence_reliability: "validated",
+    high_confidence_eligible: true,
+    validation_metadata: {
+      model_scope: "daily_pick_prequential",
+      sample_count: 76,
+      hit_rate: 0.75,
+      wilson_lower_bound: 0.6422,
+    },
+    ...overrides,
+  };
+}
+
 describe("prediction API", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -410,17 +427,7 @@ describe("prediction API", () => {
               source_name: "polymarket_totals",
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.8,
-            confidence_reliability: "validated",
-            high_confidence_eligible: true,
-            validation_metadata: {
-              model_scope: "daily_pick_prequential",
-              sample_count: 76,
-              hit_rate: 0.75,
-              wilson_lower_bound: 0.6422,
-            },
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -462,9 +469,7 @@ describe("prediction API", () => {
               source_name: "polymarket_totals",
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.75,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.75 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:05:00Z",
         },
@@ -506,9 +511,7 @@ describe("prediction API", () => {
               source_name: "polymarket_totals",
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.72,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.72 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:10:00Z",
         },
@@ -550,9 +553,7 @@ describe("prediction API", () => {
               source_name: "polymarket_totals",
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.7,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.7 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:15:00Z",
         },
@@ -675,9 +676,7 @@ describe("prediction API", () => {
               source_name: "polymarket_spreads",
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.8,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -866,6 +865,64 @@ describe("prediction API", () => {
     ]));
   });
 
+  it("fails closed when daily pick validation metadata is missing", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.78,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.78,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: { source_agreement_ratio: 0.92 },
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        status: "held",
+        noBetReason: "confidence_reliability_missing",
+        reasonLabels: [
+          "heldByRecommendationGate",
+          "confidence_reliability_missing",
+        ],
+      }),
+    ]);
+  });
+
   it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
     setDailyPicksClock();
     const supabase = buildTableSupabase({
@@ -943,9 +1000,7 @@ describe("prediction API", () => {
               market_probability: 0.49,
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.8,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -1065,9 +1120,7 @@ describe("prediction API", () => {
               market_probability: 0.5,
             },
           ],
-          summary_payload: {
-            source_agreement_ratio: 0.8,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -1129,6 +1182,7 @@ describe("prediction API", () => {
         main_recommendation_confidence: 0.5 + index / 100,
         main_recommendation_recommended: true,
         main_recommendation_no_bet_reason: null,
+        summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
         created_at: `2026-04-24T08:${String(index).padStart(2, "0")}:00Z`,
       })),
     });
@@ -1194,9 +1248,7 @@ describe("prediction API", () => {
           value_recommendation_market_probability: 0.33,
           value_recommendation_market_source: "prediction_market",
           variant_markets_summary: [],
-          summary_payload: {
-            source_agreement_ratio: 0.8,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -1279,9 +1331,7 @@ describe("prediction API", () => {
           value_recommendation_market_probability: 0.57,
           value_recommendation_market_source: "prediction_market",
           variant_markets_summary: [],
-          summary_payload: {
-            source_agreement_ratio: 0.8,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -1359,6 +1409,7 @@ describe("prediction API", () => {
             value_recommendation_model_probability: 0.64,
             value_recommendation_market_probability: 0.001,
             value_recommendation_market_source: "prediction_market",
+            summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.9 }),
             created_at: "2026-04-24T19:00:00Z",
           },
           {
@@ -1379,6 +1430,7 @@ describe("prediction API", () => {
             value_recommendation_model_probability: 0.52,
             value_recommendation_market_probability: 0.43,
             value_recommendation_market_source: "prediction_market",
+            summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
             created_at: "2026-04-24T19:30:00Z",
           },
         ],
@@ -1433,6 +1485,7 @@ describe("prediction API", () => {
           main_recommendation_confidence: 0.72,
           main_recommendation_recommended: true,
           main_recommendation_no_bet_reason: null,
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           created_at: "2026-04-24T08:00:00Z",
         },
       ],
@@ -1484,6 +1537,7 @@ describe("prediction API", () => {
           main_recommendation_confidence: 0.72,
           main_recommendation_recommended: true,
           main_recommendation_no_bet_reason: null,
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           created_at: "2026-04-24T08:00:00Z",
         },
       ],
@@ -1552,9 +1606,7 @@ describe("prediction API", () => {
           value_recommendation_market_probability: 0.57,
           value_recommendation_market_source: "prediction_market",
           variant_markets_summary: [],
-          summary_payload: {
-            source_agreement_ratio: 0.7,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.7 }),
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -1577,9 +1629,7 @@ describe("prediction API", () => {
           value_recommendation_market_probability: 0.41,
           value_recommendation_market_source: "prediction_market",
           variant_markets_summary: [],
-          summary_payload: {
-            source_agreement_ratio: 0.84,
-          },
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.84 }),
           explanation_payload: {},
           created_at: "2026-04-24T09:00:00Z",
         },
@@ -1664,6 +1714,7 @@ describe("prediction API", () => {
           value_recommendation_market_probability: null,
           value_recommendation_market_source: null,
           variant_markets_summary: [],
+          summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.84 }),
           created_at: "2026-04-24T09:00:00Z",
         },
       ],

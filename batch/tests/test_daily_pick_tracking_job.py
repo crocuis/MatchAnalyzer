@@ -102,6 +102,39 @@ def test_sync_daily_picks_holds_unvalidated_predictions_out_of_tracking() -> Non
     assert items == []
 
 
+def test_sync_daily_picks_holds_missing_validation_out_of_tracking() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_recommended": True,
+                "summary_payload": {},
+            }
+        ],
+    )
+
+    assert items == []
+
+
 def test_settle_daily_picks_and_build_cumulative_summary() -> None:
     items = [
         {

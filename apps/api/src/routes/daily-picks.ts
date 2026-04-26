@@ -764,10 +764,10 @@ function buildVariantPick(
 function resolveReliabilityHoldReason(
   base: ReturnType<typeof buildBasePickContext>,
 ): string | null {
-  if (base.highConfidenceEligible !== false) {
+  if (base.highConfidenceEligible === true) {
     return null;
   }
-  return base.confidenceReliability ?? "confidence_reliability_not_validated";
+  return base.confidenceReliability ?? "confidence_reliability_missing";
 }
 
 function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
