@@ -713,6 +713,114 @@ describe("prediction API", () => {
     spy.mockRestore();
   });
 
+  it("holds recommended daily moneyline picks when validation reliability is not eligible", async () => {
+    setDailyPicksClock();
+    const supabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.78,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.78,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: {
+            source_agreement_ratio: 0.92,
+            confidence_reliability: "below_wilson_lower_bound",
+            high_confidence_eligible: false,
+            validation_metadata: {
+              model_scope: "daily_pick_prequential",
+              sample_count: 76,
+              hit_rate: 0.75,
+              wilson_lower_bound: 0.6422,
+            },
+          },
+          variant_markets_summary: [
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.5,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.5,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+              recommended_pick: "Over 2.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.2,
+              expected_value: 0.4,
+              market_price: 0.5,
+              model_probability: 0.7,
+              market_probability: 0.5,
+            },
+          ],
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(supabase, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems).toHaveLength(2);
+    expect(view.heldItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        marketFamily: "totals",
+        status: "held",
+        noBetReason: "below_wilson_lower_bound",
+        confidenceReliability: "below_wilson_lower_bound",
+        highConfidenceEligible: false,
+        reasonLabels: [
+          "totals",
+          "heldByRecommendationGate",
+          "below_wilson_lower_bound",
+        ],
+      }),
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        status: "held",
+        noBetReason: "below_wilson_lower_bound",
+        confidenceReliability: "below_wilson_lower_bound",
+        highConfidenceEligible: false,
+        validationMetadata: {
+          model_scope: "daily_pick_prequential",
+          sample_count: 76,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.6422,
+        },
+        reasonLabels: [
+          "heldByRecommendationGate",
+          "below_wilson_lower_bound",
+        ],
+      }),
+    ]));
+  });
+
   it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
     setDailyPicksClock();
     const supabase = buildTableSupabase({
@@ -806,16 +914,6 @@ describe("prediction API", () => {
 
     expect(view.items).toEqual([
       expect.objectContaining({
-        marketFamily: "totals",
-        selectionLabel: "Over 2.5",
-        status: "recommended",
-        expectedValue: 0.3469,
-        marketPrice: 0.49,
-        modelProbability: 0.66,
-        marketProbability: 0.49,
-        noBetReason: null,
-      }),
-      expect.objectContaining({
         marketFamily: "spreads",
         selectionLabel: "Chelsea -0.5",
         status: "recommended",
@@ -823,6 +921,16 @@ describe("prediction API", () => {
         marketPrice: 0.45,
         modelProbability: 0.63,
         marketProbability: 0.45,
+        noBetReason: null,
+      }),
+      expect.objectContaining({
+        marketFamily: "totals",
+        selectionLabel: "Over 2.5",
+        status: "recommended",
+        expectedValue: 0.3469,
+        marketPrice: 0.49,
+        modelProbability: 0.66,
+        marketProbability: 0.49,
         noBetReason: null,
       }),
     ]);
@@ -835,7 +943,7 @@ describe("prediction API", () => {
     ]);
   });
 
-  it("orders recommended daily picks by recommendation score across market families", async () => {
+  it("orders recommended daily picks by comparable value score across market families", async () => {
     setDailyPicksClock();
     const supabase = buildTableSupabase({
       matches: [
@@ -871,7 +979,7 @@ describe("prediction API", () => {
           value_recommendation_pick: "HOME",
           value_recommendation_recommended: true,
           value_recommendation_edge: 0.12,
-          value_recommendation_expected_value: 0.28,
+          value_recommendation_expected_value: 0.06,
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
@@ -889,10 +997,27 @@ describe("prediction API", () => {
               recommended: true,
               no_bet_reason: null,
               edge: 0.45,
-              expected_value: 0.12,
+              expected_value: 0.18,
               market_price: 0.15,
               model_probability: 0.9,
               market_probability: 0.15,
+            },
+            {
+              market_family: "totals",
+              selection_a_label: "Over 2.5",
+              selection_a_price: 0.5,
+              selection_b_label: "Under 2.5",
+              selection_b_price: 0.5,
+              line_value: 2.5,
+              source_name: "polymarket_totals",
+              recommended_pick: "Over 2.5",
+              recommended: true,
+              no_bet_reason: null,
+              edge: 0.21,
+              expected_value: 0.14,
+              market_price: 0.5,
+              model_probability: 0.71,
+              market_probability: 0.5,
             },
           ],
           summary_payload: {
@@ -915,6 +1040,11 @@ describe("prediction API", () => {
       status: "recommended",
     });
     expect(view.items[1]).toMatchObject({
+      marketFamily: "totals",
+      selectionLabel: "Over 2.5",
+      status: "recommended",
+    });
+    expect(view.items[2]).toMatchObject({
       marketFamily: "moneyline",
       selectionLabel: "HOME",
       status: "recommended",

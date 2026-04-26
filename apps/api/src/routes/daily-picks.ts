@@ -40,6 +40,9 @@ export type DailyPickItem = {
   modelProbability: number | null;
   marketProbability: number | null;
   sourceAgreementRatio: number | null;
+  confidenceReliability: string | null;
+  highConfidenceEligible: boolean | null;
+  validationMetadata: Record<string, unknown> | null;
   status: "recommended" | "held" | "pending" | "hit" | "miss";
   noBetReason: string | null;
   reasonLabels: string[];
@@ -177,6 +180,12 @@ function readNumber(value: unknown): number | null {
 
 function readBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 async function readRowsByIds(
@@ -492,6 +501,15 @@ function buildBasePickContext(
     awayTeamLogoUrl: readString(awayTeam?.crest_url) ?? readString(awayTeam?.logo_url),
     kickoffAt: readString(match.kickoff_at) ?? "",
     sourceAgreementRatio: readNumber(summaryPayload?.source_agreement_ratio),
+    confidenceReliability:
+      readString(summaryPayload?.confidence_reliability)
+      ?? readString(summaryPayload?.confidenceReliability),
+    highConfidenceEligible:
+      readBoolean(summaryPayload?.high_confidence_eligible)
+      ?? readBoolean(summaryPayload?.highConfidenceEligible),
+    validationMetadata:
+      readRecord(summaryPayload?.validation_metadata)
+      ?? readRecord(summaryPayload?.validationMetadata),
   };
 }
 
@@ -537,8 +555,11 @@ function buildMoneylineAndVariantPicks(
     valueRecommendation?.pick === mainRecommendation.pick
       ? valueRecommendation
       : null;
+  const reliabilityHoldReason = resolveReliabilityHoldReason(base);
   const status =
-    mainRecommendation.recommended ? "recommended" : "held";
+    mainRecommendation.recommended && reliabilityHoldReason === null
+      ? "recommended"
+      : "held";
 
   const moneyline: DailyPickItem = {
     ...base,
@@ -552,10 +573,18 @@ function buildMoneylineAndVariantPicks(
     modelProbability: alignedValueRecommendation?.modelProbability ?? null,
     marketProbability: alignedValueRecommendation?.marketProbability ?? null,
     sourceAgreementRatio: base.sourceAgreementRatio,
+    confidenceReliability: base.confidenceReliability,
+    highConfidenceEligible: base.highConfidenceEligible,
+    validationMetadata: base.validationMetadata,
     status,
-    noBetReason: mainRecommendation.noBetReason ?? null,
+    noBetReason: mainRecommendation.noBetReason ?? reliabilityHoldReason,
     reasonLabels:
-      status === "held" ? ["heldByRecommendationGate"] : ["mainRecommendation"],
+      status === "held"
+        ? [
+            "heldByRecommendationGate",
+            ...(reliabilityHoldReason ? [reliabilityHoldReason] : []),
+          ]
+        : ["mainRecommendation"],
   };
 
   return [
@@ -594,6 +623,8 @@ function buildVariantPick(
     && typeof variant.recommendedPick === "string"
     && variant.recommendedPick.length > 0
   ) {
+    const reliabilityHoldReason = resolveReliabilityHoldReason(base);
+    const status = reliabilityHoldReason === null ? "recommended" : "held";
     return {
       ...base,
       id: `${base.matchId}:${rawFamily}:${variant.recommendedPick}`,
@@ -606,9 +637,15 @@ function buildVariantPick(
       modelProbability: variant.modelProbability ?? null,
       marketProbability: variant.marketProbability ?? null,
       sourceAgreementRatio: base.sourceAgreementRatio,
-      status: "recommended",
-      noBetReason: null,
-      reasonLabels: [rawFamily, "variantRecommendation"],
+      confidenceReliability: base.confidenceReliability,
+      highConfidenceEligible: base.highConfidenceEligible,
+      validationMetadata: base.validationMetadata,
+      status,
+      noBetReason: reliabilityHoldReason,
+      reasonLabels:
+        status === "held"
+          ? [rawFamily, "heldByRecommendationGate", reliabilityHoldReason]
+          : [rawFamily, "variantRecommendation"],
     };
   }
 
@@ -633,18 +670,36 @@ function buildVariantPick(
     modelProbability: variant.modelProbability ?? null,
     marketProbability: variant.marketProbability ?? normalizedMarketPrice,
     sourceAgreementRatio: base.sourceAgreementRatio,
+    confidenceReliability: base.confidenceReliability,
+    highConfidenceEligible: base.highConfidenceEligible,
+    validationMetadata: base.validationMetadata,
     status: "held",
     noBetReason: variant.noBetReason ?? "variant_market_price_only",
     reasonLabels: [rawFamily, "heldByRecommendationGate"],
   };
 }
 
+function resolveReliabilityHoldReason(
+  base: ReturnType<typeof buildBasePickContext>,
+): string | null {
+  if (base.highConfidenceEligible !== false) {
+    return null;
+  }
+  return base.confidenceReliability ?? "confidence_reliability_not_validated";
+}
+
 function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
   const recommendationScore = (item: DailyPickItem) => {
-    if (item.marketFamily === "moneyline") {
-      return item.confidence ?? 0;
+    if (item.expectedValue !== null) {
+      return item.expectedValue;
     }
-    return item.modelProbability ?? 0;
+    if (item.edge !== null) {
+      return item.edge;
+    }
+    if (item.modelProbability !== null && item.marketProbability !== null) {
+      return item.modelProbability - item.marketProbability;
+    }
+    return item.confidence ?? item.modelProbability ?? 0;
   };
 
   const leftScore = recommendationScore(left);

@@ -402,6 +402,9 @@ export interface DailyPickItem {
   modelProbability: number | null;
   marketProbability: number | null;
   sourceAgreementRatio: number | null;
+  confidenceReliability: string | null;
+  highConfidenceEligible: boolean | null;
+  validationMetadata: Record<string, unknown> | null;
   status: DailyPickStatus;
   noBetReason: string | null;
   reasonLabels: string[];

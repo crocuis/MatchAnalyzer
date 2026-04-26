@@ -150,7 +150,7 @@ def test_build_raw_moneyline_rows_adds_external_snapshot_signals_to_signal_score
     assert rows[0]["signal_score"] == 2.2
 
 
-def test_build_raw_moneyline_rows_applies_posthoc_bucket_calibration_without_dropping_rows():
+def test_build_raw_moneyline_rows_keeps_settled_outcomes_out_of_raw_adjustment():
     rows = build_raw_moneyline_rows(
         matches=[
             {
@@ -200,9 +200,9 @@ def test_build_raw_moneyline_rows_applies_posthoc_bucket_calibration_without_dro
     )
 
     assert len(rows) == 3
-    assert {row["calibration_bucket_size"] for row in rows} == {3}
-    assert [row["adjusted_pick"] for row in rows] == ["AWAY", "AWAY", "AWAY"]
-    assert sum(row["adjusted_hit"] for row in rows) == 2
+    assert "calibration_bucket_size" not in rows[0]
+    assert [row["adjusted_pick"] for row in rows] == ["DRAW", "DRAW", "DRAW"]
+    assert sum(row["adjusted_hit"] for row in rows) == 0
 
 
 def test_build_raw_moneyline_rows_uses_only_prior_rows_for_prequential_calibration():
@@ -385,13 +385,14 @@ def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
     assert summary["best_by_minimum_sample"]["10"]["evaluated_bets"] == 10
 
 
-def test_summarize_raw_moneyline_backtest_uses_prequential_quality_candidates_for_live_rate():
+def test_summarize_raw_moneyline_backtest_separates_full_and_eligible_prequential_rates():
     rows = [
         {
             "date": f"2026-04-{index + 1:02d}",
             "adjusted_hit": 0,
             "prequential_hit": 1,
             "prequential_quality_candidate": True,
+            "external_signal_source_summary": "clubelo",
             "confidence": 0.6,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
@@ -417,9 +418,81 @@ def test_summarize_raw_moneyline_backtest_uses_prequential_quality_candidates_fo
 
     summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
 
-    assert summary["all_prequential"]["evaluated_bets"] == 6
-    assert summary["all_prequential"]["coverage"] == 0.6
-    assert summary["all_prequential"]["live_betting_hit_rate"] == 1.0
+    assert summary["all_prequential"]["evaluated_bets"] == 10
+    assert summary["all_prequential"]["coverage"] == 1.0
+    assert summary["all_prequential"]["live_betting_hit_rate"] == 0.6
+    assert summary["all_prequential_full"] == summary["all_prequential"]
+    assert summary["eligible_prequential"]["evaluated_bets"] == 6
+    assert summary["eligible_prequential"]["coverage"] == 0.6
+    assert summary["eligible_prequential"]["live_betting_hit_rate"] == 1.0
+    assert summary["daily_pick_prequential"] == summary["eligible_prequential"]
+
+
+def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 39 else 0,
+            "prequential_quality_candidate": True,
+            "external_signal_source_summary": "clubelo",
+            "confidence": 0.6,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(50)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["daily_pick_prequential"]["evaluated_bets"] == 50
+    assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.78
+    assert summary["daily_pick_reliability"]["high_confidence_eligible"] is True
+    assert summary["daily_pick_reliability"]["decision"] == "bet"
+    assert summary["daily_pick_reliability"]["confidence_reliability"] == "validated"
+    assert summary["daily_pick_reliability"]["validation_metadata"] == {
+        "model_scope": "daily_pick_prequential",
+        "sample_count": 50,
+        "hit_count": 39,
+        "hit_rate": 0.78,
+        "coverage": 1.0,
+        "wilson_lower_bound": 0.6476,
+        "minimum_sample_count": 50,
+        "target_hit_rate": 0.74,
+        "minimum_wilson_lower_bound": 0.64,
+        "eligibility_filter": (
+            "prequential_quality_candidate_with_external_pre_match_signal"
+        ),
+    }
+
+
+def test_daily_pick_reliability_holds_when_wilson_bound_is_weak():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 38 else 0,
+            "prequential_quality_candidate": True,
+            "external_signal_source_summary": "clubelo",
+            "confidence": 0.6,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(50)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["daily_pick_reliability"]["high_confidence_eligible"] is False
+    assert summary["daily_pick_reliability"]["decision"] == "held"
+    assert (
+        summary["daily_pick_reliability"]["confidence_reliability"]
+        == "below_wilson_lower_bound"
+    )
 
 
 def test_summarize_raw_moneyline_backtest_can_select_strong_home_form():

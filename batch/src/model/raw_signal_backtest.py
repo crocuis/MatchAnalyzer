@@ -15,6 +15,9 @@ DEFAULT_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND = 0.45
 DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
+DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 50
+DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.74
+DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.64
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
     "T_MINUS_6H": 1,
@@ -158,8 +161,7 @@ def build_raw_moneyline_rows(
         )
     if latest_per_match:
         built_rows = list(_latest_rows_by_match(built_rows).values())
-    posthoc_rows = _apply_posthoc_bucket_calibration(built_rows)
-    return _apply_prequential_bucket_calibration(posthoc_rows)
+    return _apply_prequential_bucket_calibration(built_rows)
 
 
 def summarize_raw_moneyline_backtest(
@@ -173,10 +175,12 @@ def summarize_raw_moneyline_backtest(
     prequential_quality_candidates = [
         row for row in rows if row.get("prequential_quality_candidate")
     ]
+    daily_pick_prequential_rows = [
+        row for row in prequential_quality_candidates if _is_daily_pick_candidate(row)
+    ]
     all_raw = _summarize_rows(rows, total_count=len(rows))
-    all_prequential_rows = prequential_quality_candidates or rows
     all_prequential = _summarize_rows(
-        all_prequential_rows,
+        rows,
         hit_field="prequential_hit",
         total_count=len(rows),
     )
@@ -185,9 +189,20 @@ def summarize_raw_moneyline_backtest(
         hit_field="prequential_hit",
         total_count=len(rows),
     )
+    daily_pick_prequential = _summarize_rows(
+        daily_pick_prequential_rows,
+        hit_field="prequential_hit",
+        total_count=len(rows),
+    )
     return {
         "all_raw": all_raw,
         "all_prequential": all_prequential,
+        "all_prequential_full": all_prequential,
+        "eligible_prequential": daily_pick_prequential,
+        "daily_pick_prequential": daily_pick_prequential,
+        "daily_pick_reliability": _daily_pick_reliability_summary(
+            daily_pick_prequential,
+        ),
         "prequential_calibrated": _summarize_rows(
             prequential_calibrated_rows,
             hit_field="prequential_hit",
@@ -270,6 +285,43 @@ def _overall_prequential_target_summary(
     }
 
 
+def _daily_pick_reliability_summary(summary: dict) -> dict:
+    sample_count = int(summary.get("evaluated_bets") or 0)
+    hit_rate = float(summary.get("live_betting_hit_rate") or 0.0)
+    lower_bound = float(summary.get("wilson_lower_bound") or 0.0)
+    if sample_count < DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT:
+        reliability = "insufficient_sample"
+    elif hit_rate < DEFAULT_DAILY_PICK_TARGET_HIT_RATE:
+        reliability = "below_target_hit_rate"
+    elif lower_bound < DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND:
+        reliability = "below_wilson_lower_bound"
+    else:
+        reliability = "validated"
+    eligible = reliability == "validated"
+    return {
+        "calibrated_confidence": None,
+        "confidence_reliability": reliability,
+        "high_confidence_eligible": eligible,
+        "decision": "bet" if eligible else "held",
+        "validation_metadata": {
+            "model_scope": "daily_pick_prequential",
+            "sample_count": sample_count,
+            "hit_count": int(summary.get("hit_count") or 0),
+            "hit_rate": hit_rate,
+            "coverage": float(summary.get("coverage") or 0.0),
+            "wilson_lower_bound": lower_bound,
+            "minimum_sample_count": DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+            "target_hit_rate": DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
+            "minimum_wilson_lower_bound": (
+                DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
+            ),
+            "eligibility_filter": (
+                "prequential_quality_candidate_with_external_pre_match_signal"
+            ),
+        },
+    }
+
+
 def _read_prediction_payload(prediction: dict) -> dict:
     summary_payload = prediction.get("summary_payload")
     if isinstance(summary_payload, dict):
@@ -278,31 +330,6 @@ def _read_prediction_payload(prediction: dict) -> dict:
     if isinstance(explanation_payload, dict):
         return explanation_payload
     return {}
-
-
-def _apply_posthoc_bucket_calibration(rows: list[dict]) -> list[dict]:
-    bucket_counts: dict[tuple[float, float, float, str], Counter] = {}
-    for row in rows:
-        bucket = _calibration_bucket(row)
-        bucket_counts.setdefault(bucket, Counter())[str(row.get("actual") or "")] += 1
-
-    calibrated_rows = []
-    for row in rows:
-        bucket = _calibration_bucket(row)
-        outcomes = bucket_counts[bucket]
-        if sum(outcomes.values()) < 2:
-            calibrated_rows.append(row)
-            continue
-        calibrated_pick = str(outcomes.most_common(1)[0][0])
-        calibrated_rows.append(
-            {
-                **row,
-                "adjusted_pick": calibrated_pick,
-                "adjusted_hit": 1 if calibrated_pick == row.get("actual") else 0,
-                "calibration_bucket_size": sum(outcomes.values()),
-            }
-        )
-    return calibrated_rows
 
 
 def _apply_prequential_bucket_calibration(
@@ -485,6 +512,10 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
         and float(row.get("confidence") or 0.0) >= 0.3
         and float(row.get("max_abs_divergence") or 0.0) <= 0.03
     )
+
+
+def _is_daily_pick_candidate(row: dict) -> bool:
+    return bool(str(row.get("external_signal_source_summary") or ""))
 
 
 def _top_bucket_outcome(outcomes: Counter) -> tuple[str | None, int]:
