@@ -28,6 +28,10 @@ type MarketFilter = "all" | DailyPickMarketFamily;
 
 const MARKET_FILTERS: MarketFilter[] = ["all", "moneyline", "spreads", "totals"];
 
+function formatPercent(value: number | null): string {
+  return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
 function matchesActiveFilters(
   item: DailyPickItem,
   marketFamily: MarketFilter,
@@ -204,12 +208,15 @@ export default function DailyPicksModal({
                   <strong>{t("dailyPicks.summary.count", { count: recommendationCount })}</strong>
                 </div>
                 <div className="dailyPicksTargetStat">
-                  <small>{t("dailyPicks.target.hitRate")}</small>
-                  <strong>{Math.round(payload.target.hitRate * 100)}%</strong>
+                  <small>{t("dailyPicks.validation.cumulativeHitRate")}</small>
+                  <strong>{formatPercent(payload.validation?.hitRate ?? null)}</strong>
                 </div>
                 <div className="dailyPicksTargetStat">
-                  <small>{t("dailyPicks.target.roi")}</small>
-                  <strong>{Math.round(payload.target.roi * 100)}%</strong>
+                  <small>{t("dailyPicks.validation.sampleCount")}</small>
+                  <strong>{t("dailyPicks.validation.sampleValue", {
+                    count: payload.validation?.sampleCount ?? 0,
+                    defaultValue: `${payload.validation?.sampleCount ?? 0}`,
+                  })}</strong>
                 </div>
               </div>
             ) : null}

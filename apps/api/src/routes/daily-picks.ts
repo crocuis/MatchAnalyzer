@@ -48,6 +48,14 @@ export type DailyPickItem = {
   reasonLabels: string[];
 };
 
+export type DailyPicksValidationSummary = {
+  hitRate: number | null;
+  sampleCount: number;
+  wilsonLowerBound: number | null;
+  confidenceReliability: string | null;
+  modelScope: string | null;
+};
+
 export type DailyPicksView = {
   generatedAt: string | null;
   date: string | null;
@@ -57,6 +65,7 @@ export type DailyPicksView = {
     hitRate: number;
     roi: number;
   };
+  validation: DailyPicksValidationSummary;
   coverage: Record<DailyPickMarketFamily | "held", number>;
   items: DailyPickItem[];
   heldItems: DailyPickItem[];
@@ -70,6 +79,13 @@ export const EMPTY_VIEW: DailyPicksView = {
     maxDailyRecommendations: 10,
     hitRate: 0.7,
     roi: 0.2,
+  },
+  validation: {
+    hitRate: null,
+    sampleCount: 0,
+    wilsonLowerBound: null,
+    confidenceReliability: null,
+    modelScope: null,
   },
   coverage: {
     moneyline: 0,
@@ -457,6 +473,7 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     generatedAt: new Date().toISOString(),
     date: args.options.date ?? null,
     target: EMPTY_VIEW.target,
+    validation: summarizeDailyPickValidation(allCandidates),
     coverage: {
       moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
       spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
@@ -466,6 +483,44 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     items: visibleItems,
     heldItems: visibleHeldItems,
   };
+}
+
+function summarizeDailyPickValidation(
+  candidates: DailyPickItem[],
+): DailyPicksValidationSummary {
+  const summaries = candidates
+    .map((item) => {
+      const metadata = item.validationMetadata;
+      if (!metadata) {
+        return null;
+      }
+      const sampleCount = readNumber(metadata.sample_count)
+        ?? readNumber(metadata.sampleCount)
+        ?? 0;
+      const hitRate = readNumber(metadata.hit_rate)
+        ?? readNumber(metadata.hitRate);
+      return {
+        hitRate,
+        sampleCount,
+        wilsonLowerBound:
+          readNumber(metadata.wilson_lower_bound)
+          ?? readNumber(metadata.wilsonLowerBound),
+        confidenceReliability: item.confidenceReliability,
+        modelScope:
+          readString(metadata.model_scope)
+          ?? readString(metadata.modelScope),
+      };
+    })
+    .filter((summary): summary is DailyPicksValidationSummary => (
+      summary !== null && summary.hitRate !== null
+    ));
+  if (summaries.length === 0) {
+    return EMPTY_VIEW.validation;
+  }
+  return summaries.sort((left, right) => (
+    right.sampleCount - left.sampleCount
+    || (right.hitRate ?? 0) - (left.hitRate ?? 0)
+  ))[0];
 }
 
 function buildBasePickContext(

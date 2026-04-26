@@ -47,6 +47,11 @@
       "roi": "백테스트 ROI",
       "volume": "하루 추천 수"
     },
+    "validation": {
+      "cumulativeHitRate": "누적 적중률",
+      "sampleCount": "검증 표본",
+      "sampleValue": "{{count}}건"
+    },
     "metrics": {
       "confidence": "신뢰도",
       "expectedValue": "기대값",

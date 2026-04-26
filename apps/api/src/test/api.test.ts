@@ -288,6 +288,13 @@ describe("prediction API", () => {
         hitRate: 0.7,
         roi: 0.2,
       },
+      validation: {
+        hitRate: null,
+        sampleCount: 0,
+        wilsonLowerBound: null,
+        confidenceReliability: null,
+        modelScope: null,
+      },
       coverage: {
         moneyline: 0,
         spreads: 0,
@@ -405,6 +412,14 @@ describe("prediction API", () => {
           ],
           summary_payload: {
             source_agreement_ratio: 0.8,
+            confidence_reliability: "validated",
+            high_confidence_eligible: true,
+            validation_metadata: {
+              model_scope: "daily_pick_prequential",
+              sample_count: 76,
+              hit_rate: 0.75,
+              wilson_lower_bound: 0.6422,
+            },
           },
           explanation_payload: {},
           created_at: "2026-04-24T08:00:00Z",
@@ -567,6 +582,13 @@ describe("prediction API", () => {
       awayTeamLogoUrl: "https://crests.football-data.org/65.png",
       marketFamily: "moneyline",
       status: "recommended",
+    });
+    expect(view.validation).toEqual({
+      hitRate: 0.75,
+      sampleCount: 76,
+      wilsonLowerBound: 0.6422,
+      confidenceReliability: "validated",
+      modelScope: "daily_pick_prequential",
     });
     expect(view.coverage).toMatchObject({
       moneyline: 4,

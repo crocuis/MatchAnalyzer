@@ -704,6 +704,13 @@ beforeEach(async () => {
               generatedAt: "2026-04-24T08:00:00Z",
               date: "2026-04-24",
               target: { minDailyRecommendations: 5, maxDailyRecommendations: 10, hitRate: 0.7, roi: 0.2 },
+              validation: {
+                hitRate: 0.75,
+                sampleCount: 76,
+                wilsonLowerBound: 0.6422,
+                confidenceReliability: "validated",
+                modelScope: "daily_pick_prequential",
+              },
               coverage: { moneyline: 3, spreads: 1, totals: 1, held: 3 },
               items,
               heldItems,
@@ -1202,6 +1209,10 @@ describe("dashboard redesign", () => {
 
     const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
     expect(within(dialog).getByRole("heading", { name: /daily picks/i })).toBeInTheDocument();
+    expect(within(dialog).getByText("Cumulative hit rate")).toBeInTheDocument();
+    expect(within(dialog).getByText("75.0%")).toBeInTheDocument();
+    expect(within(dialog).getByText("Validation sample")).toBeInTheDocument();
+    expect(within(dialog).getByText("76 picks")).toBeInTheDocument();
   });
 
   it("keeps the daily picks CTA available after matches load", async () => {

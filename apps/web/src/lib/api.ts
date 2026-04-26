@@ -419,6 +419,13 @@ export interface DailyPicksResponse {
     hitRate: number;
     roi: number;
   };
+  validation: {
+    hitRate: number | null;
+    sampleCount: number;
+    wilsonLowerBound: number | null;
+    confidenceReliability: string | null;
+    modelScope: string | null;
+  };
   coverage: Record<DailyPickMarketFamily | "held", number>;
   items: DailyPickItem[];
   heldItems: DailyPickItem[];

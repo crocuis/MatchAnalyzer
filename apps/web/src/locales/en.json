@@ -47,6 +47,11 @@
       "roi": "Backtest ROI",
       "volume": "Daily picks"
     },
+    "validation": {
+      "cumulativeHitRate": "Cumulative hit rate",
+      "sampleCount": "Validation sample",
+      "sampleValue": "{{count}} picks"
+    },
     "metrics": {
       "confidence": "Confidence",
       "expectedValue": "Expected value",
