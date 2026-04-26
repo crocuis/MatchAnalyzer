@@ -27,8 +27,7 @@ export default function DailyPickCard({ item, onOpenMatch }: DailyPickCardProps)
   });
 
   const formattedDate = new Date(item.kickoffAt).toLocaleString(i18n.language, {
-    year: "numeric",
-    month: "long",
+    month: "short",
     day: "numeric",
     weekday: "short",
     hour: "2-digit",
@@ -38,42 +37,57 @@ export default function DailyPickCard({ item, onOpenMatch }: DailyPickCardProps)
 
   return (
     <article className={`dailyPickCard dailyPickCard-${item.status}`}>
+      <div className="dailyPickCardHeader">
+        <span className="dailyPickLeague">{item.leagueLabel}</span>
+        <span className="dailyPickStatus">{statusLabel}</span>
+      </div>
+
       <button
         className="dailyPickCardButton"
         type="button"
         onClick={() => onOpenMatch(item)}
       >
-        <span className="dailyPickLeague">{item.leagueLabel}</span>
-        <div className="teamRow" style={{ gap: "8px", marginTop: "4px" }}>
-          <TeamLogo
-            teamName={item.homeTeam}
-            logoUrl={item.homeTeamLogoUrl}
-            style={{ width: "20px", height: "20px", fontSize: "10px" }}
-          />
-          <strong className="dailyPickMatch" style={{ fontSize: "1rem" }}>{item.homeTeam}</strong>
+        <div className="dailyPickTeams">
+          <div className="dailyPickTeam">
+            <TeamLogo
+              teamName={item.homeTeam}
+              logoUrl={item.homeTeamLogoUrl}
+              style={{ width: "24px", height: "24px" }}
+            />
+            <span className="dailyPickMatchName">{item.homeTeam}</span>
+          </div>
+          <span className="dailyPickVs">vs</span>
+          <div className="dailyPickTeam">
+            <TeamLogo
+              teamName={item.awayTeam}
+              logoUrl={item.awayTeamLogoUrl}
+              style={{ width: "24px", height: "24px" }}
+            />
+            <span className="dailyPickMatchName">{item.awayTeam}</span>
+          </div>
         </div>
-        <div className="vsDivider" style={{ margin: "2px 0", fontSize: "8px", justifyContent: "flex-start" }}>vs</div>
-        <div className="teamRow" style={{ gap: "8px" }}>
-          <TeamLogo
-            teamName={item.awayTeam}
-            logoUrl={item.awayTeamLogoUrl}
-            style={{ width: "20px", height: "20px", fontSize: "10px" }}
-          />
-          <strong className="dailyPickMatch" style={{ fontSize: "1rem" }}>{item.awayTeam}</strong>
-        </div>
-        <span className="dailyPickKickoff" style={{ marginTop: "4px", display: "block" }}>{formattedDate}</span>
+        <span className="dailyPickKickoff">{formattedDate}</span>
       </button>
+
       <div className="dailyPickDecision">
-        <span className="dailyPickFamily">{t(`dailyPicks.marketFamilies.${item.marketFamily}`)}</span>
-        <strong>{item.selectionLabel}</strong>
-        <span className="dailyPickStatus">{statusLabel}</span>
+        <div className="dailyPickDecisionMain">
+          <span className="dailyPickFamily">{t(`dailyPicks.marketFamilies.${item.marketFamily}`)}</span>
+          <strong className="dailyPickSelection">{item.selectionLabel}</strong>
+        </div>
+        <div className="dailyPickMetrics">
+          <div className="dailyPickMetricItem">
+            <small>{t("dailyPicks.metrics.confidence")}</small>
+            <strong>{formatPercent(item.confidence)}</strong>
+          </div>
+          <div className="dailyPickMetricItem">
+            <small>{t("dailyPicks.metrics.expectedValue")}</small>
+            <strong className={item.expectedValue && item.expectedValue > 0 ? "text-success" : ""}>
+              {formatSignedPercent(item.expectedValue)}
+            </strong>
+          </div>
+        </div>
       </div>
-      <div className="dailyPickMetrics">
-        <span><small>{t("dailyPicks.metrics.confidence")}</small><strong>{formatPercent(item.confidence)}</strong></span>
-        <span><small>{t("dailyPicks.metrics.expectedValue")}</small><strong>{formatSignedPercent(item.expectedValue)}</strong></span>
-        <span><small>{t("dailyPicks.metrics.marketPrice")}</small><strong>{formatPercent(item.marketPrice)}</strong></span>
-        <span><small>{t("dailyPicks.metrics.modelProbability")}</small><strong>{formatPercent(item.modelProbability)}</strong></span>
-      </div>
+
       {item.noBetReason ? (
         <p className="dailyPickReason">
           {t(`dailyPicks.noBetReasons.${item.noBetReason}`, { defaultValue: item.noBetReason })}

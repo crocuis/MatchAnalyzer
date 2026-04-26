@@ -283,7 +283,7 @@ export default function DailyPicksModal({
               </div>
             ) : null}
             {visibleItems.length > 0 ? (
-              <div className="dailyPicksList" style={{ gap: "16px" }}>
+              <div className="dailyPicksList">
                 {visibleItems.map((item) => {
                   const itemWithLogos = enrichDailyPickWithMatchLogos(item, allMatches);
                   return (
