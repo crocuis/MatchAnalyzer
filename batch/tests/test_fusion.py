@@ -565,6 +565,31 @@ def test_build_main_recommendation_returns_no_bet_when_bucket_hit_rate_lags_conf
     }
 
 
+def test_build_main_recommendation_uses_raw_calibration_bucket_when_provided():
+    recommendation = build_main_recommendation(
+        pick="HOME",
+        confidence=0.88,
+        context={
+            "source_agreement_ratio": 1.0,
+            "calibration_bucket_confidence": 1.0,
+        },
+        bucket_summary={
+            "0.8-0.9": {"count": 9, "hit_rate": 0.667},
+            "0.9-1.0": {"count": 10, "hit_rate": 0.8},
+        },
+    )
+
+    assert recommendation == {
+        "confidence": 0.88,
+        "empirical_hit_rate": 0.8,
+        "no_bet_reason": None,
+        "pick": "HOME",
+        "recommended": True,
+        "source_agreement_ratio": 1.0,
+        "threshold": 0.62,
+    }
+
+
 def test_build_main_recommendation_allows_bookmaker_fallback_without_prediction_market_when_confident():
     recommendation = build_main_recommendation(
         pick="HOME",

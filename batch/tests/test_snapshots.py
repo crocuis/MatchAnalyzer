@@ -551,6 +551,37 @@ def test_feature_metadata_treats_external_rating_and_understat_as_resolved_signa
     assert "away_xg_against_last_5" not in metadata["missing_fields"]
 
 
+def test_feature_metadata_treats_derived_form_and_rest_as_resolved_signals():
+    snapshot = {
+        "home_points_last_5": 10,
+        "away_points_last_5": 8,
+        "home_rest_days": 5,
+        "away_rest_days": 4,
+        "home_matches_last_7d": 1,
+        "away_matches_last_7d": 2,
+        "book_home_prob": 0.52,
+        "book_draw_prob": 0.24,
+        "book_away_prob": 0.24,
+        "market_home_prob": 0.49,
+        "market_draw_prob": 0.25,
+        "market_away_prob": 0.26,
+        "prediction_market_available": True,
+    }
+
+    features = build_feature_vector(snapshot)
+    metadata = build_feature_metadata(snapshot, features)
+
+    reason_keys = {
+        reason["reason_key"] for reason in metadata["missing_signal_reasons"]
+    }
+    assert features["form_delta"] == 2
+    assert features["rest_delta"] == 1
+    assert "form_context_missing" not in reason_keys
+    assert "schedule_context_missing" not in reason_keys
+    assert "form_delta" not in metadata["missing_fields"]
+    assert "rest_delta" not in metadata["missing_fields"]
+
+
 def test_build_feature_vector_prefers_explicit_lineup_strength_delta():
     features = build_feature_vector(
         {

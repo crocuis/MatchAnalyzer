@@ -14,6 +14,7 @@ from batch.src.ingest.fetch_fixtures import (
     build_fixture_row,
     build_lineup_context_by_match,
     build_match_row_from_event,
+    build_rotowire_lineup_context_by_match,
     build_snapshot_rows_from_matches,
     build_team_rows_from_event,
     fetch_daily_schedule,
@@ -337,6 +338,7 @@ def main() -> None:
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
         lineup_context_by_match = build_lineup_context_by_match(events)
+        rotowire_lineup_context_by_match = build_rotowire_lineup_context_by_match(events)
         bsd_api_key = getattr(settings, "bsd_api_key", None)
         bsd_lineup_context_by_match = (
             build_bsd_lineup_context_by_match(bsd_api_key, events)
@@ -350,8 +352,16 @@ def main() -> None:
         )
         lineup_context_by_match = merge_lineup_contexts(
             lineup_context_by_match,
+            rotowire_lineup_context_by_match,
+        )
+        lineup_context_by_match = merge_lineup_contexts(
+            lineup_context_by_match,
             bsd_lineup_context_by_match,
         )
+        if rotowire_lineup_context_by_match:
+            archive_payload["rotowire_lineup_context_by_match"] = (
+                rotowire_lineup_context_by_match
+            )
         if bsd_lineup_context_by_match:
             archive_payload["bsd_lineup_context_by_match"] = bsd_lineup_context_by_match
         if bsd_event_signal_context_by_match:

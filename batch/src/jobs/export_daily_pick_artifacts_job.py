@@ -39,6 +39,10 @@ def read_number(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
 
 
+def read_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def read_record(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -88,6 +92,33 @@ def resolve_result_status(
     return read_text(item.get("status")) or "recommended"
 
 
+def resolve_held_reason(item: dict[str, Any], status: str) -> str | None:
+    if status != "held":
+        return None
+    reason_labels = [
+        value
+        for value in read_list(item.get("reason_labels"))
+        if isinstance(value, str)
+    ]
+    for label in reversed(reason_labels):
+        if label not in {"heldByRecommendationGate", "mainRecommendation"}:
+            return label
+    return "held"
+
+
+def _resolve_high_confidence_eligible(
+    validation_metadata: dict[str, Any],
+    status: str,
+) -> bool:
+    explicit = read_bool(validation_metadata.get("high_confidence_eligible"))
+    if explicit is not None:
+        return explicit
+    camel_case = read_bool(validation_metadata.get("highConfidenceEligible"))
+    if camel_case is not None:
+        return camel_case
+    return status != "held"
+
+
 def build_daily_pick_item(
     *,
     item: dict[str, Any],
@@ -99,6 +130,7 @@ def build_daily_pick_item(
 ) -> dict[str, Any]:
     validation_metadata = read_record(item.get("validation_metadata"))
     market_family = read_text(item.get("market_family")) or "moneyline"
+    status = resolve_result_status(item, results_by_item_id)
     return {
         "id": item.get("id"),
         "matchId": match.get("id"),
@@ -127,12 +159,15 @@ def build_daily_pick_item(
         "confidenceReliability": (
             read_text(validation_metadata.get("confidence_reliability"))
             or read_text(validation_metadata.get("confidenceReliability"))
-            or "validated"
+            or ("validated" if status != "held" else "confidence_reliability_missing")
         ),
-        "highConfidenceEligible": True,
+        "highConfidenceEligible": _resolve_high_confidence_eligible(
+            validation_metadata,
+            status,
+        ),
         "validationMetadata": validation_metadata or None,
-        "status": resolve_result_status(item, results_by_item_id),
-        "noBetReason": None,
+        "status": status,
+        "noBetReason": resolve_held_reason(item, status),
         "reasonLabels": [
             value
             for value in read_list(item.get("reason_labels"))
@@ -185,7 +220,10 @@ def build_daily_picks_view(
             str(row.get("id") or ""),
         )
     )
-    visible_items = built_items[:MAX_DAILY_RECOMMENDATIONS]
+    recommended_items = [row for row in built_items if row.get("status") != "held"]
+    held_items = [row for row in built_items if row.get("status") == "held"]
+    visible_items = recommended_items[:MAX_DAILY_RECOMMENDATIONS]
+    visible_held_items = held_items[:MAX_DAILY_RECOMMENDATIONS]
     return {
         "generatedAt": read_text(run.get("generated_at") if run else None)
         or datetime.now(timezone.utc).isoformat(),
@@ -207,10 +245,10 @@ def build_daily_picks_view(
             "totals": sum(
                 1 for row in built_items if row.get("marketFamily") == "totals"
             ),
-            "held": 0,
+            "held": len(held_items),
         },
         "items": visible_items,
-        "heldItems": [],
+        "heldItems": visible_held_items,
     }
 
 

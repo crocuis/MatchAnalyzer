@@ -7,6 +7,7 @@ from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REMOTE_READ_PAGE_SIZE = 1000
+REMOTE_UPSERT_BATCH_SIZE = 250
 
 
 def validate_table_name(table: str) -> str:
@@ -134,7 +135,14 @@ class SupabaseClient:
 
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
         table_name = validate_table_name(table)
+        if not rows:
+            return 0
         if not self._use_file_backend():
+            if len(rows) > REMOTE_UPSERT_BATCH_SIZE:
+                return sum(
+                    self.upsert_rows(table_name, rows[index : index + REMOTE_UPSERT_BATCH_SIZE])
+                    for index in range(0, len(rows), REMOTE_UPSERT_BATCH_SIZE)
+                )
             normalized_rows = self._normalize_bulk_upsert_rows(rows)
             params = urlencode({"on_conflict": "id"})
             request = Request(

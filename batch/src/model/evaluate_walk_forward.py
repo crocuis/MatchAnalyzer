@@ -44,11 +44,15 @@ def calibrate_confidence_from_buckets(
     raw_confidence: float,
     bucket_summary: dict[str, dict[str, float | int]],
     minimum_count: int = 3,
+    maximum_calibration_gap: float | None = None,
 ) -> float:
     bucket = confidence_bucket_label(raw_confidence)
     summary = bucket_summary.get(bucket)
     if not summary or int(summary["count"]) < minimum_count:
         return round(raw_confidence, 4)
 
-    calibrated = (raw_confidence * 0.5) + (float(summary["hit_rate"]) * 0.5)
+    hit_rate = float(summary["hit_rate"])
+    calibrated = (raw_confidence * 0.5) + (hit_rate * 0.5)
+    if maximum_calibration_gap is not None:
+        calibrated = min(calibrated, hit_rate + maximum_calibration_gap)
     return round(min(max(calibrated, 0.0), 1.0), 4)

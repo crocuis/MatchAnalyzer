@@ -1,11 +1,14 @@
 import json
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from batch.src.features.build_snapshots import build_snapshot
 from batch.src.ingest.normalizers import normalize_team_name
@@ -87,6 +90,18 @@ RECENT_EVENT_LIMIT = 3
 RECENCY_WEIGHTS = (1.0, 0.7, 0.4)
 LINEUP_CONTEXT_LOOKAHEAD_HOURS = 1
 BSD_API_BASE_URL = "https://sports.bzzoiro.com/api"
+ROTOWIRE_LINEUPS_BASE_URL = "https://www.rotowire.com/soccer/lineups.php"
+ROTOWIRE_COMPETITION_CODES = {
+    "premier-league": "EPL",
+    "champions-league": "UCL",
+    "la-liga": "LIGA",
+    "serie-a": "SERI",
+    "bundesliga": "BUND",
+    "ligue-1": "FRAN",
+    "world-cup": "WOC",
+}
+ROTOWIRE_UNAVAILABLE_STATUSES = {"OUT", "SUS"}
+ROTOWIRE_EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def normalize_kickoff_at(value: str) -> str:
@@ -509,6 +524,21 @@ def _normalize_bsd_position(value: Any) -> str:
     return mapping.get(normalized, str(value or "").strip().title())
 
 
+def _normalize_rotowire_position(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    if not normalized:
+        return ""
+    if normalized in {"GK", "G"}:
+        return "Goalkeeper"
+    if normalized.startswith("D"):
+        return "Defender"
+    if normalized.startswith("M") or normalized in {"AML", "AMC", "AMR", "DMC"}:
+        return "Midfielder"
+    if normalized.startswith("F") or normalized in {"ST", "CF", "LW", "RW"}:
+        return "Forward"
+    return str(value or "").strip().title()
+
+
 def _normalize_missing_players_team_name(name: str) -> str:
     return normalize_team_name(name, MISSING_PLAYERS_TEAM_ALIASES)
 
@@ -685,6 +715,304 @@ def match_bsd_events_to_schedule_events(
         if event_id:
             matched[event_id] = bsd_event
     return matched
+
+
+class _RotoWireLineupsParser(HTMLParser):
+    def __init__(self, *, default_year: int) -> None:
+        super().__init__(convert_charrefs=True)
+        self.default_year = default_year
+        self.matches: list[dict[str, Any]] = []
+        self._current: dict[str, Any] | None = None
+        self._lineup_div_depth = 0
+        self._current_side: str | None = None
+        self._section_by_side = {"home": "lineup", "away": "lineup"}
+        self._current_player: dict[str, Any] | None = None
+        self._text_target: tuple[str, str | None, str] | None = None
+        self._text_buffer: list[str] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        attr_map = {key: value or "" for key, value in attrs}
+        classes = set(attr_map.get("class", "").split())
+        if tag == "div" and {"lineup", "is-soccer"}.issubset(classes):
+            self._current = {
+                "home_lineup": [],
+                "away_lineup": [],
+                "home_injuries": [],
+                "away_injuries": [],
+                "home_status": "",
+                "away_status": "",
+            }
+            self._lineup_div_depth = 1
+            self._current_side = None
+            self._section_by_side = {"home": "lineup", "away": "lineup"}
+            return
+
+        if self._current is None:
+            return
+
+        if tag == "div":
+            self._lineup_div_depth += 1
+            if "lineup__time" in classes:
+                self._start_text("time", None, tag)
+            elif "lineup__mteam" in classes and "is-home" in classes:
+                self._start_text("team", "home", tag)
+            elif "lineup__mteam" in classes and "is-visit" in classes:
+                self._start_text("team", "away", tag)
+            elif "lineup__pos" in classes and self._current_player is not None:
+                self._start_text("player_pos", None, tag)
+        elif tag == "ul" and "lineup__list" in classes:
+            if "is-home" in classes:
+                self._current_side = "home"
+            elif "is-visit" in classes:
+                self._current_side = "away"
+        elif tag == "li" and self._current_side:
+            if "lineup__status" in classes:
+                self._start_text("status", self._current_side, tag)
+            elif "lineup__title" in classes:
+                self._start_text("title", self._current_side, tag)
+            elif "lineup__player" in classes:
+                self._current_player = {
+                    "side": self._current_side,
+                    "section": self._section_by_side[self._current_side],
+                    "position": "",
+                    "name": "",
+                    "injury_status": "",
+                }
+        elif tag == "a" and self._current_player is not None:
+            if attr_map.get("title"):
+                self._current_player["name"] = attr_map["title"].strip()
+        elif (
+            tag == "span"
+            and "lineup__inj" in classes
+            and self._current_player is not None
+        ):
+            self._start_text("player_injury", None, tag)
+
+    def handle_data(self, data: str) -> None:
+        if self._text_target is not None:
+            self._text_buffer.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._text_target is not None and self._text_target[2] == tag:
+            self._finish_text()
+
+        if tag == "li" and self._current_player is not None:
+            self._append_current_player()
+            self._current_player = None
+
+        if self._current is not None and tag == "div":
+            self._lineup_div_depth -= 1
+            if self._lineup_div_depth <= 0:
+                self.matches.append(self._current)
+                self._current = None
+                self._current_side = None
+
+    def _start_text(self, target: str, side: str | None, tag: str) -> None:
+        self._text_target = (target, side, tag)
+        self._text_buffer = []
+
+    def _finish_text(self) -> None:
+        if self._current is None or self._text_target is None:
+            return
+        target, side, _tag = self._text_target
+        value = " ".join("".join(self._text_buffer).split())
+        if target == "time":
+            self._current["time_label"] = value
+        elif target == "team" and side:
+            self._current[f"{side}_team"] = value
+        elif target == "status" and side:
+            self._current[f"{side}_status"] = value
+        elif target == "title" and side and value.lower() == "injuries":
+            self._section_by_side[side] = "injuries"
+        elif target == "player_pos" and self._current_player is not None:
+            self._current_player["position"] = value
+        elif target == "player_injury" and self._current_player is not None:
+            self._current_player["injury_status"] = value.upper()
+        self._text_target = None
+        self._text_buffer = []
+
+    def _append_current_player(self) -> None:
+        if self._current is None or self._current_player is None:
+            return
+        side = str(self._current_player.get("side"))
+        section = str(self._current_player.get("section"))
+        key = f"{side}_{'injuries' if section == 'injuries' else 'lineup'}"
+        if not self._current_player.get("name"):
+            return
+        self._current.setdefault(key, []).append(
+            {
+                "name": self._current_player.get("name"),
+                "position": _normalize_rotowire_position(
+                    self._current_player.get("position")
+                ),
+                "injury_status": self._current_player.get("injury_status"),
+            }
+        )
+
+
+def _rotowire_default_year(html: str) -> int:
+    match = re.search(r'data-gamedate="(\d{4})-\d{2}-\d{2}"', html)
+    if match:
+        return int(match.group(1))
+    return datetime.now(timezone.utc).year
+
+
+def _parse_rotowire_kickoff(value: Any, *, default_year: int) -> str | None:
+    raw = str(value or "").replace("\xa0", " ").strip()
+    if not raw:
+        return None
+    match = re.match(
+        r"^(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2})\s+"
+        r"(?P<hour>\d{1,2}):(?P<minute>\d{2})\s+(?P<ampm>AM|PM)\s+ET$",
+        raw,
+    )
+    if not match:
+        return None
+    parsed = datetime.strptime(
+        (
+            f"{match.group('month')} {match.group('day')} {default_year} "
+            f"{match.group('hour')}:{match.group('minute')} {match.group('ampm')}"
+        ),
+        "%B %d %Y %I:%M %p",
+    )
+    return parsed.replace(tzinfo=ROTOWIRE_EASTERN_TZ).astimezone(
+        timezone.utc
+    ).isoformat()
+
+
+def parse_rotowire_lineups_html(html: str) -> list[dict[str, Any]]:
+    parser = _RotoWireLineupsParser(default_year=_rotowire_default_year(html))
+    parser.feed(html)
+    rows: list[dict[str, Any]] = []
+    for row in parser.matches:
+        kickoff_at = _parse_rotowire_kickoff(
+            row.get("time_label"),
+            default_year=parser.default_year,
+        )
+        if not kickoff_at:
+            continue
+        rows.append(
+            {
+                **row,
+                "event_date": kickoff_at,
+                "home_team": row.get("home_team", ""),
+                "away_team": row.get("away_team", ""),
+            }
+        )
+    return rows
+
+
+def fetch_rotowire_lineups(
+    competition_id: str,
+    *,
+    base_url: str = ROTOWIRE_LINEUPS_BASE_URL,
+) -> list[dict[str, Any]]:
+    league_code = ROTOWIRE_COMPETITION_CODES.get(str(competition_id or ""))
+    if not league_code:
+        return []
+    url = f"{base_url}?{urlencode({'league': league_code})}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 MatchAnalyzer/1.0"})
+    try:
+        with urlopen(request, timeout=20) as response:
+            html = response.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return []
+    return parse_rotowire_lineups_html(html)
+
+
+def _rotowire_unavailable_count(players: Any) -> int | None:
+    if not isinstance(players, list):
+        return None
+    return sum(
+        1
+        for player in players
+        if str(player.get("injury_status") or "").upper()
+        in ROTOWIRE_UNAVAILABLE_STATUSES
+    )
+
+
+def build_rotowire_lineup_contexts_from_matches(
+    matches: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
+    for match_id, payload in matches.items():
+        home_lineup = {
+            "formation": None,
+            "starting": payload.get("home_lineup", []),
+            "bench": [],
+        }
+        away_lineup = {
+            "formation": None,
+            "starting": payload.get("away_lineup", []),
+            "bench": [],
+        }
+        context: dict[str, Any] = {}
+        home_starters = len(home_lineup["starting"])
+        away_starters = len(away_lineup["starting"])
+        if home_starters >= 11 and away_starters >= 11:
+            home_score = _lineup_score(home_lineup)
+            away_score = _lineup_score(away_lineup)
+            statuses = " ".join(
+                [
+                    str(payload.get("home_status") or ""),
+                    str(payload.get("away_status") or ""),
+                ]
+            ).lower()
+            context.update(
+                {
+                    "lineup_status": (
+                        "confirmed" if "confirmed" in statuses else "projected"
+                    ),
+                    "home_lineup_score": home_score,
+                    "away_lineup_score": away_score,
+                    "lineup_strength_delta": round(home_score - away_score, 4),
+                }
+            )
+
+        home_absence_count = _rotowire_unavailable_count(
+            payload.get("home_injuries", [])
+        )
+        away_absence_count = _rotowire_unavailable_count(
+            payload.get("away_injuries", [])
+        )
+        if home_absence_count is not None:
+            context["home_absence_count"] = home_absence_count
+        if away_absence_count is not None:
+            context["away_absence_count"] = away_absence_count
+
+        source_parts = []
+        if home_starters >= 11 and away_starters >= 11:
+            source_parts.append("rotowire_lineups")
+        if home_absence_count is not None or away_absence_count is not None:
+            source_parts.append("rotowire_injuries")
+        if source_parts:
+            context["lineup_source_summary"] = "+".join(source_parts)
+            contexts[str(match_id)] = context
+    return contexts
+
+
+def build_rotowire_lineup_context_by_match(
+    events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    competitions = sorted(
+        {
+            str((event.get("competition") or {}).get("id") or "")
+            for event in events
+            if (event.get("competition") or {}).get("id") in ROTOWIRE_COMPETITION_CODES
+        }
+    )
+    if not competitions:
+        return {}
+
+    rotowire_rows: list[dict[str, Any]] = []
+    for competition_id in competitions:
+        rotowire_rows.extend(fetch_rotowire_lineups(competition_id))
+    matched = match_bsd_events_to_schedule_events(events, rotowire_rows)
+    return build_rotowire_lineup_contexts_from_matches(matched)
 
 
 def build_bsd_lineup_contexts_from_payloads(

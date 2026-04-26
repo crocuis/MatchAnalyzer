@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import gzip
 import json
+import unicodedata
 from datetime import datetime, timezone
 from io import StringIO
 from typing import Any
@@ -22,15 +23,48 @@ UNDERSTAT_LEAGUES_BY_COMPETITION_ID = {
     "ligue-1": "Ligue 1",
 }
 
-TEAM_NAME_ALIASES = {
+UEFA_PROFILE_COMPETITION_IDS = {
+    "champions-league",
+    "europa-league",
+    "conference-league",
+}
+
+UEFA_PROFILE_MATCH_SOURCE = "uefa_profile_match"
+
+UEFA_PROFILE_CLUBS_BY_NORMALIZED_NAME = {
+    "bayern",
+    "breidablik",
+    "chelsea",
+    "crystal palace",
+    "drita gjilan",
+    "jagiellonia bialystok",
+    "juventus",
+    "kairat almaty",
+    "kups kuopio",
+    "lausanne sports",
+    "lech poznan",
+    "monaco",
+    "olympiacos",
+    "pafos",
+    "slavia prague",
+    "slovan bratislava",
+    "villarreal",
+}
+
+COMMON_TEAM_NAME_ALIASES = {
+    "aj auxerre": "auxerre",
+    "as monaco": "monaco",
     "manchester city": "man city",
     "manchester united": "man united",
+    "leeds united": "leeds",
+    "le havre ac": "le havre",
+    "hellas verona": "verona",
     "tottenham hotspur": "tottenham",
     "newcastle united": "newcastle",
-    "nottingham forest": "nottingham forest",
     "brighton hove albion": "brighton",
     "wolverhampton wanderers": "wolverhampton",
     "paris saint germain": "paris sg",
+    "stade rennais": "rennes",
     "bayern munich": "bayern",
     "borussia dortmund": "dortmund",
     "bayer leverkusen": "leverkusen",
@@ -43,18 +77,120 @@ TEAM_NAME_ALIASES = {
     "real sociedad": "sociedad",
 }
 
+TEAM_NAME_ALIASES_BY_SOURCE = {
+    "clubelo": {
+        "1 heidenheim 1846": "heidenheim",
+        "1 union berlin": "union berlin",
+        "aek larnaca": "larnaca",
+        "aek athens": "aek",
+        "ajax amsterdam": "ajax",
+        "athletic": "bilbao",
+        "az alkmaar": "alkmaar",
+        "as roma": "roma",
+        "bk hacken": "haecken",
+        "bodo glimt": "bodoe glimt",
+        "borussia monchengladbach": "gladbach",
+        "celta vigo": "celta",
+        "csu craiova": "craiova",
+        "drita gjilan": "drita",
+        "eintracht frankfurt": "frankfurt",
+        "cologne": "koeln",
+        "f c kobenhavn": "fc kobenhavn",
+        "fcsb": "steaua",
+        "feyenoord rotterdam": "feyenoord",
+        "fk qarabag": "karabakh agdam",
+        "hamburg sv": "hamburg",
+        "hamrun spartans": "hamrun",
+        "jagiellonia bialystok": "jagiellonia",
+        "kairat almaty": "kairat",
+        "kf shkendija": "shkendija",
+        "legia warsaw": "legia",
+        "lech poznan": "lech",
+        "lincoln red imps": "lincoln",
+        "ludogorets razgrad": "razgrad",
+        "lausanne sports": "lausanne",
+        "malmo ff": "malmoe",
+        "maccabi tel aviv": "m tel aviv",
+        "nk celje": "celje",
+        "nottingham forest": "forest",
+        "omonia nicosia": "omonia",
+        "olympiacos": "olympiakos",
+        "paok salonika": "paok",
+        "psv eindhoven": "psv",
+        "qarabag": "karabakh agdam",
+        "rapid vienna": "rapid wien",
+        "racing genk": "genk",
+        "rakow czestochowa": "rakow",
+        "rb salzburg": "salzburg",
+        "red star belgrade": "red star",
+        "real oviedo": "oviedo",
+        "shamrock rovers": "shamrock",
+        "shakhtar donetsk": "shakhtar",
+        "sk brann": "brann",
+        "sk sturm graz": "sturm graz",
+        "slavia prague": "slavia praha",
+        "sporting cp": "sporting",
+        "sparta prague": "sparta praha",
+        "tsg hoffenheim": "hoffenheim",
+        "union st gilloise": "st gillis",
+        "vfb stuttgart": "stuttgart",
+        "vfl wolfsburg": "wolfsburg",
+        "werder bremen": "werder",
+        "west ham united": "west ham",
+        "wolverhampton wanderers": "wolves",
+        "wolverhampton": "wolves",
+    },
+    "understat": {
+        "1 heidenheim 1846": "heidenheim",
+        "1 union berlin": "union berlin",
+        "as roma": "roma",
+        "borussia monchengladbach": "borussia m gladbach",
+        "hamburg sv": "hamburger sv",
+        "mainz": "mainz 05",
+        "parma": "parma calcio 1913",
+        "rb leipzig": "rasenballsport leipzig",
+        "tsg hoffenheim": "hoffenheim",
+        "vfb stuttgart": "vfb stuttgart",
+        "vfl wolfsburg": "wolfsburg",
+        "west ham united": "west ham",
+    },
+}
 
-def normalize_external_team_name(value: Any) -> str:
+SPECIAL_TRANSLITERATIONS = str.maketrans(
+    {
+        "Æ": "AE",
+        "Ð": "D",
+        "Ø": "O",
+        "Þ": "Th",
+        "ß": "ss",
+        "æ": "ae",
+        "ð": "d",
+        "ø": "o",
+        "þ": "th",
+    }
+)
+
+
+def normalize_external_team_name(value: Any, *, source: str | None = None) -> str:
+    transliterated = str(value or "").translate(SPECIAL_TRANSLITERATIONS)
+    ascii_value = unicodedata.normalize("NFKD", transliterated).encode(
+        "ascii",
+        "ignore",
+    ).decode("ascii")
     normalized = "".join(
         character.lower() if character.isalnum() else " "
-        for character in str(value or "")
+        for character in ascii_value
     )
     compact = " ".join(
         token
         for token in normalized.split()
-        if token not in {"fc", "cf", "sc", "afc", "club"}
+        if token not in {"fc", "cf", "sc", "afc", "club", "fk"}
     )
-    return TEAM_NAME_ALIASES.get(compact, compact)
+    source_aliases = TEAM_NAME_ALIASES_BY_SOURCE.get(source or "", {})
+    source_value = source_aliases.get(compact)
+    if source_value:
+        return source_value
+    return COMMON_TEAM_NAME_ALIASES.get(compact, compact)
 
 
 def fetch_clubelo_ratings(
@@ -76,7 +212,7 @@ def index_clubelo_ratings_by_team(
 ) -> dict[str, dict[str, Any]]:
     indexed: dict[str, dict[str, Any]] = {}
     for row in ratings:
-        club_name = normalize_external_team_name(row.get("Club"))
+        club_name = normalize_external_team_name(row.get("Club"), source="clubelo")
         if not club_name:
             continue
         indexed[club_name] = row
@@ -86,8 +222,10 @@ def index_clubelo_ratings_by_team(
 def find_external_team_row(
     team_name: str,
     indexed_rows: dict[str, dict[str, Any]],
+    *,
+    source: str | None = None,
 ) -> dict[str, Any] | None:
-    normalized = normalize_external_team_name(team_name)
+    normalized = normalize_external_team_name(team_name, source=source)
     if not normalized:
         return None
     direct = indexed_rows.get(normalized)
@@ -104,6 +242,13 @@ def find_external_team_row(
     if len(scored) > 1 and scored[0][0] == scored[1][0]:
         return None
     return scored[0][1]
+
+
+def find_uefa_profile_club(team_name: str) -> str | None:
+    normalized = normalize_external_team_name(team_name)
+    if not normalized:
+        return None
+    return normalized if normalized in UEFA_PROFILE_CLUBS_BY_NORMALIZED_NAME else None
 
 
 def _event_team_name(event: dict[str, Any], qualifier: str) -> str:
@@ -137,8 +282,16 @@ def build_clubelo_context_by_match(
         match_id = str(event.get("id") or "")
         if not match_id:
             continue
-        home_row = find_external_team_row(_event_team_name(event, "home"), indexed)
-        away_row = find_external_team_row(_event_team_name(event, "away"), indexed)
+        home_row = find_external_team_row(
+            _event_team_name(event, "home"),
+            indexed,
+            source="clubelo",
+        )
+        away_row = find_external_team_row(
+            _event_team_name(event, "away"),
+            indexed,
+            source="clubelo",
+        )
         home_elo = _read_float((home_row or {}).get("Elo"))
         away_elo = _read_float((away_row or {}).get("Elo"))
         if home_elo is None or away_elo is None:
@@ -215,7 +368,7 @@ def _understat_team_rows(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     for row in teams.values():
         if not isinstance(row, dict):
             continue
-        team_name = normalize_external_team_name(row.get("title"))
+        team_name = normalize_external_team_name(row.get("title"), source="understat")
         if team_name:
             indexed[team_name] = row
     return indexed
@@ -272,8 +425,16 @@ def build_understat_context_by_match(
         if not match_id or not league or kickoff is None or season_start_year is None:
             continue
         indexed_teams = team_rows_by_payload_key.get((league, season_start_year), {})
-        home_team = find_external_team_row(_event_team_name(event, "home"), indexed_teams)
-        away_team = find_external_team_row(_event_team_name(event, "away"), indexed_teams)
+        home_team = find_external_team_row(
+            _event_team_name(event, "home"),
+            indexed_teams,
+            source="understat",
+        )
+        away_team = find_external_team_row(
+            _event_team_name(event, "away"),
+            indexed_teams,
+            source="understat",
+        )
         home_xg_for, home_xg_against = _rolling_understat_xg(home_team, kickoff)
         away_xg_for, away_xg_against = _rolling_understat_xg(away_team, kickoff)
         if None in (home_xg_for, home_xg_against, away_xg_for, away_xg_against):
@@ -284,6 +445,25 @@ def build_understat_context_by_match(
             "understat_away_xg_for_last_5": away_xg_for,
             "understat_away_xg_against_last_5": away_xg_against,
             "external_signal_source_summary": "understat",
+        }
+    return contexts
+
+
+def build_uefa_profile_context_by_match(
+    events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    contexts: dict[str, dict[str, Any]] = {}
+    for event in events:
+        match_id = str(event.get("id") or "")
+        competition_id = str(event.get("competition", {}).get("id") or "")
+        if not match_id or competition_id not in UEFA_PROFILE_COMPETITION_IDS:
+            continue
+        home_profile = find_uefa_profile_club(_event_team_name(event, "home"))
+        away_profile = find_uefa_profile_club(_event_team_name(event, "away"))
+        if home_profile is None or away_profile is None:
+            continue
+        contexts[match_id] = {
+            "external_signal_source_summary": UEFA_PROFILE_MATCH_SOURCE,
         }
     return contexts
 
@@ -344,4 +524,9 @@ def build_external_signal_context_by_match(
             except (OSError, ValueError, json.JSONDecodeError):
                 league_payloads[key] = {}
     understat_context = build_understat_context_by_match(events, league_payloads)
-    return merge_external_signal_contexts(clubelo_context, understat_context)
+    uefa_profile_context = build_uefa_profile_context_by_match(events)
+    return merge_external_signal_contexts(
+        clubelo_context,
+        understat_context,
+        uefa_profile_context,
+    )
