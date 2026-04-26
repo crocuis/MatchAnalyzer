@@ -68,12 +68,12 @@ def train_baseline_model(features, labels):
     class_counts = Counter(labels)
     if any(count < CALIBRATION_FOLDS for count in class_counts.values()):
         raise ValueError(
-            "train_baseline_model requires at least 3 samples per class for isotonic calibration"
+            "train_baseline_model requires at least 3 samples per class for calibration"
         )
 
     selected_candidate, candidate_scores = select_baseline_candidate(features, labels)
     estimator = build_baseline_candidate_estimators()[selected_candidate]
-    model = CalibratedClassifierCV(estimator, method="isotonic", cv=CALIBRATION_FOLDS)
+    model = CalibratedClassifierCV(estimator, method="sigmoid", cv=CALIBRATION_FOLDS)
     model.fit(features, labels)
     model.selected_candidate_ = selected_candidate
     model.selection_metadata_ = {
