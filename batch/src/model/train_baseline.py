@@ -7,6 +7,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
 
 
 SELECTION_METRIC = "neg_log_loss"
@@ -22,6 +23,11 @@ def build_baseline_candidate_estimators() -> dict[str, object]:
                 max_iter=5000,
                 random_state=7,
             ),
+        ),
+        "decision_tree": DecisionTreeClassifier(
+            max_depth=6,
+            min_samples_leaf=10,
+            random_state=7,
         ),
     }
     if os.environ.get("MATCH_ANALYZER_ENABLE_HGB_BASELINE") in {"1", "true", "TRUE"}:

@@ -95,7 +95,10 @@ def test_train_baseline_model_records_candidate_comparison_metadata():
     assert model.selection_metadata_["selected_candidate"] == model.selected_candidate_
     assert model.selection_metadata_["selection_metric"] == "neg_log_loss"
     assert model.selection_metadata_["selection_ran"] is True
-    assert set(model.selection_metadata_["candidate_scores"]) == {"logistic_regression"}
+    assert set(model.selection_metadata_["candidate_scores"]) == {
+        "decision_tree",
+        "logistic_regression",
+    }
     assert all(
         isinstance(score, float)
         for score in model.selection_metadata_["candidate_scores"].values()
