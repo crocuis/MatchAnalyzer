@@ -5,6 +5,7 @@ from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
     build_betman_team_translation_rows,
     build_market_rows_from_schedule,
+    build_odds_api_io_market_rows,
     build_market_snapshots,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_variant_rows,
@@ -12,6 +13,8 @@ from batch.src.ingest.fetch_markets import (
     fetch_betman_buyable_games,
     fetch_betman_game_detail,
     fetch_daily_schedule,
+    fetch_odds_api_io_events,
+    fetch_odds_api_io_multi_odds,
 )
 from batch.src.jobs.sample_data import SAMPLE_MATCH_ID
 from batch.src.settings import load_settings
@@ -27,10 +30,17 @@ MATCH_SNAPSHOT_PERSISTED_FIELDS = {
     "snapshot_quality",
     "home_elo",
     "away_elo",
+    "external_home_elo",
+    "external_away_elo",
     "home_xg_for_last_5",
     "home_xg_against_last_5",
     "away_xg_for_last_5",
     "away_xg_against_last_5",
+    "understat_home_xg_for_last_5",
+    "understat_home_xg_against_last_5",
+    "understat_away_xg_for_last_5",
+    "understat_away_xg_against_last_5",
+    "external_signal_source_summary",
     "home_matches_last_7d",
     "away_matches_last_7d",
     "home_absence_count",
@@ -342,6 +352,25 @@ def main() -> None:
             )
         schedule = fetch_daily_schedule(use_real_schedule)
         payload = build_market_rows_from_schedule(schedule, snapshot_rows)
+        odds_api_io_events = []
+        odds_api_io_odds = []
+        odds_api_io_market_rows = []
+        odds_api_key = getattr(settings, "odds_api_key", None)
+        if odds_api_key:
+            odds_api_io_events = fetch_odds_api_io_events(odds_api_key)
+            odds_api_io_event_ids = [
+                str(event.get("id") or "")
+                for event in odds_api_io_events
+                if event.get("id")
+            ]
+            odds_api_io_odds = fetch_odds_api_io_multi_odds(
+                odds_api_key,
+                odds_api_io_event_ids,
+            )
+            odds_api_io_market_rows = build_odds_api_io_market_rows(
+                odds_api_io_odds,
+                snapshot_rows,
+            )
         betman_buyable_games = fetch_betman_buyable_games()
         betman_detail_payloads = [
             fetch_betman_game_detail(
@@ -367,6 +396,7 @@ def main() -> None:
             incoming_rows=betman_team_translation_rows,
         )
         payload = overlay_market_rows(payload, betman_market_rows)
+        payload = overlay_market_rows(payload, odds_api_io_market_rows)
         prediction_market_rows, prediction_market_raw = build_prediction_market_rows_for_snapshots(
             snapshot_rows=snapshot_rows,
             match_rows=match_rows,
@@ -390,6 +420,8 @@ def main() -> None:
             "betman_buyable_games": betman_buyable_games,
             "betman_game_details": betman_detail_payloads,
             "betman_team_translations": betman_team_translation_rows,
+            "odds_api_io_events": odds_api_io_events,
+            "odds_api_io_odds": odds_api_io_odds,
             "prediction_market_search_results": prediction_market_raw,
         }
         archive_key = f"markets/{use_real_schedule}.json"

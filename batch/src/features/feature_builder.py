@@ -30,10 +30,17 @@ RAW_SIGNAL_FIELDS: tuple[str, ...] = (
     "away_rest_days",
     "home_elo",
     "away_elo",
+    "external_home_elo",
+    "external_away_elo",
     "home_xg_for_last_5",
     "home_xg_against_last_5",
     "away_xg_for_last_5",
     "away_xg_against_last_5",
+    "understat_home_xg_for_last_5",
+    "understat_home_xg_against_last_5",
+    "understat_away_xg_for_last_5",
+    "understat_away_xg_against_last_5",
+    "external_signal_source_summary",
     "home_matches_last_7d",
     "away_matches_last_7d",
     "home_lineup_score",
@@ -46,6 +53,15 @@ RAW_SIGNAL_FIELDS: tuple[str, ...] = (
 ABSENCE_SIGNAL_FIELDS: tuple[str, ...] = (
     "home_absence_count",
     "away_absence_count",
+)
+OPTIONAL_EXTERNAL_SIGNAL_FIELDS: tuple[str, ...] = (
+    "external_home_elo",
+    "external_away_elo",
+    "understat_home_xg_for_last_5",
+    "understat_home_xg_against_last_5",
+    "understat_away_xg_for_last_5",
+    "understat_away_xg_against_last_5",
+    "external_signal_source_summary",
 )
 
 MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
@@ -65,7 +81,7 @@ MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] 
         "rating_context_missing",
         ("home_elo", "away_elo"),
         "Team rating seed was missing for this snapshot.",
-        "Backfill historical result windows before building snapshots so Elo can be materialized.",
+        "Backfill historical result windows or ClubElo before building snapshots so ratings can be materialized.",
     ),
     (
         "xg_context_missing",
@@ -76,7 +92,7 @@ MISSING_SIGNAL_REASON_GROUPS: tuple[tuple[str, tuple[str, ...], str, str], ...] 
             "away_xg_against_last_5",
         ),
         "Recent xG trend signals were not available in the snapshot.",
-        "Persist rolling goals/xG proxies for both teams during snapshot sync.",
+        "Persist rolling goals/xG proxies or Understat xG for both teams during snapshot sync.",
     ),
     (
         "lineup_context_missing",
@@ -158,26 +174,47 @@ def build_feature_vector(snapshot: dict) -> dict:
     market_entropy = -sum(
         value * math.log(value) for value in market_probs.values() if value > 0.0
     )
-    if snapshot.get("home_elo") is not None and snapshot.get("away_elo") is not None:
-        elo_delta = (float(snapshot["home_elo"]) - float(snapshot["away_elo"])) / 100.0
+    home_elo = (
+        snapshot.get("external_home_elo")
+        if snapshot.get("external_home_elo") is not None
+        else snapshot.get("home_elo")
+    )
+    away_elo = (
+        snapshot.get("external_away_elo")
+        if snapshot.get("external_away_elo") is not None
+        else snapshot.get("away_elo")
+    )
+    if home_elo is not None and away_elo is not None:
+        elo_delta = (float(home_elo) - float(away_elo)) / 100.0
     else:
         elo_delta = (form_delta * 0.06) + (book_attack_edge * 1.0) + (rest_delta * 0.02)
 
-    if all(
-        snapshot.get(key) is not None
-        for key in (
+    xg_fields = (
+        (
+            "understat_home_xg_for_last_5",
+            "understat_home_xg_against_last_5",
+            "understat_away_xg_for_last_5",
+            "understat_away_xg_against_last_5",
+        )
+        if all(
+            snapshot.get(key) is not None
+            for key in (
+                "understat_home_xg_for_last_5",
+                "understat_home_xg_against_last_5",
+                "understat_away_xg_for_last_5",
+                "understat_away_xg_against_last_5",
+            )
+        )
+        else (
             "home_xg_for_last_5",
             "home_xg_against_last_5",
             "away_xg_for_last_5",
             "away_xg_against_last_5",
         )
-    ):
-        home_xg_balance = float(snapshot["home_xg_for_last_5"]) - float(
-            snapshot["home_xg_against_last_5"]
-        )
-        away_xg_balance = float(snapshot["away_xg_for_last_5"]) - float(
-            snapshot["away_xg_against_last_5"]
-        )
+    )
+    if all(snapshot.get(key) is not None for key in xg_fields):
+        home_xg_balance = float(snapshot[xg_fields[0]]) - float(snapshot[xg_fields[1]])
+        away_xg_balance = float(snapshot[xg_fields[2]]) - float(snapshot[xg_fields[3]])
         xg_proxy_delta = home_xg_balance - away_xg_balance
     else:
         xg_proxy_delta = (
@@ -259,7 +296,7 @@ def build_feature_metadata(
     missing_fields = sorted(
         field
         for field in RAW_SIGNAL_FIELDS
-        if snapshot.get(field) is None
+        if snapshot.get(field) is None and field not in OPTIONAL_EXTERNAL_SIGNAL_FIELDS
     )
     populated_feature_fields = sorted(
         field

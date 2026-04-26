@@ -112,6 +112,18 @@ def test_migration_constrains_core_snapshot_and_probability_fields():
     assert "foreign key (prediction_id, match_id) references predictions(id, match_id)" in migration
 
 
+def test_external_signal_migration_adds_clubelo_and_understat_columns():
+    migration = normalize_sql(
+        Path("supabase/migrations/202604260001_external_prediction_signals.sql").read_text()
+    )
+
+    assert "external_home_elo numeric" in migration
+    assert "external_away_elo numeric" in migration
+    assert "understat_home_xg_for_last_5 numeric" in migration
+    assert "understat_away_xg_against_last_5 numeric" in migration
+    assert "external_signal_source_summary text" in migration
+
+
 def test_prediction_feature_snapshot_migration_captures_context_and_metadata():
     migration = normalize_sql(
         Path(
@@ -392,6 +404,37 @@ def test_build_feature_vector_prefers_explicit_strength_and_schedule_fields():
     assert round(features["elo_delta"], 2) == 1.4
     assert round(features["xg_proxy_delta"], 2) == 1.2
     assert features["fixture_congestion_delta"] == 2
+
+
+def test_build_feature_vector_prefers_external_rating_and_understat_xg_when_available():
+    features = build_feature_vector(
+        {
+            "form_delta": 2,
+            "rest_delta": 1,
+            "book_home_prob": 0.52,
+            "book_draw_prob": 0.24,
+            "book_away_prob": 0.24,
+            "market_home_prob": 0.49,
+            "market_draw_prob": 0.25,
+            "market_away_prob": 0.26,
+            "home_elo": 1500,
+            "away_elo": 1500,
+            "external_home_elo": 1810,
+            "external_away_elo": 1760,
+            "home_xg_for_last_5": 1.0,
+            "home_xg_against_last_5": 1.0,
+            "away_xg_for_last_5": 1.0,
+            "away_xg_against_last_5": 1.0,
+            "understat_home_xg_for_last_5": 1.8,
+            "understat_home_xg_against_last_5": 0.9,
+            "understat_away_xg_for_last_5": 1.1,
+            "understat_away_xg_against_last_5": 1.4,
+            "prediction_market_available": True,
+        }
+    )
+
+    assert round(features["elo_delta"], 2) == 0.5
+    assert round(features["xg_proxy_delta"], 2) == 1.2
 
 
 def test_build_feature_vector_prefers_explicit_lineup_strength_delta():

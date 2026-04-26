@@ -9,16 +9,23 @@ import pytest
 
 import batch.src.ingest.fetch_fixtures as fetch_fixtures_module
 import batch.src.ingest.fetch_markets as fetch_markets_module
+from batch.src.ingest.external_signals import build_clubelo_context_by_match
+from batch.src.ingest.external_signals import build_understat_context_by_match
+from batch.src.ingest.external_signals import merge_external_signal_contexts
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_bsd_lineup_contexts_from_payloads
 from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
 from batch.src.ingest.fetch_fixtures import build_match_row_from_event
 from batch.src.ingest.fetch_fixtures import build_lineup_context_by_match
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
+from batch.src.ingest.fetch_fixtures import match_bsd_events_to_schedule_events
+from batch.src.ingest.fetch_fixtures import merge_lineup_contexts
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
     build_betman_team_translation_rows,
+    build_odds_api_io_market_rows,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_rows,
     build_prediction_market_variant_rows,
@@ -35,6 +42,11 @@ from batch.src.jobs.ingest_markets_job import (
     main as run_ingest_markets_job,
     promote_market_snapshots,
     select_real_market_snapshots,
+)
+from batch.src.jobs.backfill_external_prediction_signals_job import (
+    build_external_signal_snapshot_updates,
+    bucket_date,
+    snapshot_as_of_date,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
@@ -1251,10 +1263,17 @@ def test_build_snapshot_rows_from_matches_uses_real_match_ids():
             "snapshot_quality": "partial",
             "home_elo": None,
             "away_elo": None,
+            "external_home_elo": None,
+            "external_away_elo": None,
             "home_xg_for_last_5": None,
             "home_xg_against_last_5": None,
             "away_xg_for_last_5": None,
             "away_xg_against_last_5": None,
+            "understat_home_xg_for_last_5": None,
+            "understat_home_xg_against_last_5": None,
+            "understat_away_xg_for_last_5": None,
+            "understat_away_xg_against_last_5": None,
+            "external_signal_source_summary": None,
             "home_matches_last_7d": None,
             "away_matches_last_7d": None,
             "home_points_last_5": None,
@@ -2393,6 +2412,8 @@ def test_load_settings_reads_required_environment_variables(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_KEY", "service-key")
     monkeypatch.setenv("R2_BUCKET", "raw-payloads")
+    monkeypatch.setenv("ODDS_API_KEY", "odds-key")
+    monkeypatch.setenv("BSD_API_KEY", "bsd-key")
 
     settings = load_settings()
 
@@ -2400,6 +2421,8 @@ def test_load_settings_reads_required_environment_variables(monkeypatch):
     assert settings.supabase_service_key == "service-key"
     assert settings.r2_bucket == "raw-payloads"
     assert settings.rollout_ramp_sequence == (25, 50, 100)
+    assert settings.odds_api_key == "odds-key"
+    assert settings.bsd_api_key == "bsd-key"
 
 
 def test_load_settings_parses_rollout_ramp_sequence(monkeypatch):
@@ -2413,6 +2436,430 @@ def test_load_settings_parses_rollout_ramp_sequence(monkeypatch):
     settings = load_settings()
 
     assert settings.rollout_ramp_sequence == (10, 40, 100)
+
+
+def test_build_odds_api_io_market_rows_averages_bookmaker_moneyline_quotes():
+    rows = build_odds_api_io_market_rows(
+        odds_events=[
+            {
+                "id": "odds-event-1",
+                "home": "Chelsea",
+                "away": "Arsenal",
+                "date": "2026-04-25T11:30:00Z",
+                "bookmakers": {
+                    "Bet365": [
+                        {
+                            "name": "ML",
+                            "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                            "updatedAt": "2026-04-25T09:30:00Z",
+                        }
+                    ],
+                    "Unibet": [
+                        {
+                            "name": "Match Result",
+                            "odds": [{"home": "1.95", "draw": "3.60", "away": "4.10"}],
+                            "updatedAt": "2026-04-25T09:31:00Z",
+                        }
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "snapshot_001_bookmaker"
+    assert rows[0]["source_name"] == "odds_api_io_moneyline_3way"
+    assert rows[0]["home_prob"] == pytest.approx(0.489235, abs=0.00001)
+    assert rows[0]["draw_prob"] == pytest.approx(0.27219, abs=0.00001)
+    assert rows[0]["away_prob"] == pytest.approx(0.238575, abs=0.00001)
+    assert rows[0]["raw_payload"] == {
+        "provider": "odds-api.io",
+        "event_id": "odds-event-1",
+        "bookmakers": ["Bet365", "Unibet"],
+        "quote_count": 2,
+    }
+
+
+def test_build_odds_api_io_market_rows_skips_ambiguous_same_kickoff_matches():
+    rows = build_odds_api_io_market_rows(
+        odds_events=[
+            {
+                "id": "odds-event-1",
+                "home": "Chelsea",
+                "away": "Arsenal",
+                "date": "2026-04-25T11:30:00Z",
+                "bookmakers": {
+                    "Bet365": [
+                        {
+                            "name": "ML",
+                            "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                        }
+                    ]
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            },
+            {
+                "id": "snapshot_002",
+                "match_id": "match_002",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea FC",
+                "away_team_name": "Arsenal FC",
+            },
+        ],
+    )
+
+    assert rows == []
+
+
+def test_bsd_lineup_contexts_convert_projected_lineups_to_snapshot_signals():
+    starter_positions = [
+        "G",
+        "D",
+        "D",
+        "D",
+        "D",
+        "M",
+        "M",
+        "M",
+        "F",
+        "F",
+        "F",
+    ]
+    contexts = build_bsd_lineup_contexts_from_payloads(
+        {
+            "match_001": {
+                "lineups": {
+                    "home": {
+                        "predicted_formation": "4-3-3",
+                        "starters": [
+                            {"name": f"Home {index}", "position": position}
+                            for index, position in enumerate(starter_positions, start=1)
+                        ],
+                        "substitutes": [],
+                        "unavailable_players": [{"name": "Home Injured"}],
+                    },
+                    "away": {
+                        "predicted_formation": "4-4-2",
+                        "starters": [
+                            {"name": f"Away {index}", "position": position}
+                            for index, position in enumerate(starter_positions, start=1)
+                        ],
+                        "substitutes": [],
+                        "unavailable_players": [],
+                    },
+                }
+            }
+        }
+    )
+
+    assert contexts["match_001"] == {
+        "lineup_status": "projected",
+        "home_absence_count": 1,
+        "away_absence_count": 0,
+        "home_lineup_score": 1.1318,
+        "away_lineup_score": 1.1318,
+        "lineup_strength_delta": 0.0,
+        "lineup_source_summary": "bsd_predicted_lineups",
+    }
+
+
+def test_match_bsd_events_to_schedule_events_uses_kickoff_and_team_names():
+    rows = match_bsd_events_to_schedule_events(
+        [
+            {
+                "id": "espn_match_1",
+                "start_time": "2026-04-25T11:30:00Z",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+        [
+            {
+                "id": 997,
+                "event_date": "2026-04-25T11:30:00Z",
+                "home_team": "Chelsea",
+                "away_team": "Arsenal",
+            }
+        ],
+    )
+
+    assert rows == {
+        "espn_match_1": {
+            "id": 997,
+            "event_date": "2026-04-25T11:30:00Z",
+            "home_team": "Chelsea",
+            "away_team": "Arsenal",
+        }
+    }
+
+
+def test_merge_lineup_contexts_keeps_confirmed_lineups_over_bsd_projection():
+    merged = merge_lineup_contexts(
+        {
+            "match_001": {
+                "lineup_status": "confirmed",
+                "home_lineup_score": 1.3,
+                "lineup_source_summary": "espn_lineups",
+            },
+            "match_002": {
+                "lineup_status": "unknown",
+                "lineup_source_summary": "recent_starters",
+            },
+        },
+        {
+            "match_001": {
+                "lineup_status": "projected",
+                "home_lineup_score": 1.1,
+                "lineup_source_summary": "bsd_predicted_lineups",
+            },
+            "match_002": {
+                "lineup_status": "projected",
+                "home_lineup_score": 1.2,
+                "lineup_source_summary": "bsd_predicted_lineups",
+            },
+        },
+    )
+
+    assert merged["match_001"]["home_lineup_score"] == 1.3
+    assert merged["match_002"]["lineup_status"] == "projected"
+    assert (
+        merged["match_002"]["lineup_source_summary"]
+        == "recent_starters+bsd_predicted_lineups"
+    )
+
+
+def test_build_clubelo_context_by_match_matches_aliases_and_persists_ratings():
+    contexts = build_clubelo_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Manchester City"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+        [
+            {"Club": "Man City", "Elo": "1969.01245117"},
+            {"Club": "Arsenal", "Elo": "2044.21435547"},
+        ],
+    )
+
+    assert contexts == {
+        "match_001": {
+            "external_home_elo": 1969.0125,
+            "external_away_elo": 2044.2144,
+            "external_signal_source_summary": "clubelo",
+        }
+    }
+
+
+def test_build_understat_context_by_match_uses_previous_matches_only():
+    contexts = build_understat_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competition": {"id": "premier-league"},
+                "start_time": "2026-04-25T11:30:00Z",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+        {
+            (
+                "EPL",
+                2025,
+            ): {
+                "teams": {
+                    "1": {
+                        "title": "Chelsea",
+                        "history": [
+                            {
+                                "date": "2026-04-20 15:00:00",
+                                "xG": 2.0,
+                                "xGA": 1.0,
+                            },
+                            {
+                                "date": "2026-04-26 15:00:00",
+                                "xG": 5.0,
+                                "xGA": 5.0,
+                            },
+                        ],
+                    },
+                    "2": {
+                        "title": "Arsenal",
+                        "history": [
+                            {
+                                "date": "2026-04-18 15:00:00",
+                                "xG": 1.2,
+                                "xGA": 0.7,
+                            }
+                        ],
+                    },
+                }
+            }
+        },
+    )
+
+    assert contexts == {
+        "match_001": {
+            "understat_home_xg_for_last_5": 2.0,
+            "understat_home_xg_against_last_5": 1.0,
+            "understat_away_xg_for_last_5": 1.2,
+            "understat_away_xg_against_last_5": 0.7,
+            "external_signal_source_summary": "understat",
+        }
+    }
+
+
+def test_merge_external_signal_contexts_combines_sources():
+    merged = merge_external_signal_contexts(
+        {
+            "match_001": {
+                "external_home_elo": 1800,
+                "external_signal_source_summary": "clubelo",
+            }
+        },
+        {
+            "match_001": {
+                "understat_home_xg_for_last_5": 1.8,
+                "external_signal_source_summary": "understat",
+            }
+        },
+    )
+
+    assert merged == {
+        "match_001": {
+            "external_home_elo": 1800,
+            "understat_home_xg_for_last_5": 1.8,
+            "external_signal_source_summary": "clubelo+understat",
+        }
+    }
+
+
+def test_snapshot_as_of_date_rewinds_posthoc_captured_settled_snapshots():
+    assert (
+        snapshot_as_of_date(
+            {
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-30T00:00:00+00:00",
+            },
+            {
+                "kickoff_at": "2026-04-25T18:00:00+00:00",
+                "final_result": "HOME",
+            },
+        )
+        == "2026-04-24"
+    )
+
+
+def test_bucket_date_uses_latest_prior_stride_boundary():
+    assert bucket_date("2026-04-26", stride_days=7) <= "2026-04-26"
+    assert bucket_date("2026-04-26", stride_days=1) == "2026-04-26"
+
+
+def test_build_external_signal_snapshot_updates_merges_clubelo_and_understat(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_external_prediction_signals_job.fetch_clubelo_ratings",
+        lambda as_of_date: [
+            {"Club": "Chelsea", "Elo": "1810"},
+            {"Club": "Arsenal", "Elo": "1760"},
+        ],
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_external_prediction_signals_job.fetch_understat_league_data",
+        lambda league, season_start_year: {
+            "teams": {
+                "1": {
+                    "title": "Chelsea",
+                    "history": [
+                        {
+                            "date": "2026-04-20 15:00:00",
+                            "xG": 2.0,
+                            "xGA": 1.0,
+                        }
+                    ],
+                },
+                "2": {
+                    "title": "Arsenal",
+                    "history": [
+                        {
+                            "date": "2026-04-18 15:00:00",
+                            "xG": 1.2,
+                            "xGA": 0.7,
+                        }
+                    ],
+                },
+            }
+        },
+    )
+
+    updates, metadata = build_external_signal_snapshot_updates(
+        snapshots=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-24T18:00:00+00:00",
+            }
+        ],
+        matches=[
+            {
+                "id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T18:00:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "arsenal",
+            }
+        ],
+        teams=[
+            {"id": "chelsea", "name": "Chelsea"},
+            {"id": "arsenal", "name": "Arsenal"},
+        ],
+    )
+
+    assert metadata["clubelo_context_matches"] == 1
+    assert metadata["understat_context_matches"] == 1
+    assert updates == [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_24H",
+            "captured_at": "2026-04-24T18:00:00+00:00",
+            "lineup_status": None,
+            "snapshot_quality": None,
+            "external_home_elo": 1810.0,
+            "external_away_elo": 1760.0,
+            "understat_home_xg_for_last_5": 2.0,
+            "understat_home_xg_against_last_5": 1.0,
+            "understat_away_xg_for_last_5": 1.2,
+            "understat_away_xg_against_last_5": 0.7,
+            "external_signal_source_summary": "clubelo+understat",
+        }
+    ]
 
 
 def test_r2_client_persists_archived_payload(tmp_path, monkeypatch):
