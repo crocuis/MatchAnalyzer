@@ -121,7 +121,6 @@ def build_recommended_pick_candidates(
         "pick_date": pick_date,
         "match_id": match_id,
         "prediction_id": prediction.get("id"),
-        "league_id": match.get("competition_id"),
         "model_version_id": prediction.get("model_version_id"),
         "status": "recommended",
         "validation_metadata": summary_payload.get("validation_metadata") or {},

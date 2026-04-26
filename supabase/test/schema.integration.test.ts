@@ -120,6 +120,11 @@ describe("supabase schema integration", () => {
        from information_schema.views
        where table_name = 'dashboard_league_summaries'`,
     );
+    const leaguePredictionSummaryViews = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.views
+       where table_name = 'league_prediction_summaries'`,
+    );
     const dashboardMatchCardViews = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.views
@@ -157,6 +162,12 @@ describe("supabase schema integration", () => {
            'explanation_artifact_id'
          )`,
     );
+    const dailyPickLeagueColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'daily_pick_items'
+         and column_name = 'league_id'`,
+    );
     const droppedLegacyPayloadColumns = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.columns
@@ -180,11 +191,13 @@ describe("supabase schema integration", () => {
     expect(comparisonPayloadColumns.rows[0]?.count).toBe(3);
     expect(artifactPointerColumns.rows[0]?.count).toBe(8);
     expect(dashboardLeagueSummaryViews.rows[0]?.count).toBe(1);
+    expect(leaguePredictionSummaryViews.rows[0]?.count).toBe(1);
     expect(dashboardMatchCardViews.rows[0]?.count).toBe(1);
     expect(matchCardViews.rows[0]?.count).toBe(1);
     expect(artifactTables.rows[0]?.count).toBe(1);
     expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
     expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
+    expect(dailyPickLeagueColumns.rows[0]?.count).toBe(0);
   });
 
   it("exposes dashboard league counts through the summary view", async () => {
@@ -247,7 +260,7 @@ describe("supabase schema integration", () => {
       review_count: number;
     }>(
       `select league_id, match_count, review_count
-       from dashboard_league_summaries
+       from league_prediction_summaries
        where league_id = 'epl'`,
     );
 
@@ -347,7 +360,7 @@ describe("supabase schema integration", () => {
       incorrect_count: number;
     }>(
       `select predicted_count, evaluated_count, correct_count, incorrect_count
-       from dashboard_league_summaries
+       from league_prediction_summaries
        where league_id = 'epl'`,
     );
 
@@ -437,7 +450,7 @@ describe("supabase schema integration", () => {
       incorrect_count: number;
     }>(
       `select predicted_count, evaluated_count, correct_count, incorrect_count
-       from dashboard_league_summaries
+       from league_prediction_summaries
        where league_id = 'epl'`,
     );
 

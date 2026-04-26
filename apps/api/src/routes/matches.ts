@@ -494,7 +494,7 @@ async function loadBootstrapLeagueSummaries(
   supabase: ApiSupabaseClient,
 ) {
   const { data, error } = await supabase
-    .from("dashboard_league_summaries")
+    .from("league_prediction_summaries")
     .select(
       "league_id, league_label, league_emblem_url, match_count, review_count, predicted_count, evaluated_count, correct_count, incorrect_count, success_rate",
     )

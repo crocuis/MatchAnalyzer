@@ -2438,6 +2438,8 @@ describe("prediction API", () => {
       cursor: "0",
     });
 
+    expect(from).toHaveBeenCalledWith("league_prediction_summaries");
+    expect(from).toHaveBeenCalledWith("match_cards");
     expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
     expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 1);
     expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
@@ -2451,7 +2453,7 @@ describe("prediction API", () => {
         if (tableName === "predictions") {
           throw new Error("predictions should not be queried for the card page");
         }
-        if (tableName === "dashboard_league_summaries") {
+        if (tableName === "league_prediction_summaries") {
           return {
             select: vi.fn().mockReturnThis(),
             order: vi.fn().mockResolvedValue({

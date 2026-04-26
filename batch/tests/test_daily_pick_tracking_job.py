@@ -67,6 +67,7 @@ def test_sync_daily_picks_stores_ranked_cross_market_recommendations() -> None:
     assert items[0]["selection_label"] == "Over 2.5"
     assert items[0]["line_value"] == 2.5
     assert items[0]["validation_metadata"] == {"sample_count": 90}
+    assert all("league_id" not in row for row in items)
 
 
 def test_sync_daily_picks_holds_unvalidated_predictions_out_of_tracking() -> None:

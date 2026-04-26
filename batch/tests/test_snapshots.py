@@ -325,6 +325,20 @@ def test_match_card_projection_migration_separates_dashboard_alias():
     assert "create or replace view dashboard_league_summaries with (security_invoker = true) as" in migration
 
 
+def test_projection_ssot_boundary_migration_removes_redundant_pick_league():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260426054938_normalize_projection_ssot_boundaries.sql"
+        ).read_text()
+    )
+
+    assert "alter table public.daily_pick_items drop column if exists league_id" in migration
+    assert "create or replace view league_prediction_summaries with (security_invoker = true) as" in migration
+    assert "from match_cards" in migration
+    assert "create or replace view dashboard_league_summaries with (security_invoker = true) as select" in migration
+    assert "from league_prediction_summaries" in migration
+
+
 def test_seed_links_competition_teams_and_match():
     seed = normalize_sql(Path("supabase/seed.sql").read_text())
 
