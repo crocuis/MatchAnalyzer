@@ -67,11 +67,14 @@ def test_sync_daily_picks_stores_ranked_cross_market_recommendations() -> None:
     assert [row["market_family"] for row in items] == ["totals", "moneyline"]
     assert items[0]["selection_label"] == "Over 2.5"
     assert items[0]["line_value"] == 2.5
-    assert items[0]["validation_metadata"] == {"sample_count": 90}
+    assert items[0]["validation_metadata"] == {
+        "sample_count": 90,
+        "high_confidence_eligible": True,
+    }
     assert all("league_id" not in row for row in items)
 
 
-def test_sync_daily_picks_holds_unvalidated_predictions_out_of_tracking() -> None:
+def test_sync_daily_picks_tracks_unvalidated_predictions_as_held() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -95,16 +98,31 @@ def test_sync_daily_picks_holds_unvalidated_predictions_out_of_tracking() -> Non
                 "snapshot_id": "snapshot-1",
                 "recommended_pick": "HOME",
                 "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
                 "main_recommendation_recommended": True,
-                "summary_payload": {"high_confidence_eligible": False},
+                "summary_payload": {
+                    "high_confidence_eligible": False,
+                    "confidence_reliability": "insufficient_sample",
+                },
             }
         ],
     )
 
-    assert items == []
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["validation_metadata"] == {
+        "high_confidence_eligible": False,
+        "confidence_reliability": "insufficient_sample",
+    }
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "insufficient_sample",
+    ]
 
 
-def test_sync_daily_picks_holds_missing_validation_out_of_tracking() -> None:
+def test_sync_daily_picks_tracks_missing_validation_as_held() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -128,13 +146,22 @@ def test_sync_daily_picks_holds_missing_validation_out_of_tracking() -> None:
                 "snapshot_id": "snapshot-1",
                 "recommended_pick": "HOME",
                 "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
                 "main_recommendation_recommended": True,
                 "summary_payload": {},
             }
         ],
     )
 
-    assert items == []
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["validation_metadata"] == {"high_confidence_eligible": False}
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "confidence_reliability_missing",
+    ]
 
 
 def test_settle_daily_picks_and_build_cumulative_summary() -> None:
@@ -209,6 +236,48 @@ def test_settle_daily_picks_and_build_cumulative_summary() -> None:
     assert summaries[0]["hit_count"] == 3
     assert summaries[0]["hit_rate"] == 1.0
     assert summaries[0]["wilson_lower_bound"] == 0.4385
+
+
+def test_settle_daily_picks_ignores_held_candidates() -> None:
+    items = [
+        {
+            "id": "item-recommended",
+            "run_id": "daily_pick_run_2026-04-24",
+            "pick_date": "2026-04-24",
+            "match_id": "match-1",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "market_price": 0.5,
+            "status": "recommended",
+        },
+        {
+            "id": "item-held",
+            "run_id": "daily_pick_run_2026-04-24",
+            "pick_date": "2026-04-24",
+            "match_id": "match-1",
+            "market_family": "moneyline",
+            "selection_label": "AWAY",
+            "market_price": 0.5,
+            "status": "held",
+        },
+    ]
+
+    results, runs = settle_daily_pick_items(
+        settle_date="2026-04-24",
+        items=items,
+        matches=[
+            {
+                "id": "match-1",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            }
+        ],
+        teams=[],
+    )
+
+    assert [row["pick_item_id"] for row in results] == ["item-recommended"]
+    assert runs[0]["metadata"]["settled_item_count"] == 1
 
 
 def test_settle_daily_picks_retries_previous_pending_results() -> None:

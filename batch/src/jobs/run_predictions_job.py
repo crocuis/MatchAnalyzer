@@ -39,6 +39,7 @@ from batch.src.model.fusion import (
     build_main_recommendation,
     fuse_probabilities,
     build_value_recommendation,
+    MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
     VALUE_RECOMMENDATION_EV_THRESHOLD,
     choose_recommended_pick,
     confidence_score,
@@ -1979,6 +1980,9 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
+    current_fused_selector_enabled = not read_env_flag(
+        "MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR",
+    )
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
@@ -2061,8 +2065,32 @@ def main() -> None:
             if feature_context["prediction_market_available"]
             else "without_prediction_market"
         )
+        available_variants = (
+            (
+                ("base_model", "bookmaker", "prediction_market")
+                if bool(feature_context.get("bookmaker_available", 1))
+                else ("base_model", "prediction_market")
+            )
+            if feature_context["prediction_market_available"]
+            else (
+                ("base_model", "bookmaker")
+                if bool(feature_context.get("bookmaker_available", 1))
+                else ("base_model",)
+            )
+        )
+        persisted_policy = choose_fusion_weights(
+            policy_payload=(
+                latest_fusion_policy.get("policy_payload")
+                if latest_fusion_policy
+                else None
+            ),
+            checkpoint=signal_snapshot["checkpoint_type"],
+            market_segment=market_segment,
+            allowed_variants=available_variants,
+            competition_id=str(match.get("competition_id") or ""),
+        )
         historical_performance = {}
-        if use_real_prediction_targets:
+        if use_real_prediction_targets and persisted_policy is None:
             performance_key = (
                 signal_snapshot["checkpoint_type"],
                 snapshot_target_date,
@@ -2107,30 +2135,6 @@ def main() -> None:
                         )
                     )
                 historical_performance = historical_performance_cache[fallback_key]
-        available_variants = (
-            (
-                ("base_model", "bookmaker", "prediction_market")
-                if bool(feature_context.get("bookmaker_available", 1))
-                else ("base_model", "prediction_market")
-            )
-            if feature_context["prediction_market_available"]
-            else (
-                ("base_model", "bookmaker")
-                if bool(feature_context.get("bookmaker_available", 1))
-                else ("base_model",)
-            )
-        )
-        persisted_policy = choose_fusion_weights(
-            policy_payload=(
-                latest_fusion_policy.get("policy_payload")
-                if latest_fusion_policy
-                else None
-            ),
-            checkpoint=signal_snapshot["checkpoint_type"],
-            market_segment=market_segment,
-            allowed_variants=available_variants,
-            competition_id=str(match.get("competition_id") or ""),
-        )
         source_weights = (
             persisted_policy["weights"]
             if persisted_policy
@@ -2170,7 +2174,7 @@ def main() -> None:
             "selected_source": "raw_fused",
             "historical_candidate_count": 0,
         }
-        if use_real_prediction_targets:
+        if use_real_prediction_targets and current_fused_selector_enabled:
             current_fused_key = (
                 signal_snapshot["checkpoint_type"],
                 snapshot_target_date,
@@ -2254,11 +2258,15 @@ def main() -> None:
         row["confidence_score"] = calibrate_confidence_from_buckets(
             raw_confidence_score,
             confidence_bucket_summary,
+            maximum_calibration_gap=MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
         )
         main_recommendation = build_main_recommendation(
             pick=row["recommended_pick"],
             confidence=row["confidence_score"],
-            context=scoring_context,
+            context={
+                **scoring_context,
+                "calibration_bucket_confidence": raw_confidence_score,
+            },
             bucket_summary=confidence_bucket_summary,
         )
         value_recommendation = build_value_recommendation(
@@ -2391,6 +2399,7 @@ def main() -> None:
                 validation_segment_cache[snapshot_target_date] = summarize_validation_segments(
                     validation_records,
                     validated_as_of=snapshot_target_date,
+                    include_fallback_segments=True,
                 )
             eligibility = evaluate_high_confidence_eligibility(
                 build_current_validation_candidate(

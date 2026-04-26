@@ -46,6 +46,43 @@ class ValidationSegmentKey:
         }
 
 
+def validation_segment_fallback_keys(record: dict) -> list[tuple[str, ValidationSegmentKey]]:
+    exact = build_validation_segment_key(record)
+    return [
+        ("exact", exact),
+        (
+            "league_confidence",
+            ValidationSegmentKey(
+                model_version=exact.model_version,
+                league_or_sport=exact.league_or_sport,
+                market_type=exact.market_type,
+                confidence_bucket=exact.confidence_bucket,
+                implied_probability_bucket="all",
+            ),
+        ),
+        (
+            "global_confidence_implied",
+            ValidationSegmentKey(
+                model_version=exact.model_version,
+                league_or_sport="all",
+                market_type=exact.market_type,
+                confidence_bucket=exact.confidence_bucket,
+                implied_probability_bucket=exact.implied_probability_bucket,
+            ),
+        ),
+        (
+            "global_confidence",
+            ValidationSegmentKey(
+                model_version=exact.model_version,
+                league_or_sport="all",
+                market_type=exact.market_type,
+                confidence_bucket=exact.confidence_bucket,
+                implied_probability_bucket="all",
+            ),
+        ),
+    ]
+
+
 def wilson_lower_bound(successes: int, total: int, z_score: float = 1.96) -> float:
     if total <= 0:
         return 0.0
@@ -134,6 +171,7 @@ def summarize_validation_segments(
     minimum_sample_count: int = DEFAULT_MIN_SAMPLE_COUNT,
     target_hit_rate: float = DEFAULT_TARGET_HIT_RATE,
     minimum_wilson_lower_bound: float = DEFAULT_MIN_WILSON_LOWER_BOUND,
+    include_fallback_segments: bool = False,
 ) -> dict[str, dict]:
     materialized = list(records)
     as_of = _resolve_validated_as_of(materialized, validated_as_of)
@@ -144,9 +182,18 @@ def summarize_validation_segments(
         if _record_in_window(record, cutoff=cutoff, as_of=as_of)
     ]
     grouped: dict[str, list[dict]] = {}
+    scopes_by_segment: dict[str, str] = {}
+    keys_by_segment: dict[str, ValidationSegmentKey] = {}
     for record in eligible_records:
-        key = build_validation_segment_key(record)
-        grouped.setdefault(key.id, []).append(record)
+        keys = (
+            validation_segment_fallback_keys(record)
+            if include_fallback_segments
+            else [("exact", build_validation_segment_key(record))]
+        )
+        for scope, key in keys:
+            grouped.setdefault(key.id, []).append(record)
+            scopes_by_segment.setdefault(key.id, scope)
+            keys_by_segment.setdefault(key.id, key)
 
     total_records = len(eligible_records)
     summaries: dict[str, dict] = {}
@@ -155,7 +202,7 @@ def summarize_validation_segments(
         successes = sum(1 for row in rows if bool(row.get("is_correct") or row.get("hit")))
         hit_rate = round(successes / sample_count, 4) if sample_count else 0.0
         lower_bound = wilson_lower_bound(successes, sample_count)
-        key = build_validation_segment_key(rows[0])
+        key = keys_by_segment[segment_id]
         summaries[segment_id] = {
             **key.as_dict(),
             "segment_id": segment_id,
@@ -169,6 +216,7 @@ def summarize_validation_segments(
             "minimum_sample_count": minimum_sample_count,
             "target_hit_rate": target_hit_rate,
             "minimum_wilson_lower_bound": minimum_wilson_lower_bound,
+            "validation_scope": scopes_by_segment.get(segment_id, "exact"),
             "meets_validation": (
                 sample_count >= minimum_sample_count
                 and hit_rate >= target_hit_rate
@@ -190,7 +238,13 @@ def evaluate_high_confidence_eligibility(
     minimum_wilson_lower_bound: float = DEFAULT_MIN_WILSON_LOWER_BOUND,
 ) -> dict:
     key = build_validation_segment_key(prediction)
-    summary = segment_summaries.get(key.id, {})
+    summary = _select_validation_summary(
+        prediction,
+        segment_summaries,
+        minimum_sample_count=minimum_sample_count,
+        target_hit_rate=target_hit_rate,
+        minimum_wilson_lower_bound=minimum_wilson_lower_bound,
+    )
     confidence = _read_numeric(
         prediction.get("calibrated_confidence")
         or prediction.get("calibrated_confidence_score")
@@ -218,8 +272,8 @@ def evaluate_high_confidence_eligibility(
         "decision": "eligible" if eligible else "held",
         "confidence_reliability": reliability,
         "validation_metadata": {
-            **key.as_dict(),
-            "segment_id": key.id,
+            **_summary_segment_metadata(summary, key),
+            "segment_id": str(summary.get("segment_id") or key.id),
             "rolling_window_days": rolling_window_days,
             "sample_count": sample_count,
             "hit_rate": hit_rate,
@@ -230,8 +284,9 @@ def evaluate_high_confidence_eligibility(
             "minimum_sample_count": minimum_sample_count,
             "target_hit_rate": target_hit_rate,
             "minimum_wilson_lower_bound": minimum_wilson_lower_bound,
+            "validation_scope": str(summary.get("validation_scope") or "exact"),
         },
-    }
+}
 
 
 def attach_validation_metadata(prediction_payload: dict, eligibility: dict) -> dict:
@@ -242,6 +297,53 @@ def attach_validation_metadata(prediction_payload: dict, eligibility: dict) -> d
         "high_confidence_eligible": eligibility["high_confidence_eligible"],
         "decision": eligibility["decision"],
         "validation_metadata": eligibility["validation_metadata"],
+    }
+
+
+def _select_validation_summary(
+    prediction: dict,
+    segment_summaries: dict[str, dict],
+    *,
+    minimum_sample_count: int,
+    target_hit_rate: float,
+    minimum_wilson_lower_bound: float,
+) -> dict:
+    candidates = [
+        (scope, segment_summaries.get(key.id, {}))
+        for scope, key in validation_segment_fallback_keys(prediction)
+    ]
+    exact_summary = candidates[0][1]
+    exact_sample_count = int(exact_summary.get("sample_count") or 0)
+    if exact_sample_count >= minimum_sample_count:
+        return {**exact_summary, "validation_scope": exact_summary.get("validation_scope") or "exact"}
+
+    for scope, summary in candidates[1:]:
+        sample_count = int(summary.get("sample_count") or 0)
+        hit_rate = _read_numeric(summary.get("hit_rate")) or 0.0
+        lower_bound = _read_numeric(summary.get("wilson_lower_bound")) or 0.0
+        if (
+            sample_count >= minimum_sample_count
+            and hit_rate >= target_hit_rate
+            and lower_bound >= minimum_wilson_lower_bound
+        ):
+            return {**summary, "validation_scope": summary.get("validation_scope") or scope}
+    return {**exact_summary, "validation_scope": exact_summary.get("validation_scope") or "exact"}
+
+
+def _summary_segment_metadata(summary: dict, fallback_key: ValidationSegmentKey) -> dict[str, str]:
+    return {
+        "model_version": str(summary.get("model_version") or fallback_key.model_version),
+        "league_or_sport": str(
+            summary.get("league_or_sport") or fallback_key.league_or_sport
+        ),
+        "market_type": str(summary.get("market_type") or fallback_key.market_type),
+        "confidence_bucket": str(
+            summary.get("confidence_bucket") or fallback_key.confidence_bucket
+        ),
+        "implied_probability_bucket": str(
+            summary.get("implied_probability_bucket")
+            or fallback_key.implied_probability_bucket
+        ),
     }
 
 

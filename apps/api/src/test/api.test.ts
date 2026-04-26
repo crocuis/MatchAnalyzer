@@ -2164,9 +2164,31 @@ describe("prediction API", () => {
           status: "recommended",
           validation_metadata: {
             confidence_reliability: "validated",
+            high_confidence_eligible: true,
             sample_count: 80,
           },
           reason_labels: ["mainRecommendation"],
+        },
+        {
+          id: "daily_pick_item_held",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "moneyline",
+          selection_label: "AWAY",
+          confidence: 0.88,
+          score: 0.88,
+          status: "held",
+          validation_metadata: {
+            confidence_reliability: "insufficient_sample",
+            high_confidence_eligible: false,
+            sample_count: 0,
+          },
+          reason_labels: [
+            "mainRecommendation",
+            "heldByRecommendationGate",
+            "insufficient_sample",
+          ],
         },
       ],
       daily_pick_runs: [
@@ -2205,6 +2227,9 @@ describe("prediction API", () => {
     vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
 
     const response = await app.request("/daily-picks?date=2026-04-24");
+    const heldResponse = await app.request(
+      "/daily-picks?date=2026-04-24&includeHeld=true",
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-match-analyzer-artifact")).toBe("tracked-fallback");
@@ -2217,20 +2242,39 @@ describe("prediction API", () => {
         status: string;
         confidenceReliability: string | null;
       }>;
+      heldItems: Array<{
+        matchId: string;
+        status: string;
+        confidenceReliability: string | null;
+        highConfidenceEligible: boolean | null;
+        noBetReason: string | null;
+      }>;
     };
     expect(body.generatedAt).toBe("2026-04-24T03:00:00Z");
     expect(body.validation.sampleCount).toBe(80);
     expect(body.coverage).toEqual({
-      moneyline: 1,
+      moneyline: 2,
       spreads: 0,
       totals: 0,
-      held: 0,
+      held: 1,
     });
+    expect(body.heldItems).toEqual([]);
     expect(body.items).toEqual([
       expect.objectContaining({
         matchId: "match-1",
         status: "recommended",
         confidenceReliability: "validated",
+      }),
+    ]);
+
+    const heldBody = await heldResponse.json() as typeof body;
+    expect(heldBody.heldItems).toEqual([
+      expect.objectContaining({
+        matchId: "match-1",
+        status: "held",
+        confidenceReliability: "insufficient_sample",
+        highConfidenceEligible: false,
+        noBetReason: "insufficient_sample",
       }),
     ]);
   });

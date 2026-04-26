@@ -95,6 +95,12 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
             state[table_name] = [*state[table_name], *rows]
             return len(rows)
 
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {},
+    )
+
     result = sync_job.sync_prediction_checkpoints(
         FakeClient(),
         now=now,
@@ -184,6 +190,11 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
         }
 
     monkeypatch.setattr(sync_job, "build_bsd_lineup_context_by_match", fake_bsd_lineups)
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {},
+    )
 
     result = sync_job.sync_prediction_checkpoints(
         FakeClient(),
@@ -221,6 +232,57 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
     assert row["lineup_strength_delta"] == 0.2
     assert row["lineup_source_summary"] == "bsd_predicted_lineups"
     assert rows_by_id["warmup_t_minus_24h"]["lineup_status"] == "unknown"
+
+
+def test_sync_prediction_checkpoints_uses_rotowire_when_bsd_is_missing(monkeypatch):
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+    state = {
+        "matches": [_match("day_before", "2026-04-27T11:45:00+00:00")],
+        "match_snapshots": [],
+        "teams": [
+            {"id": "arsenal", "name": "Arsenal"},
+            {"id": "chelsea", "name": "Chelsea"},
+        ],
+    }
+    upserts = []
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            assert table_name == "match_snapshots"
+            upserts.append(rows)
+            return len(rows)
+
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {
+            "day_before": {
+                "lineup_status": "projected",
+                "home_absence_count": 2,
+                "away_absence_count": 1,
+                "home_lineup_score": 1.0,
+                "away_lineup_score": 0.8,
+                "lineup_strength_delta": 0.2,
+                "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+            }
+        },
+    )
+
+    result = sync_job.sync_prediction_checkpoints(
+        FakeClient(),
+        now=now,
+        lookback_minutes=90,
+    )
+
+    assert result["rotowire_lineup_contexts"] == 1
+    assert result["bsd_lineup_contexts"] == 0
+    [row] = upserts[0]
+    assert row["lineup_status"] == "projected"
+    assert row["home_absence_count"] == 2
+    assert row["lineup_source_summary"] == "rotowire_lineups+rotowire_injuries"
 
 
 def test_sync_prediction_checkpoints_preserves_confirmed_lineup(monkeypatch):
@@ -270,6 +332,21 @@ def test_sync_prediction_checkpoints_preserves_confirmed_lineup(monkeypatch):
                 "away_lineup_score": 0.5,
                 "lineup_strength_delta": 0.0,
                 "lineup_source_summary": "bsd_predicted_lineups",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {
+            "day_before": {
+                "lineup_status": "projected",
+                "home_absence_count": 3,
+                "away_absence_count": 3,
+                "home_lineup_score": 0.4,
+                "away_lineup_score": 0.4,
+                "lineup_strength_delta": 0.0,
+                "lineup_source_summary": "rotowire_lineups",
             }
         },
     )
