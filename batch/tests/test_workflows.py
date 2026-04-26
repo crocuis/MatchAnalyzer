@@ -13,6 +13,7 @@ def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
+    assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
     assert "REAL_FIXTURE_DATE=" in workflow
 
 
@@ -39,6 +40,7 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
+    assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
     assert "REAL_MARKET_DATE=" in workflow
     assert "REAL_PREDICTION_MATCH_IDS" in workflow
     assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow

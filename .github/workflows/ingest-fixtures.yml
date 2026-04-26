@@ -21,6 +21,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
       R2_BUCKET: workflow-artifacts
       FIXTURE_FUTURE_START_DAYS: 7
       FIXTURE_FUTURE_END_DAYS: 14
