@@ -166,19 +166,13 @@ def select_real_prediction_inputs(
     target_match_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     explicit_match_ids = target_match_ids or set()
-    bulk_real_backfill = len(match_rows) > BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
     eligible_match_ids = (
         explicit_match_ids
         if explicit_match_ids
         else {
             row["id"]
             for row in match_rows
-            if target_date
-            and (
-                str(row.get("kickoff_at") or "")[:10] <= target_date
-                if bulk_real_backfill
-                else str(row.get("kickoff_at") or "").startswith(target_date)
-            )
+            if target_date and str(row.get("kickoff_at") or "")[:10] <= target_date
         }
     )
     selected_snapshots = [
@@ -204,20 +198,6 @@ def should_archive_prediction_artifacts(
     return (
         not use_real_prediction_targets
         or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
-    )
-
-
-def should_enable_current_fused_selector(
-    *,
-    target_snapshot_count: int,
-    use_real_prediction_targets: bool,
-) -> bool:
-    return (
-        not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
-        or (
-            use_real_prediction_targets
-            and target_snapshot_count > BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
-        )
     )
 
 
@@ -2012,9 +1992,8 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
-    current_fused_selector_enabled = should_enable_current_fused_selector(
-        target_snapshot_count=len(target_snapshots),
-        use_real_prediction_targets=use_real_prediction_targets,
+    current_fused_selector_enabled = not read_env_flag(
+        "MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR",
     )
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
