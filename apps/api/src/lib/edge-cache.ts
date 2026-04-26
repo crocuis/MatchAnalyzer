@@ -4,6 +4,11 @@ import type { AppBindings } from "../env";
 
 export const API_EGRESS_CACHE_CONTROL =
   "public, max-age=30, s-maxage=30, stale-while-revalidate=120";
+export const API_SHORT_CACHE_CONTROL = API_EGRESS_CACHE_CONTROL;
+export const API_ARTIFACT_CACHE_CONTROL =
+  "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400";
+export const API_IMMUTABLE_ARTIFACT_CACHE_CONTROL =
+  "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
 
 type CacheableLoader = () => Promise<unknown>;
 type CacheableResponseLoader = () => Promise<Response>;
@@ -22,10 +27,11 @@ function getDefaultCache() {
 export async function cachedJson(
   c: Context<AppBindings>,
   loader: CacheableLoader,
+  cacheControl = API_SHORT_CACHE_CONTROL,
 ): Promise<Response> {
   return cachedResponse(c, async () =>
     c.json(await loader(), 200, {
-      "cache-control": API_EGRESS_CACHE_CONTROL,
+      "cache-control": cacheControl,
     }),
   );
 }

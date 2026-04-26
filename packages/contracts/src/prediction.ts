@@ -17,13 +17,25 @@ export type MatchStatus =
 
 export interface ArtifactPointer {
   id: string;
-  storageBackend: "r2";
+  storageBackend: "r2" | "supabase_storage";
   bucketName: string;
   objectKey: string;
   storageUri: string;
   contentType: string;
   sizeBytes?: number | null;
   checksumSha256?: string | null;
+}
+
+export interface MatchArtifactManifest {
+  matchId: string;
+  version: number;
+  generatedAt: string;
+  files: {
+    prediction?: string;
+    review?: string;
+    report?: string;
+    checkpoints?: string;
+  };
 }
 
 export type MatchSnapshotRecord = {

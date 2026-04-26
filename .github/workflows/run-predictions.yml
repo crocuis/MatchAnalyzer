@@ -44,6 +44,9 @@ jobs:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       R2_BUCKET: workflow-artifacts
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_APP_URL: ${{ vars.OPENROUTER_APP_URL }}
@@ -67,6 +70,7 @@ jobs:
           TARGET_MATCH_IDS="${{ github.event.inputs.target_match_ids }}"
           if [ -n "$TARGET_MATCH_IDS" ]; then
             echo "REAL_PREDICTION_MATCH_IDS=$TARGET_MATCH_IDS" >> "$GITHUB_ENV"
+            echo "DAILY_PICK_SYNC_ENABLED=0" >> "$GITHUB_ENV"
             exit 0
           fi
           TARGET_DATE="${{ github.event.inputs.target_date }}"
@@ -74,6 +78,7 @@ jobs:
             TARGET_DATE="$(date -u +%F)"
           fi
           echo "REAL_PREDICTION_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
+          echo "DAILY_PICK_SYNC_ENABLED=1" >> "$GITHUB_ENV"
       - name: Resolve LLM advisory settings
         shell: bash
         run: |
@@ -92,4 +97,24 @@ jobs:
             echo "LLM_PREDICTION_MODEL=$LLM_MODEL_INPUT" >> "$GITHUB_ENV"
           fi
       - run: python3 -m pip install -r batch/requirements.txt
+      - name: Backfill external prediction signals
+        shell: bash
+        run: |
+          BACKFILL_ARGS=(--apply --clubelo-date-stride-days 1)
+          if [ -n "${REAL_PREDICTION_MATCH_IDS:-}" ]; then
+            BACKFILL_ARGS+=(--match-ids "$REAL_PREDICTION_MATCH_IDS")
+          else
+            BACKFILL_ARGS+=(--kickoff-date "$REAL_PREDICTION_DATE")
+          fi
+          python3 -m batch.src.jobs.backfill_external_prediction_signals_job "${BACKFILL_ARGS[@]}"
       - run: python3 -m batch.src.jobs.run_predictions_job
+      - name: Sync daily pick snapshot
+        if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}
+        run: |
+          DAILY_PICK_SYNC_DATE="${REAL_PREDICTION_DATE:-$(date -u +%F)}" \
+            python3 -m batch.src.jobs.run_daily_pick_tracking_job
+      - name: Export daily pick API artifact
+        if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}
+        run: |
+          DAILY_PICK_ARTIFACT_DATE="${REAL_PREDICTION_DATE:-$(date -u +%F)}" \
+            python3 -m batch.src.jobs.export_daily_pick_artifacts_job

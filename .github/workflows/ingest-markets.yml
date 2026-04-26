@@ -21,6 +21,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -56,5 +57,9 @@ jobs:
             echo "No changed market matches detected; skipping prediction refresh."
             exit 0
           fi
+          python3 -m batch.src.jobs.backfill_external_prediction_signals_job \
+            --apply \
+            --match-ids "$CHANGED_MATCH_IDS" \
+            --clubelo-date-stride-days 1
           REAL_PREDICTION_MATCH_IDS="$CHANGED_MATCH_IDS" \
             python3 -m batch.src.jobs.run_predictions_job

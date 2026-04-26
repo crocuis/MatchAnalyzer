@@ -6,6 +6,12 @@ import {
   type RolloutLaneSummary as HistoryLaneSummary,
 } from "../lib/rollout-lane-states";
 import { ensureOperationalReportsAccess } from "../lib/operational-auth";
+import { loadMatchArtifactJson } from "../lib/artifact-cache";
+import {
+  API_ARTIFACT_CACHE_CONTROL,
+  API_SHORT_CACHE_CONTROL,
+  cachedResponse,
+} from "../lib/edge-cache";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const reviews = new Hono<AppBindings>();
@@ -379,7 +385,23 @@ reviews.get("/:matchId", async (c) => {
     });
   }
   try {
-    return c.json(await loadReviewView(supabase, matchId));
+    return cachedResponse(c, async () => {
+      const artifactPayload = await loadMatchArtifactJson(supabase, c.env, {
+        matchId,
+        artifactKind: "review_view",
+      });
+      if (artifactPayload) {
+        return c.json(artifactPayload, 200, {
+          "cache-control": API_ARTIFACT_CACHE_CONTROL,
+          "x-match-analyzer-artifact": "hit",
+        });
+      }
+
+      return c.json(await loadReviewView(supabase, matchId), 200, {
+        "cache-control": API_SHORT_CACHE_CONTROL,
+        "x-match-analyzer-artifact": "fallback",
+      });
+    });
   } catch {
     return c.json({ matchId, review: null }, 500);
   }

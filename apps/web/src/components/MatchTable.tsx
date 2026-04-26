@@ -1,9 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  fetchDailyPicks,
-  resolveDailyPicksDate,
-  type DailyPicksResponse,
   type LeaguePredictionSummary,
   type MatchCardRow,
 } from "../lib/api";
@@ -20,11 +17,14 @@ interface MatchTableProps {
   panelId: string;
   selectedMatchId: string | null;
   onOpen: (matchId: string) => void;
-  onOpenDailyPicks?: (leagueId: string | null) => void;
   onLoadMore: () => void;
   activeView?: MatchListViewKind;
   onSelectView?: (view: MatchListViewKind) => void;
   isLoadingMore?: boolean;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${(value * 100).toFixed(1)}%`;
 }
 
 export default function MatchTable({
@@ -36,15 +36,12 @@ export default function MatchTable({
   panelId,
   selectedMatchId,
   onOpen,
-  onOpenDailyPicks,
   onLoadMore,
   activeView = "upcoming",
   onSelectView,
   isLoadingMore = false,
 }: MatchTableProps) {
-  const { t, i18n } = useTranslation();
-  const [dailyPicksSummary, setDailyPicksSummary] = useState<DailyPicksResponse | null>(null);
-  const dailyPicksDate = useMemo(() => resolveDailyPicksDate(), []);
+  const { t } = useTranslation();
   const isAllLoaded = matches.length >= totalMatches;
   const progressPercent = totalMatches > 0
     ? Math.min((matches.length / totalMatches) * 100, 100)
@@ -70,43 +67,6 @@ export default function MatchTable({
   const hitRecordLabel = evaluatedCount > 0
     ? t("matchTable.summary.hitRecord", { correct: correctCount, evaluated: evaluatedCount })
     : t("matchTable.summary.noEvaluatedMatches");
-  const dailyPicksCount = dailyPicksSummary?.items.length ?? 0;
-  const dailyPicksGeneratedAt = dailyPicksSummary?.generatedAt
-    ? new Date(dailyPicksSummary.generatedAt).toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : null;
-  const dailyPicksMarkets = dailyPicksSummary
-    ? [
-        t("dailyPicks.marketFamilies.moneyline"),
-        t("dailyPicks.marketFamilies.spreads"),
-        t("dailyPicks.marketFamilies.totals"),
-      ].join(" / ")
-    : null;
-
-  useEffect(() => {
-    let isMounted = true;
-
-    // Fetch daily picks for ALL leagues to show total count in teaser
-    void fetchDailyPicks({ date: dailyPicksDate, locale: i18n.language })
-      .then((response) => {
-        if (isMounted) {
-          setDailyPicksSummary(response);
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          setDailyPicksSummary(null);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [dailyPicksDate, i18n.language]);
 
   useEffect(() => {
     if (
@@ -248,29 +208,6 @@ export default function MatchTable({
             </div>
           </div>
         </div>
-      </section>
-
-      <section className="dailyPicksTeaser" aria-label={t("dailyPicks.entry.header")}>
-        <div className="dailyPicksTeaserMain">
-          <h2>{t("dailyPicks.entry.header")}</h2>
-          <div className="dailyPicksTeaserMetrics">
-            <div className="dailyPicksTeaserStat">
-              <span className="metricLabel">{t("dailyPicks.summary.recommendations")}</span>
-              {dailyPicksSummary ? (
-                <strong>{t("dailyPicks.summary.count", { count: dailyPicksCount })}</strong>
-              ) : (
-                <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
-              )}
-            </div>
-          </div>
-        </div>
-        <button
-          className="dailyPicksPrimaryButton"
-          type="button"
-          onClick={() => onOpenDailyPicks?.(currentLeagueId)}
-        >
-          {t("dailyPicks.entry.openShort")}
-        </button>
       </section>
 
       <div className="matchViewTabs" role="tablist" aria-label={t("matchTable.viewTabsLabel")}>

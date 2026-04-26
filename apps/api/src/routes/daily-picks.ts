@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import type { AppBindings } from "../env";
 import {
-  API_EGRESS_CACHE_CONTROL,
+  loadLatestStoredArtifact,
+  loadStoredArtifactJson,
+} from "../lib/artifact-cache";
+import {
+  API_ARTIFACT_CACHE_CONTROL,
+  API_SHORT_CACHE_CONTROL,
   cachedResponse,
 } from "../lib/edge-cache";
 import {
@@ -17,6 +22,7 @@ import {
 } from "../lib/team-translations";
 
 const dailyPicks = new Hono<AppBindings>();
+const DAILY_PICKS_ARTIFACT_KIND = "daily_picks_view";
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
@@ -26,8 +32,10 @@ export type DailyPickItem = {
   predictionId: string | null;
   leagueId: string;
   leagueLabel: string;
+  homeTeamId?: string | null;
   homeTeam: string;
   homeTeamLogoUrl: string | null;
+  awayTeamId?: string | null;
   awayTeam: string;
   awayTeamLogoUrl: string | null;
   kickoffAt: string;
@@ -40,9 +48,20 @@ export type DailyPickItem = {
   modelProbability: number | null;
   marketProbability: number | null;
   sourceAgreementRatio: number | null;
-  status: "recommended" | "held" | "pending" | "hit" | "miss";
+  confidenceReliability: string | null;
+  highConfidenceEligible: boolean | null;
+  validationMetadata: Record<string, unknown> | null;
+  status: "recommended" | "held" | "pending" | "hit" | "miss" | "void";
   noBetReason: string | null;
   reasonLabels: string[];
+};
+
+export type DailyPicksValidationSummary = {
+  hitRate: number | null;
+  sampleCount: number;
+  wilsonLowerBound: number | null;
+  confidenceReliability: string | null;
+  modelScope: string | null;
 };
 
 export type DailyPicksView = {
@@ -54,6 +73,7 @@ export type DailyPicksView = {
     hitRate: number;
     roi: number;
   };
+  validation: DailyPicksValidationSummary;
   coverage: Record<DailyPickMarketFamily | "held", number>;
   items: DailyPickItem[];
   heldItems: DailyPickItem[];
@@ -67,6 +87,13 @@ export const EMPTY_VIEW: DailyPicksView = {
     maxDailyRecommendations: 10,
     hitRate: 0.7,
     roi: 0.2,
+  },
+  validation: {
+    hitRate: null,
+    sampleCount: 0,
+    wilsonLowerBound: null,
+    confidenceReliability: null,
+    modelScope: null,
   },
   coverage: {
     moneyline: 0,
@@ -95,6 +122,7 @@ type BuildDailyPicksArgs = {
   competitions: DailyPickRow[];
   snapshots: DailyPickRow[];
   predictions: DailyPickRow[];
+  performanceSummary: DailyPicksValidationSummary | null;
   options: LoadDailyPicksOptions;
 };
 
@@ -104,6 +132,8 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
   match_snapshots: "id, match_id, checkpoint_type",
   predictions:
     "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
+  daily_pick_performance_summary:
+    "id, sample_count, hit_rate, wilson_lower_bound",
 };
 const DAILY_PICK_MATCH_SELECT =
   "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result";
@@ -179,6 +209,12 @@ function readBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 async function readRowsByIds(
   supabase: ApiSupabaseClient,
   tableName: string,
@@ -196,6 +232,28 @@ async function readRowsByIds(
     throw new Error(result.error.message);
   }
   return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
+}
+
+async function readDailyPickPerformanceSummary(
+  supabase: ApiSupabaseClient,
+): Promise<DailyPicksValidationSummary | null> {
+  const rows = await readRows(supabase, "daily_pick_performance_summary");
+  const row = rows.find((candidate) => readString(candidate.id) === "all");
+  if (!row) {
+    return null;
+  }
+  const sampleCount = readNumber(row.sample_count) ?? 0;
+  const hitRate = readNumber(row.hit_rate);
+  return {
+    hitRate,
+    sampleCount,
+    wilsonLowerBound: readNumber(row.wilson_lower_bound),
+    confidenceReliability:
+      sampleCount > 0 && hitRate !== null
+        ? "settled_daily_picks"
+        : null,
+    modelScope: "daily_pick_settled",
+  };
 }
 
 async function readMatches(
@@ -292,10 +350,11 @@ export async function loadDailyPicksView(
     return id ? [id] : [];
   }))];
 
-  const [teams, competitions, predictions] = await Promise.all([
+  const [teams, competitions, predictions, performanceSummary] = await Promise.all([
     readRowsByIds(supabase, "teams", teamIds),
     readRowsByIds(supabase, "competitions", competitionIds),
     readRowsByIds(supabase, "predictions", matchIds, "match_id"),
+    readDailyPickPerformanceSummary(supabase),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
     supabase,
@@ -315,6 +374,7 @@ export async function loadDailyPicksView(
     competitions,
     snapshots,
     predictions,
+    performanceSummary,
     options: normalizedOptions,
   });
 }
@@ -448,6 +508,7 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     generatedAt: new Date().toISOString(),
     date: args.options.date ?? null,
     target: EMPTY_VIEW.target,
+    validation: args.performanceSummary ?? summarizeDailyPickValidation(allCandidates),
     coverage: {
       moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
       spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
@@ -457,6 +518,44 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     items: visibleItems,
     heldItems: visibleHeldItems,
   };
+}
+
+function summarizeDailyPickValidation(
+  candidates: DailyPickItem[],
+): DailyPicksValidationSummary {
+  const summaries = candidates
+    .map((item) => {
+      const metadata = item.validationMetadata;
+      if (!metadata) {
+        return null;
+      }
+      const sampleCount = readNumber(metadata.sample_count)
+        ?? readNumber(metadata.sampleCount)
+        ?? 0;
+      const hitRate = readNumber(metadata.hit_rate)
+        ?? readNumber(metadata.hitRate);
+      return {
+        hitRate,
+        sampleCount,
+        wilsonLowerBound:
+          readNumber(metadata.wilson_lower_bound)
+          ?? readNumber(metadata.wilsonLowerBound),
+        confidenceReliability: item.confidenceReliability,
+        modelScope:
+          readString(metadata.model_scope)
+          ?? readString(metadata.modelScope),
+      };
+    })
+    .filter((summary): summary is DailyPicksValidationSummary => (
+      summary !== null && summary.hitRate !== null
+    ));
+  if (summaries.length === 0) {
+    return EMPTY_VIEW.validation;
+  }
+  return summaries.sort((left, right) => (
+    right.sampleCount - left.sampleCount
+    || (right.hitRate ?? 0) - (left.hitRate ?? 0)
+  ))[0];
 }
 
 function buildBasePickContext(
@@ -492,6 +591,15 @@ function buildBasePickContext(
     awayTeamLogoUrl: readString(awayTeam?.crest_url) ?? readString(awayTeam?.logo_url),
     kickoffAt: readString(match.kickoff_at) ?? "",
     sourceAgreementRatio: readNumber(summaryPayload?.source_agreement_ratio),
+    confidenceReliability:
+      readString(summaryPayload?.confidence_reliability)
+      ?? readString(summaryPayload?.confidenceReliability),
+    highConfidenceEligible:
+      readBoolean(summaryPayload?.high_confidence_eligible)
+      ?? readBoolean(summaryPayload?.highConfidenceEligible),
+    validationMetadata:
+      readRecord(summaryPayload?.validation_metadata)
+      ?? readRecord(summaryPayload?.validationMetadata),
   };
 }
 
@@ -537,8 +645,11 @@ function buildMoneylineAndVariantPicks(
     valueRecommendation?.pick === mainRecommendation.pick
       ? valueRecommendation
       : null;
+  const reliabilityHoldReason = resolveReliabilityHoldReason(base);
   const status =
-    mainRecommendation.recommended ? "recommended" : "held";
+    mainRecommendation.recommended && reliabilityHoldReason === null
+      ? "recommended"
+      : "held";
 
   const moneyline: DailyPickItem = {
     ...base,
@@ -552,10 +663,18 @@ function buildMoneylineAndVariantPicks(
     modelProbability: alignedValueRecommendation?.modelProbability ?? null,
     marketProbability: alignedValueRecommendation?.marketProbability ?? null,
     sourceAgreementRatio: base.sourceAgreementRatio,
+    confidenceReliability: base.confidenceReliability,
+    highConfidenceEligible: base.highConfidenceEligible,
+    validationMetadata: base.validationMetadata,
     status,
-    noBetReason: mainRecommendation.noBetReason ?? null,
+    noBetReason: mainRecommendation.noBetReason ?? reliabilityHoldReason,
     reasonLabels:
-      status === "held" ? ["heldByRecommendationGate"] : ["mainRecommendation"],
+      status === "held"
+        ? [
+            "heldByRecommendationGate",
+            ...(reliabilityHoldReason ? [reliabilityHoldReason] : []),
+          ]
+        : ["mainRecommendation"],
   };
 
   return [
@@ -594,6 +713,8 @@ function buildVariantPick(
     && typeof variant.recommendedPick === "string"
     && variant.recommendedPick.length > 0
   ) {
+    const reliabilityHoldReason = resolveReliabilityHoldReason(base);
+    const status = reliabilityHoldReason === null ? "recommended" : "held";
     return {
       ...base,
       id: `${base.matchId}:${rawFamily}:${variant.recommendedPick}`,
@@ -606,9 +727,15 @@ function buildVariantPick(
       modelProbability: variant.modelProbability ?? null,
       marketProbability: variant.marketProbability ?? null,
       sourceAgreementRatio: base.sourceAgreementRatio,
-      status: "recommended",
-      noBetReason: null,
-      reasonLabels: [rawFamily, "variantRecommendation"],
+      confidenceReliability: base.confidenceReliability,
+      highConfidenceEligible: base.highConfidenceEligible,
+      validationMetadata: base.validationMetadata,
+      status,
+      noBetReason: reliabilityHoldReason,
+      reasonLabels:
+        status === "held"
+          ? [rawFamily, "heldByRecommendationGate", reliabilityHoldReason]
+          : [rawFamily, "variantRecommendation"],
     };
   }
 
@@ -633,18 +760,36 @@ function buildVariantPick(
     modelProbability: variant.modelProbability ?? null,
     marketProbability: variant.marketProbability ?? normalizedMarketPrice,
     sourceAgreementRatio: base.sourceAgreementRatio,
+    confidenceReliability: base.confidenceReliability,
+    highConfidenceEligible: base.highConfidenceEligible,
+    validationMetadata: base.validationMetadata,
     status: "held",
     noBetReason: variant.noBetReason ?? "variant_market_price_only",
     reasonLabels: [rawFamily, "heldByRecommendationGate"],
   };
 }
 
+function resolveReliabilityHoldReason(
+  base: ReturnType<typeof buildBasePickContext>,
+): string | null {
+  if (base.highConfidenceEligible === true) {
+    return null;
+  }
+  return base.confidenceReliability ?? "confidence_reliability_missing";
+}
+
 function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
   const recommendationScore = (item: DailyPickItem) => {
-    if (item.marketFamily === "moneyline") {
-      return item.confidence ?? 0;
+    if (item.expectedValue !== null) {
+      return item.expectedValue;
     }
-    return item.modelProbability ?? 0;
+    if (item.edge !== null) {
+      return item.edge;
+    }
+    if (item.modelProbability !== null && item.marketProbability !== null) {
+      return item.modelProbability - item.marketProbability;
+    }
+    return item.confidence ?? item.modelProbability ?? 0;
   };
 
   const leftScore = recommendationScore(left);
@@ -659,6 +804,120 @@ function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {
   );
 }
 
+function isDailyPicksView(value: unknown): value is DailyPicksView {
+  const record = readRecord(value);
+  return Boolean(
+    record
+      && Array.isArray(record.items)
+      && Array.isArray(record.heldItems)
+      && readRecord(record.coverage)
+      && readRecord(record.target)
+      && readRecord(record.validation),
+  );
+}
+
+function filterDailyPickItems(
+  items: DailyPickItem[],
+  options: LoadDailyPicksOptions,
+) {
+  return items.filter((item) => {
+    if (options.leagueId && item.leagueId !== options.leagueId) {
+      return false;
+    }
+    if (
+      options.marketFamily
+      && options.marketFamily !== "all"
+      && item.marketFamily !== options.marketFamily
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function recomputeCoverage(items: DailyPickItem[], heldItems: DailyPickItem[]) {
+  const allCandidates = [...items, ...heldItems];
+  return {
+    moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
+    spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
+    totals: allCandidates.filter((item) => item.marketFamily === "totals").length,
+    held: heldItems.length,
+  };
+}
+
+async function localizeDailyPickItems(
+  supabase: ApiSupabaseClient,
+  items: DailyPickItem[],
+  locale: string | null | undefined,
+) {
+  const teamIds = [...new Set(items.flatMap((item) => {
+    const ids = [item.homeTeamId, item.awayTeamId].filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return ids;
+  }))];
+  const translations = await loadPreferredTeamTranslations(supabase, teamIds, locale);
+  if (translations.size === 0) {
+    return items;
+  }
+  return items.map((item) => ({
+    ...item,
+    homeTeam:
+      (item.homeTeamId ? translations.get(item.homeTeamId) : undefined)
+      ?? item.homeTeam,
+    awayTeam:
+      (item.awayTeamId ? translations.get(item.awayTeamId) : undefined)
+      ?? item.awayTeam,
+  }));
+}
+
+async function loadDailyPicksArtifactView(
+  supabase: ApiSupabaseClient,
+  bindings: AppBindings["Bindings"],
+  options: LoadDailyPicksOptions,
+): Promise<DailyPicksView | null> {
+  const date = resolveRequestedDate(options.date);
+  if (!date || options.includeHeld === true) {
+    return null;
+  }
+  let loaded: unknown = null;
+  try {
+    const row = await loadLatestStoredArtifact(supabase, {
+      ownerType: "daily_picks",
+      ownerId: date,
+      artifactKind: DAILY_PICKS_ARTIFACT_KIND,
+    });
+    loaded = row ? await loadStoredArtifactJson(row, bindings) : null;
+  } catch {
+    return null;
+  }
+  if (!isDailyPicksView(loaded)) {
+    return null;
+  }
+  const filteredItems = filterDailyPickItems(loaded.items, options).slice(0, 10);
+  const filteredHeldItems = options.includeHeld
+    ? filterDailyPickItems(loaded.heldItems, options).slice(0, 10)
+    : [];
+  const localizedItems = await localizeDailyPickItems(
+    supabase,
+    filteredItems,
+    options.locale,
+  );
+  const localizedHeldItems = await localizeDailyPickItems(
+    supabase,
+    filteredHeldItems,
+    options.locale,
+  );
+
+  return {
+    ...loaded,
+    date,
+    coverage: recomputeCoverage(localizedItems, localizedHeldItems),
+    items: localizedItems,
+    heldItems: localizedHeldItems,
+  };
+}
+
 dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
     const supabase = getSupabaseClient(c.env);
@@ -670,16 +929,29 @@ dailyPicks.get("/", async (c) => {
         ? marketFamilyQuery
         : "all";
 
-    const view = await loadDailyPicksView(supabase, {
+    const options = {
       date: c.req.query("date") ?? undefined,
       leagueId: c.req.query("leagueId") ?? null,
       marketFamily,
       includeHeld: c.req.query("includeHeld") === "true",
       locale: normalizeLocale(c.req.query("locale")),
-    });
+    };
+    const artifactView = supabase
+      ? await loadDailyPicksArtifactView(supabase, c.env, options)
+      : null;
+
+    if (artifactView) {
+      return c.json(artifactView, 200, {
+        "cache-control": API_ARTIFACT_CACHE_CONTROL,
+        "x-match-analyzer-artifact": "hit",
+      });
+    }
+
+    const view = await loadDailyPicksView(supabase, options);
 
     return c.json(view, 200, {
-      "cache-control": API_EGRESS_CACHE_CONTROL,
+      "cache-control": API_SHORT_CACHE_CONTROL,
+      "x-match-analyzer-artifact": "fallback",
     });
   });
 });

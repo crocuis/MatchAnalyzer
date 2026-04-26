@@ -3,8 +3,10 @@ import os
 from datetime import datetime, timezone
 
 from batch.src.ingest import fetch_fixtures as fixture_ingest
+from batch.src.ingest.external_signals import build_external_signal_context_by_match
 from batch.src.ingest.fetch_fixtures import (
     build_competition_row_from_event,
+    build_bsd_lineup_context_by_match,
     build_fixture_row,
     build_lineup_context_by_match,
     build_match_row_from_event,
@@ -12,6 +14,7 @@ from batch.src.ingest.fetch_fixtures import (
     build_team_rows_from_event,
     fetch_daily_schedule,
     filter_supported_events,
+    merge_lineup_contexts,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets
 from batch.src.jobs.sample_data import (
@@ -210,6 +213,10 @@ def should_backfill_real_fixture_team_assets() -> bool:
     }
 
 
+def resolve_external_signal_as_of_date(fixture_date: str) -> str:
+    return fixture_date
+
+
 def hydrate_recent_historical_matches(
     match_rows: list[dict],
     historical_matches: list[dict],
@@ -262,6 +269,7 @@ def build_sync_snapshot_rows(
     captured_at: str,
     historical_matches: list[dict],
     lineup_context_by_match: dict[str, dict],
+    external_signal_context_by_match: dict[str, dict] | None = None,
     hydrate_historical_matches: bool = False,
 ) -> list[dict]:
     source_historical_matches = (
@@ -274,6 +282,7 @@ def build_sync_snapshot_rows(
         captured_at=captured_at,
         historical_matches=source_historical_matches,
         lineup_context_by_match=lineup_context_by_match,
+        external_signal_context_by_match=external_signal_context_by_match,
     )
     confirmed_match_rows = [
         row
@@ -288,6 +297,7 @@ def build_sync_snapshot_rows(
                 captured_at=captured_at,
                 historical_matches=source_historical_matches,
                 lineup_context_by_match=lineup_context_by_match,
+                external_signal_context_by_match=external_signal_context_by_match,
             )
         )
     return snapshot_rows
@@ -323,6 +333,26 @@ def main() -> None:
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
         lineup_context_by_match = build_lineup_context_by_match(events)
+        bsd_api_key = getattr(settings, "bsd_api_key", None)
+        bsd_lineup_context_by_match = (
+            build_bsd_lineup_context_by_match(bsd_api_key, events)
+            if bsd_api_key
+            else {}
+        )
+        lineup_context_by_match = merge_lineup_contexts(
+            lineup_context_by_match,
+            bsd_lineup_context_by_match,
+        )
+        if bsd_lineup_context_by_match:
+            archive_payload["bsd_lineup_context_by_match"] = bsd_lineup_context_by_match
+        external_signal_context_by_match = build_external_signal_context_by_match(
+            events,
+            as_of_date=resolve_external_signal_as_of_date(use_real_schedule),
+        )
+        if external_signal_context_by_match:
+            archive_payload["external_signal_context_by_match"] = (
+                external_signal_context_by_match
+            )
         historical_matches = client.read_rows("matches")
         existing_snapshot_rows = client.read_rows("match_snapshots")
         snapshot_rows_payload = build_sync_snapshot_rows(
@@ -330,6 +360,7 @@ def main() -> None:
             captured_at=captured_at,
             historical_matches=historical_matches,
             lineup_context_by_match=lineup_context_by_match,
+            external_signal_context_by_match=external_signal_context_by_match,
             hydrate_historical_matches=should_hydrate_real_fixture_history(),
         )
         competition_rows, team_rows = prepare_sync_asset_rows(
