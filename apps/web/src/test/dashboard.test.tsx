@@ -1199,6 +1199,8 @@ describe("dashboard redesign", () => {
     expect(await screen.findByRole("heading", { name: /^daily picks$/i })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /^view$/i })).toBeInTheDocument();
     expect(await screen.findByText("2 picks")).toBeInTheDocument();
+    expect(await screen.findByText("Cumulative hit rate")).toBeInTheDocument();
+    expect(await screen.findByText("75.0%")).toBeInTheDocument();
     expect(dailyPicksCalls()).toContainEqual(expect.stringMatching(/^\/api\/daily-picks\?date=\d{4}-\d{2}-\d{2}&locale=en$/));
   });
 

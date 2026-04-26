@@ -27,6 +27,10 @@ interface MatchTableProps {
   isLoadingMore?: boolean;
 }
 
+function formatPercent(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
 export default function MatchTable({
   matches,
   currentLeagueId,
@@ -258,6 +262,14 @@ export default function MatchTable({
               <span className="metricLabel">{t("dailyPicks.summary.recommendations")}</span>
               {dailyPicksSummary ? (
                 <strong>{t("dailyPicks.summary.count", { count: dailyPicksCount })}</strong>
+              ) : (
+                <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
+              )}
+            </div>
+            <div className="dailyPicksTeaserStat">
+              <span className="metricLabel">{t("dailyPicks.validation.cumulativeHitRate")}</span>
+              {dailyPicksSummary ? (
+                <strong>{formatPercent(dailyPicksSummary.validation?.hitRate)}</strong>
               ) : (
                 <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
               )}
