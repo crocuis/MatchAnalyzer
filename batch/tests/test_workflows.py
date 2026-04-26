@@ -16,6 +16,7 @@ def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
+    assert "BSD_LINEUP_LOOKAHEAD_HOURS" not in workflow
     assert "REAL_FIXTURE_DATE=" in workflow
 
 

@@ -13,6 +13,7 @@ from batch.src.ingest.external_signals import build_clubelo_context_by_match
 from batch.src.ingest.external_signals import build_understat_context_by_match
 from batch.src.ingest.external_signals import merge_external_signal_contexts
 from batch.src.ingest.fetch_fixtures import build_fixture_row
+from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_context_by_match
 from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_contexts_from_events
 from batch.src.ingest.fetch_fixtures import build_bsd_lineup_contexts_from_payloads
 from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
@@ -2661,6 +2662,31 @@ def test_bsd_event_signal_contexts_capture_event_xg_fields():
         "bsd_home_xg_live": 1.3,
         "bsd_away_xg_live": 0.6,
     }
+
+
+def test_bsd_event_signal_context_by_match_skips_distant_future_events(monkeypatch):
+    def fail_fetch(*args, **kwargs):
+        raise AssertionError("distant future events should not query BSD events")
+
+    monkeypatch.setattr(fetch_fixtures_module, "fetch_bsd_events", fail_fetch)
+
+    contexts = build_bsd_event_signal_context_by_match(
+        "bsd-key",
+        [
+            {
+                "id": "match_future",
+                "start_time": (
+                    datetime.now(timezone.utc) + timedelta(days=7)
+                ).isoformat(),
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+    )
+
+    assert contexts == {}
 
 
 def test_match_bsd_events_to_schedule_events_uses_kickoff_and_team_names():
