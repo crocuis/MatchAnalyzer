@@ -138,6 +138,23 @@ export R2_SECRET_ACCESS_KEY=your-secret-access-key
 export R2_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
 ```
 
+경기 상세 예측/리뷰 응답을 정적 artifact로 우선 제공하려면 배치에서 match-level artifact를 내보낸다.
+R2 자격 증명이 없으면 `.tmp/r2/<bucket>`에 로컬 파일로 저장된다.
+
+```bash
+python3 -m batch.src.jobs.export_match_artifacts_job
+```
+
+로컬 Worker가 이 artifact를 fetch하도록 테스트하려면 정적 서버를 띄우고 API env에 base URL을 지정한다.
+
+```bash
+python3 -m http.server 8788 --directory .tmp/r2/workflow-artifacts
+export MATCH_ANALYZER_ARTIFACT_BASE_URL=http://localhost:8788
+```
+
+운영에서는 R2 공개/서명 URL을 `stored_artifacts.storage_uri`에 저장하거나, Worker가 접근 가능한 artifact base URL을
+`MATCH_ANALYZER_ARTIFACT_BASE_URL`로 제공한다.
+
 웹 앱에서 API 원점을 명시하려면 아래 값을 사용한다.
 
 ```bash

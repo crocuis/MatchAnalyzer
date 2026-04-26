@@ -12,6 +12,12 @@ import {
   normalizeValueRecommendationFromSummary,
 } from "../lib/prediction-lanes";
 import { ensureOperationalReportsAccess } from "../lib/operational-auth";
+import { loadMatchArtifactJson } from "../lib/artifact-cache";
+import {
+  API_ARTIFACT_CACHE_CONTROL,
+  API_SHORT_CACHE_CONTROL,
+  cachedResponse,
+} from "../lib/edge-cache";
 import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
 
 const predictions = new Hono<AppBindings>();
@@ -1194,7 +1200,23 @@ predictions.get("/:matchId", async (c) => {
     });
   }
   try {
-    return c.json(await loadPredictionView(supabase, matchId));
+    return cachedResponse(c, async () => {
+      const artifactPayload = await loadMatchArtifactJson(supabase, c.env, {
+        matchId,
+        artifactKind: "prediction_view",
+      });
+      if (artifactPayload) {
+        return c.json(artifactPayload, 200, {
+          "cache-control": API_ARTIFACT_CACHE_CONTROL,
+          "x-match-analyzer-artifact": "hit",
+        });
+      }
+
+      return c.json(await loadPredictionView(supabase, matchId), 200, {
+        "cache-control": API_SHORT_CACHE_CONTROL,
+        "x-match-analyzer-artifact": "fallback",
+      });
+    });
   } catch {
     return c.json(
       {

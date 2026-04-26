@@ -251,7 +251,6 @@ type MatchCardProjectionRow = {
   away_score: number | null;
   representative_recommended_pick: string | null;
   representative_confidence_score: number | null;
-  summary_payload: unknown;
   main_recommendation_pick: string | null;
   main_recommendation_confidence: number | null;
   main_recommendation_recommended: boolean | null;
@@ -265,8 +264,6 @@ type MatchCardProjectionRow = {
   value_recommendation_market_probability: number | null;
   value_recommendation_market_source: string | null;
   variant_markets_summary: unknown;
-  explanation_artifact_id: string | null;
-  explanation_artifact_uri: string | null;
   has_prediction: boolean;
   needs_review: boolean;
 };
@@ -279,7 +276,6 @@ type DashboardPredictionSummaryRow = {
   away_score: number | null;
   representative_recommended_pick: string | null;
   representative_confidence_score: number | null;
-  summary_payload: unknown;
   main_recommendation_pick: string | null;
   main_recommendation_confidence: number | null;
   main_recommendation_recommended: boolean | null;
@@ -337,7 +333,7 @@ function normalizeDashboardMainRecommendation(
 
   return normalizeMainRecommendationFromSummary(
     {
-      summaryPayload: row.summary_payload,
+      summaryPayload: null,
       mainRecommendationPick: row.main_recommendation_pick,
       mainRecommendationConfidence: row.main_recommendation_confidence,
       mainRecommendationRecommended: row.main_recommendation_recommended,
@@ -573,7 +569,7 @@ export async function loadDashboardMatchCardsPageView(
   const cardsQuery: any = supabase
     .from("match_cards")
     .select(
-      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, explanation_artifact_uri, has_prediction, needs_review",
+      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, has_prediction, needs_review",
     );
   const scopedCardsQuery =
     typeof cardsQuery.eq === "function"

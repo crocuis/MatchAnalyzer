@@ -2,6 +2,10 @@ import json
 from types import SimpleNamespace
 
 import batch.src.jobs.backfill_artifact_pointers_job as artifact_backfill_job
+from batch.src.jobs.export_match_artifacts_job import (
+    build_prediction_view,
+    build_review_view,
+)
 from batch.src.storage.artifact_store import archive_json_artifact
 
 
@@ -123,3 +127,89 @@ def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_
     assert state["post_match_review_aggregations"][0]["artifact_id"] == (
         "post_match_review_aggregation_latest_current"
     )
+
+
+def test_export_match_artifacts_builds_prediction_and_review_views():
+    prediction_view = build_prediction_view(
+        match_id="match_001",
+        predictions=[
+            {
+                "id": "prediction_001",
+                "match_id": "match_001",
+                "snapshot_id": "snapshot_001",
+                "home_prob": 0.6,
+                "draw_prob": 0.25,
+                "away_prob": 0.15,
+                "recommended_pick": "HOME",
+                "confidence_score": 0.74,
+                "summary_payload": {"bullets": ["home edge"]},
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.74,
+                "main_recommendation_recommended": True,
+                "variant_markets_summary": [
+                    {
+                        "market_family": "totals",
+                        "source_name": "betman_totals",
+                        "selection_a_label": "Under 2.5",
+                        "selection_b_label": "Over 2.5",
+                    }
+                ],
+                "explanation_artifact_id": "prediction_artifact_001",
+                "created_at": "2026-04-26T08:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-26T07:00:00Z",
+                "lineup_status": "unknown",
+                "snapshot_quality": "complete",
+            }
+        ],
+        artifacts_by_id={
+            "prediction_artifact_001": {
+                "id": "prediction_artifact_001",
+                "storage_backend": "r2",
+                "bucket_name": "workflow-artifacts",
+                "object_key": "predictions/match_001/prediction_001.json",
+                "storage_uri": "r2://workflow-artifacts/predictions/match_001/prediction_001.json",
+                "content_type": "application/json",
+                "size_bytes": 42,
+                "checksum_sha256": "abc",
+            }
+        },
+    )
+    review_view = build_review_view(
+        match_id="match_001",
+        reviews=[
+            {
+                "id": "review_001",
+                "match_id": "match_001",
+                "actual_outcome": "HOME",
+                "error_summary": "Hit",
+                "cause_tags": ["aligned"],
+                "summary_payload": {"comparison_available": True},
+                "review_artifact_id": "review_artifact_001",
+                "created_at": "2026-04-27T08:00:00Z",
+            }
+        ],
+        artifacts_by_id={
+            "review_artifact_001": {
+                "id": "review_artifact_001",
+                "storage_backend": "r2",
+                "bucket_name": "workflow-artifacts",
+                "object_key": "reviews/match_001/review_001.json",
+                "storage_uri": "r2://workflow-artifacts/reviews/match_001/review_001.json",
+                "content_type": "application/json",
+                "size_bytes": 42,
+                "checksum_sha256": "abc",
+            }
+        },
+    )
+
+    assert prediction_view["prediction"]["recommendedPick"] == "HOME"
+    assert prediction_view["prediction"]["variantMarkets"][0]["marketFamily"] == "totals"
+    assert prediction_view["checkpoints"][0]["label"] == "T_MINUS_24H"
+    assert review_view["review"]["summary"] == "Hit"
+    assert review_view["review"]["artifact"]["id"] == "review_artifact_001"

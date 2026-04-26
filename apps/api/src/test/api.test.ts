@@ -149,6 +149,134 @@ describe("prediction API", () => {
     });
   });
 
+  it("serves prediction detail from a match artifact when available", async () => {
+    const artifactPayload = {
+      matchId: "match-123",
+      prediction: { matchId: "match-123", recommendedPick: "HOME" },
+      checkpoints: [],
+    };
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "match_prediction_view_match-123",
+          owner_type: "match",
+          owner_id: "match-123",
+          artifact_kind: "prediction_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "match-artifacts/match-123/prediction.json",
+          storage_uri: "https://artifacts.example/match-123/prediction.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-26T00:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const supabase = {
+      from: vi.fn(() => artifactQuery),
+    } as never;
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(artifactPayload)),
+    );
+
+    const response = await app.request("/predictions/match-123");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+    );
+    expect(await response.json()).toEqual(artifactPayload);
+    expect(supabase.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to Supabase prediction assembly when a match artifact is missing", async () => {
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+    const predictionsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "prediction-1",
+            match_id: "match-123",
+            snapshot_id: "snapshot-1",
+            home_prob: 0.52,
+            draw_prob: 0.27,
+            away_prob: 0.21,
+            recommended_pick: "HOME",
+            confidence_score: 0.62,
+            summary_payload: {},
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.62,
+            main_recommendation_recommended: true,
+            variant_markets_summary: [],
+            explanation_artifact_id: null,
+            created_at: "2026-04-26T00:00:00Z",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const snapshotsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "snapshot-1",
+            checkpoint_type: "T_MINUS_24H",
+            captured_at: "2026-04-26T00:00:00Z",
+            lineup_status: "unknown",
+            snapshot_quality: "complete",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        error: null,
+      }),
+    };
+    const supabase = {
+      from: vi
+        .fn()
+        .mockReturnValueOnce(artifactQuery)
+        .mockReturnValueOnce(predictionsQuery)
+        .mockReturnValueOnce(snapshotsQuery)
+        .mockReturnValueOnce(matchQuery),
+    } as never;
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+
+    const response = await app.request("/predictions/match-123");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("fallback");
+    expect((await response.json()).prediction.recommendedPick).toBe("HOME");
+  });
+
   it("returns an empty review payload for a match", async () => {
     const response = await app.request("/reviews/match-123");
     expect(response.status).toBe(200);
@@ -156,6 +284,54 @@ describe("prediction API", () => {
       matchId: "match-123",
       review: null,
     });
+  });
+
+  it("serves review detail from a match artifact when available", async () => {
+    const artifactPayload = {
+      matchId: "match-123",
+      review: { matchId: "match-123", summary: "settled" },
+    };
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "match_review_view_match-123",
+          owner_type: "match",
+          owner_id: "match-123",
+          artifact_kind: "review_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "match-artifacts/match-123/review.json",
+          storage_uri: "https://artifacts.example/match-123/review.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-26T00:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const supabase = {
+      from: vi.fn(() => artifactQuery),
+    } as never;
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(artifactPayload)),
+    );
+
+    const response = await app.request("/reviews/match-123");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+    );
+    expect(await response.json()).toEqual(artifactPayload);
+    expect(supabase.from).toHaveBeenCalledTimes(1);
   });
 
   it("returns an empty review aggregation payload when no supabase client is configured", async () => {
