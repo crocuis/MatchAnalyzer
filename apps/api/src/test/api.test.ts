@@ -557,6 +557,14 @@ describe("prediction API", () => {
           created_at: "2026-04-24T08:15:00Z",
         },
       ],
+      daily_pick_performance_summary: [
+        {
+          id: "all",
+          sample_count: 76,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.6422,
+        },
+      ],
     };
     const supabase = buildTableSupabase(tables);
 
@@ -587,8 +595,8 @@ describe("prediction API", () => {
       hitRate: 0.75,
       sampleCount: 76,
       wilsonLowerBound: 0.6422,
-      confidenceReliability: "validated",
-      modelScope: "daily_pick_prequential",
+      confidenceReliability: "settled_daily_picks",
+      modelScope: "daily_pick_settled",
     });
     expect(view.coverage).toMatchObject({
       moneyline: 4,
@@ -674,6 +682,14 @@ describe("prediction API", () => {
           created_at: "2026-04-24T08:00:00Z",
         },
       ],
+      daily_pick_performance_summary: [
+        {
+          id: "all",
+          sample_count: 76,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.6422,
+        },
+      ],
     });
     const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
 
@@ -700,8 +716,8 @@ describe("prediction API", () => {
         hitRate: 0.75,
         sampleCount: 76,
         wilsonLowerBound: 0.6422,
-        confidenceReliability: "validated",
-        modelScope: "daily_pick_prequential",
+        confidenceReliability: "settled_daily_picks",
+        modelScope: "daily_pick_settled",
       },
       coverage: {
         held: 1,

@@ -68,6 +68,8 @@ def test_run_predictions_workflow_supports_manual_targets_and_daily_llm_run() ->
     assert "NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}" in workflow
     assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
     assert '[ "${{ github.event_name }}" = "schedule" ]' in workflow
+    assert "DAILY_PICK_SYNC_DATE=" in workflow
+    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
 
 
 def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() -> None:
@@ -88,6 +90,8 @@ def test_post_match_review_workflow_sets_real_review_date_and_daily_llm_run() ->
     assert "OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}" in workflow
     assert '[ "${{ github.event.schedule }}" = "20 4 * * *" ]' in workflow
     assert "date -u -d 'yesterday' +%F" in workflow
+    assert 'DAILY_PICK_SETTLE_DATE="$REAL_REVIEW_DATE"' in workflow
+    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
 
 
 def test_report_missing_signal_coverage_workflow_runs_daily() -> None:

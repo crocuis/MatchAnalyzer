@@ -93,3 +93,7 @@ jobs:
           fi
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_predictions_job
+      - name: Sync daily pick snapshot
+        run: |
+          DAILY_PICK_SYNC_DATE="${REAL_PREDICTION_DATE:-$(date -u +%F)}" \
+            python3 -m batch.src.jobs.run_daily_pick_tracking_job

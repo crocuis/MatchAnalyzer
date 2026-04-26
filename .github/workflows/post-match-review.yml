@@ -84,3 +84,7 @@ jobs:
           fi
       - run: python3 -m pip install -r batch/requirements.txt
       - run: python3 -m batch.src.jobs.run_post_match_review_job
+      - name: Settle daily pick results
+        run: |
+          DAILY_PICK_SETTLE_DATE="$REAL_REVIEW_DATE" \
+            python3 -m batch.src.jobs.run_daily_pick_tracking_job

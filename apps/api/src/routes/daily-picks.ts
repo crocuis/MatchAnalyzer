@@ -18,14 +18,6 @@ import {
 
 const dailyPicks = new Hono<AppBindings>();
 
-const DAILY_PICK_VALIDATION_BENCHMARK = {
-  hitRate: 0.75,
-  sampleCount: 76,
-  wilsonLowerBound: 0.6422,
-  confidenceReliability: "validated",
-  modelScope: "daily_pick_prequential",
-} satisfies DailyPicksValidationSummary;
-
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
 export type DailyPickItem = {
@@ -122,6 +114,7 @@ type BuildDailyPicksArgs = {
   competitions: DailyPickRow[];
   snapshots: DailyPickRow[];
   predictions: DailyPickRow[];
+  performanceSummary: DailyPicksValidationSummary | null;
   options: LoadDailyPicksOptions;
 };
 
@@ -131,6 +124,8 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
   match_snapshots: "id, match_id, checkpoint_type",
   predictions:
     "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
+  daily_pick_performance_summary:
+    "id, sample_count, hit_rate, wilson_lower_bound",
 };
 const DAILY_PICK_MATCH_SELECT =
   "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result";
@@ -231,6 +226,28 @@ async function readRowsByIds(
   return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
 }
 
+async function readDailyPickPerformanceSummary(
+  supabase: ApiSupabaseClient,
+): Promise<DailyPicksValidationSummary | null> {
+  const rows = await readRows(supabase, "daily_pick_performance_summary");
+  const row = rows.find((candidate) => readString(candidate.id) === "all");
+  if (!row) {
+    return null;
+  }
+  const sampleCount = readNumber(row.sample_count) ?? 0;
+  const hitRate = readNumber(row.hit_rate);
+  return {
+    hitRate,
+    sampleCount,
+    wilsonLowerBound: readNumber(row.wilson_lower_bound),
+    confidenceReliability:
+      sampleCount > 0 && hitRate !== null
+        ? "settled_daily_picks"
+        : null,
+    modelScope: "daily_pick_settled",
+  };
+}
+
 async function readMatches(
   supabase: ApiSupabaseClient,
   options: LoadDailyPicksOptions,
@@ -325,10 +342,11 @@ export async function loadDailyPicksView(
     return id ? [id] : [];
   }))];
 
-  const [teams, competitions, predictions] = await Promise.all([
+  const [teams, competitions, predictions, performanceSummary] = await Promise.all([
     readRowsByIds(supabase, "teams", teamIds),
     readRowsByIds(supabase, "competitions", competitionIds),
     readRowsByIds(supabase, "predictions", matchIds, "match_id"),
+    readDailyPickPerformanceSummary(supabase),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
     supabase,
@@ -348,6 +366,7 @@ export async function loadDailyPicksView(
     competitions,
     snapshots,
     predictions,
+    performanceSummary,
     options: normalizedOptions,
   });
 }
@@ -481,7 +500,7 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     generatedAt: new Date().toISOString(),
     date: args.options.date ?? null,
     target: EMPTY_VIEW.target,
-    validation: summarizeDailyPickValidation(allCandidates),
+    validation: args.performanceSummary ?? summarizeDailyPickValidation(allCandidates),
     coverage: {
       moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
       spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
@@ -523,9 +542,7 @@ function summarizeDailyPickValidation(
       summary !== null && summary.hitRate !== null
     ));
   if (summaries.length === 0) {
-    return candidates.length > 0
-      ? DAILY_PICK_VALIDATION_BENCHMARK
-      : EMPTY_VIEW.validation;
+    return EMPTY_VIEW.validation;
   }
   return summaries.sort((left, right) => (
     right.sampleCount - left.sampleCount
