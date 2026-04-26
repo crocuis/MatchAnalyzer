@@ -753,12 +753,21 @@ def test_build_review_payload_adds_llm_review_when_builder_is_provided():
 
 def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
     snapshot_rows = [
+        {"id": "match_prior_t_minus_24h", "match_id": "match_prior", "checkpoint_type": "T_MINUS_24H"},
         {"id": "match_a_t_minus_24h", "match_id": "match_a", "checkpoint_type": "T_MINUS_24H"},
         {"id": "match_a_t_minus_6h", "match_id": "match_a", "checkpoint_type": "T_MINUS_6H"},
         {"id": "match_b_t_minus_24h", "match_id": "match_b", "checkpoint_type": "T_MINUS_24H"},
         {"id": "match_b_t_minus_6h", "match_id": "match_b", "checkpoint_type": "T_MINUS_6H"},
     ]
     market_rows = [
+        {
+            "id": "match_prior_t_minus_24h_bookmaker",
+            "snapshot_id": "match_prior_t_minus_24h",
+            "source_type": "bookmaker",
+            "home_prob": 0.43,
+            "draw_prob": 0.29,
+            "away_prob": 0.28,
+        },
         {
             "id": "match_a_t_minus_24h_bookmaker",
             "snapshot_id": "match_a_t_minus_24h",
@@ -785,6 +794,7 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
         },
     ]
     match_rows = [
+        {"id": "match_prior", "kickoff_at": "2026-04-05T18:00:00+00:00"},
         {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
         {"id": "match_b", "kickoff_at": "2026-04-19T18:00:00+00:00"},
     ]
@@ -796,8 +806,23 @@ def test_select_real_prediction_inputs_filters_snapshots_by_match_date():
         target_date="2026-04-12",
     )
 
-    assert selected_snapshots == [snapshot_rows[0], snapshot_rows[1]]
-    assert selected_markets == [market_rows[0], market_rows[1]]
+    assert selected_snapshots == [snapshot_rows[0], snapshot_rows[1], snapshot_rows[2]]
+    assert selected_markets == [market_rows[0], market_rows[1], market_rows[2]]
+
+
+def test_should_archive_prediction_artifacts_skips_bulk_real_backfill():
+    assert run_predictions_job.should_archive_prediction_artifacts(
+        target_snapshot_count=25,
+        use_real_prediction_targets=True,
+    )
+    assert not run_predictions_job.should_archive_prediction_artifacts(
+        target_snapshot_count=101,
+        use_real_prediction_targets=True,
+    )
+    assert run_predictions_job.should_archive_prediction_artifacts(
+        target_snapshot_count=101,
+        use_real_prediction_targets=False,
+    )
 
 
 def test_select_real_prediction_inputs_prefers_explicit_match_ids_over_date():

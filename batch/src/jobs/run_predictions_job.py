@@ -85,6 +85,7 @@ TRAINING_RECENT_SNAPSHOT_LIMIT = 200
 TRAINED_BASELINE_UNAVAILABLE = object()
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
 VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
+BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT = 100
 PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
     "snapshot_quality",
     "lineup_status",
@@ -171,7 +172,7 @@ def select_real_prediction_inputs(
         else {
             row["id"]
             for row in match_rows
-            if target_date and row.get("kickoff_at", "").startswith(target_date)
+            if target_date and str(row.get("kickoff_at") or "")[:10] <= target_date
         }
     )
     selected_snapshots = [
@@ -187,6 +188,17 @@ def select_real_prediction_inputs(
         and row.get("source_type") in {"bookmaker", "prediction_market"}
     ]
     return selected_snapshots, selected_markets
+
+
+def should_archive_prediction_artifacts(
+    *,
+    target_snapshot_count: int,
+    use_real_prediction_targets: bool,
+) -> bool:
+    return (
+        not use_real_prediction_targets
+        or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
+    )
 
 
 def parse_iso_datetime(value: object) -> datetime | None:
@@ -1987,6 +1999,10 @@ def main() -> None:
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
     baseline_model_cache: dict[tuple[str, str], object] = {}
+    archive_prediction_artifacts = should_archive_prediction_artifacts(
+        target_snapshot_count=len(target_snapshots),
+        use_real_prediction_targets=use_real_prediction_targets,
+    )
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -2419,26 +2435,27 @@ def main() -> None:
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
         artifact_id = f"prediction_artifact_{prediction_id}"
-        artifact_payload.append(
-            archive_json_artifact(
-                r2_client=r2_client,
-                supabase_storage_client=supabase_storage_client,
-                artifact_id=artifact_id,
-                owner_type="prediction",
-                owner_id=prediction_id,
-                artifact_kind="prediction_explanation",
-                key=f"predictions/{row['match_id']}/{prediction_id}.json",
-                payload=explanation_payload,
-                summary_payload={
-                    "match_id": row["match_id"],
-                    "snapshot_id": signal_snapshot["id"],
-                    "checkpoint_type": signal_snapshot["checkpoint_type"],
-                },
-                metadata={
-                    "model_version_id": SAMPLE_MODEL_VERSION_ID,
-                },
+        if archive_prediction_artifacts:
+            artifact_payload.append(
+                archive_json_artifact(
+                    r2_client=r2_client,
+                    supabase_storage_client=supabase_storage_client,
+                    artifact_id=artifact_id,
+                    owner_type="prediction",
+                    owner_id=prediction_id,
+                    artifact_kind="prediction_explanation",
+                    key=f"predictions/{row['match_id']}/{prediction_id}.json",
+                    payload=explanation_payload,
+                    summary_payload={
+                        "match_id": row["match_id"],
+                        "snapshot_id": signal_snapshot["id"],
+                        "checkpoint_type": signal_snapshot["checkpoint_type"],
+                    },
+                    metadata={
+                        "model_version_id": SAMPLE_MODEL_VERSION_ID,
+                    },
+                )
             )
-        )
         payload.append(
             {
                 "id": prediction_id,
@@ -2480,7 +2497,9 @@ def main() -> None:
                     value_recommendation["market_source"] if value_recommendation else None
                 ),
                 "variant_markets_summary": variant_markets,
-                "explanation_artifact_id": artifact_id,
+                "explanation_artifact_id": (
+                    artifact_id if archive_prediction_artifacts else None
+                ),
             }
         )
         feature_snapshot_payload.append(
