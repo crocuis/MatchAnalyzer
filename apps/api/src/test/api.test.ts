@@ -23,6 +23,9 @@ import {
 } from "../routes/reviews";
 
 type FakeTables = Record<string, Record<string, unknown>[]>;
+type MockSupabaseClient = {
+  from: ReturnType<typeof vi.fn>;
+};
 
 function buildTableSupabase(tables: FakeTables) {
   return {
@@ -178,10 +181,10 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase = {
+    const supabase: MockSupabaseClient = {
       from: vi.fn(() => artifactQuery),
-    } as never;
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    };
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(artifactPayload)),
@@ -260,21 +263,24 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase = {
+    const supabase: MockSupabaseClient = {
       from: vi
         .fn()
         .mockReturnValueOnce(artifactQuery)
         .mockReturnValueOnce(predictionsQuery)
         .mockReturnValueOnce(snapshotsQuery)
         .mockReturnValueOnce(matchQuery),
-    } as never;
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    };
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
 
     const response = await app.request("/predictions/match-123");
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-match-analyzer-artifact")).toBe("fallback");
-    expect((await response.json()).prediction.recommendedPick).toBe("HOME");
+    const body = await response.json() as {
+      prediction: { recommendedPick: string };
+    };
+    expect(body.prediction.recommendedPick).toBe("HOME");
   });
 
   it("returns an empty review payload for a match", async () => {
@@ -314,10 +320,10 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase = {
+    const supabase: MockSupabaseClient = {
       from: vi.fn(() => artifactQuery),
-    } as never;
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    };
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(artifactPayload)),
@@ -2110,10 +2116,10 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase = {
+    const supabase: MockSupabaseClient = {
       from: vi.fn(() => artifactQuery),
-    } as never;
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    };
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(artifactPayload)),
@@ -2128,7 +2134,10 @@ describe("prediction API", () => {
     expect(response.headers.get("cache-control")).toBe(
       "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
     );
-    const body = await response.json();
+    const body = await response.json() as {
+      coverage: Record<string, number>;
+      items: Array<{ marketFamily: string }>;
+    };
     expect(body.items).toHaveLength(1);
     expect(body.items[0].marketFamily).toBe("spreads");
     expect(body.coverage).toEqual({
