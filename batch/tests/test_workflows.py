@@ -47,12 +47,15 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
+    assert "MARKET_CHECKPOINT_TYPES: T_MINUS_24H,T_MINUS_6H,T_MINUS_1H,LINEUP_CONFIRMED" in workflow
     assert "REAL_MARKET_DATE=" in workflow
-    assert "REAL_PREDICTION_MATCH_IDS" in workflow
-    assert "backfill_external_prediction_signals_job" in workflow
-    assert '--match-ids "$CHANGED_MATCH_IDS"' in workflow
-    assert "--clubelo-date-stride-days 1" in workflow
-    assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
+    assert "Changed market match ids: $CHANGED_MATCH_IDS" in workflow
+    assert "Prediction refresh is intentionally deferred" in workflow
+    assert "REAL_PREDICTION_MATCH_IDS" not in workflow
+    assert "backfill_external_prediction_signals_job" not in workflow
+    assert '--match-ids "$CHANGED_MATCH_IDS"' not in workflow
+    assert "--clubelo-date-stride-days 1" not in workflow
+    assert 'python3 -m batch.src.jobs.run_predictions_job' not in workflow
     assert "<<'PY'" not in workflow
     assert "python3 -c" in workflow
 

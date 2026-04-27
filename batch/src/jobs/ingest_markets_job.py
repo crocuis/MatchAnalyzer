@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timezone
 
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
@@ -20,6 +21,13 @@ from batch.src.jobs.sample_data import SAMPLE_MATCH_ID
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
+
+DEFAULT_MARKET_CHECKPOINT_TYPES = (
+    "T_MINUS_24H",
+    "T_MINUS_6H",
+    "T_MINUS_1H",
+    "LINEUP_CONFIRMED",
+)
 
 MATCH_SNAPSHOT_PERSISTED_FIELDS = {
     "id",
@@ -79,20 +87,49 @@ def is_optional_missing_table_error(error: Exception, table_name: str) -> bool:
     )
 
 
+def parse_market_checkpoint_types(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return DEFAULT_MARKET_CHECKPOINT_TYPES
+    checkpoint_types = tuple(
+        checkpoint.strip().upper()
+        for checkpoint in value.split(",")
+        if checkpoint.strip()
+    )
+    return checkpoint_types or DEFAULT_MARKET_CHECKPOINT_TYPES
+
+
+def parse_iso_datetime(value: object) -> datetime | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+    except ValueError:
+        return None
+
+
 def select_real_market_snapshots(
     snapshot_rows: list[dict],
     match_rows: list[dict],
     team_rows: list[dict],
     target_date: str,
+    checkpoint_types: tuple[str, ...] = DEFAULT_MARKET_CHECKPOINT_TYPES,
 ) -> list[dict]:
     matches_by_id = {row["id"]: row for row in match_rows}
     teams_by_id = {row["id"]: row for row in team_rows}
+    allowed_checkpoints = set(checkpoint_types)
     selected = []
     for snapshot in snapshot_rows:
-        if snapshot.get("checkpoint_type") != "T_MINUS_24H":
+        if str(snapshot.get("checkpoint_type") or "") not in allowed_checkpoints:
             continue
         match = matches_by_id.get(snapshot["match_id"])
         if not match or not match.get("kickoff_at", "").startswith(target_date):
+            continue
+        kickoff_at = parse_iso_datetime(match.get("kickoff_at"))
+        captured_at = parse_iso_datetime(snapshot.get("captured_at"))
+        if kickoff_at is not None and captured_at is not None and captured_at > kickoff_at:
             continue
         home_team = teams_by_id.get(match["home_team_id"])
         away_team = teams_by_id.get(match["away_team_id"])
@@ -110,6 +147,96 @@ def select_real_market_snapshots(
             }
         )
     return selected
+
+
+def filter_pre_match_market_rows(
+    rows: list[dict],
+    snapshot_rows: list[dict],
+) -> list[dict]:
+    snapshots_by_id = {
+        row["id"]: row
+        for row in snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    filtered_rows: list[dict] = []
+    for row in rows:
+        snapshot = snapshots_by_id.get(row.get("snapshot_id"))
+        if snapshot is None:
+            continue
+        kickoff_at = parse_iso_datetime(snapshot.get("kickoff_at"))
+        observed_at = parse_iso_datetime(row.get("observed_at"))
+        if kickoff_at is not None and observed_at is not None and observed_at > kickoff_at:
+            continue
+        filtered_rows.append(row)
+    return filtered_rows
+
+
+def build_market_coverage_summary(
+    *,
+    snapshot_rows: list[dict],
+    market_rows: list[dict],
+    variant_rows: list[dict],
+) -> dict:
+    summary: dict[str, dict] = {}
+    snapshot_by_id = {
+        row["id"]: row
+        for row in snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    for snapshot in snapshot_rows:
+        checkpoint = str(snapshot.get("checkpoint_type") or "unknown")
+        checkpoint_summary = summary.setdefault(
+            checkpoint,
+            {
+                "snapshot_count": 0,
+                "moneyline_count": 0,
+                "variant_count": 0,
+                "source_counts": {},
+                "variant_family_counts": {},
+            },
+        )
+        checkpoint_summary["snapshot_count"] += 1
+    for row in market_rows:
+        snapshot = snapshot_by_id.get(row.get("snapshot_id"))
+        if snapshot is None:
+            continue
+        checkpoint = str(snapshot.get("checkpoint_type") or "unknown")
+        checkpoint_summary = summary.setdefault(
+            checkpoint,
+            {
+                "snapshot_count": 0,
+                "moneyline_count": 0,
+                "variant_count": 0,
+                "source_counts": {},
+                "variant_family_counts": {},
+            },
+        )
+        checkpoint_summary["moneyline_count"] += 1
+        source_type = str(row.get("source_type") or "unknown")
+        checkpoint_summary["source_counts"][source_type] = (
+            int(checkpoint_summary["source_counts"].get(source_type) or 0) + 1
+        )
+    for row in variant_rows:
+        snapshot = snapshot_by_id.get(row.get("snapshot_id"))
+        if snapshot is None:
+            continue
+        checkpoint = str(snapshot.get("checkpoint_type") or "unknown")
+        checkpoint_summary = summary.setdefault(
+            checkpoint,
+            {
+                "snapshot_count": 0,
+                "moneyline_count": 0,
+                "variant_count": 0,
+                "source_counts": {},
+                "variant_family_counts": {},
+            },
+        )
+        checkpoint_summary["variant_count"] += 1
+        market_family = str(row.get("market_family") or "unknown")
+        checkpoint_summary["variant_family_counts"][market_family] = (
+            int(checkpoint_summary["variant_family_counts"].get(market_family) or 0) + 1
+        )
+    return summary
 
 
 def attach_team_translation_aliases(
@@ -347,6 +474,9 @@ def main() -> None:
             match_rows=match_rows,
             team_rows=team_rows,
             target_date=use_real_schedule,
+            checkpoint_types=parse_market_checkpoint_types(
+                os.environ.get("MARKET_CHECKPOINT_TYPES")
+            ),
         )
         snapshot_rows = attach_team_translation_aliases(
             snapshot_rows,
@@ -376,6 +506,10 @@ def main() -> None:
                 odds_api_io_odds,
                 snapshot_rows,
             )
+            odds_api_io_market_rows = filter_pre_match_market_rows(
+                odds_api_io_market_rows,
+                snapshot_rows,
+            )
         betman_buyable_games = fetch_betman_buyable_games()
         betman_detail_payloads = [
             fetch_betman_game_detail(
@@ -390,6 +524,14 @@ def main() -> None:
             detail_payloads=betman_detail_payloads,
             snapshot_rows=snapshot_rows,
             bookmaker_rows=payload,
+        )
+        betman_market_rows = filter_pre_match_market_rows(
+            betman_market_rows,
+            snapshot_rows,
+        )
+        betman_variant_rows = filter_pre_match_market_rows(
+            betman_variant_rows,
+            snapshot_rows,
         )
         betman_team_translation_rows = build_betman_team_translation_rows(
             detail_payloads=betman_detail_payloads,
@@ -417,6 +559,14 @@ def main() -> None:
         prediction_market_variant_rows = build_prediction_market_variant_rows(
             prediction_market_raw,
             prediction_market_contexts,
+        )
+        prediction_market_rows = filter_pre_match_market_rows(
+            prediction_market_rows,
+            snapshot_rows,
+        )
+        prediction_market_variant_rows = filter_pre_match_market_rows(
+            prediction_market_variant_rows,
+            snapshot_rows,
         )
         payload.extend(prediction_market_rows)
         prediction_market_variant_rows.extend(betman_variant_rows)
@@ -496,7 +646,43 @@ def main() -> None:
         prediction_market_variant_rows = variant_payload
         betman_team_translation_rows = []
 
-    if not payload:
+    coverage_summary = build_market_coverage_summary(
+        snapshot_rows=snapshot_rows,
+        market_rows=payload,
+        variant_rows=prediction_market_variant_rows,
+    )
+
+    if not payload and not prediction_market_variant_rows:
+        if use_real_schedule:
+            coverage_summary = build_market_coverage_summary(
+                snapshot_rows=snapshot_rows,
+                market_rows=[],
+                variant_rows=[],
+            )
+            print(
+                json.dumps(
+                    {
+                        "archive_uri": None,
+                        "snapshot_rows": len(snapshot_rows),
+                        "promoted_snapshots": 0,
+                        "deleted_market_rows": 0,
+                        "deleted_variant_rows": 0,
+                        "inserted_rows": 0,
+                        "variant_rows": 0,
+                        "team_translation_rows": 0,
+                        "odds_api_io_events": len(odds_api_io_events),
+                        "odds_api_io_odds": len(odds_api_io_odds),
+                        "odds_api_io_market_rows": len(odds_api_io_market_rows),
+                        "coverage_summary": coverage_summary,
+                        "changed_match_ids": [],
+                        "payload": [],
+                        "variant_payload": [],
+                        "skip_reason": "no_market_payload",
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
         raise ValueError("no market payload was generated")
 
     promoted_snapshots = promote_market_snapshots(snapshot_rows, payload)
@@ -581,6 +767,7 @@ def main() -> None:
                 "odds_api_io_events": len(odds_api_io_events),
                 "odds_api_io_odds": len(odds_api_io_odds),
                 "odds_api_io_market_rows": len(odds_api_io_market_rows),
+                "coverage_summary": coverage_summary,
                 "changed_match_ids": changed_match_ids,
                 "payload": payload,
                 "variant_payload": prediction_market_variant_rows,

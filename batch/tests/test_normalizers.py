@@ -42,9 +42,12 @@ from batch.src.ingest.fetch_markets import (
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.jobs.ingest_markets_job import (
     attach_team_translation_aliases,
+    build_market_coverage_summary,
     collect_changed_market_match_ids,
+    filter_pre_match_market_rows,
     filter_existing_team_translation_rows,
     main as run_ingest_markets_job,
+    parse_market_checkpoint_types,
     promote_market_snapshots,
     select_real_market_snapshots,
 )
@@ -4216,6 +4219,98 @@ def test_ingest_markets_job_deletes_withdrawn_rows_and_reports_changed_matches(
     assert payload["deleted_variant_rows"] == 1
 
 
+def test_ingest_markets_job_reports_noop_when_real_market_payload_is_empty(
+    monkeypatch,
+    capsys,
+):
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            self.state = {
+                "match_snapshots": [
+                    {
+                        "id": "match_001_t_minus_24h",
+                        "match_id": "match_001",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "captured_at": "2026-04-11T15:30:00+00:00",
+                        "snapshot_quality": "partial",
+                    }
+                ],
+                "matches": [
+                    {
+                        "id": "match_001",
+                        "competition_id": "premier-league",
+                        "kickoff_at": "2026-04-12T15:30:00+00:00",
+                        "home_team_id": "chelsea",
+                        "away_team_id": "arsenal",
+                    }
+                ],
+                "teams": [
+                    {"id": "chelsea", "name": "Chelsea"},
+                    {"id": "arsenal", "name": "Arsenal"},
+                ],
+                "competitions": [],
+                "team_translations": [],
+                "market_probabilities": [],
+                "market_variants": [],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.state.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            self.state[table_name] = list(rows)
+            return len(rows)
+
+    monkeypatch.setenv("REAL_MARKET_DATE", "2026-04-12")
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+                "r2_bucket": "ma-bucket",
+                "r2_access_key_id": None,
+                "r2_secret_access_key": None,
+                "r2_s3_endpoint": None,
+                "odds_api_key": None,
+                "odds_api_io_bookmakers": "Bet365,Unibet",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.fetch_daily_schedule",
+        lambda _date: {"data": {"events": []}},
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.fetch_betman_buyable_games",
+        lambda: {"protoGames": []},
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.build_prediction_market_rows_for_snapshots",
+        lambda **_kwargs: ([], []),
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.build_prediction_market_snapshot_contexts",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.build_prediction_market_variant_rows",
+        lambda _raw, _contexts: [],
+    )
+
+    run_ingest_markets_job()
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["skip_reason"] == "no_market_payload"
+    assert payload["snapshot_rows"] == 1
+    assert payload["coverage_summary"]["T_MINUS_24H"]["snapshot_count"] == 1
+    assert payload["inserted_rows"] == 0
+
+
 def test_polymarket_sport_for_competition_uses_supported_competitions_only():
     assert polymarket_sport_for_competition("premier-league", "Premier League") == "epl"
     assert polymarket_sport_for_competition("epl", "Premier League") == "epl"
@@ -5487,11 +5582,19 @@ def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
                 "id": "match_001_t_minus_24h",
                 "match_id": "match_001",
                 "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-04-11T15:30:00+00:00",
             },
             {
                 "id": "match_001_t_minus_6h",
                 "match_id": "match_001",
                 "checkpoint_type": "T_MINUS_6H",
+                "captured_at": "2026-04-12T09:30:00+00:00",
+            },
+            {
+                "id": "match_001_after_kickoff",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_1H",
+                "captured_at": "2026-04-12T16:00:00+00:00",
             },
         ],
         match_rows=[
@@ -5515,6 +5618,19 @@ def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
             "id": "match_001_t_minus_24h",
             "match_id": "match_001",
             "checkpoint_type": "T_MINUS_24H",
+            "captured_at": "2026-04-11T15:30:00+00:00",
+            "competition_id": "epl",
+            "kickoff_at": "2026-04-12T15:30:00+00:00",
+            "home_team_id": "chelsea",
+            "away_team_id": "man-city",
+            "home_team_name": "Chelsea FC",
+            "away_team_name": "Manchester City FC",
+        },
+        {
+            "id": "match_001_t_minus_6h",
+            "match_id": "match_001",
+            "checkpoint_type": "T_MINUS_6H",
+            "captured_at": "2026-04-12T09:30:00+00:00",
             "competition_id": "epl",
             "kickoff_at": "2026-04-12T15:30:00+00:00",
             "home_team_id": "chelsea",
@@ -5523,6 +5639,121 @@ def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
             "away_team_name": "Manchester City FC",
         }
     ]
+
+
+def test_select_real_market_snapshots_allows_checkpoint_override():
+    rows = select_real_market_snapshots(
+        snapshot_rows=[
+            {
+                "id": "match_001_t_minus_24h",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "match_001_lineup_confirmed",
+                "match_id": "match_001",
+                "checkpoint_type": "LINEUP_CONFIRMED",
+            },
+        ],
+        match_rows=[
+            {
+                "id": "match_001",
+                "competition_id": "epl",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "man-city",
+            }
+        ],
+        team_rows=[
+            {"id": "chelsea", "name": "Chelsea FC"},
+            {"id": "man-city", "name": "Manchester City FC"},
+        ],
+        target_date="2026-04-12",
+        checkpoint_types=("LINEUP_CONFIRMED",),
+    )
+
+    assert [row["id"] for row in rows] == ["match_001_lineup_confirmed"]
+
+
+def test_parse_market_checkpoint_types_defaults_to_all_pre_match_checkpoints():
+    assert parse_market_checkpoint_types(None) == (
+        "T_MINUS_24H",
+        "T_MINUS_6H",
+        "T_MINUS_1H",
+        "LINEUP_CONFIRMED",
+    )
+    assert parse_market_checkpoint_types("t_minus_24h,lineup_confirmed") == (
+        "T_MINUS_24H",
+        "LINEUP_CONFIRMED",
+    )
+
+
+def test_filter_pre_match_market_rows_drops_rows_observed_after_kickoff():
+    rows = filter_pre_match_market_rows(
+        rows=[
+            {
+                "id": "snapshot_001_bookmaker",
+                "snapshot_id": "snapshot_001",
+                "observed_at": "2026-04-12T15:00:00Z",
+            },
+            {
+                "id": "snapshot_001_live_bookmaker",
+                "snapshot_id": "snapshot_001",
+                "observed_at": "2026-04-12T15:31:00Z",
+            },
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "kickoff_at": "2026-04-12T15:30:00+00:00",
+            }
+        ],
+    )
+
+    assert [row["id"] for row in rows] == ["snapshot_001_bookmaker"]
+
+
+def test_build_market_coverage_summary_counts_checkpoints_and_sources():
+    summary = build_market_coverage_summary(
+        snapshot_rows=[
+            {"id": "snapshot_24h", "checkpoint_type": "T_MINUS_24H"},
+            {"id": "snapshot_6h", "checkpoint_type": "T_MINUS_6H"},
+        ],
+        market_rows=[
+            {
+                "id": "snapshot_24h_bookmaker",
+                "snapshot_id": "snapshot_24h",
+                "source_type": "bookmaker",
+            },
+            {
+                "id": "snapshot_6h_prediction_market",
+                "snapshot_id": "snapshot_6h",
+                "source_type": "prediction_market",
+            },
+        ],
+        variant_rows=[
+            {
+                "id": "snapshot_6h_total",
+                "snapshot_id": "snapshot_6h",
+                "market_family": "totals",
+            }
+        ],
+    )
+
+    assert summary["T_MINUS_24H"] == {
+        "snapshot_count": 1,
+        "moneyline_count": 1,
+        "variant_count": 0,
+        "source_counts": {"bookmaker": 1},
+        "variant_family_counts": {},
+    }
+    assert summary["T_MINUS_6H"] == {
+        "snapshot_count": 1,
+        "moneyline_count": 1,
+        "variant_count": 1,
+        "source_counts": {"prediction_market": 1},
+        "variant_family_counts": {"totals": 1},
+    }
 
 
 def test_promote_market_snapshots_marks_market_backed_snapshots_complete():
