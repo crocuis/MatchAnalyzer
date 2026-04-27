@@ -26,7 +26,7 @@ jobs:
       R2_BUCKET: workflow-artifacts
       FIXTURE_FUTURE_START_DAYS: 7
       FIXTURE_FUTURE_END_DAYS: 14
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
