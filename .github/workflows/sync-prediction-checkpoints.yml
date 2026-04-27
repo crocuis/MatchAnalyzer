@@ -53,7 +53,7 @@ jobs:
       PREDICTION_SYNC_LOOKBACK_MINUTES: ${{ github.event.inputs.lookback_minutes || '60' }}
       LLM_PREDICTION_ADVISORY_ENABLED: ${{ github.event.inputs.enable_llm_advisory == 'true' && '1' || '0' }}
       LLM_PROVIDER: ${{ github.event.inputs.llm_provider || 'nvidia' }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
