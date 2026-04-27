@@ -22,7 +22,8 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      REAL_FIXTURE_SYNC_MODE: schedule
+      BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
+      BSD_LINEUP_LOOKAHEAD_HOURS: 48
       R2_BUCKET: workflow-artifacts
       FIXTURE_FUTURE_START_DAYS: 7
       FIXTURE_FUTURE_END_DAYS: 14
@@ -58,16 +59,40 @@ jobs:
               date -u -d "$TARGET_DATE_CANONICAL +${OFFSET} days" +%F
             done
             echo "EOF"
+            echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"
           } >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
       - name: Ingest fixture window
         shell: bash
         run: |
+          CHANGED_MATCH_IDS_FILE="$(mktemp)"
           while IFS= read -r TARGET_DATE; do
             if [ -z "$TARGET_DATE" ]; then
               continue
             fi
             echo "::group::REAL_FIXTURE_DATE=$TARGET_DATE"
-            REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job
+            FIXTURE_LOG="$(mktemp)"
+            REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job | tee "$FIXTURE_LOG"
+            if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then
+              echo "::endgroup::"
+              continue
+            fi
+            python3 -c 'import json, sys; from pathlib import Path; lines = [line.strip() for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]; payload = json.loads(lines[-1]) if lines else {}; [print(match_id) for match_id in payload.get("changed_match_ids", [])]' "$FIXTURE_LOG" >> "$CHANGED_MATCH_IDS_FILE"
             echo "::endgroup::"
           done <<< "$FIXTURE_DATES"
+          if [ ! -s "$CHANGED_MATCH_IDS_FILE" ]; then
+            echo "No changed fixture matches detected; skipping prediction refresh."
+            exit 0
+          fi
+          mapfile -t CHANGED_MATCH_IDS < <(sort -u "$CHANGED_MATCH_IDS_FILE")
+          if [ "${#CHANGED_MATCH_IDS[@]}" -eq 0 ]; then
+            echo "No unique changed fixture matches remained after dedupe; skipping prediction refresh."
+            exit 0
+          fi
+          REAL_PREDICTION_MATCH_IDS="$(IFS=,; echo "${CHANGED_MATCH_IDS[*]}")"
+          python3 -m batch.src.jobs.backfill_external_prediction_signals_job \
+            --apply \
+            --match-ids "$REAL_PREDICTION_MATCH_IDS" \
+            --clubelo-date-stride-days 1
+          REAL_PREDICTION_MATCH_IDS="$REAL_PREDICTION_MATCH_IDS" \
+            python3 -m batch.src.jobs.run_predictions_job

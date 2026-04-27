@@ -89,7 +89,6 @@ BENCH_PLAYER_WEIGHT = 0.02
 RECENT_EVENT_LIMIT = 3
 RECENCY_WEIGHTS = (1.0, 0.7, 0.4)
 LINEUP_CONTEXT_LOOKAHEAD_HOURS = 1
-BSD_EVENT_SIGNAL_LOOKAHEAD_HOURS = 48
 BSD_API_BASE_URL = "https://sports.bzzoiro.com/api"
 ROTOWIRE_LINEUPS_BASE_URL = "https://www.rotowire.com/soccer/lineups.php"
 ROTOWIRE_COMPETITION_CODES = {
@@ -1074,13 +1073,10 @@ def build_bsd_event_signal_context_by_match(
     api_key: str,
     events: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    target_events = [
-        event for event in events if _should_fetch_bsd_event_signal_context(event)
-    ]
     dates = sorted(
         {
             event_date
-            for event in target_events
+            for event in events
             if (event_date := _schedule_event_utc_date(event)) is not None
         }
     )
@@ -1096,7 +1092,7 @@ def build_bsd_event_signal_context_by_match(
                 tz="UTC",
             )
         )
-    return build_bsd_event_signal_contexts_from_events(target_events, bsd_events)
+    return build_bsd_event_signal_contexts_from_events(events, bsd_events)
 
 
 def _read_optional_float(value: Any) -> float | None:
@@ -1219,23 +1215,6 @@ def _should_fetch_lineup_context(event: dict[str, Any]) -> bool:
         return True
     return kickoff_at.astimezone(timezone.utc) <= datetime.now(timezone.utc) + timedelta(
         hours=_lineup_context_lookahead_hours()
-    )
-
-
-def _should_fetch_bsd_event_signal_context(event: dict[str, Any]) -> bool:
-    start_time = event.get("start_time")
-    if not start_time:
-        return False
-    try:
-        kickoff_at = datetime.fromisoformat(str(start_time).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if kickoff_at.tzinfo is None:
-        return False
-    if event.get("status") == "closed":
-        return True
-    return kickoff_at.astimezone(timezone.utc) <= datetime.now(timezone.utc) + timedelta(
-        hours=BSD_EVENT_SIGNAL_LOOKAHEAD_HOURS
     )
 
 

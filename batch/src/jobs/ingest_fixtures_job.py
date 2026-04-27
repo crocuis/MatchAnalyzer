@@ -218,13 +218,6 @@ def should_backfill_real_fixture_team_assets() -> bool:
     }
 
 
-def real_fixture_sync_mode() -> str:
-    mode = os.environ.get("REAL_FIXTURE_SYNC_MODE", "full").strip().lower()
-    if mode not in {"full", "schedule"}:
-        raise ValueError("REAL_FIXTURE_SYNC_MODE must be one of: full, schedule")
-    return mode
-
-
 def resolve_external_signal_as_of_date(fixture_date: str) -> str:
     return fixture_date
 
@@ -344,71 +337,59 @@ def main() -> None:
             },
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
-        if real_fixture_sync_mode() == "full":
-            lineup_context_by_match = build_lineup_context_by_match(events)
-            rotowire_lineup_context_by_match = build_rotowire_lineup_context_by_match(
-                events
+        lineup_context_by_match = build_lineup_context_by_match(events)
+        rotowire_lineup_context_by_match = build_rotowire_lineup_context_by_match(events)
+        bsd_api_key = getattr(settings, "bsd_api_key", None)
+        bsd_lineup_context_by_match = (
+            build_bsd_lineup_context_by_match(bsd_api_key, events)
+            if bsd_api_key
+            else {}
+        )
+        bsd_event_signal_context_by_match = (
+            build_bsd_event_signal_context_by_match(bsd_api_key, events)
+            if bsd_api_key
+            else {}
+        )
+        lineup_context_by_match = merge_lineup_contexts(
+            lineup_context_by_match,
+            rotowire_lineup_context_by_match,
+        )
+        lineup_context_by_match = merge_lineup_contexts(
+            lineup_context_by_match,
+            bsd_lineup_context_by_match,
+        )
+        if rotowire_lineup_context_by_match:
+            archive_payload["rotowire_lineup_context_by_match"] = (
+                rotowire_lineup_context_by_match
             )
-            bsd_api_key = getattr(settings, "bsd_api_key", None)
-            bsd_lineup_context_by_match = (
-                build_bsd_lineup_context_by_match(bsd_api_key, events)
-                if bsd_api_key
-                else {}
+        if bsd_lineup_context_by_match:
+            archive_payload["bsd_lineup_context_by_match"] = bsd_lineup_context_by_match
+        if bsd_event_signal_context_by_match:
+            archive_payload["bsd_event_signal_context_by_match"] = (
+                bsd_event_signal_context_by_match
             )
-            bsd_event_signal_context_by_match = (
-                build_bsd_event_signal_context_by_match(bsd_api_key, events)
-                if bsd_api_key
-                else {}
+        external_signal_context_by_match = build_external_signal_context_by_match(
+            events,
+            as_of_date=resolve_external_signal_as_of_date(use_real_schedule),
+        )
+        external_signal_context_by_match = merge_external_signal_contexts(
+            external_signal_context_by_match,
+            bsd_event_signal_context_by_match,
+        )
+        if external_signal_context_by_match:
+            archive_payload["external_signal_context_by_match"] = (
+                external_signal_context_by_match
             )
-            lineup_context_by_match = merge_lineup_contexts(
-                lineup_context_by_match,
-                rotowire_lineup_context_by_match,
-            )
-            lineup_context_by_match = merge_lineup_contexts(
-                lineup_context_by_match,
-                bsd_lineup_context_by_match,
-            )
-            if rotowire_lineup_context_by_match:
-                archive_payload["rotowire_lineup_context_by_match"] = (
-                    rotowire_lineup_context_by_match
-                )
-            if bsd_lineup_context_by_match:
-                archive_payload["bsd_lineup_context_by_match"] = bsd_lineup_context_by_match
-            if bsd_event_signal_context_by_match:
-                archive_payload["bsd_event_signal_context_by_match"] = (
-                    bsd_event_signal_context_by_match
-                )
-            external_signal_context_by_match = build_external_signal_context_by_match(
-                events,
-                as_of_date=resolve_external_signal_as_of_date(use_real_schedule),
-            )
-            external_signal_context_by_match = merge_external_signal_contexts(
-                external_signal_context_by_match,
-                bsd_event_signal_context_by_match,
-            )
-            if external_signal_context_by_match:
-                archive_payload["external_signal_context_by_match"] = (
-                    external_signal_context_by_match
-                )
-            historical_matches = client.read_rows("matches")
-            existing_snapshot_rows = client.read_rows("match_snapshots")
-            snapshot_rows_payload = build_sync_snapshot_rows(
-                match_rows=payload,
-                captured_at=captured_at,
-                historical_matches=historical_matches,
-                lineup_context_by_match=lineup_context_by_match,
-                external_signal_context_by_match=external_signal_context_by_match,
-                hydrate_historical_matches=should_hydrate_real_fixture_history(),
-            )
-            changed_match_ids = collect_changed_fixture_match_ids(
-                match_rows=payload,
-                existing_match_rows=historical_matches,
-                snapshot_rows=snapshot_rows_payload,
-                existing_snapshot_rows=existing_snapshot_rows,
-            )
-        else:
-            snapshot_rows_payload = []
-            changed_match_ids = []
+        historical_matches = client.read_rows("matches")
+        existing_snapshot_rows = client.read_rows("match_snapshots")
+        snapshot_rows_payload = build_sync_snapshot_rows(
+            match_rows=payload,
+            captured_at=captured_at,
+            historical_matches=historical_matches,
+            lineup_context_by_match=lineup_context_by_match,
+            external_signal_context_by_match=external_signal_context_by_match,
+            hydrate_historical_matches=should_hydrate_real_fixture_history(),
+        )
         competition_rows, team_rows = prepare_sync_asset_rows(
             competition_rows=competition_rows,
             team_rows=team_rows,
@@ -422,6 +403,12 @@ def main() -> None:
             team_rows,
             locale="en",
             is_primary=True,
+        )
+        changed_match_ids = collect_changed_fixture_match_ids(
+            match_rows=payload,
+            existing_match_rows=historical_matches,
+            snapshot_rows=snapshot_rows_payload,
+            existing_snapshot_rows=existing_snapshot_rows,
         )
     else:
         normalized = build_fixture_row(SAMPLE_RAW_FIXTURE, {})

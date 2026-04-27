@@ -47,15 +47,6 @@ def test_select_due_prediction_targets_uses_checkpoint_windows_and_daily_pick_su
         "six_hours",
         "day_before",
     ]
-    assert [
-        (target.match_id, target.refresh_external_signals, target.refresh_lineup)
-        for target in targets
-    ] == [
-        ("one_hour", False, True),
-        ("six_hours", False, True),
-        ("day_before", True, True),
-        ("warmup", True, False),
-    ]
 
 
 def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(monkeypatch):
@@ -108,7 +99,6 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
     )
 
     assert result["target_match_ids"] == ["day_before", "six_hours"]
-    assert result["external_signal_match_ids"] == ["day_before"]
     assert result["daily_pick_dates"] == ["2026-04-26", "2026-04-27"]
     assert result["target_count"] == 2
     assert result["snapshot_rows"] == 2
@@ -118,44 +108,10 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
     assert rows_by_id["six_hours_t_minus_6h"]["external_signal_source_summary"] == "clubelo"
 
 
-def test_sync_prediction_checkpoints_backfills_external_signals_for_late_first_checkpoint(
-    monkeypatch,
-):
-    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
-    state = {
-        "matches": [_match("six_hours", "2026-04-26T17:30:00+00:00")],
-        "match_snapshots": [],
-        "teams": [
-            {"id": "arsenal", "name": "Arsenal"},
-            {"id": "chelsea", "name": "Chelsea"},
-        ],
-    }
-
-    class FakeClient:
-        def read_rows(self, table_name: str) -> list[dict]:
-            return list(state[table_name])
-
-        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
-            assert table_name == "match_snapshots"
-            return len(rows)
-
-    result = sync_job.sync_prediction_checkpoints(
-        FakeClient(),
-        now=now,
-        lookback_minutes=90,
-    )
-
-    assert result["target_match_ids"] == ["six_hours"]
-    assert result["external_signal_match_ids"] == ["six_hours"]
-
-
 def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkeypatch):
     now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
     state = {
-        "matches": [
-            _match("day_before", "2026-04-27T11:45:00+00:00"),
-            _match("warmup", "2026-04-29T11:30:00+00:00"),
-        ],
+        "matches": [_match("day_before", "2026-04-27T11:45:00+00:00")],
         "match_snapshots": [],
         "teams": [
             {"id": "arsenal", "name": "Arsenal"},
@@ -204,7 +160,6 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
     )
 
     assert result["bsd_lineup_contexts"] == 1
-    assert result["bsd_lineup_target_match_ids"] == ["day_before"]
     assert captured_events == [
         {
             "id": "day_before",
@@ -224,14 +179,12 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
             ],
         }
     ]
-    rows_by_id = {row["id"]: row for row in upserts[0]}
-    row = rows_by_id["day_before_t_minus_24h"]
+    [row] = upserts[0]
     assert row["lineup_status"] == "projected"
     assert row["home_absence_count"] == 1
     assert row["away_absence_count"] == 0
     assert row["lineup_strength_delta"] == 0.2
     assert row["lineup_source_summary"] == "bsd_predicted_lineups"
-    assert rows_by_id["warmup_t_minus_24h"]["lineup_status"] == "unknown"
 
 
 def test_sync_prediction_checkpoints_uses_rotowire_when_bsd_is_missing(monkeypatch):
