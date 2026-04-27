@@ -20,7 +20,7 @@ jobs:
       SUPABASE_URL: https://placeholder.supabase.local
       SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
       R2_BUCKET: workflow-artifacts
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
