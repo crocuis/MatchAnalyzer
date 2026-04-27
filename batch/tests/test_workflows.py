@@ -15,7 +15,9 @@ def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     assert 'cron: "0 */6 * * *"' not in workflow
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
-    assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
+    assert "BSD_API_KEY:" not in workflow
+    assert "REAL_FIXTURE_SYNC_MODE: schedule" in workflow
+    assert "BSD_LINEUP_LOOKAHEAD_HOURS" not in workflow
     assert "REAL_FIXTURE_DATE=" in workflow
 
 
@@ -29,15 +31,12 @@ def test_ingest_fixtures_workflow_syncs_current_day_and_second_week_window() -> 
     assert "FIXTURE_DATES<<EOF" in workflow
     assert "while IFS= read -r TARGET_DATE; do" in workflow
     assert 'REAL_FIXTURE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.ingest_fixtures_job' in workflow
-    assert "REAL_PREDICTION_MATCH_IDS" in workflow
-    assert "backfill_external_prediction_signals_job" in workflow
-    assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
-    assert "--clubelo-date-stride-days 1" in workflow
-    assert 'python3 -m batch.src.jobs.run_predictions_job' in workflow
-    assert 'echo "PRIMARY_FIXTURE_DATE=$TARGET_DATE_CANONICAL"' in workflow
-    assert 'if [ "$TARGET_DATE" != "$PRIMARY_FIXTURE_DATE" ]; then' in workflow
+    assert "CHANGED_MATCH_IDS_FILE" not in workflow
+    assert "REAL_PREDICTION_MATCH_IDS" not in workflow
+    assert "backfill_external_prediction_signals_job" not in workflow
+    assert 'python3 -m batch.src.jobs.run_predictions_job' not in workflow
+    assert "PRIMARY_FIXTURE_DATE" not in workflow
     assert "<<'PY'" not in workflow
-    assert "python3 -c" in workflow
 
 
 def test_ingest_markets_workflow_sets_real_market_date() -> None:
@@ -104,10 +103,11 @@ def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick
     assert "LLM_PREDICTION_ADVISORY_ENABLED:" in workflow
     assert "python3 -m batch.src.jobs.sync_prediction_checkpoints_job" in workflow
     assert "SYNC_TARGET_MATCH_IDS" in workflow
+    assert "SYNC_EXTERNAL_SIGNAL_MATCH_IDS" in workflow
     assert "SYNC_DAILY_PICK_DATES" in workflow
     assert "No due prediction checkpoints detected; skipping prediction refresh." in workflow
     assert "backfill_external_prediction_signals_job" in workflow
-    assert '--match-ids "$SYNC_TARGET_MATCH_IDS"' in workflow
+    assert '--match-ids "$SYNC_EXTERNAL_SIGNAL_MATCH_IDS"' in workflow
     assert "REAL_PREDICTION_MATCH_IDS=\"$SYNC_TARGET_MATCH_IDS\"" in workflow
     assert "No daily-pick prediction checkpoints changed; skipping daily pick refresh." in workflow
     assert "DAILY_PICK_SYNC_DATE=\"$TARGET_DATE\"" in workflow

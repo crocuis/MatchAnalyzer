@@ -45,6 +45,8 @@ class PredictionSyncWindow:
     offset: timedelta
     checkpoint: str
     refresh_daily_pick: bool
+    refresh_external_signals: bool
+    refresh_lineup: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +56,8 @@ class PredictionSyncTarget:
     checkpoint: str
     window_name: str
     refresh_daily_pick: bool
+    refresh_external_signals: bool
+    refresh_lineup: bool
 
 
 PREDICTION_SYNC_WINDOWS = (
@@ -62,24 +66,32 @@ PREDICTION_SYNC_WINDOWS = (
         offset=timedelta(hours=72),
         checkpoint="T_MINUS_24H",
         refresh_daily_pick=False,
+        refresh_external_signals=True,
+        refresh_lineup=False,
     ),
     PredictionSyncWindow(
         name="T_MINUS_24H",
         offset=timedelta(hours=24),
         checkpoint="T_MINUS_24H",
         refresh_daily_pick=True,
+        refresh_external_signals=True,
+        refresh_lineup=True,
     ),
     PredictionSyncWindow(
         name="T_MINUS_6H",
         offset=timedelta(hours=6),
         checkpoint="T_MINUS_6H",
         refresh_daily_pick=True,
+        refresh_external_signals=False,
+        refresh_lineup=True,
     ),
     PredictionSyncWindow(
         name="T_MINUS_1H",
         offset=timedelta(hours=1),
         checkpoint="T_MINUS_1H",
         refresh_daily_pick=True,
+        refresh_external_signals=False,
+        refresh_lineup=True,
     ),
 )
 
@@ -141,12 +153,20 @@ def select_due_prediction_targets(
             refresh_daily_pick = window.refresh_daily_pick or (
                 existing.refresh_daily_pick if existing else False
             )
+            refresh_external_signals = window.refresh_external_signals or (
+                existing.refresh_external_signals if existing else False
+            )
+            refresh_lineup = window.refresh_lineup or (
+                existing.refresh_lineup if existing else False
+            )
             targets_by_key[key] = PredictionSyncTarget(
                 match_id=match_id,
                 kickoff_at=kickoff_at,
                 checkpoint=window.checkpoint,
                 window_name=window.name,
                 refresh_daily_pick=refresh_daily_pick,
+                refresh_external_signals=refresh_external_signals,
+                refresh_lineup=refresh_lineup,
             )
     return sorted(
         targets_by_key.values(),
@@ -175,6 +195,27 @@ def latest_snapshot_contexts_by_match(
             if snapshot.get(field) is not None
         }
     return contexts
+
+
+def snapshot_context_has_external_signals(context: dict[str, Any]) -> bool:
+    return any(context.get(field) is not None for field in EXTERNAL_SIGNAL_FIELDS)
+
+
+def external_signal_match_ids_for_targets(
+    targets: list[PredictionSyncTarget],
+    existing_snapshots: list[dict],
+) -> list[str]:
+    context_by_match = latest_snapshot_contexts_by_match(existing_snapshots)
+    return sorted(
+        {
+            target.match_id
+            for target in targets
+            if target.refresh_external_signals
+            or not snapshot_context_has_external_signals(
+                context_by_match.get(target.match_id, {})
+            )
+        }
+    )
 
 
 def build_due_snapshot_rows(
@@ -264,6 +305,7 @@ def refresh_bsd_lineup_contexts_for_targets(
     matches: list[dict],
     teams: list[dict],
 ) -> dict[str, dict[str, Any]]:
+    targets = [target for target in targets if target.refresh_lineup]
     if not api_key or not targets:
         return {}
     events = build_bsd_lineup_events_for_targets(
@@ -315,15 +357,16 @@ def sync_prediction_checkpoints(
         now=observed_at,
         lookback_minutes=lookback_minutes,
     )
-    teams = client.read_rows("teams") if targets else []
+    lineup_targets = [target for target in targets if target.refresh_lineup]
+    teams = client.read_rows("teams") if lineup_targets else []
     rotowire_lineup_contexts = refresh_rotowire_lineup_contexts_for_targets(
-        targets=targets,
+        targets=lineup_targets,
         matches=matches,
         teams=teams,
     )
     bsd_lineup_contexts = refresh_bsd_lineup_contexts_for_targets(
         api_key=bsd_api_key,
-        targets=targets,
+        targets=lineup_targets,
         matches=matches,
         teams=teams,
     )
@@ -344,6 +387,13 @@ def sync_prediction_checkpoints(
         else 0
     )
     target_match_ids = sorted({target.match_id for target in targets})
+    external_signal_match_ids = external_signal_match_ids_for_targets(
+        targets,
+        existing_snapshots,
+    )
+    bsd_lineup_target_match_ids = sorted(
+        {target.match_id for target in targets if target.refresh_lineup}
+    )
     daily_pick_dates = sorted(
         {
             target.kickoff_at.date().isoformat()
@@ -353,12 +403,14 @@ def sync_prediction_checkpoints(
     )
     return {
         "target_match_ids": target_match_ids,
+        "external_signal_match_ids": external_signal_match_ids,
         "daily_pick_dates": daily_pick_dates,
         "target_count": len(targets),
         "snapshot_rows": len(snapshot_rows),
         "upserted_rows": upserted_rows,
         "rotowire_lineup_contexts": len(rotowire_lineup_contexts),
         "bsd_lineup_contexts": len(bsd_lineup_contexts),
+        "bsd_lineup_target_match_ids": bsd_lineup_target_match_ids,
         "lookback_minutes": lookback_minutes,
         "targets": [
             {
@@ -367,6 +419,8 @@ def sync_prediction_checkpoints(
                 "window": target.window_name,
                 "kickoff_at": target.kickoff_at.isoformat(),
                 "refresh_daily_pick": target.refresh_daily_pick,
+                "refresh_external_signals": target.refresh_external_signals,
+                "refresh_lineup": target.refresh_lineup,
             }
             for target in targets
         ],
