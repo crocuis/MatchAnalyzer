@@ -4795,6 +4795,67 @@ describe("prediction API", () => {
     ]);
   });
 
+  it("keeps review-needed no-bet picks visible in dashboard match card summaries", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            match_count: 1,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            league_id: "premier-league",
+            league_label: "Premier League",
+            home_team: "Liverpool",
+            away_team: "Brentford",
+            kickoff_at: "2026-04-27T21:00:00Z",
+            representative_recommended_pick: "HOME",
+            representative_confidence_score: 0.58,
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.58,
+            main_recommendation_recommended: false,
+            main_recommendation_no_bet_reason: "low_confidence",
+            has_prediction: true,
+            needs_review: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+    });
+
+    expect(page.items[0]?.needsReview).toBe(true);
+    expect(page.items[0]?.recommendedPick).toBe("HOME");
+    expect(page.items[0]?.confidence).toBe(0.58);
+    expect(page.items[0]?.mainRecommendation).toEqual({
+      pick: "HOME",
+      confidence: 0.58,
+      recommended: false,
+      noBetReason: "low_confidence",
+    });
+    expect(page.items[0]?.noBetReason).toBe("low_confidence");
+  });
+
   it("prefers the most recent prediction in the detail view when rows share a checkpoint", async () => {
     const predictionsQuery = {
       select: vi.fn().mockReturnThis(),
