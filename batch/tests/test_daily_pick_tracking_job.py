@@ -122,6 +122,59 @@ def test_sync_daily_picks_tracks_unvalidated_predictions_as_held() -> None:
     ]
 
 
+def test_sync_daily_picks_uses_adaptive_recommendation_gate() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.68,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.68,
+                "main_recommendation_recommended": True,
+                "main_recommendation_no_bet_reason": None,
+                "summary_payload": {
+                    "high_confidence_eligible": False,
+                    "confidence_reliability": "below_high_confidence_threshold",
+                    "validation_metadata": {
+                        "sample_count": 12,
+                        "hit_rate": 0.75,
+                        "wilson_lower_bound": 0.35,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "recommended"
+    assert items[0]["reason_labels"] == ["mainRecommendation"]
+    assert items[0]["validation_metadata"] == {
+        "high_confidence_eligible": False,
+        "confidence_reliability": "below_high_confidence_threshold",
+        "sample_count": 12,
+        "hit_rate": 0.75,
+        "wilson_lower_bound": 0.35,
+    }
+
+
 def test_sync_daily_picks_tracks_missing_validation_as_held() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",

@@ -3876,6 +3876,38 @@ def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
     ]
 
 
+def test_supabase_client_uses_default_projection_for_heavy_prediction_tables(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    requested_urls: list[str] = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps([{"id": "prediction-1"}]).encode("utf-8")
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        requested_urls.append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    rows = client.read_rows("predictions")
+
+    assert rows == [{"id": "prediction-1"}]
+    assert len(requested_urls) == 1
+    assert "select=%2A" not in requested_urls[0]
+    assert "summary_payload" in requested_urls[0]
+    assert "variant_markets_summary" in requested_urls[0]
+
+
 def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
 

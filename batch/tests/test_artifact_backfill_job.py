@@ -90,8 +90,19 @@ def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_
         def __init__(self, _url: str, _key: str) -> None:
             pass
 
-        def read_rows(self, table_name: str) -> list[dict]:
-            return list(state.get(table_name, []))
+        def read_rows(
+            self,
+            table_name: str,
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            rows = list(state.get(table_name, []))
+            if columns is None:
+                return rows
+            column_set = set(columns)
+            return [
+                {key: value for key, value in row.items() if key in column_set}
+                for row in rows
+            ]
 
         def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
             existing = {row["id"]: row for row in state.get(table_name, [])}

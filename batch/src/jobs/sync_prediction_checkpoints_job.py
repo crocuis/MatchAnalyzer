@@ -28,6 +28,9 @@ EXTERNAL_SIGNAL_FIELDS = (
     "bsd_away_xg_live",
     "external_signal_source_summary",
 )
+EXTERNAL_SIGNAL_COMPLETENESS_FIELDS = tuple(
+    field for field in EXTERNAL_SIGNAL_FIELDS if field != "external_signal_source_summary"
+)
 LINEUP_SIGNAL_FIELDS = (
     "lineup_status",
     "home_absence_count",
@@ -198,7 +201,10 @@ def latest_snapshot_contexts_by_match(
 
 
 def snapshot_context_has_external_signals(context: dict[str, Any]) -> bool:
-    return any(context.get(field) is not None for field in EXTERNAL_SIGNAL_FIELDS)
+    return any(
+        context.get(field) is not None
+        for field in EXTERNAL_SIGNAL_COMPLETENESS_FIELDS
+    )
 
 
 def external_signal_match_ids_for_targets(

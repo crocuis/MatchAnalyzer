@@ -108,6 +108,38 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
     assert rows_by_id["six_hours_t_minus_6h"]["external_signal_source_summary"] == "clubelo"
 
 
+def test_external_signal_source_summary_alone_does_not_skip_backfill():
+    targets = [
+        sync_job.PredictionSyncTarget(
+            match_id="match-1",
+            kickoff_at=datetime(2026, 4, 27, 12, 0, tzinfo=timezone.utc),
+            checkpoint="T_MINUS_24H",
+            window_name="T_MINUS_24H",
+            refresh_daily_pick=True,
+            refresh_external_signals=False,
+            refresh_lineup=True,
+        )
+    ]
+    snapshots = [
+        {
+            "id": "snapshot-1",
+            "match_id": "match-1",
+            "captured_at": "2026-04-26T12:00:00+00:00",
+            "external_signal_source_summary": "uefa_profile_match",
+        }
+    ]
+
+    assert (
+        sync_job.snapshot_context_has_external_signals(
+            {"external_signal_source_summary": "uefa_profile_match"}
+        )
+        is False
+    )
+    assert sync_job.external_signal_match_ids_for_targets(targets, snapshots) == [
+        "match-1"
+    ]
+
+
 def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkeypatch):
     now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
     state = {

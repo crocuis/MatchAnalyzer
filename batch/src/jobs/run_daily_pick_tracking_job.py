@@ -126,9 +126,12 @@ def build_recommended_pick_candidates(
 ) -> list[dict]:
     summary = prediction.get("summary_payload")
     summary_payload = summary if isinstance(summary, dict) else {}
-    high_confidence_eligible = summary_payload.get("high_confidence_eligible") is True
+    status, reliability_hold_reason = _resolve_daily_pick_gate(
+        prediction,
+        summary_payload,
+    )
     reliability_hold_reason = (
-        None if high_confidence_eligible else _resolve_reliability_hold_reason(summary_payload)
+        None if status == "recommended" else reliability_hold_reason
     )
     validation_metadata = _build_daily_pick_validation_metadata(summary_payload)
 
@@ -138,7 +141,7 @@ def build_recommended_pick_candidates(
         "match_id": match_id,
         "prediction_id": prediction.get("id"),
         "model_version_id": prediction.get("model_version_id"),
-        "status": "recommended" if high_confidence_eligible else "held",
+        "status": status,
         "validation_metadata": validation_metadata,
         "reliability_hold_reason": reliability_hold_reason,
     }
@@ -314,6 +317,41 @@ def _build_daily_pick_validation_metadata(summary_payload: dict) -> dict:
     ):
         metadata.setdefault("source_agreement_ratio", float(source_agreement_ratio))
     return metadata
+
+
+def _has_daily_pick_validation_support(summary_payload: dict) -> bool:
+    if summary_payload.get("high_confidence_eligible") is True:
+        return True
+    raw_metadata = summary_payload.get("validation_metadata")
+    if not isinstance(raw_metadata, dict):
+        return False
+    return all(
+        raw_metadata.get(field) is not None
+        for field in ("sample_count", "hit_rate", "wilson_lower_bound")
+    )
+
+
+def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[str, str]:
+    prediction_gate = prediction.get("main_recommendation_recommended")
+    no_bet_reason = prediction.get("main_recommendation_no_bet_reason")
+    has_validation_support = _has_daily_pick_validation_support(summary_payload)
+    has_no_bet_reason = isinstance(no_bet_reason, str) and bool(no_bet_reason)
+    if prediction_gate is None:
+        is_recommended = (
+            summary_payload.get("high_confidence_eligible") is True
+            and has_validation_support
+        )
+    else:
+        is_recommended = (
+            prediction_gate is True
+            and has_validation_support
+            and not has_no_bet_reason
+        )
+    if is_recommended:
+        return "recommended", ""
+    if has_no_bet_reason:
+        return "held", no_bet_reason
+    return "held", _resolve_reliability_hold_reason(summary_payload)
 
 
 def _resolve_reliability_hold_reason(summary_payload: dict) -> str:
