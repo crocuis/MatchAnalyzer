@@ -10,6 +10,7 @@ from batch.src.ingest.external_signals import (
     UNDERSTAT_LEAGUES_BY_COMPETITION_ID,
     build_clubelo_context_by_match,
     build_understat_context_by_match,
+    build_uefa_profile_context_by_match,
     fetch_clubelo_ratings,
     fetch_understat_league_data,
     understat_season_start_year,
@@ -186,7 +187,8 @@ def filter_backfill_scope(
 
 
 def snapshot_has_external_signals(snapshot: dict[str, Any]) -> bool:
-    return any(snapshot.get(field) is not None for field in EXTERNAL_SIGNAL_FIELDS)
+    predictive_fields = EXTERNAL_SIGNAL_FIELDS - {"external_signal_source_summary"}
+    return any(snapshot.get(field) is not None for field in predictive_fields)
 
 
 def merge_external_signal_source_summary(*values: Any) -> str | None:
@@ -370,6 +372,7 @@ def build_external_signal_snapshot_updates(
         if match_id in events_by_match_id
     ]
     understat_contexts = build_understat_contexts(target_events)
+    uefa_profile_contexts = build_uefa_profile_context_by_match(target_events)
     clubelo_contexts_by_snapshot_id = build_clubelo_contexts_by_snapshot_id(
         snapshots=target_snapshots,
         matches_by_id=matches_by_id,
@@ -384,6 +387,7 @@ def build_external_signal_snapshot_updates(
         context = merge_external_signal_context_rows(
             clubelo_contexts_by_snapshot_id.get(str(snapshot.get("id") or "")),
             understat_contexts.get(match_id),
+            uefa_profile_contexts.get(match_id),
         )
         if not context:
             continue
@@ -421,6 +425,7 @@ def build_external_signal_snapshot_updates(
         ),
         "clubelo_context_snapshots": len(clubelo_contexts_by_snapshot_id),
         "understat_context_matches": len(understat_contexts),
+        "uefa_profile_context_matches": len(uefa_profile_contexts),
         "merged_context_snapshots": len(updates),
         "source_counts": dict(source_counter),
     }

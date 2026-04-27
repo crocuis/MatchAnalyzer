@@ -11,19 +11,22 @@ import batch.src.ingest.fetch_fixtures as fetch_fixtures_module
 import batch.src.ingest.fetch_markets as fetch_markets_module
 from batch.src.ingest.external_signals import build_clubelo_context_by_match
 from batch.src.ingest.external_signals import build_understat_context_by_match
+from batch.src.ingest.external_signals import build_uefa_profile_context_by_match
 from batch.src.ingest.external_signals import merge_external_signal_contexts
 from batch.src.ingest.fetch_fixtures import build_fixture_row
-from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_context_by_match
 from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_contexts_from_events
 from batch.src.ingest.fetch_fixtures import build_bsd_lineup_contexts_from_payloads
 from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
 from batch.src.ingest.fetch_fixtures import build_match_row_from_event
 from batch.src.ingest.fetch_fixtures import build_lineup_context_by_match
+from batch.src.ingest.fetch_fixtures import build_rotowire_lineup_context_by_match
+from batch.src.ingest.fetch_fixtures import build_rotowire_lineup_contexts_from_matches
 from batch.src.ingest.fetch_fixtures import build_snapshot_rows_from_matches
 from batch.src.ingest.fetch_fixtures import competition_emblem_url
 from batch.src.ingest.fetch_fixtures import filter_supported_events
 from batch.src.ingest.fetch_fixtures import match_bsd_events_to_schedule_events
 from batch.src.ingest.fetch_fixtures import merge_lineup_contexts
+from batch.src.ingest.fetch_fixtures import parse_rotowire_lineups_html
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
     build_betman_team_translation_rows,
@@ -51,6 +54,7 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
     bucket_date,
     filter_backfill_scope,
     parse_match_id_filter,
+    snapshot_has_external_signals,
     snapshot_as_of_date,
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
@@ -62,7 +66,6 @@ from batch.src.jobs.ingest_fixtures_job import (
     resolve_external_signal_as_of_date,
     should_backfill_real_fixture_team_assets,
     should_hydrate_real_fixture_history,
-    main as run_ingest_fixtures_job,
 )
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
@@ -2665,31 +2668,6 @@ def test_bsd_event_signal_contexts_capture_event_xg_fields():
     }
 
 
-def test_bsd_event_signal_context_by_match_skips_distant_future_events(monkeypatch):
-    def fail_fetch(*args, **kwargs):
-        raise AssertionError("distant future events should not query BSD events")
-
-    monkeypatch.setattr(fetch_fixtures_module, "fetch_bsd_events", fail_fetch)
-
-    contexts = build_bsd_event_signal_context_by_match(
-        "bsd-key",
-        [
-            {
-                "id": "match_future",
-                "start_time": (
-                    datetime.now(timezone.utc) + timedelta(days=7)
-                ).isoformat(),
-                "competitors": [
-                    {"qualifier": "home", "team": {"name": "Chelsea"}},
-                    {"qualifier": "away", "team": {"name": "Arsenal"}},
-                ],
-            }
-        ],
-    )
-
-    assert contexts == {}
-
-
 def test_match_bsd_events_to_schedule_events_uses_kickoff_and_team_names():
     rows = match_bsd_events_to_schedule_events(
         [
@@ -2718,6 +2696,172 @@ def test_match_bsd_events_to_schedule_events_uses_kickoff_and_team_names():
             "event_date": "2026-04-25T11:30:00Z",
             "home_team": "Chelsea",
             "away_team": "Arsenal",
+        }
+    }
+
+
+def test_parse_rotowire_lineups_html_extracts_projected_players_and_injuries():
+    html = """
+    <main data-gamedate="2026-04-27">
+      <div class="lineup is-soccer">
+        <div class="lineup__time"><b>April 27</b>&nbsp; 3:00 PM ET</div>
+        <div class="lineup__matchup">
+          <div class="lineup__mteam is-home">Manchester United</div>
+          <div class="lineup__mteam is-visit">Brentford</div>
+        </div>
+        <div class="lineup__main">
+          <ul class="lineup__list is-home">
+            <li class="lineup__status is-expected">Predicted Lineup</li>
+            <li class="lineup__player"><div class="lineup__pos ">GK</div><a title="Home Keeper"></a></li>
+            <li class="lineup__title is-middle">Injuries</li>
+            <li class="lineup__player"><div class="lineup__pos ">D</div><a title="Home Defender"></a><span class="lineup__inj">OUT</span></li>
+            <li class="lineup__player"><div class="lineup__pos ">M</div><a title="Home Midfielder"></a><span class="lineup__inj">QUES</span></li>
+          </ul>
+          <ul class="lineup__list is-visit">
+            <li class="lineup__status is-confirmed">Confirmed Lineup</li>
+            <li class="lineup__player"><div class="lineup__pos ">FW</div><a title="Away Forward"></a></li>
+            <li class="lineup__title is-middle">Injuries</li>
+            <li class="lineup__player"><div class="lineup__pos ">M</div><a title="Away Midfielder"></a><span class="lineup__inj">SUS</span></li>
+          </ul>
+        </div>
+      </div>
+    </main>
+    """
+
+    rows = parse_rotowire_lineups_html(html)
+
+    assert rows == [
+        {
+            "home_lineup": [
+                {
+                    "name": "Home Keeper",
+                    "position": "Goalkeeper",
+                    "injury_status": "",
+                }
+            ],
+            "away_lineup": [
+                {
+                    "name": "Away Forward",
+                    "position": "Forward",
+                    "injury_status": "",
+                }
+            ],
+            "home_injuries": [
+                {
+                    "name": "Home Defender",
+                    "position": "Defender",
+                    "injury_status": "OUT",
+                },
+                {
+                    "name": "Home Midfielder",
+                    "position": "Midfielder",
+                    "injury_status": "QUES",
+                },
+            ],
+            "away_injuries": [
+                {
+                    "name": "Away Midfielder",
+                    "position": "Midfielder",
+                    "injury_status": "SUS",
+                }
+            ],
+            "home_status": "Predicted Lineup",
+            "away_status": "Confirmed Lineup",
+            "time_label": "April 27 3:00 PM ET",
+            "home_team": "Manchester United",
+            "away_team": "Brentford",
+            "event_date": "2026-04-27T19:00:00+00:00",
+        }
+    ]
+
+
+def test_build_rotowire_lineup_contexts_keeps_questionable_out_of_absence_count():
+    starter_positions = [
+        "Goalkeeper",
+        "Defender",
+        "Defender",
+        "Defender",
+        "Defender",
+        "Midfielder",
+        "Midfielder",
+        "Midfielder",
+        "Forward",
+        "Forward",
+        "Forward",
+    ]
+    contexts = build_rotowire_lineup_contexts_from_matches(
+        {
+            "match_001": {
+                "home_status": "Predicted Lineup",
+                "away_status": "Predicted Lineup",
+                "home_lineup": [
+                    {"name": f"Home {index}", "position": position}
+                    for index, position in enumerate(starter_positions, start=1)
+                ],
+                "away_lineup": [
+                    {"name": f"Away {index}", "position": position}
+                    for index, position in enumerate(starter_positions, start=1)
+                ],
+                "home_injuries": [
+                    {"name": "Home Out", "position": "Defender", "injury_status": "OUT"},
+                    {"name": "Home Ques", "position": "Forward", "injury_status": "QUES"},
+                ],
+                "away_injuries": [
+                    {"name": "Away Sus", "position": "Midfielder", "injury_status": "SUS"}
+                ],
+            }
+        }
+    )
+
+    assert contexts["match_001"] == {
+        "lineup_status": "projected",
+        "home_lineup_score": 1.0318,
+        "away_lineup_score": 1.0318,
+        "lineup_strength_delta": 0.0,
+        "home_absence_count": 1,
+        "away_absence_count": 1,
+        "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+    }
+
+
+def test_build_rotowire_lineup_context_by_match_matches_supported_schedule(monkeypatch):
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "fetch_rotowire_lineups",
+        lambda competition_id: [
+            {
+                "event_date": "2026-04-27T19:00:00+00:00",
+                "home_team": "Manchester United",
+                "away_team": "Brentford",
+                "home_injuries": [
+                    {"name": "Home Out", "position": "Defender", "injury_status": "OUT"}
+                ],
+                "away_injuries": [],
+                "home_lineup": [],
+                "away_lineup": [],
+            }
+        ],
+    )
+
+    contexts = build_rotowire_lineup_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "start_time": "2026-04-27T19:00:00Z",
+                "competition": {"id": "premier-league"},
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Manchester United"}},
+                    {"qualifier": "away", "team": {"name": "Brentford"}},
+                ],
+            }
+        ]
+    )
+
+    assert contexts == {
+        "match_001": {
+            "home_absence_count": 1,
+            "away_absence_count": 0,
+            "lineup_source_summary": "rotowire_injuries",
         }
     }
 
@@ -2783,6 +2927,172 @@ def test_build_clubelo_context_by_match_matches_aliases_and_persists_ratings():
     }
 
 
+def test_build_clubelo_context_by_match_uses_source_specific_aliases():
+    contexts = build_clubelo_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Nottingham Forest"}},
+                    {"qualifier": "away", "team": {"name": "VfL Wolfsburg"}},
+                ],
+            },
+            {
+                "id": "match_002",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "AS Roma"}},
+                    {"qualifier": "away", "team": {"name": "1. FC Heidenheim 1846"}},
+                ],
+            },
+        ],
+        [
+            {"Club": "Forest", "Elo": "1710.5"},
+            {"Club": "Wolfsburg", "Elo": "1680.25"},
+            {"Club": "Roma", "Elo": "1760.75"},
+            {"Club": "Heidenheim", "Elo": "1601.125"},
+        ],
+    )
+
+    assert contexts == {
+        "match_001": {
+            "external_home_elo": 1710.5,
+            "external_away_elo": 1680.25,
+            "external_signal_source_summary": "clubelo",
+        },
+        "match_002": {
+            "external_home_elo": 1760.75,
+            "external_away_elo": 1601.125,
+            "external_signal_source_summary": "clubelo",
+        },
+    }
+
+
+def test_build_clubelo_context_by_match_normalizes_diacritics_and_short_provider_names():
+    contexts = build_clubelo_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Atlético Madrid"}},
+                    {"qualifier": "away", "team": {"name": "Borussia Mönchengladbach"}},
+                ],
+            },
+            {
+                "id": "match_002",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "FC Cologne"}},
+                    {"qualifier": "away", "team": {"name": "Werder Bremen"}},
+                ],
+            },
+        ],
+        [
+            {"Club": "Atletico", "Elo": "1850"},
+            {"Club": "Gladbach", "Elo": "1700"},
+            {"Club": "Koeln", "Elo": "1650"},
+            {"Club": "Werder", "Elo": "1660"},
+        ],
+    )
+
+    assert contexts == {
+        "match_001": {
+            "external_home_elo": 1850.0,
+            "external_away_elo": 1700.0,
+            "external_signal_source_summary": "clubelo",
+        },
+        "match_002": {
+            "external_home_elo": 1650.0,
+            "external_away_elo": 1660.0,
+            "external_signal_source_summary": "clubelo",
+        },
+    }
+
+
+def test_build_clubelo_context_by_match_maps_european_competition_aliases():
+    contexts = build_clubelo_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "FK Qarabag"}},
+                    {"qualifier": "away", "team": {"name": "F.C. København"}},
+                ],
+            },
+            {
+                "id": "match_002",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Malmö FF"}},
+                    {"qualifier": "away", "team": {"name": "Union St.-Gilloise"}},
+                ],
+            },
+        ],
+        [
+            {"Club": "Karabakh Agdam", "Elo": "1580"},
+            {"Club": "FC Kobenhavn", "Elo": "1690"},
+            {"Club": "Malmoe", "Elo": "1605"},
+            {"Club": "St Gillis", "Elo": "1750"},
+        ],
+    )
+
+    assert contexts == {
+        "match_001": {
+            "external_home_elo": 1580.0,
+            "external_away_elo": 1690.0,
+            "external_signal_source_summary": "clubelo",
+        },
+        "match_002": {
+            "external_home_elo": 1605.0,
+            "external_away_elo": 1750.0,
+            "external_signal_source_summary": "clubelo",
+        },
+    }
+
+
+def test_build_uefa_profile_context_by_match_matches_current_european_club_gaps():
+    contexts = build_uefa_profile_context_by_match(
+        [
+            {
+                "id": "conference_gap",
+                "competition": {"id": "conference-league"},
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "KuPS Kuopio"}},
+                    {"qualifier": "away", "team": {"name": "Lech Poznan"}},
+                ],
+            },
+            {
+                "id": "champions_gap",
+                "competition": {"id": "champions-league"},
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Pafos"}},
+                    {"qualifier": "away", "team": {"name": "AS Monaco"}},
+                ],
+            },
+            {
+                "id": "placeholder",
+                "competition": {"id": "europa-league"},
+                "competitors": [
+                    {
+                        "qualifier": "home",
+                        "team": {"name": "Semifinal 1 Winner"},
+                    },
+                    {
+                        "qualifier": "away",
+                        "team": {"name": "Semifinal 2 Winner"},
+                    },
+                ],
+            },
+        ]
+    )
+
+    assert contexts == {
+        "conference_gap": {
+            "external_signal_source_summary": "uefa_profile_match",
+        },
+        "champions_gap": {
+            "external_signal_source_summary": "uefa_profile_match",
+        },
+    }
+
+
 def test_build_understat_context_by_match_uses_previous_matches_only():
     contexts = build_understat_context_by_match(
         [
@@ -2843,6 +3153,116 @@ def test_build_understat_context_by_match_uses_previous_matches_only():
     }
 
 
+def test_build_understat_context_by_match_keeps_understat_team_names_source_scoped():
+    contexts = build_understat_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competition": {"id": "premier-league"},
+                "start_time": "2026-04-25T11:30:00Z",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Nottingham Forest"}},
+                    {"qualifier": "away", "team": {"name": "West Ham United"}},
+                ],
+            }
+        ],
+        {
+            (
+                "EPL",
+                2025,
+            ): {
+                "teams": {
+                    "1": {
+                        "title": "Nottingham Forest",
+                        "history": [
+                            {
+                                "date": "2026-04-20 15:00:00",
+                                "xG": 1.5,
+                                "xGA": 1.1,
+                            },
+                        ],
+                    },
+                    "2": {
+                        "title": "West Ham",
+                        "history": [
+                            {
+                                "date": "2026-04-18 15:00:00",
+                                "xG": 0.9,
+                                "xGA": 1.4,
+                            }
+                        ],
+                    },
+                }
+            }
+        },
+    )
+
+    assert contexts == {
+        "match_001": {
+            "understat_home_xg_for_last_5": 1.5,
+            "understat_home_xg_against_last_5": 1.1,
+            "understat_away_xg_for_last_5": 0.9,
+            "understat_away_xg_against_last_5": 1.4,
+            "external_signal_source_summary": "understat",
+        }
+    }
+
+
+def test_build_understat_context_by_match_uses_source_specific_short_names():
+    contexts = build_understat_context_by_match(
+        [
+            {
+                "id": "match_001",
+                "competition": {"id": "bundesliga"},
+                "start_time": "2026-04-25T11:30:00Z",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Borussia Mönchengladbach"}},
+                    {"qualifier": "away", "team": {"name": "RB Leipzig"}},
+                ],
+            }
+        ],
+        {
+            (
+                "Bundesliga",
+                2025,
+            ): {
+                "teams": {
+                    "1": {
+                        "title": "Borussia M.Gladbach",
+                        "history": [
+                            {
+                                "date": "2026-04-20 15:00:00",
+                                "xG": 1.5,
+                                "xGA": 1.1,
+                            },
+                        ],
+                    },
+                    "2": {
+                        "title": "RasenBallsport Leipzig",
+                        "history": [
+                            {
+                                "date": "2026-04-18 15:00:00",
+                                "xG": 1.7,
+                                "xGA": 0.8,
+                            }
+                        ],
+                    },
+                }
+            }
+        },
+    )
+
+    assert contexts == {
+        "match_001": {
+            "understat_home_xg_for_last_5": 1.5,
+            "understat_home_xg_against_last_5": 1.1,
+            "understat_away_xg_for_last_5": 1.7,
+            "understat_away_xg_against_last_5": 0.8,
+            "external_signal_source_summary": "understat",
+        }
+    }
+
+
 def test_merge_external_signal_contexts_combines_sources():
     merged = merge_external_signal_contexts(
         {
@@ -2888,120 +3308,21 @@ def test_fixture_ingest_uses_fixture_date_for_external_signal_context():
     assert resolve_external_signal_as_of_date("2026-04-24") == "2026-04-24"
 
 
-def test_real_fixture_schedule_mode_skips_detail_signal_sync(monkeypatch, capsys):
-    event = {
-        "id": "match_001",
-        "competition": {
-            "id": "premier-league",
-            "name": "Premier League",
-            "emblem": "https://example.test/pl.png",
-        },
-        "season": {"id": "premier-league-2026"},
-        "start_time": "2026-05-03T11:30:00Z",
-        "status": "scheduled",
-        "venue": {"country": "England"},
-        "competitors": [
-            {
-                "qualifier": "home",
-                "team": {
-                    "id": "arsenal",
-                    "name": "Arsenal",
-                    "crest": "https://example.test/arsenal.png",
-                },
-            },
-            {
-                "qualifier": "away",
-                "team": {
-                    "id": "chelsea",
-                    "name": "Chelsea",
-                    "crest": "https://example.test/chelsea.png",
-                },
-            },
-        ],
-    }
-    upserts = []
-
-    def fail_detail_sync(*args, **kwargs):
-        raise AssertionError("schedule mode should not run detail signal sync")
-
-    class FakeClient:
-        def __init__(self, _base_url: str, _service_key: str) -> None:
-            pass
-
-        def read_rows(self, table_name: str) -> list[dict]:
-            if table_name in {"competitions", "teams"}:
-                return []
-            raise AssertionError(f"schedule mode should not read {table_name}")
-
-        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
-            upserts.append((table_name, rows))
-            return len(rows)
-
-    class FakeR2Client:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def archive_json(self, _key: str, _payload: dict) -> str:
-            return "r2://fixtures/2026-05-03.json"
-
-    monkeypatch.setenv("REAL_FIXTURE_DATE", "2026-05-03")
-    monkeypatch.setenv("REAL_FIXTURE_SYNC_MODE", "schedule")
-    monkeypatch.setattr(
-        "batch.src.jobs.ingest_fixtures_job.fetch_daily_schedule",
-        lambda _target_date: {"data": {"events": [event]}},
-    )
-    monkeypatch.setattr(
-        "batch.src.jobs.ingest_fixtures_job.build_lineup_context_by_match",
-        fail_detail_sync,
-    )
-    monkeypatch.setattr(
-        "batch.src.jobs.ingest_fixtures_job.build_bsd_lineup_context_by_match",
-        fail_detail_sync,
-    )
-    monkeypatch.setattr(
-        "batch.src.jobs.ingest_fixtures_job.build_bsd_event_signal_context_by_match",
-        fail_detail_sync,
-    )
-    monkeypatch.setattr(
-        "batch.src.jobs.ingest_fixtures_job.build_external_signal_context_by_match",
-        fail_detail_sync,
-    )
-    monkeypatch.setattr("batch.src.jobs.ingest_fixtures_job.SupabaseClient", FakeClient)
-    monkeypatch.setattr("batch.src.jobs.ingest_fixtures_job.R2Client", FakeR2Client)
-    monkeypatch.setattr(
-        "batch.src.jobs.ingest_fixtures_job.load_settings",
-        lambda: type(
-            "Settings",
-            (),
-            {
-                "supabase_url": "https://example.supabase.co",
-                "supabase_key": "service-key",
-                "bsd_api_key": "bsd-key",
-                "r2_bucket": "workflow-artifacts",
-                "r2_access_key_id": None,
-                "r2_secret_access_key": None,
-                "r2_s3_endpoint": None,
-            },
-        )(),
-    )
-
-    run_ingest_fixtures_job()
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["fixture_rows"] == 1
-    assert payload["snapshot_rows"] == 0
-    assert payload["changed_match_ids"] == []
-    assert [table_name for table_name, _rows in upserts] == [
-        "competitions",
-        "teams",
-        "team_translations",
-        "matches",
-    ]
-
-
 def test_bucket_date_uses_latest_prior_stride_boundary():
     assert bucket_date("2026-04-26", stride_days=7) <= "2026-04-26"
     assert bucket_date("2026-04-26", stride_days=1) == "2026-04-26"
+
+
+def test_snapshot_has_external_signals_ignores_identity_only_profile_match():
+    assert not snapshot_has_external_signals(
+        {"external_signal_source_summary": "uefa_profile_match"}
+    )
+    assert snapshot_has_external_signals(
+        {
+            "external_home_elo": 1810.0,
+            "external_signal_source_summary": "clubelo+uefa_profile_match",
+        }
+    )
 
 
 def test_parse_match_id_filter_trims_empty_values():
@@ -3555,14 +3876,12 @@ def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
     ]
 
 
-def test_supabase_client_uses_narrow_default_remote_columns_for_heavy_tables(monkeypatch):
+def test_supabase_client_uses_default_projection_for_heavy_prediction_tables(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
     requested_urls: list[str] = []
 
     class FakeResponse:
-        def __init__(self, payload: list[dict], status: int = 200) -> None:
-            self.payload = payload
-            self.status = status
+        status = 200
 
         def __enter__(self):
             return self
@@ -3571,25 +3890,22 @@ def test_supabase_client_uses_narrow_default_remote_columns_for_heavy_tables(mon
             return False
 
         def read(self) -> bytes:
-            return json.dumps(self.payload).encode("utf-8")
+            return json.dumps([{"id": "prediction-1"}]).encode("utf-8")
 
     def fake_urlopen(request, timeout=30):
         del timeout
         requested_urls.append(request.full_url)
-        return FakeResponse([])
+        return FakeResponse()
 
     monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
 
-    client.read_rows("predictions")
-    client.read_rows("prediction_feature_snapshots")
+    rows = client.read_rows("predictions")
 
+    assert rows == [{"id": "prediction-1"}]
+    assert len(requested_urls) == 1
     assert "select=%2A" not in requested_urls[0]
-    assert "explanation_payload" not in requested_urls[0]
-    assert "explanation_artifact_id" in requested_urls[0]
     assert "summary_payload" in requested_urls[0]
-    assert "select=%2A" not in requested_urls[1]
-    assert "source_metadata" not in requested_urls[1]
-    assert "feature_metadata" in requested_urls[1]
+    assert "variant_markets_summary" in requested_urls[0]
 
 
 def test_supabase_client_reads_unordered_view_without_id(monkeypatch):

@@ -18,6 +18,7 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 
 MAX_DAILY_RECOMMENDATIONS = 10
+MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
 
 
@@ -75,13 +76,23 @@ def sync_daily_picks_for_date(
         )
     )
     run_id = build_daily_pick_run_id(pick_date)
+    recommended_candidates = [row for row in candidates if row.get("status") == "recommended"]
+    held_candidates = [row for row in candidates if row.get("status") == "held"]
+    selected_candidates = (
+        recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]
+        + held_candidates[:MAX_DAILY_HELD_CANDIDATES]
+    )
     selected_items = [
         {
-            **row,
+            **{
+                key: value
+                for key, value in row.items()
+                if key != "reliability_hold_reason"
+            },
             "run_id": run_id,
             "id": build_daily_pick_item_id(run_id, row),
         }
-        for row in candidates[:MAX_DAILY_RECOMMENDATIONS]
+        for row in selected_candidates
     ]
     model_version_id = next(
         (
@@ -99,6 +110,8 @@ def sync_daily_picks_for_date(
         "metadata": {
             "candidate_count": len(candidates),
             "selected_count": len(selected_items),
+            "recommended_count": len(recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]),
+            "held_count": len(held_candidates[:MAX_DAILY_HELD_CANDIDATES]),
             "ranking": "expected_value_edge_probability_confidence",
         },
     }
@@ -113,8 +126,14 @@ def build_recommended_pick_candidates(
 ) -> list[dict]:
     summary = prediction.get("summary_payload")
     summary_payload = summary if isinstance(summary, dict) else {}
-    if summary_payload.get("high_confidence_eligible") is not True:
-        return []
+    status, reliability_hold_reason = _resolve_daily_pick_gate(
+        prediction,
+        summary_payload,
+    )
+    reliability_hold_reason = (
+        None if status == "recommended" else reliability_hold_reason
+    )
+    validation_metadata = _build_daily_pick_validation_metadata(summary_payload)
 
     match_id = str(match.get("id") or "")
     base = {
@@ -122,8 +141,9 @@ def build_recommended_pick_candidates(
         "match_id": match_id,
         "prediction_id": prediction.get("id"),
         "model_version_id": prediction.get("model_version_id"),
-        "status": "recommended",
-        "validation_metadata": summary_payload.get("validation_metadata") or {},
+        "status": status,
+        "validation_metadata": validation_metadata,
+        "reliability_hold_reason": reliability_hold_reason,
     }
 
     candidates: list[dict] = []
@@ -202,7 +222,10 @@ def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | No
             market_probability=market_probability,
             confidence=confidence,
         ),
-        "reason_labels": ["mainRecommendation"],
+        "reason_labels": _recommendation_reason_labels(
+            base,
+            "mainRecommendation",
+        ),
     }
 
 
@@ -251,7 +274,11 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
             market_probability=market_probability,
             confidence=None,
         ),
-        "reason_labels": [market_family, "variantRecommendation"],
+        "reason_labels": _recommendation_reason_labels(
+            base,
+            market_family,
+            "variantRecommendation",
+        ),
     }
 
 
@@ -270,6 +297,76 @@ def recommendation_score(
     if model_probability is not None and market_probability is not None:
         return model_probability - market_probability
     return confidence or model_probability or 0.0
+
+
+def _build_daily_pick_validation_metadata(summary_payload: dict) -> dict:
+    raw_metadata = summary_payload.get("validation_metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    if "high_confidence_eligible" not in metadata:
+        metadata["high_confidence_eligible"] = (
+            summary_payload.get("high_confidence_eligible") is True
+        )
+    if "confidence_reliability" not in metadata:
+        reliability = summary_payload.get("confidence_reliability")
+        if isinstance(reliability, str) and reliability:
+            metadata["confidence_reliability"] = reliability
+    source_agreement_ratio = summary_payload.get("source_agreement_ratio")
+    if isinstance(source_agreement_ratio, (int, float)) and not isinstance(
+        source_agreement_ratio,
+        bool,
+    ):
+        metadata.setdefault("source_agreement_ratio", float(source_agreement_ratio))
+    return metadata
+
+
+def _has_daily_pick_validation_support(summary_payload: dict) -> bool:
+    if summary_payload.get("high_confidence_eligible") is True:
+        return True
+    raw_metadata = summary_payload.get("validation_metadata")
+    if not isinstance(raw_metadata, dict):
+        return False
+    return all(
+        raw_metadata.get(field) is not None
+        for field in ("sample_count", "hit_rate", "wilson_lower_bound")
+    )
+
+
+def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[str, str]:
+    prediction_gate = prediction.get("main_recommendation_recommended")
+    no_bet_reason = prediction.get("main_recommendation_no_bet_reason")
+    has_validation_support = _has_daily_pick_validation_support(summary_payload)
+    has_no_bet_reason = isinstance(no_bet_reason, str) and bool(no_bet_reason)
+    if prediction_gate is None:
+        is_recommended = (
+            summary_payload.get("high_confidence_eligible") is True
+            and has_validation_support
+        )
+    else:
+        is_recommended = (
+            prediction_gate is True
+            and has_validation_support
+            and not has_no_bet_reason
+        )
+    if is_recommended:
+        return "recommended", ""
+    if has_no_bet_reason:
+        return "held", no_bet_reason
+    return "held", _resolve_reliability_hold_reason(summary_payload)
+
+
+def _resolve_reliability_hold_reason(summary_payload: dict) -> str:
+    reliability = summary_payload.get("confidence_reliability")
+    if isinstance(reliability, str) and reliability:
+        return reliability
+    return "confidence_reliability_missing"
+
+
+def _recommendation_reason_labels(base: dict, *labels: str) -> list[str]:
+    reason_labels = [label for label in labels if label]
+    if base.get("status") != "held":
+        return reason_labels
+    hold_reason = str(base.get("reliability_hold_reason") or "confidence_reliability_missing")
+    return [*reason_labels, "heldByRecommendationGate", hold_reason]
 
 
 def settle_daily_pick_items(

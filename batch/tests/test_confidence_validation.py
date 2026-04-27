@@ -77,6 +77,43 @@ def test_high_confidence_eligibility_holds_insufficient_samples():
     assert decision["validation_metadata"]["rolling_window_days"] == 90
 
 
+def test_high_confidence_eligibility_can_use_validated_broader_segment():
+    records = [
+        _record(index, correct=True)
+        for index in range(10)
+    ]
+    records.extend(
+        {
+            **_record(index + 10, correct=index < 45),
+            "league_or_sport": "serie-a",
+        }
+        for index in range(50)
+    )
+    segments = summarize_validation_segments(
+        records,
+        validated_as_of="2026-04-30T00:00:00Z",
+        include_fallback_segments=True,
+    )
+
+    decision = evaluate_high_confidence_eligibility(
+        {
+            "model_version": "model-v1",
+            "league_or_sport": "premier-league",
+            "market_type": "moneyline",
+            "calibrated_confidence": 0.86,
+            "implied_probability": 0.62,
+        },
+        segments,
+        validated_as_of="2026-04-30T00:00:00Z",
+    )
+
+    assert decision["high_confidence_eligible"] is True
+    assert decision["confidence_reliability"] == "validated"
+    assert decision["validation_metadata"]["sample_count"] == 60
+    assert decision["validation_metadata"]["league_or_sport"] == "all"
+    assert decision["validation_metadata"]["validation_scope"] == "global_confidence_implied"
+
+
 def test_high_confidence_eligibility_accepts_validated_segment():
     segments = summarize_validation_segments(
         [_record(index, correct=index < 45) for index in range(50)],

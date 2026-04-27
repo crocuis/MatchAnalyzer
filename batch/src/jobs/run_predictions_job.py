@@ -39,6 +39,7 @@ from batch.src.model.fusion import (
     build_main_recommendation,
     fuse_probabilities,
     build_value_recommendation,
+    MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
     VALUE_RECOMMENDATION_EV_THRESHOLD,
     choose_recommended_pick,
     confidence_score,
@@ -80,10 +81,15 @@ BOOKMAKER_FALLBACK_DRAW_MAX_PROBABILITY = 0.24
 BOOKMAKER_FALLBACK_NEUTRAL_ELO_MAX_ABS = 0.05
 BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
-TRAINING_RECENT_SNAPSHOT_LIMIT = 200
+TRAINING_RECENT_SNAPSHOT_LIMIT = 2000
 TRAINED_BASELINE_UNAVAILABLE = object()
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
 VARIANT_RECOMMENDATION_MIN_MARKET_PRICE = 0.1
+BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT = 100
+ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.55
+ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT = 5
+ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE = 0.70
+ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND = 0.30
 PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
     "snapshot_quality",
     "lineup_status",
@@ -170,7 +176,7 @@ def select_real_prediction_inputs(
         else {
             row["id"]
             for row in match_rows
-            if target_date and row.get("kickoff_at", "").startswith(target_date)
+            if target_date and str(row.get("kickoff_at") or "")[:10] <= target_date
         }
     )
     selected_snapshots = [
@@ -186,6 +192,17 @@ def select_real_prediction_inputs(
         and row.get("source_type") in {"bookmaker", "prediction_market"}
     ]
     return selected_snapshots, selected_markets
+
+
+def should_archive_prediction_artifacts(
+    *,
+    target_snapshot_count: int,
+    use_real_prediction_targets: bool,
+) -> bool:
+    return (
+        not use_real_prediction_targets
+        or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
+    )
 
 
 def parse_iso_datetime(value: object) -> datetime | None:
@@ -291,6 +308,52 @@ def build_current_validation_candidate(
             if value_recommendation
             else None
         ),
+    }
+
+
+def apply_adaptive_recommendation_gate(
+    main_recommendation: dict,
+    eligibility: dict,
+) -> dict:
+    validation_metadata = eligibility.get("validation_metadata") or {}
+    confidence = float(main_recommendation.get("confidence") or 0.0)
+    sample_count = int(validation_metadata.get("sample_count") or 0)
+    hit_rate = float(validation_metadata.get("hit_rate") or 0.0)
+    wilson_lower_bound = float(validation_metadata.get("wilson_lower_bound") or 0.0)
+    reasons = []
+    if confidence < ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD:
+        reasons.append("below_adaptive_confidence_threshold")
+    if sample_count < ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT:
+        reasons.append("insufficient_sample")
+    if hit_rate < ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE:
+        reasons.append("below_target_hit_rate")
+    if wilson_lower_bound < ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND:
+        reasons.append("below_wilson_lower_bound")
+
+    existing_no_bet_reason = main_recommendation.get("no_bet_reason")
+    recommended = not reasons
+    return {
+        **main_recommendation,
+        "recommended": recommended,
+        "no_bet_reason": (
+            None
+            if recommended
+            else existing_no_bet_reason or reasons[0]
+        ),
+        "adaptive_validation_gate": {
+            "recommended": recommended,
+            "reasons": reasons,
+            "confidence_threshold": ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD,
+            "minimum_sample_count": ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT,
+            "target_hit_rate": ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE,
+            "minimum_wilson_lower_bound": ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND,
+            "sample_count": sample_count,
+            "hit_rate": hit_rate,
+            "wilson_lower_bound": wilson_lower_bound,
+            "strict_high_confidence_eligible": bool(
+                eligibility.get("high_confidence_eligible")
+            ),
+        },
     }
 
 
@@ -1979,10 +2042,17 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
+    current_fused_selector_enabled = not read_env_flag(
+        "MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR",
+    )
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
     baseline_model_cache: dict[tuple[str, str], object] = {}
+    archive_prediction_artifacts = should_archive_prediction_artifacts(
+        target_snapshot_count=len(target_snapshots),
+        use_real_prediction_targets=use_real_prediction_targets,
+    )
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -2061,8 +2131,32 @@ def main() -> None:
             if feature_context["prediction_market_available"]
             else "without_prediction_market"
         )
+        available_variants = (
+            (
+                ("base_model", "bookmaker", "prediction_market")
+                if bool(feature_context.get("bookmaker_available", 1))
+                else ("base_model", "prediction_market")
+            )
+            if feature_context["prediction_market_available"]
+            else (
+                ("base_model", "bookmaker")
+                if bool(feature_context.get("bookmaker_available", 1))
+                else ("base_model",)
+            )
+        )
+        persisted_policy = choose_fusion_weights(
+            policy_payload=(
+                latest_fusion_policy.get("policy_payload")
+                if latest_fusion_policy
+                else None
+            ),
+            checkpoint=signal_snapshot["checkpoint_type"],
+            market_segment=market_segment,
+            allowed_variants=available_variants,
+            competition_id=str(match.get("competition_id") or ""),
+        )
         historical_performance = {}
-        if use_real_prediction_targets:
+        if use_real_prediction_targets and persisted_policy is None:
             performance_key = (
                 signal_snapshot["checkpoint_type"],
                 snapshot_target_date,
@@ -2107,30 +2201,6 @@ def main() -> None:
                         )
                     )
                 historical_performance = historical_performance_cache[fallback_key]
-        available_variants = (
-            (
-                ("base_model", "bookmaker", "prediction_market")
-                if bool(feature_context.get("bookmaker_available", 1))
-                else ("base_model", "prediction_market")
-            )
-            if feature_context["prediction_market_available"]
-            else (
-                ("base_model", "bookmaker")
-                if bool(feature_context.get("bookmaker_available", 1))
-                else ("base_model",)
-            )
-        )
-        persisted_policy = choose_fusion_weights(
-            policy_payload=(
-                latest_fusion_policy.get("policy_payload")
-                if latest_fusion_policy
-                else None
-            ),
-            checkpoint=signal_snapshot["checkpoint_type"],
-            market_segment=market_segment,
-            allowed_variants=available_variants,
-            competition_id=str(match.get("competition_id") or ""),
-        )
         source_weights = (
             persisted_policy["weights"]
             if persisted_policy
@@ -2170,7 +2240,7 @@ def main() -> None:
             "selected_source": "raw_fused",
             "historical_candidate_count": 0,
         }
-        if use_real_prediction_targets:
+        if use_real_prediction_targets and current_fused_selector_enabled:
             current_fused_key = (
                 signal_snapshot["checkpoint_type"],
                 snapshot_target_date,
@@ -2254,11 +2324,15 @@ def main() -> None:
         row["confidence_score"] = calibrate_confidence_from_buckets(
             raw_confidence_score,
             confidence_bucket_summary,
+            maximum_calibration_gap=MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
         )
         main_recommendation = build_main_recommendation(
             pick=row["recommended_pick"],
             confidence=row["confidence_score"],
-            context=scoring_context,
+            context={
+                **scoring_context,
+                "calibration_bucket_confidence": raw_confidence_score,
+            },
             bucket_summary=confidence_bucket_summary,
         )
         value_recommendation = build_value_recommendation(
@@ -2391,6 +2465,7 @@ def main() -> None:
                 validation_segment_cache[snapshot_target_date] = summarize_validation_segments(
                     validation_records,
                     validated_as_of=snapshot_target_date,
+                    include_fallback_segments=True,
                 )
             eligibility = evaluate_high_confidence_eligibility(
                 build_current_validation_candidate(
@@ -2405,31 +2480,38 @@ def main() -> None:
                 explanation_payload,
                 eligibility,
             )
+            main_recommendation = apply_adaptive_recommendation_gate(
+                main_recommendation,
+                eligibility,
+            )
+            explanation_payload["main_recommendation"] = main_recommendation
+            explanation_payload["no_bet_reason"] = main_recommendation["no_bet_reason"]
         if llm_advisory is not None:
             explanation_payload["llm_advisory"] = llm_advisory
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
         artifact_id = f"prediction_artifact_{prediction_id}"
-        artifact_payload.append(
-            archive_json_artifact(
-                r2_client=r2_client,
-                supabase_storage_client=supabase_storage_client,
-                artifact_id=artifact_id,
-                owner_type="prediction",
-                owner_id=prediction_id,
-                artifact_kind="prediction_explanation",
-                key=f"predictions/{row['match_id']}/{prediction_id}.json",
-                payload=explanation_payload,
-                summary_payload={
-                    "match_id": row["match_id"],
-                    "snapshot_id": signal_snapshot["id"],
-                    "checkpoint_type": signal_snapshot["checkpoint_type"],
-                },
-                metadata={
-                    "model_version_id": SAMPLE_MODEL_VERSION_ID,
-                },
+        if archive_prediction_artifacts:
+            artifact_payload.append(
+                archive_json_artifact(
+                    r2_client=r2_client,
+                    supabase_storage_client=supabase_storage_client,
+                    artifact_id=artifact_id,
+                    owner_type="prediction",
+                    owner_id=prediction_id,
+                    artifact_kind="prediction_explanation",
+                    key=f"predictions/{row['match_id']}/{prediction_id}.json",
+                    payload=explanation_payload,
+                    summary_payload={
+                        "match_id": row["match_id"],
+                        "snapshot_id": signal_snapshot["id"],
+                        "checkpoint_type": signal_snapshot["checkpoint_type"],
+                    },
+                    metadata={
+                        "model_version_id": SAMPLE_MODEL_VERSION_ID,
+                    },
+                )
             )
-        )
         payload.append(
             {
                 "id": prediction_id,
@@ -2471,7 +2553,9 @@ def main() -> None:
                     value_recommendation["market_source"] if value_recommendation else None
                 ),
                 "variant_markets_summary": variant_markets,
-                "explanation_artifact_id": artifact_id,
+                "explanation_artifact_id": (
+                    artifact_id if archive_prediction_artifacts else None
+                ),
             }
         )
         feature_snapshot_payload.append(

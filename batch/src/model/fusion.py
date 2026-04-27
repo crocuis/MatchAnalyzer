@@ -544,7 +544,10 @@ def build_main_recommendation(
             1.0 if context.get("sources_agree") else 0.5,
         )
     )
-    bucket = bucket_summary.get(confidence_bucket_label(confidence))
+    calibration_bucket_confidence = float(
+        context.get("calibration_bucket_confidence", confidence)
+    )
+    bucket = bucket_summary.get(confidence_bucket_label(calibration_bucket_confidence))
     empirical_hit_rate = (
         round(float(bucket["hit_rate"]), 4) if bucket and "hit_rate" in bucket else None
     )

@@ -6,6 +6,7 @@ from typing import Any
 
 from batch.src.ingest.fetch_fixtures import (
     build_bsd_lineup_context_by_match,
+    build_rotowire_lineup_context_by_match,
     build_snapshot_rows_from_matches,
     merge_lineup_contexts,
 )
@@ -26,6 +27,9 @@ EXTERNAL_SIGNAL_FIELDS = (
     "bsd_home_xg_live",
     "bsd_away_xg_live",
     "external_signal_source_summary",
+)
+EXTERNAL_SIGNAL_COMPLETENESS_FIELDS = tuple(
+    field for field in EXTERNAL_SIGNAL_FIELDS if field != "external_signal_source_summary"
 )
 LINEUP_SIGNAL_FIELDS = (
     "lineup_status",
@@ -197,7 +201,10 @@ def latest_snapshot_contexts_by_match(
 
 
 def snapshot_context_has_external_signals(context: dict[str, Any]) -> bool:
-    return any(context.get(field) is not None for field in EXTERNAL_SIGNAL_FIELDS)
+    return any(
+        context.get(field) is not None
+        for field in EXTERNAL_SIGNAL_COMPLETENESS_FIELDS
+    )
 
 
 def external_signal_match_ids_for_targets(
@@ -320,6 +327,27 @@ def refresh_bsd_lineup_contexts_for_targets(
         return {}
 
 
+def refresh_rotowire_lineup_contexts_for_targets(
+    *,
+    targets: list[PredictionSyncTarget],
+    matches: list[dict],
+    teams: list[dict],
+) -> dict[str, dict[str, Any]]:
+    if not targets:
+        return {}
+    events = build_bsd_lineup_events_for_targets(
+        targets=targets,
+        matches=matches,
+        teams=teams,
+    )
+    if not events:
+        return {}
+    try:
+        return build_rotowire_lineup_context_by_match(events)
+    except OSError:
+        return {}
+
+
 def sync_prediction_checkpoints(
     client: SupabaseClient,
     *,
@@ -336,19 +364,28 @@ def sync_prediction_checkpoints(
         lookback_minutes=lookback_minutes,
     )
     lineup_targets = [target for target in targets if target.refresh_lineup]
-    teams = client.read_rows("teams") if bsd_api_key and lineup_targets else []
+    teams = client.read_rows("teams") if lineup_targets else []
+    rotowire_lineup_contexts = refresh_rotowire_lineup_contexts_for_targets(
+        targets=lineup_targets,
+        matches=matches,
+        teams=teams,
+    )
     bsd_lineup_contexts = refresh_bsd_lineup_contexts_for_targets(
         api_key=bsd_api_key,
         targets=lineup_targets,
         matches=matches,
         teams=teams,
     )
+    lineup_contexts = merge_lineup_contexts(
+        rotowire_lineup_contexts,
+        bsd_lineup_contexts,
+    )
     snapshot_rows = build_due_snapshot_rows(
         targets=targets,
         matches=matches,
         existing_snapshots=existing_snapshots,
         captured_at=observed_at.isoformat(),
-        lineup_context_updates_by_match=bsd_lineup_contexts,
+        lineup_context_updates_by_match=lineup_contexts,
     )
     upserted_rows = (
         client.upsert_rows("match_snapshots", snapshot_rows)
@@ -377,6 +414,7 @@ def sync_prediction_checkpoints(
         "target_count": len(targets),
         "snapshot_rows": len(snapshot_rows),
         "upserted_rows": upserted_rows,
+        "rotowire_lineup_contexts": len(rotowire_lineup_contexts),
         "bsd_lineup_contexts": len(bsd_lineup_contexts),
         "bsd_lineup_target_match_ids": bsd_lineup_target_match_ids,
         "lookback_minutes": lookback_minutes,

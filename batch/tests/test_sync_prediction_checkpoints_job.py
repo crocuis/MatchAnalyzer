@@ -47,15 +47,6 @@ def test_select_due_prediction_targets_uses_checkpoint_windows_and_daily_pick_su
         "six_hours",
         "day_before",
     ]
-    assert [
-        (target.match_id, target.refresh_external_signals, target.refresh_lineup)
-        for target in targets
-    ] == [
-        ("one_hour", False, True),
-        ("six_hours", False, True),
-        ("day_before", True, True),
-        ("warmup", True, False),
-    ]
 
 
 def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(monkeypatch):
@@ -95,6 +86,12 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
             state[table_name] = [*state[table_name], *rows]
             return len(rows)
 
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {},
+    )
+
     result = sync_job.sync_prediction_checkpoints(
         FakeClient(),
         now=now,
@@ -102,7 +99,6 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
     )
 
     assert result["target_match_ids"] == ["day_before", "six_hours"]
-    assert result["external_signal_match_ids"] == ["day_before"]
     assert result["daily_pick_dates"] == ["2026-04-26", "2026-04-27"]
     assert result["target_count"] == 2
     assert result["snapshot_rows"] == 2
@@ -112,44 +108,42 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
     assert rows_by_id["six_hours_t_minus_6h"]["external_signal_source_summary"] == "clubelo"
 
 
-def test_sync_prediction_checkpoints_backfills_external_signals_for_late_first_checkpoint(
-    monkeypatch,
-):
-    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
-    state = {
-        "matches": [_match("six_hours", "2026-04-26T17:30:00+00:00")],
-        "match_snapshots": [],
-        "teams": [
-            {"id": "arsenal", "name": "Arsenal"},
-            {"id": "chelsea", "name": "Chelsea"},
-        ],
-    }
+def test_external_signal_source_summary_alone_does_not_skip_backfill():
+    targets = [
+        sync_job.PredictionSyncTarget(
+            match_id="match-1",
+            kickoff_at=datetime(2026, 4, 27, 12, 0, tzinfo=timezone.utc),
+            checkpoint="T_MINUS_24H",
+            window_name="T_MINUS_24H",
+            refresh_daily_pick=True,
+            refresh_external_signals=False,
+            refresh_lineup=True,
+        )
+    ]
+    snapshots = [
+        {
+            "id": "snapshot-1",
+            "match_id": "match-1",
+            "captured_at": "2026-04-26T12:00:00+00:00",
+            "external_signal_source_summary": "uefa_profile_match",
+        }
+    ]
 
-    class FakeClient:
-        def read_rows(self, table_name: str) -> list[dict]:
-            return list(state[table_name])
-
-        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
-            assert table_name == "match_snapshots"
-            return len(rows)
-
-    result = sync_job.sync_prediction_checkpoints(
-        FakeClient(),
-        now=now,
-        lookback_minutes=90,
+    assert (
+        sync_job.snapshot_context_has_external_signals(
+            {"external_signal_source_summary": "uefa_profile_match"}
+        )
+        is False
     )
-
-    assert result["target_match_ids"] == ["six_hours"]
-    assert result["external_signal_match_ids"] == ["six_hours"]
+    assert sync_job.external_signal_match_ids_for_targets(targets, snapshots) == [
+        "match-1"
+    ]
 
 
 def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkeypatch):
     now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
     state = {
-        "matches": [
-            _match("day_before", "2026-04-27T11:45:00+00:00"),
-            _match("warmup", "2026-04-29T11:30:00+00:00"),
-        ],
+        "matches": [_match("day_before", "2026-04-27T11:45:00+00:00")],
         "match_snapshots": [],
         "teams": [
             {"id": "arsenal", "name": "Arsenal"},
@@ -184,6 +178,11 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
         }
 
     monkeypatch.setattr(sync_job, "build_bsd_lineup_context_by_match", fake_bsd_lineups)
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {},
+    )
 
     result = sync_job.sync_prediction_checkpoints(
         FakeClient(),
@@ -193,7 +192,6 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
     )
 
     assert result["bsd_lineup_contexts"] == 1
-    assert result["bsd_lineup_target_match_ids"] == ["day_before"]
     assert captured_events == [
         {
             "id": "day_before",
@@ -213,14 +211,63 @@ def test_sync_prediction_checkpoints_refreshes_bsd_lineup_for_due_targets(monkey
             ],
         }
     ]
-    rows_by_id = {row["id"]: row for row in upserts[0]}
-    row = rows_by_id["day_before_t_minus_24h"]
+    [row] = upserts[0]
     assert row["lineup_status"] == "projected"
     assert row["home_absence_count"] == 1
     assert row["away_absence_count"] == 0
     assert row["lineup_strength_delta"] == 0.2
     assert row["lineup_source_summary"] == "bsd_predicted_lineups"
-    assert rows_by_id["warmup_t_minus_24h"]["lineup_status"] == "unknown"
+
+
+def test_sync_prediction_checkpoints_uses_rotowire_when_bsd_is_missing(monkeypatch):
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+    state = {
+        "matches": [_match("day_before", "2026-04-27T11:45:00+00:00")],
+        "match_snapshots": [],
+        "teams": [
+            {"id": "arsenal", "name": "Arsenal"},
+            {"id": "chelsea", "name": "Chelsea"},
+        ],
+    }
+    upserts = []
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            assert table_name == "match_snapshots"
+            upserts.append(rows)
+            return len(rows)
+
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {
+            "day_before": {
+                "lineup_status": "projected",
+                "home_absence_count": 2,
+                "away_absence_count": 1,
+                "home_lineup_score": 1.0,
+                "away_lineup_score": 0.8,
+                "lineup_strength_delta": 0.2,
+                "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+            }
+        },
+    )
+
+    result = sync_job.sync_prediction_checkpoints(
+        FakeClient(),
+        now=now,
+        lookback_minutes=90,
+    )
+
+    assert result["rotowire_lineup_contexts"] == 1
+    assert result["bsd_lineup_contexts"] == 0
+    [row] = upserts[0]
+    assert row["lineup_status"] == "projected"
+    assert row["home_absence_count"] == 2
+    assert row["lineup_source_summary"] == "rotowire_lineups+rotowire_injuries"
 
 
 def test_sync_prediction_checkpoints_preserves_confirmed_lineup(monkeypatch):
@@ -270,6 +317,21 @@ def test_sync_prediction_checkpoints_preserves_confirmed_lineup(monkeypatch):
                 "away_lineup_score": 0.5,
                 "lineup_strength_delta": 0.0,
                 "lineup_source_summary": "bsd_predicted_lineups",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {
+            "day_before": {
+                "lineup_status": "projected",
+                "home_absence_count": 3,
+                "away_absence_count": 3,
+                "home_lineup_score": 0.4,
+                "away_lineup_score": 0.4,
+                "lineup_strength_delta": 0.0,
+                "lineup_source_summary": "rotowire_lineups",
             }
         },
     )

@@ -901,7 +901,7 @@ async function loadDailyPicksArtifactView(
   options: LoadDailyPicksOptions,
 ): Promise<DailyPicksView | null> {
   const date = resolveRequestedDate(options.date);
-  if (!date || options.includeHeld === true) {
+  if (!date) {
     return null;
   }
   let loaded: unknown = null;
@@ -950,7 +950,7 @@ async function loadTrackedDailyPicksView(
     ...options,
     date: resolveRequestedDate(options.date),
   };
-  if (!normalizedOptions.date || normalizedOptions.includeHeld === true) {
+  if (!normalizedOptions.date) {
     return null;
   }
 
@@ -1060,7 +1060,12 @@ async function loadTrackedDailyPicksView(
       || compareDailyPicks(left.item, right.item)
     ))
     .map((row) => row.item);
-  const visibleItems = sortedItems.slice(0, 10);
+  const recommendedItems = sortedItems.filter((item) => item.status !== "held");
+  const heldItems = sortedItems.filter((item) => item.status === "held");
+  const visibleItems = recommendedItems.slice(0, 10);
+  const visibleHeldItems = normalizedOptions.includeHeld
+    ? heldItems.slice(0, 10)
+    : [];
 
   return {
     generatedAt: readString(runs[0]?.generated_at) ?? new Date().toISOString(),
@@ -1071,10 +1076,10 @@ async function loadTrackedDailyPicksView(
       moneyline: sortedItems.filter((item) => item.marketFamily === "moneyline").length,
       spreads: sortedItems.filter((item) => item.marketFamily === "spreads").length,
       totals: sortedItems.filter((item) => item.marketFamily === "totals").length,
-      held: 0,
+      held: heldItems.length,
     },
     items: visibleItems,
-    heldItems: [],
+    heldItems: visibleHeldItems,
   };
 }
 
@@ -1130,6 +1135,7 @@ function buildTrackedDailyPickItem({
   const awayTeam = awayTeamId ? teamsById.get(awayTeamId) : undefined;
   const competition = competitionsById.get(leagueId);
   const validationMetadata = readRecord(pick.validation_metadata);
+  const status = readTrackedStatus(pick, result);
 
   return {
     id: readString(pick.id) ?? `${matchId}:${marketFamily}:${selectionLabel}`,
@@ -1166,15 +1172,36 @@ function buildTrackedDailyPickItem({
     confidenceReliability:
       readString(validationMetadata?.confidence_reliability)
       ?? readString(validationMetadata?.confidenceReliability)
-      ?? "validated",
-    highConfidenceEligible: true,
+      ?? (status === "held" ? "confidence_reliability_missing" : "validated"),
+    highConfidenceEligible:
+      readBoolean(validationMetadata?.high_confidence_eligible)
+      ?? readBoolean(validationMetadata?.highConfidenceEligible)
+      ?? (status === "held" ? false : true),
     validationMetadata,
-    status: readTrackedStatus(pick, result),
-    noBetReason: null,
+    status,
+    noBetReason: resolveTrackedNoBetReason(pick, status),
     reasonLabels: Array.isArray(pick.reason_labels)
       ? pick.reason_labels.filter((value): value is string => typeof value === "string")
       : [],
   };
+}
+
+function resolveTrackedNoBetReason(
+  pick: DailyPickRow,
+  status: DailyPickItem["status"],
+): string | null {
+  if (status !== "held") {
+    return null;
+  }
+  const labels = Array.isArray(pick.reason_labels)
+    ? pick.reason_labels.filter((value): value is string => typeof value === "string")
+    : [];
+  for (const label of [...labels].reverse()) {
+    if (label !== "heldByRecommendationGate" && label !== "mainRecommendation") {
+      return label;
+    }
+  }
+  return "held";
 }
 
 dailyPicks.get("/", async (c) => {

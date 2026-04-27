@@ -9,9 +9,15 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def read_optional_rows(client, table_name: str) -> list[dict]:
+def read_optional_rows(
+    client,
+    table_name: str,
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
     try:
-        return client.read_rows(table_name)
+        if columns is None:
+            return client.read_rows(table_name)
+        return client.read_rows(table_name, columns=columns)
     except KeyError:
         return []
     except ValueError as exc:

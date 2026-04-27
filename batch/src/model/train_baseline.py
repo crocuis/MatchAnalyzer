@@ -1,4 +1,5 @@
 from collections import Counter
+import os
 
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier
@@ -13,7 +14,7 @@ CALIBRATION_FOLDS = 3
 
 
 def build_baseline_candidate_estimators() -> dict[str, object]:
-    return {
+    estimators = {
         "logistic_regression": make_pipeline(
             StandardScaler(),
             LogisticRegression(
@@ -22,8 +23,24 @@ def build_baseline_candidate_estimators() -> dict[str, object]:
                 random_state=7,
             ),
         ),
-        "hist_gradient_boosting": HistGradientBoostingClassifier(random_state=7),
     }
+    if os.environ.get("MATCH_ANALYZER_ENABLE_HGB_BASELINE") in {"1", "true", "TRUE"}:
+        estimators["hist_gradient_boosting"] = HistGradientBoostingClassifier(
+            random_state=7,
+        )
+    candidate_filter = {
+        value.strip()
+        for value in os.environ.get("MATCH_ANALYZER_BASELINE_CANDIDATES", "").split(",")
+        if value.strip()
+    }
+    if candidate_filter:
+        selected_estimators = {
+            name: estimator
+            for name, estimator in estimators.items()
+            if name in candidate_filter
+        }
+        return selected_estimators or estimators
+    return estimators
 
 
 def select_baseline_candidate(features, labels) -> tuple[str, dict[str, float]]:

@@ -179,7 +179,17 @@ def main() -> None:
     updated_counts: dict[str, int] = {}
     pending_table_updates: list[tuple[str, list[dict]]] = []
 
-    predictions = read_optional_rows(client, "predictions")
+    predictions = read_optional_rows(
+        client,
+        "predictions",
+        columns=(
+            "id",
+            "match_id",
+            "explanation_artifact_id",
+            "explanation_payload",
+            "summary_payload",
+        ),
+    )
     archived_predictions, prediction_artifacts = _archive_prediction_rows(
         predictions,
         r2_client,

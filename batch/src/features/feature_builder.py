@@ -156,6 +156,16 @@ MISSING_SIGNAL_REASON_TAXONOMY: tuple[tuple[str, tuple[str, ...], str, str], ...
 
 def _alternate_resolved_signal_fields(snapshot: dict) -> set[str]:
     resolved_fields: set[str] = set()
+    if (
+        snapshot.get("home_points_last_5") is not None
+        and snapshot.get("away_points_last_5") is not None
+    ):
+        resolved_fields.add("form_delta")
+    if (
+        snapshot.get("home_rest_days") is not None
+        and snapshot.get("away_rest_days") is not None
+    ):
+        resolved_fields.add("rest_delta")
     if all(snapshot.get(field) is not None for field in EXTERNAL_RATING_SIGNAL_FIELDS):
         resolved_fields.update(CANONICAL_RATING_SIGNAL_FIELDS)
     if all(snapshot.get(field) is not None for field in UNDERSTAT_XG_SIGNAL_FIELDS):
