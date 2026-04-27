@@ -215,31 +215,125 @@ def build_review_aggregation_report(reviews: list[dict]) -> dict:
     by_miss_family: Counter[str] = Counter()
     by_severity: Counter[str] = Counter()
     by_primary_signal: Counter[str] = Counter()
+    by_llm_miss_reason_family: Counter[str] = Counter()
+    by_llm_blindspot: Counter[str] = Counter()
+    by_llm_blindspot_group: Counter[str] = Counter()
+    by_llm_data_gap: Counter[str] = Counter()
+    by_llm_data_gap_group: Counter[str] = Counter()
+    by_llm_actionable_fix: Counter[str] = Counter()
+    by_llm_actionable_fix_group: Counter[str] = Counter()
+    llm_review_count = 0
+    llm_should_change_features_count = 0
 
     for review in reviews:
-      market_summary = review.get("market_comparison_summary") or {}
-      taxonomy = market_summary.get("taxonomy") or {}
-      attribution_summary = market_summary.get("attribution_summary") or {}
+        market_summary = (
+            review.get("market_comparison_summary")
+            or review.get("summary_payload")
+            or {}
+        )
+        taxonomy = market_summary.get("taxonomy") or {}
+        attribution_summary = market_summary.get("attribution_summary") or {}
 
-      miss_family = taxonomy.get("miss_family")
-      severity = taxonomy.get("severity")
-      primary_signal = attribution_summary.get("primary_signal")
+        miss_family = taxonomy.get("miss_family")
+        severity = taxonomy.get("severity")
+        primary_signal = attribution_summary.get("primary_signal")
 
-      if isinstance(miss_family, str):
-          by_miss_family[miss_family] += 1
-      if isinstance(severity, str):
-          by_severity[severity] += 1
-      if isinstance(primary_signal, str):
-          by_primary_signal[primary_signal] += 1
+        if isinstance(miss_family, str):
+            by_miss_family[miss_family] += 1
+        if isinstance(severity, str):
+            by_severity[severity] += 1
+        if isinstance(primary_signal, str):
+            by_primary_signal[primary_signal] += 1
+        llm_review = market_summary.get("llm_review") or {}
+        if llm_review.get("status") != "available":
+            continue
+        llm_review_count += 1
+        llm_miss_reason = llm_review.get("miss_reason_family")
+        if isinstance(llm_miss_reason, str):
+            by_llm_miss_reason_family[llm_miss_reason] += 1
+        for blindspot in llm_review.get("model_blindspots") or []:
+            if isinstance(blindspot, str):
+                by_llm_blindspot[blindspot] += 1
+                by_llm_blindspot_group[group_llm_review_signal(blindspot)] += 1
+        for data_gap in llm_review.get("data_gaps") or []:
+            if isinstance(data_gap, str):
+                by_llm_data_gap[data_gap] += 1
+                by_llm_data_gap_group[group_llm_review_signal(data_gap)] += 1
+        for actionable_fix in llm_review.get("actionable_fixes") or []:
+            if isinstance(actionable_fix, str):
+                by_llm_actionable_fix[actionable_fix] += 1
+                by_llm_actionable_fix_group[
+                    group_llm_review_signal(actionable_fix)
+                ] += 1
+        if llm_review.get("should_change_features") is True:
+            llm_should_change_features_count += 1
 
     return {
         "total_reviews": len(reviews),
         "by_miss_family": dict(by_miss_family),
         "by_severity": dict(by_severity),
         "by_primary_signal": dict(by_primary_signal),
+        "llm_review_count": llm_review_count,
+        "llm_should_change_features_count": llm_should_change_features_count,
+        "by_llm_miss_reason_family": dict(by_llm_miss_reason_family),
+        "by_llm_blindspot": dict(by_llm_blindspot),
+        "by_llm_blindspot_group": dict(by_llm_blindspot_group),
+        "by_llm_data_gap": dict(by_llm_data_gap),
+        "by_llm_data_gap_group": dict(by_llm_data_gap_group),
+        "by_llm_actionable_fix": dict(by_llm_actionable_fix),
+        "by_llm_actionable_fix_group": dict(by_llm_actionable_fix_group),
         "top_miss_family": by_miss_family.most_common(1)[0][0] if by_miss_family else None,
         "top_primary_signal": by_primary_signal.most_common(1)[0][0] if by_primary_signal else None,
+        "top_llm_blindspot": (
+            by_llm_blindspot.most_common(1)[0][0] if by_llm_blindspot else None
+        ),
+        "top_llm_blindspot_group": (
+            by_llm_blindspot_group.most_common(1)[0][0]
+            if by_llm_blindspot_group
+            else None
+        ),
+        "top_llm_actionable_fix": (
+            by_llm_actionable_fix.most_common(1)[0][0]
+            if by_llm_actionable_fix
+            else None
+        ),
+        "top_llm_actionable_fix_group": (
+            by_llm_actionable_fix_group.most_common(1)[0][0]
+            if by_llm_actionable_fix_group
+            else None
+        ),
     }
+
+
+def group_llm_review_signal(value: str) -> str:
+    normalized = value.replace("_", " ").replace("-", " ").lower()
+    if any(token in normalized for token in ("lineup", "absence", "injury")):
+        return "lineup_availability"
+    if any(token in normalized for token in ("market", "bookmaker", "odds")):
+        return "market_anchor"
+    if any(token in normalized for token in ("form", "rest", "schedule", "congestion")):
+        return "form_rest_schedule"
+    if "draw" in normalized:
+        return "draw_calibration"
+    if any(
+        token in normalized
+        for token in (
+            "confidence",
+            "dampen",
+            "dampening",
+            "discount",
+            "cap",
+            "source count",
+            "single source",
+            "sparse",
+            "partial",
+            "completeness",
+        )
+    ):
+        return "confidence_dampening"
+    if any(token in normalized for token in ("elo", "xg", "strength")):
+        return "strength_signal_calibration"
+    return "other"
 
 
 def build_review_aggregation_comparison(

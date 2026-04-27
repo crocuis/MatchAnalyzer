@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import batch.src.jobs.backfill_llm_post_match_reviews_job as backfill_llm_post_match_reviews_job
 import batch.src.jobs.backfill_post_match_reviews_job as backfill_post_match_reviews_job
 import batch.src.jobs.repair_prediction_match_graph_job as repair_prediction_match_graph_job
 import batch.src.jobs.backfill_prediction_recalibration_job as backfill_prediction_recalibration_job
@@ -20,6 +21,7 @@ from batch.src.model.prediction_graph_integrity import (
 from batch.src.model.posthoc_recalibration import recalibrate_predictions
 from batch.src.model.predict_matches import build_prediction_row, build_source_agreement_ratio
 from batch.src.review.post_match_review import build_review
+from batch.src.storage.r2_client import R2Client
 
 
 def prediction_for_match(predictions: list[dict], match_id: str) -> dict:
@@ -561,6 +563,18 @@ def test_build_review_aggregation_report_summarizes_taxonomy_and_primary_signal(
                         "primary_signal": "strengthHome",
                         "secondary_signal": "xgHome",
                     },
+                    "llm_review": {
+                        "schema_version": "post_match_llm_review.v1",
+                        "status": "available",
+                        "miss_reason_family": "lineup_or_availability",
+                        "model_blindspots": [
+                            "lineup_strength_delta_underweighted",
+                            "lineup_strength_delta_underweighted",
+                        ],
+                        "data_gaps": ["confirmed_lineups_unavailable"],
+                        "actionable_fixes": ["increase projected lineup weight"],
+                        "should_change_features": True,
+                    },
                 },
             },
             {
@@ -594,7 +608,206 @@ def test_build_review_aggregation_report_summarizes_taxonomy_and_primary_signal(
         "strengthHome": 1,
         "xgHome": 1,
     }
+    assert report["llm_review_count"] == 1
+    assert report["llm_should_change_features_count"] == 1
+    assert report["by_llm_miss_reason_family"] == {
+        "lineup_or_availability": 1,
+    }
+    assert report["by_llm_blindspot"] == {
+        "lineup_strength_delta_underweighted": 2,
+    }
+    assert report["by_llm_blindspot_group"] == {
+        "lineup_availability": 2,
+    }
+    assert report["by_llm_data_gap"] == {
+        "confirmed_lineups_unavailable": 1,
+    }
+    assert report["by_llm_data_gap_group"] == {
+        "lineup_availability": 1,
+    }
+    assert report["by_llm_actionable_fix"] == {
+        "increase projected lineup weight": 1,
+    }
+    assert report["by_llm_actionable_fix_group"] == {
+        "lineup_availability": 1,
+    }
+    assert report["top_llm_blindspot"] == "lineup_strength_delta_underweighted"
+    assert report["top_llm_blindspot_group"] == "lineup_availability"
+    assert report["top_llm_actionable_fix"] == "increase projected lineup weight"
+    assert report["top_llm_actionable_fix_group"] == "lineup_availability"
     assert report["top_miss_family"] == "directional_miss"
+
+
+def test_llm_post_match_review_backfill_updates_only_review_candidates(
+    monkeypatch,
+    tmp_path,
+):
+    state: dict[str, list[dict]] = {
+        "post_match_reviews": [
+            {
+                "id": "review_001",
+                "match_id": "match_001",
+                "prediction_id": "prediction_001",
+                "actual_outcome": "AWAY",
+                "error_summary": "Prediction missed the actual away result.",
+                "cause_tags": ["major_directional_miss"],
+                "summary_payload": {
+                    "comparison_available": True,
+                    "market_outperformed_model": True,
+                    "taxonomy": {
+                        "miss_family": "directional_miss",
+                        "severity": "high",
+                        "consensus_level": "low",
+                        "market_signal": "market_outperformed_model",
+                    },
+                    "attribution_summary": {
+                        "primary_signal": "strengthHome",
+                        "secondary_signal": "xgHome",
+                    },
+                },
+                "comparison_available": True,
+                "market_outperformed_model": True,
+                "taxonomy_miss_family": "directional_miss",
+                "taxonomy_severity": "high",
+                "taxonomy_consensus_level": "low",
+                "taxonomy_market_signal": "market_outperformed_model",
+                "attribution_primary_signal": "strengthHome",
+                "attribution_secondary_signal": "xgHome",
+                "review_artifact_id": "review_artifact_review_001",
+            },
+            {
+                "id": "review_002",
+                "match_id": "match_002",
+                "prediction_id": "prediction_002",
+                "actual_outcome": "HOME",
+                "cause_tags": [],
+                "summary_payload": {},
+            },
+            {
+                "id": "review_003",
+                "match_id": "match_003",
+                "prediction_id": "prediction_003",
+                "actual_outcome": "DRAW",
+                "cause_tags": ["draw_blind_spot"],
+                "summary_payload": {
+                    "llm_review": {
+                        "schema_version": "post_match_llm_review.v1",
+                        "status": "available",
+                    }
+                },
+            },
+        ],
+        "predictions": [
+            {
+                "id": "prediction_001",
+                "match_id": "match_001",
+                "snapshot_id": "snapshot_001",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.78,
+                "home_prob": 0.62,
+                "draw_prob": 0.20,
+                "away_prob": 0.18,
+                "summary_payload": {"bullets": ["Home strength dominated."]},
+            },
+        ],
+        "matches": [
+            {
+                "id": "match_001",
+                "competition_id": "league_001",
+                "kickoff_at": "2026-04-12T18:00:00+00:00",
+                "final_result": "AWAY",
+            }
+        ],
+        "stored_artifacts": [
+            {
+                "id": "review_artifact_review_001",
+                "object_key": "reviews/match_001/review_001.json",
+            }
+        ],
+        "post_match_review_aggregations": [
+            {
+                "id": "latest",
+                "rollout_channel": "current",
+                "rollout_version": 1,
+                "report_payload": {"total_reviews": 3},
+            }
+        ],
+        "post_match_review_aggregation_versions": [],
+    }
+
+    class FakeClient:
+        def read_rows(
+            self,
+            table_name: str,
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            rows = list(state.get(table_name, []))
+            if columns is None:
+                return rows
+            column_set = set(columns)
+            return [
+                {key: value for key, value in row.items() if key in column_set}
+                for row in rows
+            ]
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            existing = {row["id"]: row for row in state.get(table_name, [])}
+            for row in rows:
+                existing[row["id"]] = {
+                    **existing.get(row["id"], {}),
+                    **row,
+                }
+            state[table_name] = list(existing.values())
+            return len(rows)
+
+    def fake_llm_review_builder(*, prediction, match_result, review):
+        assert prediction["id"] == "prediction_001"
+        assert match_result["final_result"] == "AWAY"
+        assert review["taxonomy"]["miss_family"] == "directional_miss"
+        return {
+            "schema_version": "post_match_llm_review.v1",
+            "status": "available",
+            "miss_reason_family": "lineup_or_availability",
+            "severity": "high",
+            "model_blindspots": ["lineup_strength_delta_underweighted"],
+            "data_gaps": ["confirmed_lineups_unavailable"],
+            "actionable_fixes": ["increase projected lineup weight"],
+            "should_change_features": True,
+            "review_summary": "Projected team strength was overweighted.",
+        }
+
+    monkeypatch.chdir(tmp_path)
+
+    result = backfill_llm_post_match_reviews_job.run_llm_review_backfill(
+        FakeClient(),
+        R2Client("workflow-artifacts"),
+        llm_review_builder=fake_llm_review_builder,
+        limit=10,
+    )
+
+    assert result["candidate_rows"] == 1
+    assert result["updated_rows"] == 1
+    assert result["persisted_artifacts"] == 3
+    assert result["llm_status_counts"] == {"available": 1}
+    assert result["aggregation_report"]["llm_review_count"] == 2
+    assert result["aggregation_report"]["by_llm_blindspot"] == {
+        "lineup_strength_delta_underweighted": 1,
+    }
+    assert result["aggregation_report"]["by_llm_blindspot_group"] == {
+        "lineup_availability": 1,
+    }
+    updated_review = next(
+        row for row in state["post_match_reviews"] if row["id"] == "review_001"
+    )
+    assert updated_review["summary_payload"]["llm_review"]["status"] == "available"
+    assert updated_review["review_artifact_id"] == "review_artifact_review_001"
+    latest_aggregation = next(
+        row for row in state["post_match_review_aggregations"] if row["id"] == "latest"
+    )
+    assert latest_aggregation["rollout_version"] == 2
+    assert latest_aggregation["report_payload"]["top_llm_blindspot"] == (
+        "lineup_strength_delta_underweighted"
+    )
 
 
 def test_build_review_aggregation_report_comparison_tracks_family_deltas():

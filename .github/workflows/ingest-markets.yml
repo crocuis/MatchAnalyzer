@@ -24,6 +24,7 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       ODDS_API_IO_BOOKMAKERS: Bet365,Unibet
+      MARKET_CHECKPOINT_TYPES: T_MINUS_24H,T_MINUS_6H,T_MINUS_1H,LINEUP_CONFIRMED
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -47,7 +48,7 @@ jobs:
           fi
           echo "REAL_MARKET_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
-      - name: Ingest markets and refresh changed predictions
+      - name: Ingest markets
         shell: bash
         run: |
           MARKET_LOG="$(mktemp)"
@@ -56,12 +57,8 @@ jobs:
             python3 -c 'import json, sys; from pathlib import Path; lines = [line.strip() for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]; payload = json.loads(lines[-1]) if lines else {}; print(",".join(payload.get("changed_match_ids", [])))' "$MARKET_LOG"
           )"
           if [ -z "$CHANGED_MATCH_IDS" ]; then
-            echo "No changed market matches detected; skipping prediction refresh."
+            echo "No changed market matches detected."
             exit 0
           fi
-          python3 -m batch.src.jobs.backfill_external_prediction_signals_job \
-            --apply \
-            --match-ids "$CHANGED_MATCH_IDS" \
-            --clubelo-date-stride-days 1
-          REAL_PREDICTION_MATCH_IDS="$CHANGED_MATCH_IDS" \
-            python3 -m batch.src.jobs.run_predictions_job
+          echo "Changed market match ids: $CHANGED_MATCH_IDS"
+          echo "Prediction refresh is intentionally deferred to run-predictions or sync-prediction-checkpoints."
