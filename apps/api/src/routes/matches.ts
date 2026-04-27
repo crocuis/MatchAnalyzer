@@ -639,12 +639,8 @@ export async function loadDashboardMatchCardsPageView(
         needsReview: row.needs_review,
         kickoffAt: row.kickoff_at,
       }),
-      recommendedPick: mainRecommendation?.recommended
-        ? mainRecommendation.pick
-        : null,
-      confidence: mainRecommendation?.recommended
-        ? mainRecommendation.confidence
-        : null,
+      recommendedPick: mainRecommendation?.pick ?? null,
+      confidence: mainRecommendation?.confidence ?? null,
       mainRecommendation,
       valueRecommendation,
       variantMarkets,

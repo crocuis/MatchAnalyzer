@@ -4795,6 +4795,89 @@ describe("prediction API", () => {
     ]);
   });
 
+  it("keeps review-needed no-bet picks visible in dashboard match card summaries", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 1,
+            review_count: 1,
+            predicted_count: 1,
+            evaluated_count: 1,
+            correct_count: 0,
+            incorrect_count: 1,
+            success_rate: 0,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            home_team: "Liverpool",
+            home_team_logo_url: null,
+            away_team: "Brentford",
+            away_team_logo_url: null,
+            kickoff_at: "2026-04-27T21:00:00Z",
+            final_result: "AWAY",
+            home_score: 1,
+            away_score: 2,
+            representative_recommended_pick: "HOME",
+            representative_confidence_score: 0.58,
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.58,
+            main_recommendation_recommended: false,
+            main_recommendation_no_bet_reason: "low_confidence",
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            variant_markets_summary: [],
+            has_prediction: true,
+            needs_review: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+    });
+
+    expect(page.items[0]?.needsReview).toBe(true);
+    expect(page.items[0]?.recommendedPick).toBe("HOME");
+    expect(page.items[0]?.confidence).toBe(0.58);
+    expect(page.items[0]?.mainRecommendation).toEqual({
+      pick: "HOME",
+      confidence: 0.58,
+      recommended: false,
+      noBetReason: "low_confidence",
+    });
+    expect(page.items[0]?.noBetReason).toBe("low_confidence");
+  });
+
   it("prefers the most recent prediction in the detail view when rows share a checkpoint", async () => {
     const predictionsQuery = {
       select: vi.fn().mockReturnThis(),
