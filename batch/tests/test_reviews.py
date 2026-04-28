@@ -2922,6 +2922,7 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
         lambda **_kwargs: {},
     )
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+    monkeypatch.setenv("MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR", "1")
 
     run_predictions_job.main()
 
@@ -3431,6 +3432,7 @@ def test_run_predictions_job_calibrates_selector_confidence_against_selected_pro
         },
     )
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+    monkeypatch.setenv("MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR", "1")
 
     run_predictions_job.main()
 

@@ -2378,9 +2378,9 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
-    current_fused_selector_enabled = not read_env_flag(
-        "MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR",
-    )
+    current_fused_selector_enabled = read_env_flag(
+        "MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR",
+    ) and not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
