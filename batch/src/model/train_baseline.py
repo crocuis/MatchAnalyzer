@@ -2,6 +2,7 @@ from collections import Counter
 import os
 
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.base import clone
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_score
@@ -13,12 +14,21 @@ SELECTION_METRIC = "neg_log_loss"
 CALIBRATION_FOLDS = 3
 
 
+def read_env_flag(name: str) -> bool:
+    return os.environ.get(name) in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def build_baseline_candidate_estimators() -> dict[str, object]:
+    logistic_solver = (
+        "lbfgs"
+        if read_env_flag("MATCH_ANALYZER_FAST_BASELINE_TRAINING")
+        else "saga"
+    )
     estimators = {
         "logistic_regression": make_pipeline(
             StandardScaler(),
             LogisticRegression(
-                solver="saga",
+                solver=logistic_solver,
                 max_iter=5000,
                 random_state=7,
             ),
@@ -70,6 +80,20 @@ def train_baseline_model(features, labels):
         raise ValueError(
             "train_baseline_model requires at least 3 samples per class for isotonic calibration"
         )
+
+    if read_env_flag("MATCH_ANALYZER_FAST_BASELINE_TRAINING"):
+        estimators = build_baseline_candidate_estimators()
+        selected_candidate = next(iter(estimators))
+        model = clone(estimators[selected_candidate])
+        model.fit(features, labels)
+        model.selected_candidate_ = selected_candidate
+        model.selection_metadata_ = {
+            "selected_candidate": selected_candidate,
+            "selection_metric": "fast_fit_no_cv",
+            "selection_ran": False,
+            "candidate_scores": {},
+        }
+        return model
 
     selected_candidate, candidate_scores = select_baseline_candidate(features, labels)
     estimator = build_baseline_candidate_estimators()[selected_candidate]

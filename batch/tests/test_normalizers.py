@@ -31,6 +31,7 @@ from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
     build_betman_team_translation_rows,
     build_odds_api_io_market_rows,
+    build_odds_api_io_variant_rows,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_rows,
     build_prediction_market_variant_rows,
@@ -60,6 +61,12 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
     snapshot_has_external_signals,
     snapshot_as_of_date,
 )
+from batch.src.jobs.backfill_odds_api_io_historical_markets_job import (
+    HistoricalOddsApiCache,
+    fetch_historical_odds_for_snapshots,
+    parse_competition_filter,
+    select_backfill_snapshots as select_odds_api_io_historical_backfill_snapshots,
+)
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
@@ -69,6 +76,10 @@ from batch.src.jobs.ingest_fixtures_job import (
     resolve_external_signal_as_of_date,
     should_backfill_real_fixture_team_assets,
     should_hydrate_real_fixture_history,
+)
+from batch.src.jobs.run_predictions_job import (
+    anchor_calibrated_bookmaker_weight,
+    build_poisson_outcome_probabilities,
 )
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
@@ -2544,6 +2555,708 @@ def test_fetch_odds_api_io_multi_odds_uses_free_plan_bookmaker_defaults(monkeypa
             {"eventIds": "event-1", "bookmakers": "Bet365,Unibet"},
         )
     ]
+
+
+def test_fetch_odds_api_io_events_for_snapshots_queries_supported_leagues(monkeypatch):
+    captured_params = []
+
+    def fake_fetch_json(
+        api_key,
+        path,
+        params,
+        *,
+        base_url=fetch_markets_module.ODDS_API_IO_BASE_URL,
+    ):
+        del api_key, base_url
+        captured_params.append((path, params))
+        return [
+            {
+                "id": 123,
+                "home": "Chelsea",
+                "away": "Arsenal",
+                "date": "2026-05-01T19:00:00Z",
+            }
+        ]
+
+    monkeypatch.setattr(fetch_markets_module, "fetch_odds_api_io_json", fake_fetch_json)
+
+    rows = fetch_markets_module.fetch_odds_api_io_events_for_snapshots(
+        "api-key",
+        [
+            {
+                "id": "snapshot-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-05-01T19:00:00Z",
+            },
+            {
+                "id": "snapshot-2",
+                "competition_id": "la-liga",
+                "kickoff_at": "2026-05-02T19:00:00Z",
+            },
+            {
+                "id": "snapshot-3",
+                "competition_id": "unsupported-league",
+                "kickoff_at": "2026-05-02T19:00:00Z",
+            },
+        ],
+        bookmakers="Bet365,Unibet",
+    )
+
+    assert rows == [
+        {
+            "id": 123,
+            "home": "Chelsea",
+            "away": "Arsenal",
+            "date": "2026-05-01T19:00:00Z",
+        },
+    ]
+    assert [params.get("league") for _path, params in captured_params] == [
+        "england-premier-league",
+        "spain-laliga",
+        None,
+    ]
+    assert all(params["status"] == "pending,live" for _path, params in captured_params)
+    assert all(params.get("bookmaker") is None for _path, params in captured_params)
+
+
+def test_fetch_odds_api_io_events_for_snapshots_merges_generic_window_results(monkeypatch):
+    captured_params = []
+
+    def fake_fetch_json(
+        api_key,
+        path,
+        params,
+        *,
+        base_url=fetch_markets_module.ODDS_API_IO_BASE_URL,
+    ):
+        del api_key, path, base_url
+        captured_params.append(params)
+        if params.get("league") == "england-premier-league":
+            return [
+                {
+                    "id": "league-event",
+                    "home": "Chelsea",
+                    "away": "Arsenal",
+                    "date": "2026-05-01T19:00:00Z",
+                }
+            ]
+        if params.get("league") is None:
+            return [
+                {
+                    "id": "unsupported-event",
+                    "home": "Jeonbuk",
+                    "away": "Ulsan",
+                    "date": "2026-05-02T10:00:00Z",
+                },
+                {
+                    "id": "league-event",
+                    "home": "Chelsea",
+                    "away": "Arsenal",
+                    "date": "2026-05-01T19:00:00Z",
+                },
+            ]
+        return []
+
+    monkeypatch.setattr(fetch_markets_module, "fetch_odds_api_io_json", fake_fetch_json)
+
+    rows = fetch_markets_module.fetch_odds_api_io_events_for_snapshots(
+        "api-key",
+        [
+            {
+                "id": "snapshot-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-05-01T19:00:00Z",
+            },
+            {
+                "id": "snapshot-2",
+                "competition_id": "k-league",
+                "kickoff_at": "2026-05-02T10:00:00Z",
+            },
+        ],
+        bookmakers="Bet365,Unibet",
+    )
+
+    assert rows == [
+        {
+            "id": "league-event",
+            "home": "Chelsea",
+            "away": "Arsenal",
+            "date": "2026-05-01T19:00:00Z",
+        },
+        {
+            "id": "unsupported-event",
+            "home": "Jeonbuk",
+            "away": "Ulsan",
+            "date": "2026-05-02T10:00:00Z",
+        },
+    ]
+    assert captured_params == [
+        {
+            "sport": "football",
+            "limit": 200,
+            "league": "england-premier-league",
+            "status": "pending,live",
+            "from": "2026-05-01T13:00:00Z",
+            "to": "2026-05-02T16:00:00Z",
+            "bookmaker": None,
+        },
+        {
+            "sport": "football",
+            "limit": 200,
+            "status": "pending,live",
+            "from": "2026-05-01T13:00:00Z",
+            "to": "2026-05-02T16:00:00Z",
+            "league": None,
+            "bookmaker": None,
+        },
+    ]
+
+
+def test_fetch_odds_api_io_historical_events_for_snapshots_queries_historical_endpoint(
+    monkeypatch,
+):
+    captured_params = []
+
+    def fake_fetch_json(
+        api_key,
+        path,
+        params,
+        *,
+        base_url=fetch_markets_module.ODDS_API_IO_BASE_URL,
+    ):
+        del api_key, base_url
+        captured_params.append((path, params))
+        return {"events": [{"id": 123, "home": "Chelsea", "away": "Arsenal"}]}
+
+    monkeypatch.setattr(fetch_markets_module, "fetch_odds_api_io_json", fake_fetch_json)
+
+    rows = fetch_markets_module.fetch_odds_api_io_historical_events_for_snapshots(
+        "api-key",
+        [
+            {
+                "id": "snapshot-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-02-01T14:00:00Z",
+            }
+        ],
+    )
+
+    assert rows == [{"id": 123, "home": "Chelsea", "away": "Arsenal"}]
+    assert captured_params == [
+        (
+            "historical/events",
+            {
+                "sport": "football",
+                "league": "england-premier-league",
+                "from": "2026-02-01T08:00:00Z",
+                "to": "2026-02-01T20:00:00Z",
+            },
+        )
+    ]
+
+
+def test_fetch_odds_api_io_historical_odds_fetches_each_event(monkeypatch):
+    captured_params = []
+
+    def fake_fetch_json(
+        api_key,
+        path,
+        params,
+        *,
+        base_url=fetch_markets_module.ODDS_API_IO_BASE_URL,
+    ):
+        del api_key, base_url
+        captured_params.append((path, params))
+        return {
+            "id": params["eventId"],
+            "bookmakers": {
+                "Bet365": [
+                    {
+                        "name": "ML",
+                        "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(fetch_markets_module, "fetch_odds_api_io_json", fake_fetch_json)
+
+    rows = fetch_markets_module.fetch_odds_api_io_historical_odds(
+        "api-key",
+        ["event-1", "event-1", "event-2"],
+        bookmakers="Bet365",
+    )
+
+    assert [row["id"] for row in rows] == ["event-1", "event-2"]
+    assert captured_params == [
+        ("historical/odds", {"eventId": "event-1", "bookmakers": "Bet365"}),
+        ("historical/odds", {"eventId": "event-2", "bookmakers": "Bet365"}),
+    ]
+
+
+def test_build_odds_api_io_variant_rows_extracts_spreads_and_totals():
+    rows = build_odds_api_io_variant_rows(
+        odds_events=[
+            {
+                "id": "odds-event-1",
+                "home": "Chelsea",
+                "away": "Arsenal",
+                "date": "2026-04-25T11:30:00Z",
+                "bookmakers": {
+                    "Bet365": [
+                        {
+                            "name": "Spread",
+                            "odds": [{"hdp": -0.5, "home": "1.90", "away": "1.95"}],
+                            "updatedAt": "2026-04-25T09:30:00Z",
+                        },
+                        {
+                            "name": "Totals",
+                            "odds": [{"hdp": 2.5, "over": "1.80", "under": "2.00"}],
+                            "updatedAt": "2026-04-25T09:31:00Z",
+                        },
+                    ],
+                    "Unibet": [
+                        {
+                            "name": "Spread",
+                            "odds": [{"hdp": -0.5, "home": "1.95", "away": "1.90"}],
+                            "updatedAt": "2026-04-25T09:32:00Z",
+                        },
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+    )
+
+    assert len(rows) == 2
+    spreads = next(row for row in rows if row["market_family"] == "spreads")
+    totals = next(row for row in rows if row["market_family"] == "totals")
+    assert spreads["id"] == "snapshot_001_bookmaker_spreads_m0p5"
+    assert spreads["selection_a_label"] == "Chelsea -0.5"
+    assert spreads["selection_b_label"] == "Arsenal +0.5"
+    assert spreads["selection_a_price"] == pytest.approx(0.519568, abs=0.00001)
+    assert spreads["selection_b_price"] == pytest.approx(0.519568, abs=0.00001)
+    assert spreads["raw_payload"]["bookmakers"] == ["Bet365", "Unibet"]
+    assert totals["id"] == "snapshot_001_bookmaker_totals_2p5"
+    assert totals["selection_a_label"] == "Over 2.5"
+    assert totals["selection_b_label"] == "Under 2.5"
+    assert totals["selection_a_price"] == pytest.approx(0.555556, abs=0.00001)
+    assert totals["selection_b_price"] == pytest.approx(0.5, abs=0.00001)
+
+
+def test_build_odds_api_io_rows_mark_historical_closing_as_pre_match():
+    rows = build_odds_api_io_market_rows(
+        odds_events=[
+            {
+                "id": "odds-event-1",
+                "home": "Chelsea",
+                "away": "Arsenal",
+                "date": "2026-02-01T14:00:00Z",
+                "bookmakers": {
+                    "Bet365": [
+                        {
+                            "name": "ML",
+                            "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                            "updatedAt": "2026-02-01T13:59:00.815Z",
+                        }
+                    ]
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "kickoff_at": "2026-02-01T14:00:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+        historical_closing=True,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["observed_at"] == "2026-02-01T14:00:00+00:00"
+    assert rows[0]["raw_payload"]["historical_closing"] is True
+    assert rows[0]["raw_payload"]["closing_observed_at"] == "2026-02-01T13:59:00.815Z"
+
+
+def test_fetch_football_data_csv_rows_reads_current_season_file(monkeypatch):
+    class FakeResponse(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _traceback):
+            self.close()
+
+    captured = {}
+
+    def fake_urlopen(request, timeout=30):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        payload = "Div,Date,HomeTeam,AwayTeam,B365H,B365D,B365A\nE0,01/02/2026,Chelsea,Arsenal,2.00,3.50,4.00\n"
+        return FakeResponse(payload.encode())
+
+    monkeypatch.setattr(fetch_markets_module, "urlopen", fake_urlopen)
+
+    rows = fetch_markets_module.fetch_football_data_csv_rows("2526", "E0")
+
+    assert captured["url"] == "https://www.football-data.co.uk/mmz4281/2526/E0.csv"
+    assert rows[0]["HomeTeam"] == "Chelsea"
+
+
+def test_build_football_data_rows_extracts_moneyline_totals_and_spreads():
+    snapshot_rows = [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "competition_id": "premier-league",
+            "kickoff_at": "2026-02-01T14:00:00+00:00",
+            "home_team_name": "Chelsea",
+            "away_team_name": "Arsenal",
+        }
+    ]
+    football_rows = [
+        {
+            "Div": "E0",
+            "Date": "01/02/2026",
+            "HomeTeam": "Chelsea",
+            "AwayTeam": "Arsenal",
+            "B365H": "2.00",
+            "B365D": "3.50",
+            "B365A": "4.00",
+            "B365>2.5": "1.80",
+            "B365<2.5": "2.00",
+            "AHCh": "-0.5",
+            "B365CAHH": "1.91",
+            "B365CAHA": "1.99",
+        }
+    ]
+
+    market_rows = fetch_markets_module.build_football_data_market_rows(
+        football_rows,
+        snapshot_rows,
+    )
+    variant_rows = fetch_markets_module.build_football_data_variant_rows(
+        football_rows,
+        snapshot_rows,
+    )
+
+    assert len(market_rows) == 1
+    assert market_rows[0]["source_name"] == "football_data_moneyline_3way"
+    assert market_rows[0]["raw_payload"]["historical_closing"] is True
+    assert market_rows[0]["home_prob"] == pytest.approx(0.482759, abs=0.00001)
+    assert {row["market_family"] for row in variant_rows} == {"spreads", "totals"}
+
+
+def test_build_football_data_snapshot_signal_updates_uses_prior_matches_only():
+    snapshot_rows = [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "kickoff_at": "2026-02-01T14:00:00+00:00",
+            "home_team_name": "Chelsea",
+            "away_team_name": "Arsenal",
+        }
+    ]
+    football_rows = [
+        {
+            "Date": "20/01/2026",
+            "HomeTeam": "Chelsea",
+            "AwayTeam": "Tottenham",
+            "HS": "12",
+            "AS": "8",
+            "HST": "5",
+            "AST": "2",
+            "HC": "7",
+            "AC": "3",
+            "HY": "1",
+            "AY": "2",
+            "HR": "0",
+            "AR": "1",
+        },
+        {
+            "Date": "28/01/2026",
+            "HomeTeam": "Liverpool",
+            "AwayTeam": "Chelsea",
+            "HS": "10",
+            "AS": "14",
+            "HST": "4",
+            "AST": "6",
+            "HC": "4",
+            "AC": "5",
+            "HY": "2",
+            "AY": "1",
+            "HR": "0",
+            "AR": "0",
+        },
+        {
+            "Date": "25/01/2026",
+            "HomeTeam": "Arsenal",
+            "AwayTeam": "Everton",
+            "HS": "9",
+            "AS": "7",
+            "HST": "3",
+            "AST": "1",
+            "HC": "4",
+            "AC": "2",
+            "HY": "0",
+            "AY": "3",
+            "HR": "0",
+            "AR": "0",
+        },
+        {
+            "Date": "01/02/2026",
+            "HomeTeam": "Chelsea",
+            "AwayTeam": "Arsenal",
+            "HS": "30",
+            "AS": "1",
+            "HST": "20",
+            "AST": "0",
+        },
+    ]
+
+    updates = fetch_markets_module.build_football_data_snapshot_signal_updates(
+        football_rows,
+        snapshot_rows,
+    )
+
+    assert updates == [
+        {
+            "id": "snapshot_001",
+            "football_data_signal_source_summary": "football_data_match_stats",
+            "home_shots_for_last_5": 13.0,
+            "home_shots_against_last_5": 9.0,
+            "home_shots_on_target_for_last_5": 5.5,
+            "home_shots_on_target_against_last_5": 3.0,
+            "home_corners_for_last_5": 6.0,
+            "home_corners_against_last_5": 3.5,
+            "home_cards_for_last_5": 1.0,
+            "home_cards_against_last_5": 3.0,
+            "home_shot_trend_last_5": 2.0,
+            "home_match_stat_sample": 2,
+            "away_shots_for_last_5": 9.0,
+            "away_shots_against_last_5": 7.0,
+            "away_shots_on_target_for_last_5": 3.0,
+            "away_shots_on_target_against_last_5": 1.0,
+            "away_corners_for_last_5": 4.0,
+            "away_corners_against_last_5": 2.0,
+            "away_cards_for_last_5": 0.0,
+            "away_cards_against_last_5": 3.0,
+            "away_shot_trend_last_5": None,
+            "away_match_stat_sample": 1,
+        }
+    ]
+
+
+def test_build_football_data_snapshot_signal_updates_does_not_count_empty_stat_rows():
+    updates = fetch_markets_module.build_football_data_snapshot_signal_updates(
+        [
+            {
+                "Date": "20/01/2026",
+                "HomeTeam": "Chelsea",
+                "AwayTeam": "Tottenham",
+            },
+            {
+                "Date": "21/01/2026",
+                "HomeTeam": "Arsenal",
+                "AwayTeam": "Everton",
+            },
+        ],
+        [
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "kickoff_at": "2026-02-01T14:00:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+    )
+
+    assert updates[0]["home_match_stat_sample"] == 0
+    assert updates[0]["away_match_stat_sample"] == 0
+    assert updates[0]["home_shots_for_last_5"] is None
+    assert updates[0]["away_shots_for_last_5"] is None
+
+
+def test_build_poisson_outcome_probabilities_prefers_understat_xg():
+    probabilities = build_poisson_outcome_probabilities(
+        {
+            "home_xg_for_last_5": 3.0,
+            "home_xg_against_last_5": 0.2,
+            "away_xg_for_last_5": 0.2,
+            "away_xg_against_last_5": 3.0,
+            "understat_home_xg_for_last_5": 1.0,
+            "understat_home_xg_against_last_5": 1.0,
+            "understat_away_xg_for_last_5": 1.0,
+            "understat_away_xg_against_last_5": 1.0,
+        }
+    )
+
+    assert probabilities is not None
+    assert probabilities["home"] == pytest.approx(probabilities["away"])
+    assert probabilities["home"] < 0.36
+    assert sum(probabilities.values()) == pytest.approx(1.0)
+
+
+def test_build_poisson_outcome_probabilities_uses_football_data_stats_when_xg_missing():
+    probabilities = build_poisson_outcome_probabilities(
+        {
+            "home_shots_for_last_5": 14.0,
+            "home_shots_on_target_for_last_5": 6.0,
+            "home_corners_for_last_5": 6.0,
+            "home_match_stat_sample": 5,
+            "away_shots_for_last_5": 7.0,
+            "away_shots_on_target_for_last_5": 2.0,
+            "away_corners_for_last_5": 2.0,
+            "away_match_stat_sample": 5,
+        }
+    )
+
+    assert probabilities is not None
+    assert probabilities["home"] > probabilities["away"]
+    assert sum(probabilities.values()) == pytest.approx(1.0)
+
+
+def test_anchor_calibrated_bookmaker_weight_raises_trusted_closing_source():
+    weights = anchor_calibrated_bookmaker_weight(
+        {"base_model": 0.55, "bookmaker": 0.45},
+        bookmaker_row={"source_name": "football_data_moneyline_3way"},
+        prediction_market_available=False,
+    )
+
+    assert weights == {"base_model": 0.28, "bookmaker": 0.72}
+
+
+def test_select_odds_api_io_historical_backfill_snapshots_targets_europe_only():
+    rows = select_odds_api_io_historical_backfill_snapshots(
+        snapshot_rows=[
+            {
+                "id": "ucl_snapshot",
+                "match_id": "ucl_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-02-01T12:00:00+00:00",
+            },
+            {
+                "id": "epl_snapshot",
+                "match_id": "epl_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-02-01T12:00:00+00:00",
+            },
+        ],
+        match_rows=[
+            {
+                "id": "ucl_match",
+                "competition_id": "champions-league",
+                "kickoff_at": "2026-02-01T20:00:00+00:00",
+                "home_score": 2,
+                "away_score": 1,
+                "home_team_id": "home",
+                "away_team_id": "away",
+            },
+            {
+                "id": "epl_match",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-02-01T20:00:00+00:00",
+                "home_score": 2,
+                "away_score": 1,
+                "home_team_id": "home",
+                "away_team_id": "away",
+            },
+        ],
+        team_rows=[
+            {"id": "home", "name": "Chelsea"},
+            {"id": "away", "name": "Arsenal"},
+        ],
+        competition_filter=parse_competition_filter(None),
+        start_date="2026-02-01",
+        end_date="2026-02-01",
+    )
+
+    assert [row["id"] for row in rows] == ["ucl_snapshot"]
+
+
+def test_fetch_historical_odds_for_snapshots_uses_cache_and_budget(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key
+        calls.append((path, params))
+        if path == "historical/events":
+            return {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "home": "Chelsea",
+                        "away": "Arsenal",
+                        "date": "2026-02-01T20:00:00Z",
+                    },
+                    {
+                        "id": "event-unmatched",
+                        "home": "Barcelona",
+                        "away": "Real Madrid",
+                        "date": "2026-02-01T20:00:00Z",
+                    },
+                ]
+            }
+        return {
+            "id": params["eventId"],
+            "home": "Chelsea",
+            "away": "Arsenal",
+            "date": "2026-02-01T20:00:00Z",
+            "bookmakers": {
+                "Bet365": [
+                    {
+                        "name": "ML",
+                        "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+    snapshot_rows = [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "competition_id": "champions-league",
+            "kickoff_at": "2026-02-01T20:00:00+00:00",
+            "home_team_name": "Chelsea",
+            "away_team_name": "Arsenal",
+        }
+    ]
+    cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365",
+        max_requests=2,
+    )
+
+    rows = fetch_historical_odds_for_snapshots(snapshot_rows, cache)
+    cached_rows = fetch_historical_odds_for_snapshots(snapshot_rows, cache)
+
+    assert [row["id"] for row in rows] == ["event-1"]
+    assert [row["id"] for row in cached_rows] == ["event-1"]
+    assert len(calls) == 2
+    assert [
+        params["eventId"]
+        for path, params in calls
+        if path == "historical/odds"
+    ] == ["event-1"]
+    assert cache.request_count == 2
+    assert cache.cache_hits == 2
 
 
 def test_build_odds_api_io_market_rows_skips_ambiguous_same_kickoff_matches():

@@ -27,7 +27,8 @@ DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
     "by_market_segment",
     "overall",
 )
-SOURCE_VARIANTS = ("base_model", "bookmaker", "prediction_market")
+SOURCE_VARIANTS = ("base_model", "bookmaker", "prediction_market", "poisson")
+MARKET_CONSENSUS_VARIANTS = ("base_model", "bookmaker", "prediction_market")
 MAX_INFERRED_SOURCE_WEIGHT = 0.6
 
 
@@ -103,7 +104,7 @@ def _rebalance_for_dual_source_consensus(
     probability_sources: dict[str, dict[str, float]],
     allowed_variants: tuple[str, ...],
 ) -> dict[str, float]:
-    if len(allowed_variants) != 3 or set(allowed_variants) != set(SOURCE_VARIANTS):
+    if len(allowed_variants) != 3 or set(allowed_variants) != set(MARKET_CONSENSUS_VARIANTS):
         return raw_weights
 
     top_picks = {
@@ -152,6 +153,7 @@ def _build_inferred_weights(
     base_probs: dict,
     book_probs: dict,
     market_probs: dict,
+    poisson_probs: dict | None = None,
     allowed_variants: tuple[str, ...],
 ) -> dict[str, float]:
     probability_sources = {
@@ -159,11 +161,14 @@ def _build_inferred_weights(
         "bookmaker": book_probs,
         "prediction_market": market_probs,
     }
+    if poisson_probs is not None:
+        probability_sources["poisson"] = poisson_probs
     raw_weights = {
         variant: 1.0
         + (_probability_sharpness(probability_sources[variant]) * 7.0)
         + (_probability_margin(probability_sources[variant]) * 7.0)
         for variant in allowed_variants
+        if variant in probability_sources
     }
     raw_weights = _rebalance_for_dual_source_consensus(
         raw_weights,
@@ -387,18 +392,29 @@ def fuse_probabilities(
     base_probs: dict,
     book_probs: dict,
     market_probs: dict,
+    poisson_probs: dict | None = None,
     weights: dict | None = None,
     allowed_variants: tuple[str, ...] = SOURCE_VARIANTS,
 ) -> dict:
+    probability_sources = {
+        "base_model": base_probs,
+        "bookmaker": book_probs,
+        "prediction_market": market_probs,
+    }
+    if poisson_probs is not None:
+        probability_sources["poisson"] = poisson_probs
     active_variants = tuple(
-        variant for variant in SOURCE_VARIANTS if variant in allowed_variants
+        variant
+        for variant in SOURCE_VARIANTS
+        if variant in allowed_variants and variant in probability_sources
     )
     if not active_variants:
-        active_variants = SOURCE_VARIANTS
+        active_variants = MARKET_CONSENSUS_VARIANTS
     weights = weights or _build_inferred_weights(
         base_probs=base_probs,
         book_probs=book_probs,
         market_probs=market_probs,
+        poisson_probs=poisson_probs,
         allowed_variants=active_variants,
     )
     total_weight = sum(
@@ -407,26 +423,16 @@ def fuse_probabilities(
     if total_weight <= 0:
         weights = _build_equal_weights(active_variants)
         total_weight = 1.0
-    fused = {
-        "home": (
-            (base_probs["home"] * float(weights.get("base_model", 0.0)))
-            + (book_probs["home"] * float(weights.get("bookmaker", 0.0)))
-            + (market_probs["home"] * float(weights.get("prediction_market", 0.0)))
+    fused = {}
+    for outcome in ("home", "draw", "away"):
+        fused[outcome] = (
+            sum(
+                probability_sources[source_name][outcome]
+                * float(weights.get(source_name, 0.0))
+                for source_name in active_variants
+            )
+            / total_weight
         )
-        / total_weight,
-        "draw": (
-            (base_probs["draw"] * float(weights.get("base_model", 0.0)))
-            + (book_probs["draw"] * float(weights.get("bookmaker", 0.0)))
-            + (market_probs["draw"] * float(weights.get("prediction_market", 0.0)))
-        )
-        / total_weight,
-        "away": (
-            (base_probs["away"] * float(weights.get("base_model", 0.0)))
-            + (book_probs["away"] * float(weights.get("bookmaker", 0.0)))
-            + (market_probs["away"] * float(weights.get("prediction_market", 0.0)))
-        )
-        / total_weight,
-    }
     total = fused["home"] + fused["draw"] + fused["away"]
     return {key: value / total for key, value in fused.items()}
 

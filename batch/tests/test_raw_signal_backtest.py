@@ -232,6 +232,70 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
             "understat_xg_available": 0,
         }
     )
+    assert not _is_daily_pick_candidate(
+        {
+            "external_signal_source_summary": "",
+            "external_rating_available": 0,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+        }
+    )
+    assert _is_daily_pick_candidate(
+        {
+            "external_signal_source_summary": "",
+            "external_rating_available": 0,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 1,
+        }
+    )
+
+
+def test_build_raw_moneyline_rows_rejects_empty_football_data_samples():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": "match-1",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snap-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+                "home_match_stat_sample": 1,
+                "away_match_stat_sample": 1,
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snap-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.61,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.61,
+                        "recommended": True,
+                    },
+                    "feature_context": {},
+                },
+            }
+        ],
+    )
+
+    assert rows[0]["football_data_match_stats_available"] == 0
+    assert not _is_daily_pick_candidate(rows[0])
 
 
 def test_build_raw_moneyline_rows_keeps_settled_outcomes_out_of_raw_adjustment():
@@ -548,8 +612,8 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
         "coverage": 1.0,
         "wilson_lower_bound": 0.6476,
         "minimum_sample_count": 50,
-        "target_hit_rate": 0.74,
-        "minimum_wilson_lower_bound": 0.64,
+        "target_hit_rate": 0.7,
+        "minimum_wilson_lower_bound": 0.62,
         "eligibility_filter": (
             "prequential_quality_candidate_with_external_pre_match_signal"
         ),
@@ -561,7 +625,7 @@ def test_daily_pick_reliability_holds_when_wilson_bound_is_weak():
         {
             "date": f"2026-04-{index + 1:02d}",
             "adjusted_hit": 0,
-            "prequential_hit": 1 if index < 38 else 0,
+            "prequential_hit": 1 if index < 37 else 0,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
             "external_rating_available": 1,

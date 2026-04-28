@@ -12,6 +12,11 @@ FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
     "canonical_xg_delta",
     "understat_xg_delta",
     "xg_delta_disagreement",
+    "shot_volume_delta",
+    "shot_quality_delta",
+    "corner_delta",
+    "card_discipline_delta",
+    "match_stat_trend_delta",
     "fixture_congestion_delta",
     "lineup_strength_delta",
     "market_gap_home",
@@ -25,6 +30,7 @@ FEATURE_VECTOR_FIELDS: tuple[str, ...] = (
     "prediction_market_available",
     "external_rating_available",
     "understat_xg_available",
+    "football_data_match_stats_available",
     "snapshot_quality_complete",
     "lineup_confirmed",
 )
@@ -53,6 +59,27 @@ RAW_SIGNAL_FIELDS: tuple[str, ...] = (
     "bsd_home_xg_live",
     "bsd_away_xg_live",
     "external_signal_source_summary",
+    "home_shots_for_last_5",
+    "home_shots_against_last_5",
+    "away_shots_for_last_5",
+    "away_shots_against_last_5",
+    "home_shots_on_target_for_last_5",
+    "home_shots_on_target_against_last_5",
+    "away_shots_on_target_for_last_5",
+    "away_shots_on_target_against_last_5",
+    "home_corners_for_last_5",
+    "home_corners_against_last_5",
+    "away_corners_for_last_5",
+    "away_corners_against_last_5",
+    "home_cards_for_last_5",
+    "home_cards_against_last_5",
+    "away_cards_for_last_5",
+    "away_cards_against_last_5",
+    "home_shot_trend_last_5",
+    "away_shot_trend_last_5",
+    "home_match_stat_sample",
+    "away_match_stat_sample",
+    "football_data_signal_source_summary",
     "home_matches_last_7d",
     "away_matches_last_7d",
     "home_lineup_score",
@@ -78,6 +105,27 @@ OPTIONAL_EXTERNAL_SIGNAL_FIELDS: tuple[str, ...] = (
     "bsd_home_xg_live",
     "bsd_away_xg_live",
     "external_signal_source_summary",
+    "home_shots_for_last_5",
+    "home_shots_against_last_5",
+    "away_shots_for_last_5",
+    "away_shots_against_last_5",
+    "home_shots_on_target_for_last_5",
+    "home_shots_on_target_against_last_5",
+    "away_shots_on_target_for_last_5",
+    "away_shots_on_target_against_last_5",
+    "home_corners_for_last_5",
+    "home_corners_against_last_5",
+    "away_corners_for_last_5",
+    "away_corners_against_last_5",
+    "home_cards_for_last_5",
+    "home_cards_against_last_5",
+    "away_cards_for_last_5",
+    "away_cards_against_last_5",
+    "home_shot_trend_last_5",
+    "away_shot_trend_last_5",
+    "home_match_stat_sample",
+    "away_match_stat_sample",
+    "football_data_signal_source_summary",
 )
 CANONICAL_RATING_SIGNAL_FIELDS: tuple[str, ...] = ("home_elo", "away_elo")
 EXTERNAL_RATING_SIGNAL_FIELDS: tuple[str, ...] = (
@@ -265,10 +313,40 @@ def build_feature_vector(snapshot: dict) -> dict:
             "understat_away_xg_against_last_5",
         ),
     )
+    shot_volume_delta = _paired_delta(
+        snapshot,
+        "home_shots_for_last_5",
+        "away_shots_for_last_5",
+    )
+    shot_quality_delta = _shot_quality_delta(snapshot)
+    corner_delta = _paired_delta(
+        snapshot,
+        "home_corners_for_last_5",
+        "away_corners_for_last_5",
+    )
+    card_discipline_delta = _paired_delta(
+        snapshot,
+        "away_cards_for_last_5",
+        "home_cards_for_last_5",
+    )
+    match_stat_trend_delta = _paired_delta(
+        snapshot,
+        "home_shot_trend_last_5",
+        "away_shot_trend_last_5",
+    )
+    football_data_match_stats_available = int(
+        (_numeric(snapshot.get("home_match_stat_sample")) or 0.0) > 0.0
+        and (_numeric(snapshot.get("away_match_stat_sample")) or 0.0) > 0.0
+        and _has_football_data_attack_signal(snapshot, "home")
+        and _has_football_data_attack_signal(snapshot, "away")
+    )
     fallback_xg_delta = (
         (book_attack_edge * 1.2)
         + (market_attack_edge * 1.0)
         + (form_delta * 0.04)
+        + ((shot_volume_delta or 0.0) * 0.03)
+        + ((shot_quality_delta or 0.0) * 0.7)
+        + ((corner_delta or 0.0) * 0.02)
     )
     if understat_xg_delta is not None:
         xg_proxy_delta = understat_xg_delta
@@ -325,6 +403,11 @@ def build_feature_vector(snapshot: dict) -> dict:
         "canonical_xg_delta": canonical_xg_feature,
         "understat_xg_delta": understat_xg_feature,
         "xg_delta_disagreement": xg_delta_disagreement,
+        "shot_volume_delta": shot_volume_delta or 0.0,
+        "shot_quality_delta": shot_quality_delta or 0.0,
+        "corner_delta": corner_delta or 0.0,
+        "card_discipline_delta": card_discipline_delta or 0.0,
+        "match_stat_trend_delta": match_stat_trend_delta or 0.0,
         "fixture_congestion_delta": fixture_congestion_delta,
         "home_lineup_score": snapshot.get("home_lineup_score"),
         "away_lineup_score": snapshot.get("away_lineup_score"),
@@ -341,6 +424,7 @@ def build_feature_vector(snapshot: dict) -> dict:
         "prediction_market_available": snapshot.get("prediction_market_available", True),
         "external_rating_available": external_rating_available,
         "understat_xg_available": understat_xg_available,
+        "football_data_match_stats_available": football_data_match_stats_available,
         "snapshot_quality_complete": int(
             snapshot.get("snapshot_quality", "complete") == "complete"
         ),
@@ -360,6 +444,50 @@ def _xg_delta(snapshot: dict, fields: tuple[str, str, str, str]) -> float | None
     home_xg_balance = float(snapshot[fields[0]]) - float(snapshot[fields[1]])
     away_xg_balance = float(snapshot[fields[2]]) - float(snapshot[fields[3]])
     return home_xg_balance - away_xg_balance
+
+
+def _paired_delta(snapshot: dict, home_field: str, away_field: str) -> float | None:
+    if snapshot.get(home_field) is None or snapshot.get(away_field) is None:
+        return None
+    return float(snapshot[home_field]) - float(snapshot[away_field])
+
+
+def _numeric(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _shot_quality_delta(snapshot: dict) -> float | None:
+    if not all(
+        snapshot.get(key) is not None
+        for key in (
+            "home_shots_for_last_5",
+            "away_shots_for_last_5",
+            "home_shots_on_target_for_last_5",
+            "away_shots_on_target_for_last_5",
+        )
+    ):
+        return None
+    home_shots = max(float(snapshot["home_shots_for_last_5"]), 0.1)
+    away_shots = max(float(snapshot["away_shots_for_last_5"]), 0.1)
+    home_ratio = float(snapshot["home_shots_on_target_for_last_5"]) / home_shots
+    away_ratio = float(snapshot["away_shots_on_target_for_last_5"]) / away_shots
+    return home_ratio - away_ratio
+
+
+def _has_football_data_attack_signal(snapshot: dict, side: str) -> bool:
+    return any(
+        _numeric(snapshot.get(f"{side}_{field}")) is not None
+        for field in (
+            "shots_for_last_5",
+            "shots_on_target_for_last_5",
+            "corners_for_last_5",
+        )
+    )
 
 
 def feature_vector_to_model_input(feature_vector: dict) -> list[float]:

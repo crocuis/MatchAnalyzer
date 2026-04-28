@@ -148,6 +148,19 @@ def test_bsd_event_signal_migration_adds_snapshot_xg_columns():
     assert "bsd_away_xg_live numeric" in migration
 
 
+def test_football_data_signal_migration_adds_snapshot_match_stat_columns():
+    migration = normalize_sql(
+        Path("supabase/migrations/202604280001_add_football_data_snapshot_signals.sql").read_text()
+    )
+
+    assert "home_shots_for_last_5 numeric" in migration
+    assert "away_shots_on_target_against_last_5 numeric" in migration
+    assert "home_corners_for_last_5 numeric" in migration
+    assert "away_cards_against_last_5 numeric" in migration
+    assert "home_match_stat_sample integer" in migration
+    assert "football_data_signal_source_summary text" in migration
+
+
 def test_prediction_feature_snapshot_migration_captures_context_and_metadata():
     migration = normalize_sql(
         Path(
@@ -497,6 +510,63 @@ def test_build_feature_vector_keeps_internal_and_external_signals_separate():
     assert round(features["xg_delta_disagreement"], 2) == 1.2
     assert features["external_rating_available"] == 1
     assert features["understat_xg_available"] == 1
+
+
+def test_build_feature_vector_includes_football_data_match_stat_edges():
+    features = build_feature_vector(
+        {
+            "form_delta": 0,
+            "rest_delta": 0,
+            "book_home_prob": 0.45,
+            "book_draw_prob": 0.28,
+            "book_away_prob": 0.27,
+            "market_home_prob": 0.43,
+            "market_draw_prob": 0.29,
+            "market_away_prob": 0.28,
+            "home_shots_for_last_5": 14.0,
+            "away_shots_for_last_5": 8.0,
+            "home_shots_on_target_for_last_5": 6.0,
+            "away_shots_on_target_for_last_5": 2.0,
+            "home_corners_for_last_5": 7.0,
+            "away_corners_for_last_5": 3.0,
+            "home_cards_for_last_5": 1.0,
+            "away_cards_for_last_5": 3.0,
+            "home_shot_trend_last_5": 0.8,
+            "away_shot_trend_last_5": -0.2,
+            "home_match_stat_sample": 5,
+            "away_match_stat_sample": 5,
+            "football_data_signal_source_summary": "football_data_match_stats",
+            "prediction_market_available": True,
+        }
+    )
+
+    assert features["shot_volume_delta"] == 6.0
+    assert round(features["shot_quality_delta"], 3) == 0.179
+    assert features["corner_delta"] == 4.0
+    assert features["card_discipline_delta"] == 2.0
+    assert features["match_stat_trend_delta"] == 1.0
+    assert features["football_data_match_stats_available"] == 1
+
+
+def test_build_feature_vector_rejects_empty_football_data_match_stat_samples():
+    features = build_feature_vector(
+        {
+            "form_delta": 0,
+            "rest_delta": 0,
+            "book_home_prob": 0.45,
+            "book_draw_prob": 0.28,
+            "book_away_prob": 0.27,
+            "market_home_prob": 0.43,
+            "market_draw_prob": 0.29,
+            "market_away_prob": 0.28,
+            "home_match_stat_sample": 1,
+            "away_match_stat_sample": 1,
+            "football_data_signal_source_summary": "football_data_match_stats",
+            "prediction_market_available": True,
+        }
+    )
+
+    assert features["football_data_match_stats_available"] == 0
 
 
 def test_feature_metadata_treats_external_rating_and_understat_as_resolved_signals():

@@ -5,8 +5,12 @@ from datetime import datetime, timezone
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
     build_betman_team_translation_rows,
+    build_football_data_market_rows,
+    build_football_data_snapshot_signal_updates,
+    build_football_data_variant_rows,
     build_market_rows_from_schedule,
     build_odds_api_io_market_rows,
+    build_odds_api_io_variant_rows,
     build_market_snapshots,
     build_prediction_market_snapshot_contexts,
     build_prediction_market_variant_rows,
@@ -14,11 +18,18 @@ from batch.src.ingest.fetch_markets import (
     fetch_betman_buyable_games,
     fetch_betman_game_detail,
     fetch_daily_schedule,
-    fetch_odds_api_io_events,
+    fetch_football_data_csv_rows,
+    fetch_odds_api_io_events_for_snapshots,
+    fetch_odds_api_io_historical_events_for_snapshots,
+    fetch_odds_api_io_historical_odds,
     fetch_odds_api_io_multi_odds,
+    football_data_code_for_competition,
+    football_data_season_code,
 )
 from batch.src.jobs.sample_data import SAMPLE_MATCH_ID
 from batch.src.settings import load_settings
+from batch.src.storage.local_dataset_client import LocalDatasetClient
+from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -108,6 +119,16 @@ def parse_iso_datetime(value: object) -> datetime | None:
         )
     except ValueError:
         return None
+
+
+def parse_bool_env(name: str) -> bool:
+    return str(os.environ.get(name) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
 
 
 def select_real_market_snapshots(
@@ -288,6 +309,27 @@ def attach_team_translation_aliases(
     return enriched
 
 
+def fetch_football_data_rows_for_snapshots(
+    snapshot_rows: list[dict],
+) -> list[dict]:
+    rows: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for snapshot in snapshot_rows:
+        league_code = football_data_code_for_competition(
+            str(snapshot.get("competition_id") or "")
+        )
+        kickoff_at = str(snapshot.get("kickoff_at") or "")
+        if not league_code or not kickoff_at:
+            continue
+        season_code = football_data_season_code(kickoff_at)
+        key = (season_code, league_code)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        rows.extend(fetch_football_data_csv_rows(season_code, league_code))
+    return rows
+
+
 def filter_existing_team_translation_rows(
     *,
     existing_rows: list[dict],
@@ -453,7 +495,12 @@ def overlay_market_rows(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    local_dataset_dir = resolve_local_prediction_dataset_dir()
+    client = (
+        LocalDatasetClient(local_dataset_dir)
+        if local_dataset_dir is not None
+        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+    )
     all_snapshot_rows = client.read_rows("match_snapshots")
     if not all_snapshot_rows:
         raise ValueError("match_snapshots must exist before ingesting markets")
@@ -463,6 +510,12 @@ def main() -> None:
     odds_api_io_events = []
     odds_api_io_odds = []
     odds_api_io_market_rows = []
+    odds_api_io_variant_rows = []
+    odds_api_io_error = None
+    football_data_rows = []
+    football_data_market_rows = []
+    football_data_snapshot_signal_updates = []
+    football_data_variant_rows = []
 
     if use_real_schedule:
         match_rows = client.read_rows("matches")
@@ -487,89 +540,183 @@ def main() -> None:
             raise ValueError(
                 "T_MINUS_24H match_snapshots must exist before ingesting real markets"
             )
-        schedule = fetch_daily_schedule(use_real_schedule)
-        payload = build_market_rows_from_schedule(schedule, snapshot_rows)
-        odds_api_key = getattr(settings, "odds_api_key", None)
+        odds_api_key = (
+            None
+            if parse_bool_env("ODDS_API_IO_DISABLE")
+            else getattr(settings, "odds_api_key", None)
+        )
+        include_historical_odds = (
+            bool(odds_api_key) and parse_bool_env("ODDS_API_IO_INCLUDE_HISTORICAL")
+        )
+        historical_odds_only = (
+            include_historical_odds and parse_bool_env("ODDS_API_IO_HISTORICAL_ONLY")
+        )
+        football_data_fallback_enabled = historical_odds_only or parse_bool_env(
+            "FOOTBALL_DATA_MARKET_FALLBACK"
+        )
+        schedule = {} if historical_odds_only else fetch_daily_schedule(use_real_schedule)
+        payload = (
+            []
+            if historical_odds_only
+            else build_market_rows_from_schedule(schedule, snapshot_rows)
+        )
         if odds_api_key:
-            odds_api_io_events = fetch_odds_api_io_events(odds_api_key)
-            odds_api_io_event_ids = [
-                str(event.get("id") or "")
-                for event in odds_api_io_events
-                if event.get("id")
+            odds_api_io_bookmakers = getattr(
+                settings,
+                "odds_api_io_bookmakers",
+                "Bet365,Unibet",
+            )
+            try:
+                if include_historical_odds:
+                    odds_api_io_events = fetch_odds_api_io_historical_events_for_snapshots(
+                        odds_api_key,
+                        snapshot_rows,
+                    )
+                else:
+                    odds_api_io_events = fetch_odds_api_io_events_for_snapshots(
+                        odds_api_key,
+                        snapshot_rows,
+                        bookmakers=odds_api_io_bookmakers,
+                        status=os.environ.get("ODDS_API_IO_EVENT_STATUS") or "pending,live",
+                    )
+                odds_api_io_event_ids = [
+                    str(event.get("id") or "")
+                    for event in odds_api_io_events
+                    if event.get("id")
+                ]
+                if include_historical_odds:
+                    odds_api_io_odds = fetch_odds_api_io_historical_odds(
+                        odds_api_key,
+                        odds_api_io_event_ids,
+                        bookmakers=odds_api_io_bookmakers,
+                    )
+                else:
+                    odds_api_io_odds = fetch_odds_api_io_multi_odds(
+                        odds_api_key,
+                        odds_api_io_event_ids,
+                        bookmakers=odds_api_io_bookmakers,
+                    )
+                odds_api_io_market_rows = build_odds_api_io_market_rows(
+                    odds_api_io_odds,
+                    snapshot_rows,
+                    historical_closing=include_historical_odds,
+                )
+                odds_api_io_variant_rows = build_odds_api_io_variant_rows(
+                    odds_api_io_odds,
+                    snapshot_rows,
+                    historical_closing=include_historical_odds,
+                )
+                odds_api_io_market_rows = filter_pre_match_market_rows(
+                    odds_api_io_market_rows,
+                    snapshot_rows,
+                )
+                odds_api_io_variant_rows = filter_pre_match_market_rows(
+                    odds_api_io_variant_rows,
+                    snapshot_rows,
+                )
+            except Exception as exc:
+                if not football_data_fallback_enabled:
+                    raise
+                odds_api_io_error = f"{type(exc).__name__}: {exc}"
+        if football_data_fallback_enabled:
+            football_data_rows = fetch_football_data_rows_for_snapshots(snapshot_rows)
+            football_data_market_rows = build_football_data_market_rows(
+                football_data_rows,
+                snapshot_rows,
+            )
+            football_data_variant_rows = build_football_data_variant_rows(
+                football_data_rows,
+                snapshot_rows,
+            )
+            football_data_snapshot_signal_updates = (
+                build_football_data_snapshot_signal_updates(
+                    football_data_rows,
+                    snapshot_rows,
+                )
+            )
+            football_data_market_rows = filter_pre_match_market_rows(
+                football_data_market_rows,
+                snapshot_rows,
+            )
+            football_data_variant_rows = filter_pre_match_market_rows(
+                football_data_variant_rows,
+                snapshot_rows,
+            )
+        if historical_odds_only:
+            betman_buyable_games = {}
+            betman_detail_payloads = []
+            betman_market_rows = []
+            betman_variant_rows = []
+            betman_team_translation_rows = []
+        else:
+            betman_buyable_games = fetch_betman_buyable_games()
+            betman_detail_payloads = [
+                fetch_betman_game_detail(
+                    game["gmId"],
+                    game["gmTs"],
+                    game_year=game.get("gmOsidTsYear"),
+                )
+                for game in betman_buyable_games.get("protoGames", [])
+                if game.get("gmId") and game.get("gmTs")
             ]
-            odds_api_io_odds = fetch_odds_api_io_multi_odds(
-                odds_api_key,
-                odds_api_io_event_ids,
-                bookmakers=getattr(settings, "odds_api_io_bookmakers", "Bet365,Unibet"),
+            betman_market_rows, betman_variant_rows = build_betman_market_rows(
+                detail_payloads=betman_detail_payloads,
+                snapshot_rows=snapshot_rows,
+                bookmaker_rows=payload,
             )
-            odds_api_io_market_rows = build_odds_api_io_market_rows(
-                odds_api_io_odds,
+            betman_market_rows = filter_pre_match_market_rows(
+                betman_market_rows,
                 snapshot_rows,
             )
-            odds_api_io_market_rows = filter_pre_match_market_rows(
-                odds_api_io_market_rows,
+            betman_variant_rows = filter_pre_match_market_rows(
+                betman_variant_rows,
                 snapshot_rows,
             )
-        betman_buyable_games = fetch_betman_buyable_games()
-        betman_detail_payloads = [
-            fetch_betman_game_detail(
-                game["gmId"],
-                game["gmTs"],
-                game_year=game.get("gmOsidTsYear"),
+            betman_team_translation_rows = build_betman_team_translation_rows(
+                detail_payloads=betman_detail_payloads,
+                snapshot_rows=snapshot_rows,
+                bookmaker_rows=payload,
             )
-            for game in betman_buyable_games.get("protoGames", [])
-            if game.get("gmId") and game.get("gmTs")
-        ]
-        betman_market_rows, betman_variant_rows = build_betman_market_rows(
-            detail_payloads=betman_detail_payloads,
-            snapshot_rows=snapshot_rows,
-            bookmaker_rows=payload,
-        )
-        betman_market_rows = filter_pre_match_market_rows(
-            betman_market_rows,
-            snapshot_rows,
-        )
-        betman_variant_rows = filter_pre_match_market_rows(
-            betman_variant_rows,
-            snapshot_rows,
-        )
-        betman_team_translation_rows = build_betman_team_translation_rows(
-            detail_payloads=betman_detail_payloads,
-            snapshot_rows=snapshot_rows,
-            bookmaker_rows=payload,
-        )
-        betman_team_translation_rows = filter_existing_team_translation_rows(
-            existing_rows=team_translation_rows,
-            incoming_rows=betman_team_translation_rows,
-        )
+            betman_team_translation_rows = filter_existing_team_translation_rows(
+                existing_rows=team_translation_rows,
+                incoming_rows=betman_team_translation_rows,
+            )
         payload = overlay_market_rows(payload, betman_market_rows)
+        payload = overlay_market_rows(payload, football_data_market_rows)
         payload = overlay_market_rows(payload, odds_api_io_market_rows)
-        prediction_market_rows, prediction_market_raw = build_prediction_market_rows_for_snapshots(
-            snapshot_rows=snapshot_rows,
-            match_rows=match_rows,
-            team_rows=team_rows,
-            competition_rows=competition_rows,
-        )
-        prediction_market_contexts = build_prediction_market_snapshot_contexts(
-            snapshot_rows=snapshot_rows,
-            match_rows=match_rows,
-            team_rows=team_rows,
-            competition_rows=competition_rows,
-        )
-        prediction_market_variant_rows = build_prediction_market_variant_rows(
-            prediction_market_raw,
-            prediction_market_contexts,
-        )
-        prediction_market_rows = filter_pre_match_market_rows(
-            prediction_market_rows,
-            snapshot_rows,
-        )
-        prediction_market_variant_rows = filter_pre_match_market_rows(
-            prediction_market_variant_rows,
-            snapshot_rows,
-        )
+        if historical_odds_only:
+            prediction_market_raw = {}
+            prediction_market_rows = []
+            prediction_market_variant_rows = []
+        else:
+            prediction_market_rows, prediction_market_raw = build_prediction_market_rows_for_snapshots(
+                snapshot_rows=snapshot_rows,
+                match_rows=match_rows,
+                team_rows=team_rows,
+                competition_rows=competition_rows,
+            )
+            prediction_market_contexts = build_prediction_market_snapshot_contexts(
+                snapshot_rows=snapshot_rows,
+                match_rows=match_rows,
+                team_rows=team_rows,
+                competition_rows=competition_rows,
+            )
+            prediction_market_variant_rows = build_prediction_market_variant_rows(
+                prediction_market_raw,
+                prediction_market_contexts,
+            )
+            prediction_market_rows = filter_pre_match_market_rows(
+                prediction_market_rows,
+                snapshot_rows,
+            )
+            prediction_market_variant_rows = filter_pre_match_market_rows(
+                prediction_market_variant_rows,
+                snapshot_rows,
+            )
         payload.extend(prediction_market_rows)
         prediction_market_variant_rows.extend(betman_variant_rows)
+        prediction_market_variant_rows.extend(football_data_variant_rows)
+        prediction_market_variant_rows.extend(odds_api_io_variant_rows)
         archive_payload = {
             "bookmaker_schedule": schedule,
             "betman_buyable_games": betman_buyable_games,
@@ -577,6 +724,8 @@ def main() -> None:
             "betman_team_translations": betman_team_translation_rows,
             "odds_api_io_events": odds_api_io_events,
             "odds_api_io_odds": odds_api_io_odds,
+            "odds_api_io_error": odds_api_io_error,
+            "football_data_rows": football_data_rows,
             "prediction_market_search_results": prediction_market_raw,
         }
         archive_key = f"markets/{use_real_schedule}.json"
@@ -659,6 +808,11 @@ def main() -> None:
                 market_rows=[],
                 variant_rows=[],
             )
+            updated_snapshot_signals = (
+                client.upsert_rows("match_snapshots", football_data_snapshot_signal_updates)
+                if football_data_snapshot_signal_updates
+                else 0
+            )
             print(
                 json.dumps(
                     {
@@ -673,6 +827,15 @@ def main() -> None:
                         "odds_api_io_events": len(odds_api_io_events),
                         "odds_api_io_odds": len(odds_api_io_odds),
                         "odds_api_io_market_rows": len(odds_api_io_market_rows),
+                        "odds_api_io_variant_rows": len(odds_api_io_variant_rows),
+                        "odds_api_io_error": odds_api_io_error,
+                        "football_data_rows": len(football_data_rows),
+                        "football_data_market_rows": len(football_data_market_rows),
+                        "football_data_variant_rows": len(football_data_variant_rows),
+                        "football_data_snapshot_signal_updates": len(
+                            football_data_snapshot_signal_updates
+                        ),
+                        "updated_snapshot_signals": updated_snapshot_signals,
                         "coverage_summary": coverage_summary,
                         "changed_match_ids": [],
                         "payload": [],
@@ -719,12 +882,14 @@ def main() -> None:
         snapshot_rows=snapshot_rows,
     )
 
-    archive_uri = R2Client(
-        settings.r2_bucket,
-        access_key_id=settings.r2_access_key_id,
-        secret_access_key=settings.r2_secret_access_key,
-        s3_endpoint=settings.r2_s3_endpoint,
-    ).archive_json(archive_key, archive_payload)
+    archive_uri = None
+    if not parse_bool_env("MATCH_ANALYZER_SKIP_MARKET_ARCHIVE"):
+        archive_uri = R2Client(
+            settings.r2_bucket,
+            access_key_id=settings.r2_access_key_id,
+            secret_access_key=settings.r2_secret_access_key,
+            s3_endpoint=settings.r2_s3_endpoint,
+        ).archive_json(archive_key, archive_payload)
     deleted_market_rows = (
         client.delete_rows("market_probabilities", "id", deleted_market_ids)
         if deleted_market_ids
@@ -737,6 +902,11 @@ def main() -> None:
     )
     if promoted_snapshots:
         client.upsert_rows("match_snapshots", promoted_snapshots)
+    updated_snapshot_signals = (
+        client.upsert_rows("match_snapshots", football_data_snapshot_signal_updates)
+        if football_data_snapshot_signal_updates
+        else 0
+    )
     inserted = client.upsert_rows("market_probabilities", payload)
     try:
         variant_inserted = client.upsert_rows(
@@ -767,6 +937,15 @@ def main() -> None:
                 "odds_api_io_events": len(odds_api_io_events),
                 "odds_api_io_odds": len(odds_api_io_odds),
                 "odds_api_io_market_rows": len(odds_api_io_market_rows),
+                "odds_api_io_variant_rows": len(odds_api_io_variant_rows),
+                "odds_api_io_error": odds_api_io_error,
+                "football_data_rows": len(football_data_rows),
+                "football_data_market_rows": len(football_data_market_rows),
+                "football_data_variant_rows": len(football_data_variant_rows),
+                "football_data_snapshot_signal_updates": len(
+                    football_data_snapshot_signal_updates
+                ),
+                "updated_snapshot_signals": updated_snapshot_signals,
                 "coverage_summary": coverage_summary,
                 "changed_match_ids": changed_match_ids,
                 "payload": payload,

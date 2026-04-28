@@ -2,6 +2,8 @@ import json
 
 from batch.src.jobs.run_predictions_job import (
     build_market_probabilities,
+    build_available_source_variants,
+    build_poisson_scoring_context,
     resolve_bookmaker_context,
     build_snapshot_context,
     predict_base_probabilities,
@@ -153,6 +155,14 @@ def build_evaluation_report(
                 prediction_payload,
                 "base_model",
             )
+        poisson_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "poisson",
+        )
+        if poisson_probs is None:
+            model_selection = prediction_payload.get("model_selection")
+            if isinstance(model_selection, dict):
+                poisson_probs = read_probability_map(model_selection.get("poisson_probs"))
         fused_probs = read_prediction_fused_probabilities(prediction)
         use_prediction_payload = (
             bookmaker_probs is not None
@@ -178,6 +188,7 @@ def build_evaluation_report(
                 }
             selection_context = {
                 **feature_context,
+                **build_poisson_scoring_context(poisson_probs, base_probs),
                 "source_agreement_ratio": prediction_payload.get("source_agreement_ratio"),
                 "max_abs_divergence": prediction_payload.get("max_abs_divergence"),
             }
@@ -195,6 +206,7 @@ def build_evaluation_report(
                         prediction_market_probs if prediction_market_available else bookmaker_probs
                     ),
                     "base_model_probs": base_probs,
+                    "poisson_probs": poisson_probs,
                     "raw_fused_probs": fused_probs,
                     "selector_history_eligible": stored_raw_fused_probs is not None,
                     "confidence": (
@@ -237,6 +249,7 @@ def build_evaluation_report(
             match_rows=match_rows,
             target_date=str(match["kickoff_at"])[:10],
         )
+        poisson_probs = read_probability_map(_model_selection.get("poisson_probs"))
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
             if prediction_market
@@ -265,17 +278,12 @@ def build_evaluation_report(
                 base_probs,
                 book_probs,
                 prediction_market_probs,
+                poisson_probs=poisson_probs,
                 allowed_variants=(
-                    (
-                        ("base_model", "bookmaker", "prediction_market")
-                        if bookmaker_available
-                        else ("base_model", "prediction_market")
-                    )
-                    if prediction_market_available
-                    else (
-                        ("base_model", "bookmaker")
-                        if bookmaker_available
-                        else ("base_model",)
+                    build_available_source_variants(
+                        bookmaker_available=bookmaker_available,
+                        prediction_market_available=prediction_market_available,
+                        poisson_probs=poisson_probs,
                     )
                 ),
             )
@@ -292,6 +300,7 @@ def build_evaluation_report(
                 bookmaker_probs=book_probs,
                 prediction_market_probs=prediction_market_probs,
                 base_model_probs=base_probs,
+                poisson_probs=poisson_probs,
                 fused_probs=fused_probs,
             )
         )
@@ -311,6 +320,7 @@ def build_evaluation_report(
                     bookmaker_probs=candidate["bookmaker_probs"],
                     prediction_market_probs=candidate["prediction_market_probs"],
                     base_model_probs=candidate["base_model_probs"],
+                    poisson_probs=candidate.get("poisson_probs"),
                     fused_probs=current_fused_by_snapshot[candidate["snapshot_id"]],
                 )
             )
