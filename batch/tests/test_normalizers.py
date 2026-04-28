@@ -68,6 +68,9 @@ from batch.src.jobs.backfill_odds_api_io_historical_markets_job import (
     parse_competition_filter,
     select_backfill_snapshots as select_odds_api_io_historical_backfill_snapshots,
 )
+from batch.src.jobs.backfill_football_data_markets_job import (
+    merge_snapshot_signal_updates,
+)
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
@@ -3261,6 +3264,38 @@ def test_build_football_data_snapshot_signal_updates_does_not_count_empty_stat_r
     assert updates[0]["away_match_stat_sample"] == 0
     assert updates[0]["home_shots_for_last_5"] is None
     assert updates[0]["away_shots_for_last_5"] is None
+
+
+def test_merge_snapshot_signal_updates_preserves_required_snapshot_fields():
+    rows = merge_snapshot_signal_updates(
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "captured_at": "2026-04-10T18:00:00+00:00",
+                "checkpoint_type": "T_MINUS_24H",
+                "home_shots_for_last_5": None,
+            }
+        ],
+        updates=[
+            {
+                "id": "snapshot_001",
+                "home_shots_for_last_5": 11.2,
+                "football_data_signal_source_summary": "football_data_match_stats",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "captured_at": "2026-04-10T18:00:00+00:00",
+            "checkpoint_type": "T_MINUS_24H",
+            "home_shots_for_last_5": 11.2,
+            "football_data_signal_source_summary": "football_data_match_stats",
+        }
+    ]
 
 
 def test_build_poisson_outcome_probabilities_prefers_understat_xg():
