@@ -346,6 +346,17 @@ def _matching_historical_candidates(
     candidate: dict,
     candidates: list[dict],
 ) -> list[dict]:
+    return _matching_historical_candidates_with_scope(
+        candidate=candidate,
+        candidates=candidates,
+    )[0]
+
+
+def _matching_historical_candidates_with_scope(
+    *,
+    candidate: dict,
+    candidates: list[dict],
+) -> tuple[list[dict], str]:
     checkpoint = candidate.get("checkpoint")
     prediction_market_available = bool(candidate.get("prediction_market_available"))
     matching_segment = [
@@ -355,14 +366,14 @@ def _matching_historical_candidates(
         and bool(row.get("prediction_market_available")) == prediction_market_available
     ]
     if len(matching_segment) >= CURRENT_FUSED_SELECTOR_MIN_ROWS:
-        return matching_segment
+        return matching_segment, "checkpoint_market_segment"
 
     matching_checkpoint = [
         row for row in candidates if row.get("checkpoint") == checkpoint
     ]
     if len(matching_checkpoint) >= CURRENT_FUSED_SELECTOR_MIN_ROWS:
-        return matching_checkpoint
-    return candidates
+        return matching_checkpoint, "checkpoint"
+    return candidates, "all"
 
 
 def current_fused_selector_history_ready(candidates: list[dict]) -> bool:
@@ -375,6 +386,55 @@ def current_fused_selector_history_ready(candidates: list[dict]) -> bool:
         len(class_counts) >= len(OUTCOME_KEYS)
         and min(class_counts.values()) >= CURRENT_FUSED_SELECTOR_MIN_CLASS_COUNT
     )
+
+
+def _fit_current_fused_selector(historical_candidates: list[dict]):
+    features = [
+        build_current_fused_feature_vector(
+            base_model_probs=row["base_model_probs"],
+            bookmaker_probs=row["bookmaker_probs"],
+            raw_fused_probs=row["raw_fused_probs"],
+            confidence=row.get("confidence"),
+            context=row.get("context"),
+        )
+        for row in historical_candidates
+    ]
+    targets = [
+        OUTCOME_KEY_TO_INDEX[OUTCOME_LABEL_TO_KEY[str(row["actual_outcome"])]]
+        for row in historical_candidates
+    ]
+    model = HistGradientBoostingClassifier(
+        max_depth=CURRENT_FUSED_SELECTOR_MAX_DEPTH,
+        min_samples_leaf=CURRENT_FUSED_SELECTOR_MIN_SAMPLES_LEAF,
+        random_state=7,
+    )
+    model.fit(features, targets)
+    return model
+
+
+def _predict_current_fused_with_selector(candidate: dict, model) -> dict[str, float]:
+    predicted = model.predict_proba(
+        [
+            build_current_fused_feature_vector(
+                base_model_probs=candidate["base_model_probs"],
+                bookmaker_probs=candidate["bookmaker_probs"],
+                raw_fused_probs=candidate["raw_fused_probs"],
+                confidence=candidate.get("confidence"),
+                context=candidate.get("context"),
+            )
+        ]
+    )[0]
+    class_values = {outcome_key: 0.0 for outcome_key in OUTCOME_KEYS}
+    for class_index, probability in zip(model.classes_, predicted, strict=True):
+        outcome_key = OUTCOME_KEYS[int(class_index)]
+        class_values[outcome_key] = float(probability)
+    total = sum(class_values.values())
+    if total <= 0:
+        raise ValueError("current fused selector produced zero probability mass")
+    return {
+        outcome_key: round(probability / total, 6)
+        for outcome_key, probability in class_values.items()
+    }
 
 
 def select_current_fused_probabilities(
@@ -390,70 +450,79 @@ def select_current_fused_probabilities(
         return fallback
 
     try:
-        features = [
-            build_current_fused_feature_vector(
-                base_model_probs=row["base_model_probs"],
-                bookmaker_probs=row["bookmaker_probs"],
-                raw_fused_probs=row["raw_fused_probs"],
-                confidence=row.get("confidence"),
-                context=row.get("context"),
-            )
-            for row in historical_candidates
-        ]
-        targets = [
-            OUTCOME_KEY_TO_INDEX[OUTCOME_LABEL_TO_KEY[str(row["actual_outcome"])]]
-            for row in historical_candidates
-        ]
-        model = HistGradientBoostingClassifier(
-            max_depth=CURRENT_FUSED_SELECTOR_MAX_DEPTH,
-            min_samples_leaf=CURRENT_FUSED_SELECTOR_MIN_SAMPLES_LEAF,
-            random_state=7,
-        )
-        model.fit(features, targets)
-        predicted = model.predict_proba(
-            [
-                build_current_fused_feature_vector(
-                    base_model_probs=candidate["base_model_probs"],
-                    bookmaker_probs=candidate["bookmaker_probs"],
-                    raw_fused_probs=candidate["raw_fused_probs"],
-                    confidence=candidate.get("confidence"),
-                    context=candidate.get("context"),
-                )
-            ]
-        )[0]
+        model = _fit_current_fused_selector(historical_candidates)
+        return _predict_current_fused_with_selector(candidate, model)
     except (KeyError, TypeError, ValueError):
         return fallback
 
-    class_values = {outcome_key: 0.0 for outcome_key in OUTCOME_KEYS}
-    for class_index, probability in zip(model.classes_, predicted, strict=True):
-        outcome_key = OUTCOME_KEYS[int(class_index)]
-        class_values[outcome_key] = float(probability)
-    total = sum(class_values.values())
-    if total <= 0:
-        return fallback
-    return {
-        outcome_key: round(probability / total, 6)
-        for outcome_key, probability in class_values.items()
-    }
+
+def select_prequential_current_fused_probability(
+    *,
+    candidate: dict,
+    historical_candidates: list[dict],
+) -> dict[str, float]:
+    matching_historical = _matching_historical_candidates(
+        candidate=candidate,
+        candidates=[
+            row
+            for row in historical_candidates
+            if row.get("actual_outcome") and _selector_history_eligible(row)
+        ],
+    )
+    return select_current_fused_probabilities(
+        candidate=candidate,
+        historical_candidates=matching_historical,
+    )
 
 
 def build_current_fused_probabilities(
     candidates: list[dict],
+    *,
+    refit_interval: int = 1,
 ) -> dict[str, dict[str, float]]:
     probabilities_by_snapshot: dict[str, dict[str, float]] = {}
     ordered_candidates = sorted(candidates, key=_candidate_sort_key)
     historical_candidates: list[dict] = []
+    selector_cache: dict[
+        tuple[object, bool, str],
+        tuple[int, object],
+    ] = {}
+    refit_interval = max(int(refit_interval), 1)
     for candidate in ordered_candidates:
-        matching_historical = _matching_historical_candidates(
+        matching_historical, scope = _matching_historical_candidates_with_scope(
             candidate=candidate,
             candidates=historical_candidates,
         )
-        probabilities_by_snapshot[str(candidate["snapshot_id"])] = (
-            select_current_fused_probabilities(
-                candidate=candidate,
-                historical_candidates=matching_historical,
-            )
+        cache_key = (
+            candidate.get("checkpoint"),
+            bool(candidate.get("prediction_market_available")),
+            scope,
         )
+        cached = selector_cache.get(cache_key)
+        fallback = _current_fused_fallback(candidate)
+        if (
+            not _selector_history_eligible(candidate)
+            or not current_fused_selector_history_ready(matching_historical)
+        ):
+            probabilities_by_snapshot[str(candidate["snapshot_id"])] = fallback
+        else:
+            model = cached[1] if cached is not None else None
+            if cached is None or len(matching_historical) - cached[0] >= refit_interval:
+                try:
+                    model = _fit_current_fused_selector(matching_historical)
+                except (KeyError, TypeError, ValueError):
+                    model = None
+                if model is not None:
+                    selector_cache[cache_key] = (len(matching_historical), model)
+            if model is None:
+                probabilities_by_snapshot[str(candidate["snapshot_id"])] = fallback
+            else:
+                try:
+                    probabilities_by_snapshot[str(candidate["snapshot_id"])] = (
+                        _predict_current_fused_with_selector(candidate, model)
+                    )
+                except (KeyError, TypeError, ValueError):
+                    probabilities_by_snapshot[str(candidate["snapshot_id"])] = fallback
         if candidate.get("actual_outcome") and _selector_history_eligible(candidate):
             historical_candidates.append(candidate)
     return probabilities_by_snapshot

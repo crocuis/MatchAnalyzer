@@ -50,6 +50,7 @@ from batch.src.model.evaluate_prediction_sources import (
     build_variant_evaluation_rows,
     current_fused_selector_history_ready,
     derive_variant_weights,
+    select_prequential_current_fused_probability,
     summarize_variant_metrics,
 )
 from batch.src.model.confidence_validation import (
@@ -2628,32 +2629,32 @@ def main() -> None:
                 current_fused_key
             ]
             if current_fused_selector_history_ready(historical_current_fused_candidates):
-                selected_fused_probs = build_current_fused_probabilities(
-                    [
-                        *historical_current_fused_candidates,
-                        {
-                            "snapshot_id": signal_snapshot["id"],
-                            "kickoff_at": next(
-                                (
-                                    str(match.get("kickoff_at") or "")
-                                    for match in match_rows
-                                    if match.get("id") == signal_snapshot["match_id"]
-                                ),
-                                "",
-                            ),
-                            "checkpoint": signal_snapshot["checkpoint_type"],
-                            "prediction_market_available": bool(
-                                feature_context["prediction_market_available"]
-                            ),
-                            "actual_outcome": None,
-                            "base_model_probs": base_probs,
-                            "bookmaker_probs": book_probs,
-                            "raw_fused_probs": raw_fused_probs,
-                            "confidence": raw_confidence_score,
-                            "context": scoring_context,
-                        },
-                    ]
-                )[signal_snapshot["id"]]
+                selector_candidate = {
+                    "snapshot_id": signal_snapshot["id"],
+                    "kickoff_at": str(match.get("kickoff_at") or ""),
+                    "checkpoint": signal_snapshot["checkpoint_type"],
+                    "prediction_market_available": bool(
+                        feature_context["prediction_market_available"]
+                    ),
+                    "actual_outcome": None,
+                    "base_model_probs": base_probs,
+                    "bookmaker_probs": book_probs,
+                    "raw_fused_probs": raw_fused_probs,
+                    "confidence": raw_confidence_score,
+                    "context": scoring_context,
+                }
+                if len(historical_current_fused_candidates) <= 50:
+                    selected_fused_probs = build_current_fused_probabilities(
+                        [
+                            *historical_current_fused_candidates,
+                            selector_candidate,
+                        ]
+                    )[signal_snapshot["id"]]
+                else:
+                    selected_fused_probs = select_prequential_current_fused_probability(
+                        candidate=selector_candidate,
+                        historical_candidates=historical_current_fused_candidates,
+                    )
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]
@@ -2971,21 +2972,27 @@ def main() -> None:
     feature_snapshots_inserted = client.upsert_rows(
         "prediction_feature_snapshots", feature_snapshot_payload
     )
-    print(
-        json.dumps(
-            {
-                "snapshot_rows": len(snapshot_rows),
-                "target_snapshot_rows": len(target_snapshots),
-                "model_rows": model_rows,
-                "artifact_rows": artifact_rows,
-                "inserted_rows": inserted,
-                "feature_snapshot_rows": feature_snapshots_inserted,
-                "skipped_snapshots": skipped_snapshots,
-                "payload": payload,
-            },
-            sort_keys=True,
-        )
+    result_payload = {
+        "snapshot_rows": len(snapshot_rows),
+        "target_snapshot_rows": len(target_snapshots),
+        "model_rows": model_rows,
+        "artifact_rows": artifact_rows,
+        "inserted_rows": inserted,
+        "feature_snapshot_rows": feature_snapshots_inserted,
+        "skipped_snapshots": skipped_snapshots,
+    }
+    include_output_payload = (
+        os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
+        in {"1", "true", "TRUE", "yes", "YES"}
+        or not use_real_prediction_targets
+        or len(payload) <= 20
     )
+    if include_output_payload:
+        result_payload["payload"] = payload
+    else:
+        result_payload["payload_omitted"] = len(payload)
+        result_payload["payload_sample"] = payload[:3]
+    print(json.dumps(result_payload, sort_keys=True))
 
 
 if __name__ == "__main__":

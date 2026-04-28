@@ -3311,6 +3311,91 @@ def test_fetch_historical_odds_for_snapshots_uses_cache_and_budget(tmp_path, mon
     assert cache.cache_hits == 2
 
 
+def test_historical_odds_cache_keys_include_bookmaker_filter(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key, path
+        calls.append(dict(params))
+        return {
+            "id": params["eventId"],
+            "bookmakers": {
+                str(params.get("bookmakers") or "all"): [
+                    {
+                        "name": "ML",
+                        "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+
+    bet365_cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365",
+        max_requests=4,
+    )
+    unibet_cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Unibet",
+        max_requests=4,
+    )
+
+    assert bet365_cache.fetch_odds("event-1")["bookmakers"].keys() == {"Bet365"}
+    assert unibet_cache.fetch_odds("event-1")["bookmakers"].keys() == {"Unibet"}
+    assert [params.get("bookmakers") for params in calls] == ["Bet365", "Unibet"]
+
+
+def test_historical_odds_falls_back_to_unfiltered_when_selected_books_are_empty(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key, path
+        calls.append(dict(params))
+        if params.get("bookmakers"):
+            return {
+                "id": params["eventId"],
+                "bookmakers": {},
+            }
+        return {
+            "id": params["eventId"],
+            "bookmakers": {
+                "fallback-book": [
+                    {
+                        "name": "ML",
+                        "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+    cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365,Unibet",
+        max_requests=4,
+    )
+
+    row = cache.fetch_odds("event-1")
+
+    assert row is not None
+    assert row["bookmakers"].keys() == {"fallback-book"}
+    assert [params.get("bookmakers") for params in calls] == ["Bet365,Unibet", None]
+
+
 def test_build_odds_api_io_market_rows_skips_ambiguous_same_kickoff_matches():
     rows = build_odds_api_io_market_rows(
         odds_events=[

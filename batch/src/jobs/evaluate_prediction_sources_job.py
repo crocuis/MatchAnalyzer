@@ -1,16 +1,15 @@
 import json
-
 from batch.src.jobs.run_predictions_job import (
     build_market_probabilities,
     build_available_source_variants,
     build_poisson_scoring_context,
     resolve_bookmaker_context,
     build_snapshot_context,
+    local_dataset_side_effects_enabled,
     predict_base_probabilities,
 )
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.evaluate_prediction_sources import (
-    build_current_fused_probabilities,
     build_variant_evaluation_rows,
     derive_variant_weights,
     summarize_variant_metrics,
@@ -20,6 +19,7 @@ from batch.src.model.evaluate_prediction_sources import (
 from batch.src.model.fusion import (
     build_fusion_policy_comparison,
     build_latest_fusion_policy,
+    choose_current_fused_probabilities,
     fuse_probabilities,
 )
 from batch.src.rollout.promotion_policy import (
@@ -33,6 +33,8 @@ from batch.src.storage.artifact_store import (
     build_supabase_storage_artifact_client,
 )
 from batch.src.storage.r2_client import R2Client
+from batch.src.storage.local_dataset_client import LocalDatasetClient
+from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.rollout_state import (
     build_history_row_id,
     next_rollout_version,
@@ -79,9 +81,9 @@ def read_prediction_source_probabilities(
     if not isinstance(source_metadata, dict):
         return None
     market_sources = source_metadata.get("market_sources")
-    if not isinstance(market_sources, dict):
-        return None
-    source = market_sources.get(source_name)
+    source = market_sources.get(source_name) if isinstance(market_sources, dict) else None
+    if not isinstance(source, dict):
+        source = source_metadata.get(source_name)
     if not isinstance(source, dict):
         return None
     return read_probability_map(source.get("probabilities"))
@@ -92,19 +94,22 @@ def read_prediction_fused_probabilities(
 ) -> dict[str, float] | None:
     if not isinstance(prediction, dict):
         return None
-    prediction_payload = read_prediction_payload(prediction)
-    raw_fused_probs = read_probability_map(
-        prediction_payload.get("raw_current_fused_probs")
-    )
-    if raw_fused_probs is not None:
-        return raw_fused_probs
-    return read_probability_map(
+    persisted_probs = read_probability_map(
         {
             "home": prediction.get("home_prob"),
             "draw": prediction.get("draw_prob"),
             "away": prediction.get("away_prob"),
         }
     )
+    if persisted_probs is not None:
+        return persisted_probs
+    prediction_payload = read_prediction_payload(prediction)
+    raw_fused_probs = read_probability_map(
+        prediction_payload.get("raw_current_fused_probs")
+    )
+    if raw_fused_probs is not None:
+        return raw_fused_probs
+    return None
 
 
 def build_evaluation_report(
@@ -164,12 +169,26 @@ def build_evaluation_report(
             if isinstance(model_selection, dict):
                 poisson_probs = read_probability_map(model_selection.get("poisson_probs"))
         fused_probs = read_prediction_fused_probabilities(prediction)
-        use_prediction_payload = (
-            bookmaker_probs is not None
-            and base_probs is not None
-            and fused_probs is not None
-        )
+        use_prediction_payload = base_probs is not None and fused_probs is not None
         if use_prediction_payload:
+            feature_context = prediction_payload.get("feature_context")
+            if not isinstance(feature_context, dict):
+                feature_context = {}
+            bookmaker_available = bool(
+                feature_context.get("bookmaker_available", bookmaker_probs is not None)
+            ) and bookmaker_probs is not None
+            if bookmaker_probs is None:
+                bookmaker_probs = dict(base_probs)
+            fused_probs = choose_current_fused_probabilities(
+                raw_fused_probs=fused_probs,
+                bookmaker_probs=bookmaker_probs,
+                confidence=(
+                    prediction.get("confidence_score")
+                    if isinstance(prediction, dict)
+                    else prediction_payload.get("calibrated_confidence_score")
+                ),
+                context=feature_context,
+            )
             _, current_prediction_market = build_market_probabilities(
                 snapshot["id"],
                 market_by_snapshot,
@@ -178,9 +197,6 @@ def build_evaluation_report(
             prediction_market_available = bool(
                 prediction_payload.get("prediction_market_available")
             ) and prediction_market_probs is not None and current_prediction_market is not None
-            feature_context = prediction_payload.get("feature_context")
-            if not isinstance(feature_context, dict):
-                feature_context = {}
             if not prediction_market_available:
                 feature_context = {
                     **feature_context,
@@ -200,6 +216,7 @@ def build_evaluation_report(
                     "checkpoint": snapshot["checkpoint_type"],
                     "competition_id": str(match.get("competition_id") or "unknown"),
                     "actual_outcome": str(match["final_result"]),
+                    "bookmaker_available": bookmaker_available,
                     "prediction_market_available": prediction_market_available,
                     "bookmaker_probs": bookmaker_probs,
                     "prediction_market_probs": (
@@ -307,7 +324,6 @@ def build_evaluation_report(
         evaluated_snapshot_ids.add(snapshot["id"])
 
     if payload_candidates:
-        current_fused_by_snapshot = build_current_fused_probabilities(payload_candidates)
         for candidate in payload_candidates:
             rows.extend(
                 build_variant_evaluation_rows(
@@ -316,12 +332,13 @@ def build_evaluation_report(
                     checkpoint=candidate["checkpoint"],
                     competition_id=candidate["competition_id"],
                     actual_outcome=candidate["actual_outcome"],
+                    bookmaker_available=candidate["bookmaker_available"],
                     prediction_market_available=candidate["prediction_market_available"],
                     bookmaker_probs=candidate["bookmaker_probs"],
                     prediction_market_probs=candidate["prediction_market_probs"],
                     base_model_probs=candidate["base_model_probs"],
                     poisson_probs=candidate.get("poisson_probs"),
-                    fused_probs=current_fused_by_snapshot[candidate["snapshot_id"]],
+                    fused_probs=candidate["raw_fused_probs"],
                 )
             )
             evaluated_snapshot_ids.add(candidate["snapshot_id"])
@@ -443,14 +460,23 @@ def build_fusion_policy_summary(policy_payload: dict) -> dict:
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
-    r2_client = R2Client(
-        getattr(settings, "r2_bucket", "workflow-artifacts"),
-        access_key_id=getattr(settings, "r2_access_key_id", None),
-        secret_access_key=getattr(settings, "r2_secret_access_key", None),
-        s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+    local_dataset_dir = resolve_local_prediction_dataset_dir()
+    client = (
+        LocalDatasetClient(local_dataset_dir)
+        if local_dataset_dir is not None
+        else SupabaseClient(settings.supabase_url, settings.supabase_key)
     )
-    supabase_storage_client = build_supabase_storage_artifact_client(settings)
+    persist_external_artifacts = local_dataset_side_effects_enabled(local_dataset_dir)
+    r2_client = None
+    supabase_storage_client = None
+    if persist_external_artifacts:
+        r2_client = R2Client(
+            getattr(settings, "r2_bucket", "workflow-artifacts"),
+            access_key_id=getattr(settings, "r2_access_key_id", None),
+            secret_access_key=getattr(settings, "r2_secret_access_key", None),
+            s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+        )
+        supabase_storage_client = build_supabase_storage_artifact_client(settings)
     snapshot_rows = client.read_rows("match_snapshots")
     prediction_rows = read_optional_rows(client, "predictions")
     market_rows = client.read_rows("market_probabilities")
@@ -506,65 +532,71 @@ def main() -> None:
     current_policy_summary = build_fusion_policy_summary(current_policy_payload)
     latest_policy_artifact_id = f"prediction_fusion_policy_latest_{rollout_channel}"
     history_policy_artifact_id = f"prediction_fusion_policy_{rollout_channel}_v{rollout_version}"
-    artifact_rows = [
-        archive_json_artifact(
-            r2_client=r2_client,
-            supabase_storage_client=supabase_storage_client,
-            artifact_id=latest_report_artifact_id,
-            owner_type="prediction_source_evaluation_report",
-            owner_id="latest",
-            artifact_kind="source_evaluation_report",
-            key=f"reports/source-evaluation/latest-{rollout_channel}-v{rollout_version}.json",
-            payload=report,
-            summary_payload={
-                "rollout_channel": rollout_channel,
-                "rollout_version": rollout_version,
-            },
-        ),
-        archive_json_artifact(
-            r2_client=r2_client,
-            supabase_storage_client=supabase_storage_client,
-            artifact_id=history_report_artifact_id,
-            owner_type="prediction_source_evaluation_report_version",
-            owner_id=report_history_id,
-            artifact_kind="source_evaluation_report",
-            key=f"reports/source-evaluation/history/{report_history_id}.json",
-            payload=report,
-            summary_payload={
-                "rollout_channel": rollout_channel,
-                "rollout_version": rollout_version,
-            },
-        ),
-        archive_json_artifact(
-            r2_client=r2_client,
-            supabase_storage_client=supabase_storage_client,
-            artifact_id=latest_policy_artifact_id,
-            owner_type="prediction_fusion_policy",
-            owner_id="latest",
-            artifact_kind="fusion_policy_report",
-            key=f"reports/fusion-policy/latest-{rollout_channel}-v{rollout_version}.json",
-            payload=current_policy_payload,
-            summary_payload={
-                "rollout_channel": rollout_channel,
-                "rollout_version": rollout_version,
-            },
-        ),
-        archive_json_artifact(
-            r2_client=r2_client,
-            supabase_storage_client=supabase_storage_client,
-            artifact_id=history_policy_artifact_id,
-            owner_type="prediction_fusion_policy_version",
-            owner_id=policy_history_id,
-            artifact_kind="fusion_policy_report",
-            key=f"reports/fusion-policy/history/{policy_history_id}.json",
-            payload=current_policy_payload,
-            summary_payload={
-                "rollout_channel": rollout_channel,
-                "rollout_version": rollout_version,
-            },
-        ),
-    ]
-    persisted_artifact_rows = client.upsert_rows("stored_artifacts", artifact_rows)
+    artifact_rows = []
+    if persist_external_artifacts:
+        artifact_rows = [
+            archive_json_artifact(
+                r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
+                artifact_id=latest_report_artifact_id,
+                owner_type="prediction_source_evaluation_report",
+                owner_id="latest",
+                artifact_kind="source_evaluation_report",
+                key=f"reports/source-evaluation/latest-{rollout_channel}-v{rollout_version}.json",
+                payload=report,
+                summary_payload={
+                    "rollout_channel": rollout_channel,
+                    "rollout_version": rollout_version,
+                },
+            ),
+            archive_json_artifact(
+                r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
+                artifact_id=history_report_artifact_id,
+                owner_type="prediction_source_evaluation_report_version",
+                owner_id=report_history_id,
+                artifact_kind="source_evaluation_report",
+                key=f"reports/source-evaluation/history/{report_history_id}.json",
+                payload=report,
+                summary_payload={
+                    "rollout_channel": rollout_channel,
+                    "rollout_version": rollout_version,
+                },
+            ),
+            archive_json_artifact(
+                r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
+                artifact_id=latest_policy_artifact_id,
+                owner_type="prediction_fusion_policy",
+                owner_id="latest",
+                artifact_kind="fusion_policy_report",
+                key=f"reports/fusion-policy/latest-{rollout_channel}-v{rollout_version}.json",
+                payload=current_policy_payload,
+                summary_payload={
+                    "rollout_channel": rollout_channel,
+                    "rollout_version": rollout_version,
+                },
+            ),
+            archive_json_artifact(
+                r2_client=r2_client,
+                supabase_storage_client=supabase_storage_client,
+                artifact_id=history_policy_artifact_id,
+                owner_type="prediction_fusion_policy_version",
+                owner_id=policy_history_id,
+                artifact_kind="fusion_policy_report",
+                key=f"reports/fusion-policy/history/{policy_history_id}.json",
+                payload=current_policy_payload,
+                summary_payload={
+                    "rollout_channel": rollout_channel,
+                    "rollout_version": rollout_version,
+                },
+            ),
+        ]
+    persisted_artifact_rows = (
+        client.upsert_rows("stored_artifacts", artifact_rows)
+        if artifact_rows
+        else 0
+    )
     persisted_rows = client.upsert_rows(
         "prediction_source_evaluation_reports",
         [
