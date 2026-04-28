@@ -1,12 +1,15 @@
 from pathlib import Path
-from datetime import datetime, timezone
+import csv
+from datetime import datetime, timedelta, timezone
 import json
+import os
 import re
 import subprocess
 import sys
 import time
 import unicodedata
 from typing import Any
+from urllib.error import HTTPError
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -15,10 +18,29 @@ POLYMARKET_PRIMARY_MARKET_TYPE = "moneyline"
 POLYMARKET_SEARCH_MARKET_TYPES = ("moneyline", "spreads", "totals")
 ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
 ODDS_API_IO_MULTI_ODDS_CHUNK_SIZE = 10
+ODDS_API_IO_URLOPEN_MAX_ATTEMPTS = 4
 DEFAULT_ODDS_API_IO_BOOKMAKERS = "Bet365,Unibet"
+ODDS_API_IO_LEAGUE_SLUGS_BY_COMPETITION = {
+    "premier-league": "england-premier-league",
+    "la-liga": "spain-laliga",
+    "bundesliga": "germany-bundesliga",
+    "serie-a": "italy-serie-a",
+    "ligue-1": "france-ligue-1",
+    "champions-league": "international-clubs-uefa-champions-league",
+    "europa-league": "international-clubs-uefa-europa-league",
+    "conference-league": "international-clubs-uefa-conference-league",
+}
 BETMAN_BUYABLE_GAMES_URL = "https://m.betman.co.kr/buyPsblGame/inqBuyAbleGameInfoList.do"
 BETMAN_GAME_INFO_URL = "https://m.betman.co.kr/buyPsblGame/gameInfoInq.do"
 BETMAN_URLOPEN_MAX_ATTEMPTS = 3
+FOOTBALL_DATA_BASE_URL = "https://www.football-data.co.uk/mmz4281"
+FOOTBALL_DATA_CODES_BY_COMPETITION = {
+    "premier-league": "E0",
+    "bundesliga": "D1",
+    "serie-a": "I1",
+    "la-liga": "SP1",
+    "ligue-1": "F1",
+}
 BETMAN_COMPETITION_NAME_HINTS: dict[str, tuple[str, ...]] = {
     "premier-league": ("epl", "프리미어"),
     "la-liga": ("라리가", "laliga"),
@@ -74,8 +96,25 @@ def fetch_odds_api_io_json(
     }
     url = f"{base_url.rstrip('/')}/{path.lstrip('/')}?{urlencode(query)}"
     request = Request(url=url, headers={"User-Agent": "MatchAnalyzer/1.0"})
-    with urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+    sleep_seconds = float(os.environ.get("ODDS_API_IO_REQUEST_SLEEP_SECONDS") or "0")
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
+    for attempt in range(1, ODDS_API_IO_URLOPEN_MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            should_retry = exc.code == 429 or exc.code >= 500
+            if not should_retry or attempt == ODDS_API_IO_URLOPEN_MAX_ATTEMPTS:
+                raise
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            delay = float(retry_after or attempt * 5)
+        except URLError:
+            if attempt == ODDS_API_IO_URLOPEN_MAX_ATTEMPTS:
+                raise
+            delay = float(attempt)
+        time.sleep(delay)
+    raise RuntimeError("unreachable odds-api.io retry state")
 
 
 def _extract_odds_api_io_list(payload: Any, *keys: str) -> list[dict[str, Any]]:
@@ -95,15 +134,161 @@ def fetch_odds_api_io_events(
     *,
     sport: str = "football",
     limit: int = 200,
+    league: str | None = None,
+    status: str | None = None,
+    from_datetime: str | None = None,
+    to_datetime: str | None = None,
+    bookmaker: str | None = None,
     base_url: str = ODDS_API_IO_BASE_URL,
 ) -> list[dict[str, Any]]:
     payload = fetch_odds_api_io_json(
         api_key,
         "events",
-        {"sport": sport, "limit": limit},
+        {
+            "sport": sport,
+            "limit": limit,
+            "league": league,
+            "status": status,
+            "from": from_datetime,
+            "to": to_datetime,
+            "bookmaker": bookmaker,
+        },
         base_url=base_url,
     )
     return _extract_odds_api_io_list(payload, "events", "results", "data")
+
+
+def odds_api_io_league_slug_for_competition(competition_id: str) -> str | None:
+    return ODDS_API_IO_LEAGUE_SLUGS_BY_COMPETITION.get(
+        str(competition_id or "").strip().lower()
+    )
+
+
+def fetch_odds_api_io_events_for_snapshots(
+    api_key: str,
+    snapshot_rows: list[dict[str, Any]],
+    *,
+    bookmakers: str | None = DEFAULT_ODDS_API_IO_BOOKMAKERS,
+    status: str = "pending,live",
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> list[dict[str, Any]]:
+    kickoff_values = [
+        parse_utc_minute(str(snapshot.get("kickoff_at") or ""))
+        for snapshot in snapshot_rows
+        if str(snapshot.get("kickoff_at") or "").strip()
+    ]
+    if not kickoff_values:
+        return []
+    from_dt = min(kickoff_values) - timedelta(hours=6)
+    to_dt = max(kickoff_values) + timedelta(hours=6)
+    from_iso = from_dt.isoformat().replace("+00:00", "Z")
+    to_iso = to_dt.isoformat().replace("+00:00", "Z")
+    league_slugs = sorted(
+        {
+            league_slug
+            for league_slug in (
+                odds_api_io_league_slug_for_competition(
+                    str(snapshot.get("competition_id") or "")
+                )
+                for snapshot in snapshot_rows
+            )
+            if league_slug
+        }
+    )
+
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    del bookmakers
+    for league_slug in league_slugs:
+        for event in fetch_odds_api_io_events(
+            api_key,
+            league=league_slug,
+            status=status,
+            from_datetime=from_iso,
+            to_datetime=to_iso,
+            base_url=base_url,
+        ):
+            event_id = _odds_api_io_event_id(event)
+            if event_id:
+                rows_by_id[event_id] = event
+    for event in fetch_odds_api_io_events(
+        api_key,
+        status=status,
+        from_datetime=from_iso,
+        to_datetime=to_iso,
+        base_url=base_url,
+    ):
+        event_id = _odds_api_io_event_id(event)
+        if event_id and event_id not in rows_by_id:
+            rows_by_id[event_id] = event
+    return list(rows_by_id.values())
+
+
+def fetch_odds_api_io_historical_events(
+    api_key: str,
+    *,
+    league: str,
+    sport: str = "football",
+    from_datetime: str,
+    to_datetime: str,
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> list[dict[str, Any]]:
+    payload = fetch_odds_api_io_json(
+        api_key,
+        "historical/events",
+        {
+            "sport": sport,
+            "league": league,
+            "from": from_datetime,
+            "to": to_datetime,
+        },
+        base_url=base_url,
+    )
+    return _extract_odds_api_io_list(payload, "events", "results", "data")
+
+
+def fetch_odds_api_io_historical_events_for_snapshots(
+    api_key: str,
+    snapshot_rows: list[dict[str, Any]],
+    *,
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> list[dict[str, Any]]:
+    kickoff_values = [
+        parse_utc_minute(str(snapshot.get("kickoff_at") or ""))
+        for snapshot in snapshot_rows
+        if str(snapshot.get("kickoff_at") or "").strip()
+    ]
+    if not kickoff_values:
+        return []
+    from_dt = min(kickoff_values) - timedelta(hours=6)
+    to_dt = max(kickoff_values) + timedelta(hours=6)
+    league_slugs = sorted(
+        {
+            league_slug
+            for league_slug in (
+                odds_api_io_league_slug_for_competition(
+                    str(snapshot.get("competition_id") or "")
+                )
+                for snapshot in snapshot_rows
+            )
+            if league_slug
+        }
+    )
+    if not league_slugs:
+        return []
+
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    for league_slug in league_slugs:
+        for event in fetch_odds_api_io_historical_events(
+            api_key,
+            league=league_slug,
+            from_datetime=from_dt.isoformat().replace("+00:00", "Z"),
+            to_datetime=to_dt.isoformat().replace("+00:00", "Z"),
+            base_url=base_url,
+        ):
+            event_id = _odds_api_io_event_id(event)
+            if event_id:
+                rows_by_id[event_id] = event
+    return list(rows_by_id.values())
 
 
 def fetch_odds_api_io_multi_odds(
@@ -126,6 +311,33 @@ def fetch_odds_api_io_multi_odds(
             },
             base_url=base_url,
         )
+        rows.extend(
+            _extract_odds_api_io_list(payload, "odds", "events", "results", "data")
+        )
+    return rows
+
+
+def fetch_odds_api_io_historical_odds(
+    api_key: str,
+    event_ids: list[str],
+    *,
+    bookmakers: str | None = DEFAULT_ODDS_API_IO_BOOKMAKERS,
+    base_url: str = ODDS_API_IO_BASE_URL,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event_id in [event_id for event_id in dict.fromkeys(event_ids) if event_id]:
+        payload = fetch_odds_api_io_json(
+            api_key,
+            "historical/odds",
+            {
+                "eventId": event_id,
+                "bookmakers": bookmakers,
+            },
+            base_url=base_url,
+        )
+        if isinstance(payload, dict) and payload.get("bookmakers"):
+            rows.append(payload)
+            continue
         rows.extend(
             _extract_odds_api_io_list(payload, "odds", "events", "results", "data")
         )
@@ -531,6 +743,380 @@ def decimal_odds_to_probability(odds: Any) -> float | None:
     return round(1.0 / value, 6)
 
 
+def football_data_season_code(kickoff_at: str) -> str:
+    kickoff = parse_utc_minute(kickoff_at)
+    season_start_year = kickoff.year if kickoff.month >= 7 else kickoff.year - 1
+    return f"{season_start_year % 100:02d}{(season_start_year + 1) % 100:02d}"
+
+
+def football_data_code_for_competition(competition_id: str) -> str | None:
+    return FOOTBALL_DATA_CODES_BY_COMPETITION.get(
+        str(competition_id or "").strip().lower()
+    )
+
+
+def fetch_football_data_csv_rows(
+    season_code: str,
+    league_code: str,
+    *,
+    base_url: str = FOOTBALL_DATA_BASE_URL,
+) -> list[dict[str, Any]]:
+    url = f"{base_url.rstrip('/')}/{season_code}/{league_code}.csv"
+    cache_dir = os.environ.get("FOOTBALL_DATA_CACHE_DIR")
+    cache_path = (
+        Path(cache_dir) / season_code / f"{league_code}.csv"
+        if str(cache_dir or "").strip()
+        else None
+    )
+    if cache_path is not None and cache_path.exists():
+        text = cache_path.read_text(encoding="utf-8-sig")
+    else:
+        request = Request(url=url, headers={"User-Agent": "MatchAnalyzer/1.0"})
+        with urlopen(request, timeout=30) as response:
+            text = response.read().decode("utf-8-sig")
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(text, encoding="utf-8")
+    return [
+        {str(key): value for key, value in row.items() if key is not None}
+        for row in csv.DictReader(text.splitlines())
+        if any(str(value or "").strip() for value in row.values())
+    ]
+
+
+def _parse_football_data_date(value: Any) -> str | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw_value, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _football_data_decimal(row: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = _read_numeric(row.get(key))
+        if value is not None and value > 1.0:
+            return value
+    return None
+
+
+def _select_football_data_row(
+    snapshot: dict[str, Any],
+    football_data_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    kickoff_at = str(snapshot.get("kickoff_at") or "")
+    if not kickoff_at:
+        return None
+    try:
+        match_date = parse_utc_minute(kickoff_at).date().isoformat()
+    except ValueError:
+        return None
+    home_aliases = _snapshot_team_aliases(snapshot, "home_team_aliases")
+    away_aliases = _snapshot_team_aliases(snapshot, "away_team_aliases")
+    candidates = []
+    for row in football_data_rows:
+        if _parse_football_data_date(row.get("Date")) != match_date:
+            continue
+        if not _team_name_matches(str(row.get("HomeTeam") or ""), home_aliases):
+            continue
+        if not _team_name_matches(str(row.get("AwayTeam") or ""), away_aliases):
+            continue
+        candidates.append(row)
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def build_football_data_market_rows(
+    football_data_rows: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for snapshot in snapshot_rows:
+        row = _select_football_data_row(snapshot, football_data_rows)
+        if row is None:
+            continue
+        home_decimal = _football_data_decimal(row, "B365H", "AvgH", "MaxH")
+        draw_decimal = _football_data_decimal(row, "B365D", "AvgD", "MaxD")
+        away_decimal = _football_data_decimal(row, "B365A", "AvgA", "MaxA")
+        if None in (home_decimal, draw_decimal, away_decimal):
+            continue
+        home_price = decimal_odds_to_probability(home_decimal)
+        draw_price = decimal_odds_to_probability(draw_decimal)
+        away_price = decimal_odds_to_probability(away_decimal)
+        if None in (home_price, draw_price, away_price):
+            continue
+        normalized = normalize_market_probabilities(home_price, draw_price, away_price)
+        rows.append(
+            {
+                "id": f"{snapshot['id']}_football_data_bookmaker",
+                "snapshot_id": snapshot["id"],
+                "source_type": "bookmaker",
+                "source_name": "football_data_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": normalized["home_prob"],
+                "draw_prob": normalized["draw_prob"],
+                "away_prob": normalized["away_prob"],
+                "home_price": home_price,
+                "draw_price": draw_price,
+                "away_price": away_price,
+                "raw_payload": {
+                    "provider": "football-data.co.uk",
+                    "league_code": row.get("Div"),
+                    "home_team": row.get("HomeTeam"),
+                    "away_team": row.get("AwayTeam"),
+                    "bookmaker": "Bet365" if row.get("B365H") else "market-average",
+                    "historical_closing": True,
+                },
+                "observed_at": str(snapshot.get("kickoff_at") or ""),
+            }
+        )
+    return rows
+
+
+def build_football_data_variant_rows(
+    football_data_rows: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for snapshot in snapshot_rows:
+        row = _select_football_data_row(snapshot, football_data_rows)
+        if row is None:
+            continue
+        over_decimal = _football_data_decimal(row, "B365>2.5", "Avg>2.5", "Max>2.5")
+        under_decimal = _football_data_decimal(row, "B365<2.5", "Avg<2.5", "Max<2.5")
+        over_price = decimal_odds_to_probability(over_decimal)
+        under_price = decimal_odds_to_probability(under_decimal)
+        if over_price is not None and under_price is not None:
+            rows.append(
+                {
+                    "id": f"{snapshot['id']}_football_data_bookmaker_totals_2p5",
+                    "snapshot_id": snapshot["id"],
+                    "source_type": "bookmaker",
+                    "source_name": "football_data_totals",
+                    "market_family": "totals",
+                    "selection_a_label": "Over 2.5",
+                    "selection_a_price": over_price,
+                    "selection_b_label": "Under 2.5",
+                    "selection_b_price": under_price,
+                    "line_value": 2.5,
+                    "raw_payload": {
+                        "provider": "football-data.co.uk",
+                        "league_code": row.get("Div"),
+                        "bookmaker": "Bet365" if row.get("B365>2.5") else "market-average",
+                        "historical_closing": True,
+                    },
+                    "observed_at": str(snapshot.get("kickoff_at") or ""),
+                }
+            )
+        handicap = next(
+            (
+                value
+                for value in (_read_numeric(row.get("AHCh")), _read_numeric(row.get("AHh")))
+                if value is not None
+            ),
+            None,
+        )
+        home_handicap_decimal = _football_data_decimal(row, "B365CAHH", "B365AHH")
+        away_handicap_decimal = _football_data_decimal(row, "B365CAHA", "B365AHA")
+        home_handicap_price = decimal_odds_to_probability(home_handicap_decimal)
+        away_handicap_price = decimal_odds_to_probability(away_handicap_decimal)
+        if (
+            handicap is not None
+            and home_handicap_price is not None
+            and away_handicap_price is not None
+        ):
+            line_value = float(handicap)
+            line_token = _odds_api_io_line_token(line_value)
+            rows.append(
+                {
+                    "id": f"{snapshot['id']}_football_data_bookmaker_spreads_{line_token}",
+                    "snapshot_id": snapshot["id"],
+                    "source_type": "bookmaker",
+                    "source_name": "football_data_spreads",
+                    "market_family": "spreads",
+                    "selection_a_label": f"{snapshot.get('home_team_name') or 'Home'} {line_value:+g}",
+                    "selection_a_price": home_handicap_price,
+                    "selection_b_label": f"{snapshot.get('away_team_name') or 'Away'} {-line_value:+g}",
+                    "selection_b_price": away_handicap_price,
+                    "line_value": line_value,
+                    "raw_payload": {
+                        "provider": "football-data.co.uk",
+                        "league_code": row.get("Div"),
+                        "bookmaker": "Bet365",
+                        "historical_closing": True,
+                    },
+                    "observed_at": str(snapshot.get("kickoff_at") or ""),
+                }
+            )
+    return rows
+
+
+def _football_data_stat(row: dict[str, Any], key: str) -> float | None:
+    value = _read_numeric(row.get(key))
+    if value is None or value < 0:
+        return None
+    return float(value)
+
+
+def _football_data_match_date(row: dict[str, Any]) -> str | None:
+    return _parse_football_data_date(row.get("Date"))
+
+
+def _football_data_team_history_rows(
+    *,
+    football_data_rows: list[dict[str, Any]],
+    aliases: list[str],
+    match_date: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    history: list[tuple[str, dict[str, Any]]] = []
+    for row in football_data_rows:
+        row_date = _football_data_match_date(row)
+        if row_date is None or row_date >= match_date:
+            continue
+        if _team_name_matches(str(row.get("HomeTeam") or ""), aliases) or _team_name_matches(
+            str(row.get("AwayTeam") or ""),
+            aliases,
+        ):
+            history.append((row_date, row))
+    history.sort(key=lambda item: item[0], reverse=True)
+    return [row for _row_date, row in history[:limit]]
+
+
+def _mean(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 6)
+
+
+def _trend(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    return round((values[-1] - values[0]) / (len(values) - 1), 6)
+
+
+def _football_data_team_stat_metrics(
+    history_rows: list[dict[str, Any]],
+    aliases: list[str],
+) -> dict[str, float | int | None]:
+    shots_for: list[float] = []
+    shots_against: list[float] = []
+    shots_on_target_for: list[float] = []
+    shots_on_target_against: list[float] = []
+    corners_for: list[float] = []
+    corners_against: list[float] = []
+    cards_for: list[float] = []
+    cards_against: list[float] = []
+    usable_match_count = 0
+
+    for row in reversed(history_rows):
+        is_home = _team_name_matches(str(row.get("HomeTeam") or ""), aliases)
+        if is_home:
+            team_prefix, opponent_prefix = "H", "A"
+        else:
+            team_prefix, opponent_prefix = "A", "H"
+
+        team_shots = _football_data_stat(row, f"{team_prefix}S")
+        opponent_shots = _football_data_stat(row, f"{opponent_prefix}S")
+        team_sot = _football_data_stat(row, f"{team_prefix}ST")
+        opponent_sot = _football_data_stat(row, f"{opponent_prefix}ST")
+        team_corners = _football_data_stat(row, f"{team_prefix}C")
+        opponent_corners = _football_data_stat(row, f"{opponent_prefix}C")
+        team_yellow = _football_data_stat(row, f"{team_prefix}Y")
+        opponent_yellow = _football_data_stat(row, f"{opponent_prefix}Y")
+        team_red = _football_data_stat(row, f"{team_prefix}R") or 0.0
+        opponent_red = _football_data_stat(row, f"{opponent_prefix}R") or 0.0
+        if any(
+            value is not None
+            for value in (
+                team_shots,
+                opponent_shots,
+                team_sot,
+                opponent_sot,
+                team_corners,
+                opponent_corners,
+                team_yellow,
+                opponent_yellow,
+            )
+        ):
+            usable_match_count += 1
+
+        if team_shots is not None:
+            shots_for.append(team_shots)
+        if opponent_shots is not None:
+            shots_against.append(opponent_shots)
+        if team_sot is not None:
+            shots_on_target_for.append(team_sot)
+        if opponent_sot is not None:
+            shots_on_target_against.append(opponent_sot)
+        if team_corners is not None:
+            corners_for.append(team_corners)
+        if opponent_corners is not None:
+            corners_against.append(opponent_corners)
+        if team_yellow is not None:
+            cards_for.append(team_yellow + (team_red * 2.0))
+        if opponent_yellow is not None:
+            cards_against.append(opponent_yellow + (opponent_red * 2.0))
+
+    return {
+        "shots_for_last_5": _mean(shots_for),
+        "shots_against_last_5": _mean(shots_against),
+        "shots_on_target_for_last_5": _mean(shots_on_target_for),
+        "shots_on_target_against_last_5": _mean(shots_on_target_against),
+        "corners_for_last_5": _mean(corners_for),
+        "corners_against_last_5": _mean(corners_against),
+        "cards_for_last_5": _mean(cards_for),
+        "cards_against_last_5": _mean(cards_against),
+        "shot_trend_last_5": _trend(shots_for),
+        "match_stat_sample": usable_match_count,
+    }
+
+
+def build_football_data_snapshot_signal_updates(
+    football_data_rows: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    updates: list[dict[str, Any]] = []
+    for snapshot in snapshot_rows:
+        try:
+            match_date = parse_utc_minute(str(snapshot.get("kickoff_at") or "")).date().isoformat()
+        except ValueError:
+            continue
+        home_aliases = _snapshot_team_aliases(snapshot, "home_team_aliases")
+        away_aliases = _snapshot_team_aliases(snapshot, "away_team_aliases")
+        if not home_aliases or not away_aliases:
+            continue
+        home_history_rows = _football_data_team_history_rows(
+            football_data_rows=football_data_rows,
+            aliases=home_aliases,
+            match_date=match_date,
+        )
+        away_history_rows = _football_data_team_history_rows(
+            football_data_rows=football_data_rows,
+            aliases=away_aliases,
+            match_date=match_date,
+        )
+        if not home_history_rows and not away_history_rows:
+            continue
+        home_metrics = _football_data_team_stat_metrics(home_history_rows, home_aliases)
+        away_metrics = _football_data_team_stat_metrics(away_history_rows, away_aliases)
+        update = {
+            "id": snapshot["id"],
+            "football_data_signal_source_summary": "football_data_match_stats",
+        }
+        for key, value in home_metrics.items():
+            update[f"home_{key}"] = value
+        for key, value in away_metrics.items():
+            update[f"away_{key}"] = value
+        updates.append(update)
+    return updates
+
+
 def _odds_api_io_event_id(event: dict[str, Any]) -> str:
     return str(event.get("id") or event.get("eventId") or event.get("event_id") or "")
 
@@ -720,9 +1306,44 @@ def _odds_api_io_observed_at(
     return max(values)
 
 
+def _latest_odds_api_io_quote_observed_at(quotes: list[dict[str, Any]]) -> str:
+    values = [
+        str(quote.get("updated_at"))
+        for quote in quotes
+        if str(quote.get("updated_at") or "").strip()
+    ]
+    return max(values) if values else ""
+
+
+def _odds_api_io_raw_payload(
+    event: dict[str, Any],
+    quotes: list[dict[str, Any]],
+    *,
+    historical_closing: bool,
+) -> dict[str, Any]:
+    raw_payload = {
+        "provider": "odds-api.io",
+        "event_id": _odds_api_io_event_id(event),
+        "bookmakers": sorted(
+            {
+                str(quote.get("bookmaker") or "")
+                for quote in quotes
+                if str(quote.get("bookmaker") or "").strip()
+            }
+        ),
+        "quote_count": len(quotes),
+    }
+    if historical_closing:
+        raw_payload["historical_closing"] = True
+        raw_payload["closing_observed_at"] = _latest_odds_api_io_quote_observed_at(quotes)
+    return raw_payload
+
+
 def build_odds_api_io_market_rows(
     odds_events: list[dict[str, Any]],
     snapshot_rows: list[dict[str, Any]],
+    *,
+    historical_closing: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for event in odds_events:
@@ -758,25 +1379,177 @@ def build_odds_api_io_market_rows(
                 "home_price": home_price,
                 "draw_price": draw_price,
                 "away_price": away_price,
-                "raw_payload": {
-                    "provider": "odds-api.io",
-                    "event_id": _odds_api_io_event_id(event),
-                    "bookmakers": sorted(
-                        {
-                            str(quote.get("bookmaker") or "")
-                            for quote in quotes
-                            if str(quote.get("bookmaker") or "").strip()
-                        }
-                    ),
-                    "quote_count": len(quotes),
-                },
-                "observed_at": _odds_api_io_observed_at(
+                "raw_payload": _odds_api_io_raw_payload(
                     event,
                     quotes,
-                    str(snapshot.get("kickoff_at") or ""),
+                    historical_closing=historical_closing,
+                ),
+                "observed_at": (
+                    str(snapshot.get("kickoff_at") or "")
+                    if historical_closing
+                    else _odds_api_io_observed_at(
+                        event,
+                        quotes,
+                        str(snapshot.get("kickoff_at") or ""),
+                    )
                 ),
             }
         )
+    return rows
+
+
+def _odds_api_io_line_token(line_value: float) -> str:
+    return f"{line_value:g}".replace("-", "m").replace(".", "p")
+
+
+def _extract_odds_api_io_variant_quotes(
+    event: dict[str, Any],
+) -> list[dict[str, Any]]:
+    bookmakers = event.get("bookmakers") or {}
+    entries: list[tuple[str, Any]] = []
+    if isinstance(bookmakers, dict):
+        entries = [(str(name), markets) for name, markets in bookmakers.items()]
+    elif isinstance(bookmakers, list):
+        entries = [
+            (
+                str(
+                    bookmaker.get("name")
+                    or bookmaker.get("title")
+                    or bookmaker.get("key")
+                    or ""
+                ),
+                bookmaker.get("markets") or bookmaker.get("odds") or [],
+            )
+            for bookmaker in bookmakers
+            if isinstance(bookmaker, dict)
+        ]
+
+    quotes: list[dict[str, Any]] = []
+    for bookmaker_name, markets in entries:
+        if isinstance(markets, dict):
+            markets = markets.get("markets") or markets.get("odds") or []
+        if not isinstance(markets, list):
+            continue
+        for market in markets:
+            if not isinstance(market, dict):
+                continue
+            market_name = _odds_api_io_market_name(market)
+            odds_entries = market.get("odds")
+            if isinstance(odds_entries, dict):
+                odds_entries = [odds_entries]
+            if not isinstance(odds_entries, list):
+                continue
+            for odds in odds_entries:
+                if not isinstance(odds, dict):
+                    continue
+                line_value = _read_numeric(
+                    odds.get("hdp")
+                    if odds.get("hdp") is not None
+                    else odds.get("line")
+                    or odds.get("points")
+                    or odds.get("total")
+                )
+                if line_value is None:
+                    continue
+                if market_name in {"spread", "spreads", "handicap", "asian handicap"}:
+                    home_price = decimal_odds_to_probability(odds.get("home"))
+                    away_price = decimal_odds_to_probability(odds.get("away"))
+                    if None in (home_price, away_price):
+                        continue
+                    quotes.append(
+                        {
+                            "bookmaker": bookmaker_name,
+                            "market_family": "spreads",
+                            "line_value": float(line_value),
+                            "selection_a_price": home_price,
+                            "selection_b_price": away_price,
+                            "updated_at": market.get("updatedAt") or market.get("updated_at"),
+                        }
+                    )
+                elif market_name in {"totals", "total", "total goals", "over under"}:
+                    over_price = decimal_odds_to_probability(odds.get("over"))
+                    under_price = decimal_odds_to_probability(odds.get("under"))
+                    if None in (over_price, under_price):
+                        continue
+                    quotes.append(
+                        {
+                            "bookmaker": bookmaker_name,
+                            "market_family": "totals",
+                            "line_value": abs(float(line_value)),
+                            "selection_a_price": over_price,
+                            "selection_b_price": under_price,
+                            "updated_at": market.get("updatedAt") or market.get("updated_at"),
+                        }
+                    )
+    return quotes
+
+
+def build_odds_api_io_variant_rows(
+    odds_events: list[dict[str, Any]],
+    snapshot_rows: list[dict[str, Any]],
+    *,
+    historical_closing: bool = False,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in odds_events:
+        snapshot = _select_odds_api_io_snapshot(event, snapshot_rows)
+        if snapshot is None:
+            continue
+        quotes = _extract_odds_api_io_variant_quotes(event)
+        grouped: dict[tuple[str, float], list[dict[str, Any]]] = {}
+        for quote in quotes:
+            grouped.setdefault(
+                (str(quote["market_family"]), float(quote["line_value"])),
+                [],
+            ).append(quote)
+        for (market_family, line_value), grouped_quotes in grouped.items():
+            selection_a_price = round(
+                sum(float(quote["selection_a_price"]) for quote in grouped_quotes)
+                / len(grouped_quotes),
+                6,
+            )
+            selection_b_price = round(
+                sum(float(quote["selection_b_price"]) for quote in grouped_quotes)
+                / len(grouped_quotes),
+                6,
+            )
+            line_token = _odds_api_io_line_token(line_value)
+            if market_family == "spreads":
+                selection_a_label = f"{snapshot.get('home_team_name') or 'Home'} {line_value:+g}"
+                selection_b_label = f"{snapshot.get('away_team_name') or 'Away'} {-line_value:+g}"
+                source_name = "odds_api_io_spreads"
+            else:
+                selection_a_label = f"Over {line_value:g}"
+                selection_b_label = f"Under {line_value:g}"
+                source_name = "odds_api_io_totals"
+            rows.append(
+                {
+                    "id": f"{snapshot['id']}_bookmaker_{market_family}_{line_token}",
+                    "snapshot_id": snapshot["id"],
+                    "source_type": "bookmaker",
+                    "source_name": source_name,
+                    "market_family": market_family,
+                    "selection_a_label": selection_a_label,
+                    "selection_a_price": selection_a_price,
+                    "selection_b_label": selection_b_label,
+                    "selection_b_price": selection_b_price,
+                    "line_value": line_value,
+                    "raw_payload": _odds_api_io_raw_payload(
+                        event,
+                        grouped_quotes,
+                        historical_closing=historical_closing,
+                    ),
+                    "observed_at": (
+                        str(snapshot.get("kickoff_at") or "")
+                        if historical_closing
+                        else _odds_api_io_observed_at(
+                            event,
+                            grouped_quotes,
+                            str(snapshot.get("kickoff_at") or ""),
+                        )
+                    ),
+                }
+            )
     return rows
 
 

@@ -39,6 +39,7 @@ from batch.src.model.fusion import (
     build_main_recommendation,
     fuse_probabilities,
     build_value_recommendation,
+    normalize_fusion_weights,
     MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
     VALUE_RECOMMENDATION_EV_THRESHOLD,
     choose_recommended_pick,
@@ -63,6 +64,8 @@ from batch.src.storage.artifact_store import (
     archive_json_artifact,
     build_supabase_storage_artifact_client,
 )
+from batch.src.storage.local_dataset_client import LocalDatasetClient
+from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -81,6 +84,15 @@ BOOKMAKER_FALLBACK_DRAW_MAX_PROBABILITY = 0.24
 BOOKMAKER_FALLBACK_NEUTRAL_ELO_MAX_ABS = 0.05
 BOOKMAKER_FALLBACK_HOME_NEGATIVE_XG_THRESHOLD = -1.0
 DEFAULT_NO_BOOKMAKER_PRIOR_PROBS = {"home": 0.4, "draw": 0.35, "away": 0.25}
+CALIBRATED_BOOKMAKER_ANCHOR_SOURCES = {
+    "football_data_moneyline_3way",
+    "odds_api_io_moneyline_3way",
+}
+CALIBRATED_BOOKMAKER_MIN_WEIGHT = 0.72
+POISSON_BASE_BLEND_WEIGHT = 0.18
+POISSON_EXPERT_MIN_SAMPLE = 25
+POISSON_EXPERT_MIN_HIT_RATE_EDGE = 0.015
+POISSON_EXPERT_MAX_LOGLOSS_REGRET = 0.03
 TRAINING_RECENT_SNAPSHOT_LIMIT = 2000
 TRAINED_BASELINE_UNAVAILABLE = object()
 VARIANT_GOAL_DISTRIBUTION_MAX_GOALS = 10
@@ -110,6 +122,27 @@ PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
     "bsd_home_xg_live",
     "bsd_away_xg_live",
     "external_signal_source_summary",
+    "home_shots_for_last_5",
+    "home_shots_against_last_5",
+    "away_shots_for_last_5",
+    "away_shots_against_last_5",
+    "home_shots_on_target_for_last_5",
+    "home_shots_on_target_against_last_5",
+    "away_shots_on_target_for_last_5",
+    "away_shots_on_target_against_last_5",
+    "home_corners_for_last_5",
+    "home_corners_against_last_5",
+    "away_corners_for_last_5",
+    "away_corners_against_last_5",
+    "home_cards_for_last_5",
+    "home_cards_against_last_5",
+    "away_cards_for_last_5",
+    "away_cards_against_last_5",
+    "home_shot_trend_last_5",
+    "away_shot_trend_last_5",
+    "home_match_stat_sample",
+    "away_match_stat_sample",
+    "football_data_signal_source_summary",
     "home_matches_last_7d",
     "away_matches_last_7d",
     "home_points_last_5",
@@ -203,6 +236,12 @@ def should_archive_prediction_artifacts(
         not use_real_prediction_targets
         or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
     )
+
+
+def local_dataset_side_effects_enabled(local_dataset_dir: object) -> bool:
+    if local_dataset_dir is None:
+        return True
+    return read_env_flag("MATCH_ANALYZER_LOCAL_DATASET_ALLOW_SIDE_EFFECTS")
 
 
 def parse_iso_datetime(value: object) -> datetime | None:
@@ -560,6 +599,16 @@ def build_historical_current_fused_candidates(
                 prediction_payload,
                 "base_model",
             )
+        poisson_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "poisson",
+        )
+        if poisson_probs is None:
+            poisson_probs = read_probability_map(
+                (prediction_payload.get("model_selection") or {}).get("poisson_probs")
+                if isinstance(prediction_payload.get("model_selection"), dict)
+                else None
+            )
         raw_fused_probs = read_prediction_fused_probabilities(prediction)
         feature_context = prediction_payload.get("feature_context")
         if not isinstance(feature_context, dict):
@@ -595,6 +644,7 @@ def build_historical_current_fused_candidates(
                 ),
                 "context": {
                     **feature_context,
+                    **build_poisson_scoring_context(poisson_probs, base_model_probs),
                     "source_agreement_ratio": prediction_payload.get("source_agreement_ratio"),
                     "max_abs_divergence": prediction_payload.get("max_abs_divergence"),
                 },
@@ -664,6 +714,8 @@ def refresh_snapshot_long_signals_if_stale(
     match: dict | None,
     match_rows: list[dict],
 ) -> dict:
+    if read_env_flag("MATCH_ANALYZER_DISABLE_LONG_SIGNAL_REFRESH"):
+        return snapshot
     if not snapshot_has_intervening_completed_match(
         snapshot,
         match=match,
@@ -776,6 +828,7 @@ def build_historical_source_performance_summary(
             training_dataset_cache=training_dataset_cache,
             baseline_model_cache=baseline_model_cache,
         )
+        poisson_probs = read_probability_map(_model_selection.get("poisson_probs"))
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
             if prediction_market
@@ -788,18 +841,10 @@ def build_historical_source_performance_summary(
             else book_probs["away"],
         }
         prediction_market_available = bool(feature_context["prediction_market_available"])
-        available_variants = (
-            (
-                ("base_model", "bookmaker", "prediction_market")
-                if bookmaker_available
-                else ("base_model", "prediction_market")
-            )
-            if prediction_market_available
-            else (
-                ("base_model", "bookmaker")
-                if bookmaker_available
-                else ("base_model",)
-            )
+        available_variants = build_available_source_variants(
+            bookmaker_available=bookmaker_available,
+            prediction_market_available=prediction_market_available,
+            poisson_probs=poisson_probs,
         )
         fused_probs = (
             dict(base_probs)
@@ -811,6 +856,7 @@ def build_historical_source_performance_summary(
                 base_probs,
                 book_probs,
                 prediction_market_probs,
+                poisson_probs=poisson_probs,
                 allowed_variants=available_variants,
             )
         )
@@ -826,6 +872,7 @@ def build_historical_source_performance_summary(
                 bookmaker_probs=book_probs,
                 prediction_market_probs=prediction_market_probs,
                 base_model_probs=base_probs,
+                poisson_probs=poisson_probs,
                 fused_probs=fused_probs,
             )
         )
@@ -840,6 +887,7 @@ def build_source_metadata(
     book_probs: dict,
     prediction_market: dict | None,
     prediction_market_probs: dict,
+    poisson_probs: dict[str, float] | None,
     feature_context: dict,
     base_model_source: str,
     source_weights: dict[str, float],
@@ -887,6 +935,11 @@ def build_source_metadata(
                     if prediction_market_row is not None
                     else None
                 ),
+            },
+            "poisson": {
+                "available": poisson_probs is not None,
+                "source_name": "poisson_xg",
+                "probabilities": poisson_probs,
             },
         },
     }
@@ -1171,6 +1224,164 @@ def rebalance_bookmaker_fallback_draw(
     return {outcome: value / total for outcome, value in adjusted.items()}
 
 
+def normalize_probability_map(probabilities: dict[str, float]) -> dict[str, float]:
+    total = sum(float(probabilities.get(key) or 0.0) for key in ("home", "draw", "away"))
+    if total <= 0:
+        return dict(DEFAULT_NO_BOOKMAKER_PRIOR_PROBS)
+    return {
+        key: float(probabilities.get(key) or 0.0) / total
+        for key in ("home", "draw", "away")
+    }
+
+
+def build_poisson_outcome_probabilities(snapshot: dict) -> dict[str, float] | None:
+    expectation = _estimate_variant_goal_expectancies(snapshot)
+    if expectation is None:
+        return None
+    home_expected_goals, away_expected_goals = expectation
+    goal_matrix = _build_goal_matrix(
+        home_expected_goals=home_expected_goals,
+        away_expected_goals=away_expected_goals,
+    )
+    probabilities = {"home": 0.0, "draw": 0.0, "away": 0.0}
+    for home_goals, away_goals, probability in goal_matrix:
+        if home_goals > away_goals:
+            probabilities["home"] += probability
+        elif away_goals > home_goals:
+            probabilities["away"] += probability
+        else:
+            probabilities["draw"] += probability
+    return normalize_probability_map(probabilities)
+
+
+def blend_with_poisson_expert(
+    base_probs: dict[str, float],
+    snapshot: dict,
+    *,
+    weight: float = POISSON_BASE_BLEND_WEIGHT,
+) -> tuple[dict[str, float], dict[str, float] | None]:
+    poisson_probs = build_poisson_outcome_probabilities(snapshot)
+    if poisson_probs is None:
+        return base_probs, None
+    blended = {
+        outcome: (float(base_probs[outcome]) * (1.0 - weight))
+        + (float(poisson_probs[outcome]) * weight)
+        for outcome in ("home", "draw", "away")
+    }
+    return normalize_probability_map(blended), poisson_probs
+
+
+def anchor_calibrated_bookmaker_weight(
+    weights: dict[str, float],
+    *,
+    bookmaker_row: dict | None,
+    prediction_market_available: bool,
+) -> dict[str, float]:
+    if prediction_market_available or bookmaker_row is None:
+        return weights
+    if str(bookmaker_row.get("source_name") or "") not in CALIBRATED_BOOKMAKER_ANCHOR_SOURCES:
+        return weights
+    current_bookmaker_weight = float(weights.get("bookmaker") or 0.0)
+    if current_bookmaker_weight >= CALIBRATED_BOOKMAKER_MIN_WEIGHT:
+        return weights
+    adjusted = dict(weights)
+    adjusted["bookmaker"] = CALIBRATED_BOOKMAKER_MIN_WEIGHT
+    remaining = max(1.0 - CALIBRATED_BOOKMAKER_MIN_WEIGHT, 0.0)
+    other_keys = [key for key in adjusted if key != "bookmaker"]
+    other_total = sum(float(weights.get(key) or 0.0) for key in other_keys)
+    if other_total <= 0:
+        for key in other_keys:
+            adjusted[key] = round(remaining / len(other_keys), 4) if other_keys else 0.0
+    else:
+        for key in other_keys:
+            adjusted[key] = remaining * (float(weights.get(key) or 0.0) / other_total)
+    rounded = {key: round(value, 4) for key, value in adjusted.items()}
+    first_key = next(iter(rounded))
+    rounded[first_key] = round(rounded[first_key] + (1.0 - sum(rounded.values())), 4)
+    return rounded
+
+
+def build_available_source_variants(
+    *,
+    bookmaker_available: bool,
+    prediction_market_available: bool,
+    poisson_probs: dict[str, float] | None = None,
+) -> tuple[str, ...]:
+    variants = ["base_model"]
+    if bookmaker_available:
+        variants.append("bookmaker")
+    if prediction_market_available:
+        variants.append("prediction_market")
+    if poisson_probs is not None:
+        variants.append("poisson")
+    return tuple(variants)
+
+
+def build_poisson_scoring_context(
+    poisson_probs: dict[str, float] | None,
+    base_probs: dict[str, float],
+) -> dict[str, float]:
+    if poisson_probs is None:
+        return {}
+    return {
+        "poisson_probs": poisson_probs,
+        "poisson_home_prob": float(poisson_probs["home"]),
+        "poisson_draw_prob": float(poisson_probs["draw"]),
+        "poisson_away_prob": float(poisson_probs["away"]),
+        "poisson_base_max_delta": max(
+            abs(float(poisson_probs[outcome]) - float(base_probs[outcome]))
+            for outcome in ("home", "draw", "away")
+        ),
+    }
+
+
+def should_use_poisson_expert(
+    *,
+    historical_performance: dict[str, dict[str, float | int]],
+    poisson_probs: dict[str, float] | None,
+) -> bool:
+    if poisson_probs is None:
+        return False
+    poisson_metrics = historical_performance.get("poisson")
+    base_metrics = historical_performance.get("base_model")
+    if not poisson_metrics or not base_metrics:
+        return False
+    poisson_count = int(poisson_metrics.get("count") or 0)
+    if poisson_count < POISSON_EXPERT_MIN_SAMPLE:
+        return False
+    poisson_hit_rate = float(poisson_metrics.get("hit_rate") or 0.0)
+    base_hit_rate = float(base_metrics.get("hit_rate") or 0.0)
+    poisson_logloss = float(poisson_metrics.get("avg_log_loss") or 999.0)
+    base_logloss = float(base_metrics.get("avg_log_loss") or 999.0)
+    return (
+        poisson_hit_rate >= base_hit_rate + POISSON_EXPERT_MIN_HIT_RATE_EDGE
+        and poisson_logloss <= base_logloss + POISSON_EXPERT_MAX_LOGLOSS_REGRET
+    )
+
+
+def persisted_policy_requests_poisson_weight(policy: dict | None) -> bool:
+    if not isinstance(policy, dict):
+        return False
+    try:
+        return float((policy.get("weights") or {}).get("poisson") or 0.0) > 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def remove_poisson_weight(weights: dict[str, float]) -> dict[str, float]:
+    if "poisson" not in weights:
+        return weights
+    filtered = {
+        source_name: weight
+        for source_name, weight in weights.items()
+        if source_name != "poisson"
+    }
+    return normalize_fusion_weights(
+        filtered,
+        allowed_variants=tuple(filtered),
+    ) or filtered
+
+
 def predict_base_probabilities(
     snapshot: dict,
     feature_context: dict,
@@ -1244,10 +1455,20 @@ def predict_base_probabilities(
         if baseline_model_cache is not None:
             baseline_model_cache[cache_key] = model
     if model is TRAINED_BASELINE_UNAVAILABLE:
-        return (
+        poisson_blended_probs, poisson_probs = blend_with_poisson_expert(
             centroid_probs,
-            "centroid_fallback",
-            build_model_selection_metadata(base_model_source="centroid_fallback"),
+            snapshot,
+        )
+        source_name = (
+            "centroid_poisson_blend" if poisson_probs is not None else "centroid_fallback"
+        )
+        return (
+            poisson_blended_probs,
+            source_name,
+            {
+                **build_model_selection_metadata(base_model_source=source_name),
+                **({"poisson_probs": poisson_probs} if poisson_probs is not None else {}),
+            },
         )
 
     probabilities = model.predict_proba([feature_input])[0]
@@ -1255,21 +1476,43 @@ def predict_base_probabilities(
     for class_label, probability in zip(model.classes_, probabilities, strict=True):
         base_probs[str(class_label).lower()] = float(probability)
     if max(base_probs.values()) <= 0.4:
-        return (
+        poisson_blended_probs, poisson_probs = blend_with_poisson_expert(
             centroid_probs,
-            "centroid_fallback",
-            build_model_selection_metadata(
-                selection_metadata=getattr(model, "selection_metadata_", None),
-                base_model_source="centroid_fallback",
-            ),
+            snapshot,
         )
-    return (
+        source_name = (
+            "centroid_poisson_blend" if poisson_probs is not None else "centroid_fallback"
+        )
+        return (
+            poisson_blended_probs,
+            source_name,
+            {
+                **build_model_selection_metadata(
+                    selection_metadata=getattr(model, "selection_metadata_", None),
+                    base_model_source=source_name,
+                ),
+                **({"poisson_probs": poisson_probs} if poisson_probs is not None else {}),
+            },
+        )
+    poisson_blended_probs, poisson_probs = blend_with_poisson_expert(
         base_probs,
-        "trained_baseline",
-        build_model_selection_metadata(
-            selection_metadata=getattr(model, "selection_metadata_", None),
-            base_model_source="trained_baseline",
-        ),
+        snapshot,
+    )
+    source_name = (
+        "trained_baseline_poisson_blend"
+        if poisson_probs is not None
+        else "trained_baseline"
+    )
+    return (
+        poisson_blended_probs,
+        source_name,
+        {
+            **build_model_selection_metadata(
+                selection_metadata=getattr(model, "selection_metadata_", None),
+                base_model_source=source_name,
+            ),
+            **({"poisson_probs": poisson_probs} if poisson_probs is not None else {}),
+        },
     )
 
 
@@ -1328,23 +1571,25 @@ def build_confidence_bucket_summary(
             training_dataset_cache=training_dataset_cache,
             baseline_model_cache=baseline_model_cache,
         )
+        poisson_probs = read_probability_map(_model_selection.get("poisson_probs"))
+        prediction_market_probs = {
+            "home": prediction_market["home_prob"]
+            if prediction_market
+            else book_probs["home"],
+            "draw": prediction_market["draw_prob"]
+            if prediction_market
+            else book_probs["draw"],
+            "away": prediction_market["away_prob"]
+            if prediction_market
+            else book_probs["away"],
+        }
         scoring_context = {
             **feature_context,
             "baseline_model_trained": base_model_source == "trained_baseline",
             "source_agreement_ratio": build_source_agreement_ratio(
                 base_probs=base_probs,
                 book_probs=book_probs,
-                market_probs={
-                    "home": prediction_market["home_prob"]
-                    if prediction_market
-                    else book_probs["home"],
-                    "draw": prediction_market["draw_prob"]
-                    if prediction_market
-                    else book_probs["draw"],
-                    "away": prediction_market["away_prob"]
-                    if prediction_market
-                    else book_probs["away"],
-                },
+                market_probs=prediction_market_probs,
                 bookmaker_available=bool(feature_context.get("bookmaker_available", 1)),
                 prediction_market_available=feature_context["prediction_market_available"],
             ),
@@ -1354,17 +1599,7 @@ def build_confidence_bucket_summary(
             checkpoint=snapshot["checkpoint_type"],
             base_probs=base_probs,
             book_probs=book_probs,
-            market_probs={
-                "home": prediction_market["home_prob"]
-                if prediction_market
-                else book_probs["home"],
-                "draw": prediction_market["draw_prob"]
-                if prediction_market
-                else book_probs["draw"],
-                "away": prediction_market["away_prob"]
-                if prediction_market
-                else book_probs["away"],
-            },
+            market_probs=prediction_market_probs,
             context=scoring_context,
         )
         records.append(
@@ -1375,6 +1610,53 @@ def build_confidence_bucket_summary(
             }
         )
 
+    return summarize_confidence_buckets(records)
+
+
+def build_confidence_bucket_summary_from_predictions(
+    *,
+    prediction_rows: list[dict],
+    snapshot_rows: list[dict],
+    match_rows: list[dict],
+    checkpoint_type: str,
+    target_date: str | None,
+) -> dict[str, dict[str, float | int]]:
+    if not target_date:
+        return {}
+    match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
+    snapshot_by_id = {row["id"]: row for row in snapshot_rows if row.get("id")}
+    records: list[dict] = []
+    for prediction in prediction_rows:
+        snapshot = snapshot_by_id.get(prediction.get("snapshot_id"))
+        match = match_by_id.get(prediction.get("match_id"))
+        if (
+            not snapshot
+            or not match
+            or snapshot.get("checkpoint_type") != checkpoint_type
+            or not match.get("final_result")
+            or str(match.get("kickoff_at") or "")[:10] >= target_date
+        ):
+            continue
+        summary_payload = prediction.get("summary_payload")
+        if not isinstance(summary_payload, dict):
+            summary_payload = {}
+        confidence = _read_numeric(
+            summary_payload.get("raw_confidence_score")
+            or prediction.get("confidence_score")
+        )
+        pick = str(
+            prediction.get("recommended_pick")
+            or prediction.get("main_recommendation_pick")
+            or ""
+        ).upper()
+        if confidence is None or pick not in {"HOME", "DRAW", "AWAY"}:
+            continue
+        records.append(
+            {
+                "confidence": confidence,
+                "is_correct": pick == str(match["final_result"]).upper(),
+            }
+        )
     return summarize_confidence_buckets(records)
 
 
@@ -1510,16 +1792,60 @@ def _estimate_variant_goal_expectancies(snapshot: dict | None) -> tuple[float, f
     if not isinstance(snapshot, dict):
         return None
 
-    home_xg_for = _read_numeric(snapshot.get("home_xg_for_last_5"))
-    home_xg_against = _read_numeric(snapshot.get("home_xg_against_last_5"))
-    away_xg_for = _read_numeric(snapshot.get("away_xg_for_last_5"))
-    away_xg_against = _read_numeric(snapshot.get("away_xg_against_last_5"))
+    home_xg_for = _read_numeric(
+        snapshot.get("understat_home_xg_for_last_5")
+        if snapshot.get("understat_home_xg_for_last_5") is not None
+        else snapshot.get("home_xg_for_last_5")
+    )
+    home_xg_against = _read_numeric(
+        snapshot.get("understat_home_xg_against_last_5")
+        if snapshot.get("understat_home_xg_against_last_5") is not None
+        else snapshot.get("home_xg_against_last_5")
+    )
+    away_xg_for = _read_numeric(
+        snapshot.get("understat_away_xg_for_last_5")
+        if snapshot.get("understat_away_xg_for_last_5") is not None
+        else snapshot.get("away_xg_for_last_5")
+    )
+    away_xg_against = _read_numeric(
+        snapshot.get("understat_away_xg_against_last_5")
+        if snapshot.get("understat_away_xg_against_last_5") is not None
+        else snapshot.get("away_xg_against_last_5")
+    )
+    stat_home_lambda = _estimate_football_data_stat_lambda(snapshot, "home")
+    stat_away_lambda = _estimate_football_data_stat_lambda(snapshot, "away")
     if None in (home_xg_for, home_xg_against, away_xg_for, away_xg_against):
-        return None
+        if stat_home_lambda is None or stat_away_lambda is None:
+            return None
+        return stat_home_lambda, stat_away_lambda
 
     home_lambda = max(((home_xg_for or 0.0) + (away_xg_against or 0.0)) / 2.0, 0.2)
     away_lambda = max(((away_xg_for or 0.0) + (home_xg_against or 0.0)) / 2.0, 0.2)
+    if stat_home_lambda is not None and stat_away_lambda is not None:
+        home_lambda = (home_lambda * 0.8) + (stat_home_lambda * 0.2)
+        away_lambda = (away_lambda * 0.8) + (stat_away_lambda * 0.2)
     return home_lambda, away_lambda
+
+
+def _estimate_football_data_stat_lambda(snapshot: dict, side: str) -> float | None:
+    shots_for = _read_numeric(snapshot.get(f"{side}_shots_for_last_5"))
+    shots_on_target_for = _read_numeric(snapshot.get(f"{side}_shots_on_target_for_last_5"))
+    corners_for = _read_numeric(snapshot.get(f"{side}_corners_for_last_5"))
+    sample = _read_numeric(snapshot.get(f"{side}_match_stat_sample"))
+    if sample is None or sample <= 0:
+        return None
+    components = [
+        value
+        for value in (
+            0.07 * shots_for if shots_for is not None else None,
+            0.18 * shots_on_target_for if shots_on_target_for is not None else None,
+            0.02 * corners_for if corners_for is not None else None,
+        )
+        if value is not None
+    ]
+    if not components:
+        return None
+    return min(max(sum(components), 0.2), 4.5)
 
 
 def _poisson_probability(goal_count: int, expected_goals: float) -> float:
@@ -1923,14 +2249,23 @@ def build_prediction_llm_context(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
-    r2_client = R2Client(
-        getattr(settings, "r2_bucket", "workflow-artifacts"),
-        access_key_id=getattr(settings, "r2_access_key_id", None),
-        secret_access_key=getattr(settings, "r2_secret_access_key", None),
-        s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+    local_dataset_dir = resolve_local_prediction_dataset_dir()
+    client = (
+        LocalDatasetClient(local_dataset_dir)
+        if local_dataset_dir is not None
+        else SupabaseClient(settings.supabase_url, settings.supabase_key)
     )
-    supabase_storage_client = build_supabase_storage_artifact_client(settings)
+    persist_side_effects = local_dataset_side_effects_enabled(local_dataset_dir)
+    r2_client = None
+    supabase_storage_client = None
+    if persist_side_effects:
+        r2_client = R2Client(
+            getattr(settings, "r2_bucket", "workflow-artifacts"),
+            access_key_id=getattr(settings, "r2_access_key_id", None),
+            secret_access_key=getattr(settings, "r2_secret_access_key", None),
+            s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
+        )
+        supabase_storage_client = build_supabase_storage_artifact_client(settings)
     prediction_llm_enabled = read_env_flag("LLM_PREDICTION_ADVISORY_ENABLED")
     llm_provider = getattr(settings, "llm_provider", "nvidia")
     prediction_llm_api_key = (
@@ -2053,6 +2388,7 @@ def main() -> None:
         target_snapshot_count=len(target_snapshots),
         use_real_prediction_targets=use_real_prediction_targets,
     )
+    archive_prediction_artifacts = archive_prediction_artifacts and persist_side_effects
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -2092,6 +2428,7 @@ def main() -> None:
             training_dataset_cache=training_dataset_cache,
             baseline_model_cache=baseline_model_cache,
         )
+        poisson_probs = read_probability_map(model_selection.get("poisson_probs"))
         prediction_market_probs = {
             "home": prediction_market["home_prob"]
             if prediction_market
@@ -2131,18 +2468,10 @@ def main() -> None:
             if feature_context["prediction_market_available"]
             else "without_prediction_market"
         )
-        available_variants = (
-            (
-                ("base_model", "bookmaker", "prediction_market")
-                if bool(feature_context.get("bookmaker_available", 1))
-                else ("base_model", "prediction_market")
-            )
-            if feature_context["prediction_market_available"]
-            else (
-                ("base_model", "bookmaker")
-                if bool(feature_context.get("bookmaker_available", 1))
-                else ("base_model",)
-            )
+        available_variants = build_available_source_variants(
+            bookmaker_available=bool(feature_context.get("bookmaker_available", 1)),
+            prediction_market_available=bool(feature_context["prediction_market_available"]),
+            poisson_probs=poisson_probs,
         )
         persisted_policy = choose_fusion_weights(
             policy_payload=(
@@ -2156,7 +2485,14 @@ def main() -> None:
             competition_id=str(match.get("competition_id") or ""),
         )
         historical_performance = {}
-        if use_real_prediction_targets and persisted_policy is None:
+        should_load_historical_performance = (
+            use_real_prediction_targets
+            and (
+                persisted_policy is None
+                or persisted_policy_requests_poisson_weight(persisted_policy)
+            )
+        )
+        if should_load_historical_performance:
             performance_key = (
                 signal_snapshot["checkpoint_type"],
                 snapshot_target_date,
@@ -2209,6 +2545,35 @@ def main() -> None:
                 allowed_variants=available_variants,
             )
         )
+        source_weights = anchor_calibrated_bookmaker_weight(
+            source_weights,
+            bookmaker_row=select_market_row(
+                market_by_snapshot,
+                snapshot_id=signal_snapshot["id"],
+                source_type="bookmaker",
+                market_family="moneyline_3way",
+            ),
+            prediction_market_available=bool(feature_context["prediction_market_available"]),
+        )
+        poisson_expert_enabled = should_use_poisson_expert(
+            historical_performance=historical_performance,
+            poisson_probs=poisson_probs,
+        )
+        active_poisson_probs = poisson_probs if poisson_expert_enabled else None
+        if not poisson_expert_enabled:
+            source_weights = remove_poisson_weight(source_weights)
+        scoring_context = {
+            **scoring_context,
+            **build_poisson_scoring_context(active_poisson_probs, base_probs),
+            "source_agreement_ratio": build_source_agreement_ratio(
+                base_probs=base_probs,
+                book_probs=book_probs,
+                market_probs=prediction_market_probs,
+                bookmaker_available=bool(feature_context.get("bookmaker_available", 1)),
+                prediction_market_available=feature_context["prediction_market_available"],
+                poisson_probs=active_poisson_probs,
+            ),
+        }
         if (
             (
                 base_model_source in {"bookmaker_fallback", "centroid_fallback"}
@@ -2313,12 +2678,21 @@ def main() -> None:
                 snapshot_target_date,
             )
             if confidence_key not in confidence_bucket_cache:
-                confidence_bucket_cache[confidence_key] = build_confidence_bucket_summary(
-                    snapshot_rows=snapshot_rows,
-                    market_by_snapshot=market_by_snapshot,
-                    match_rows=match_rows,
-                    checkpoint_type=signal_snapshot["checkpoint_type"],
-                    target_date=snapshot_target_date,
+                confidence_bucket_cache[confidence_key] = (
+                    build_confidence_bucket_summary_from_predictions(
+                        prediction_rows=prediction_rows,
+                        snapshot_rows=snapshot_rows,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                    )
+                    or build_confidence_bucket_summary(
+                        snapshot_rows=snapshot_rows,
+                        market_by_snapshot=market_by_snapshot,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                    )
                 )
             confidence_bucket_summary = confidence_bucket_cache[confidence_key]
         row["confidence_score"] = calibrate_confidence_from_buckets(
@@ -2376,6 +2750,7 @@ def main() -> None:
             book_probs=book_probs,
             prediction_market=prediction_market,
             prediction_market_probs=prediction_market_probs,
+            poisson_probs=poisson_probs,
             feature_context=feature_context,
             base_model_source=base_model_source,
             source_weights=source_weights,
@@ -2575,11 +2950,19 @@ def main() -> None:
     if len(payload) != len(target_snapshots):
         raise ValueError("sample prediction pipeline requires a payload per snapshot")
 
-    model_rows = client.upsert_rows(
-        "model_versions",
-        [build_model_version_row(by_checkpoint_selection=model_selection_by_checkpoint)],
+    model_rows = (
+        client.upsert_rows(
+            "model_versions",
+            [build_model_version_row(by_checkpoint_selection=model_selection_by_checkpoint)],
+        )
+        if persist_side_effects
+        else 0
     )
-    artifact_rows = client.upsert_rows("stored_artifacts", artifact_payload) if artifact_payload else 0
+    artifact_rows = (
+        client.upsert_rows("stored_artifacts", artifact_payload)
+        if persist_side_effects and artifact_payload
+        else 0
+    )
     persisted_payload = [
         {key: value for key, value in row.items() if key != "explanation_payload"}
         for row in payload

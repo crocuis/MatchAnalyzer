@@ -48,6 +48,26 @@ def test_build_variant_evaluation_rows_skips_prediction_market_when_unavailable(
     ]
 
 
+def test_build_variant_evaluation_rows_includes_poisson_when_available() -> None:
+    rows = build_variant_evaluation_rows(
+        match_id="match-001",
+        snapshot_id="snapshot-001",
+        checkpoint="T_MINUS_24H",
+        competition_id="epl",
+        actual_outcome="AWAY",
+        prediction_market_available=False,
+        bookmaker_probs={"home": 0.43, "draw": 0.28, "away": 0.29},
+        prediction_market_probs={"home": 0.43, "draw": 0.28, "away": 0.29},
+        base_model_probs={"home": 0.42, "draw": 0.29, "away": 0.29},
+        poisson_probs={"home": 0.28, "draw": 0.24, "away": 0.48},
+        fused_probs={"home": 0.36, "draw": 0.27, "away": 0.37},
+    )
+
+    poisson_row = next(row for row in rows if row["variant"] == "poisson")
+    assert poisson_row["recommended_pick"] == "AWAY"
+    assert poisson_row["hit"] == 1
+
+
 def test_summarize_variant_metrics_supports_segment_breakdown() -> None:
     rows = [
         {

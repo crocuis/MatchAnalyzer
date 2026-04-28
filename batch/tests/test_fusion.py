@@ -55,6 +55,25 @@ def test_fuse_probabilities_accepts_dynamic_source_weights():
     assert round(fused["home"], 4) == 0.596
 
 
+def test_fuse_probabilities_can_use_poisson_as_independent_expert():
+    fused = fuse_probabilities(
+        base_probs={"home": 0.42, "draw": 0.29, "away": 0.29},
+        book_probs={"home": 0.43, "draw": 0.28, "away": 0.29},
+        market_probs={"home": 0.42, "draw": 0.28, "away": 0.30},
+        poisson_probs={"home": 0.28, "draw": 0.24, "away": 0.48},
+        weights={
+            "base_model": 0.2,
+            "bookmaker": 0.2,
+            "prediction_market": 0.2,
+            "poisson": 0.4,
+        },
+        allowed_variants=("base_model", "bookmaker", "prediction_market", "poisson"),
+    )
+
+    assert round(sum(fused.values()), 5) == 1.0
+    assert choose_recommended_pick(fused) == "AWAY"
+
+
 def test_fuse_probabilities_skips_prediction_market_when_source_is_unavailable():
     fused = fuse_probabilities(
         base_probs={"home": 0.20, "draw": 0.23, "away": 0.57},

@@ -3,7 +3,7 @@ from collections import Counter
 
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-from batch.src.model.fusion import choose_current_fused_probabilities
+from batch.src.model.fusion import SOURCE_VARIANTS, choose_current_fused_probabilities
 
 
 OUTCOME_KEYS: tuple[str, ...] = ("home", "draw", "away")
@@ -88,6 +88,7 @@ def build_variant_evaluation_rows(
     bookmaker_probs: dict[str, float],
     prediction_market_probs: dict[str, float],
     base_model_probs: dict[str, float],
+    poisson_probs: dict[str, float] | None = None,
     fused_probs: dict[str, float],
 ) -> list[dict]:
     market_segment = (
@@ -148,6 +149,19 @@ def build_variant_evaluation_rows(
             ),
         ]
     )
+    if poisson_probs is not None:
+        rows.append(
+            _build_variant_row(
+                variant="poisson",
+                match_id=match_id,
+                snapshot_id=snapshot_id,
+                checkpoint=checkpoint,
+                competition_id=competition_id,
+                market_segment=market_segment,
+                actual_outcome=actual_outcome,
+                probabilities=poisson_probs,
+            )
+        )
     return rows
 
 
@@ -226,7 +240,7 @@ def summarize_variant_metrics_by_fields(
 
 def derive_variant_weights(
     summary: dict[str, dict[str, float | int]],
-    allowed_variants: tuple[str, ...] = ("base_model", "bookmaker", "prediction_market"),
+    allowed_variants: tuple[str, ...] = SOURCE_VARIANTS,
 ) -> dict[str, float]:
     scored_variants: dict[str, float] = {}
     for variant in allowed_variants:
@@ -300,6 +314,10 @@ def build_current_fused_feature_vector(
         float(context.get("xg_proxy_delta") or 0.0),
         float(context.get("prediction_market_available") or 0),
         float(context.get("lineup_confirmed") or 0),
+        float(context.get("poisson_home_prob") or 0.0),
+        float(context.get("poisson_draw_prob") or 0.0),
+        float(context.get("poisson_away_prob") or 0.0),
+        float(context.get("poisson_base_max_delta") or 0.0),
     ]
 
 

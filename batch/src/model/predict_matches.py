@@ -15,12 +15,15 @@ def build_source_agreement_ratio(
     market_probs: dict,
     bookmaker_available: bool,
     prediction_market_available: bool,
+    poisson_probs: dict | None = None,
 ) -> float:
     source_votes = [max(base_probs, key=base_probs.get)]
     if bookmaker_available:
         source_votes.append(max(book_probs, key=book_probs.get))
     if prediction_market_available:
         source_votes.append(max(market_probs, key=market_probs.get))
+    if poisson_probs is not None:
+        source_votes.append(max(poisson_probs, key=poisson_probs.get))
     if len(source_votes) == 1:
         return 0.5
     return max(source_votes.count(vote) for vote in set(source_votes)) / len(source_votes)
@@ -37,25 +40,23 @@ def build_prediction_row(
 ) -> dict:
     bookmaker_available = bool(context.get("bookmaker_available", 1))
     prediction_market_available = context.get("prediction_market_available", True)
-    allowed_variants = (
-        (
-            ("base_model", "bookmaker", "prediction_market")
-            if bookmaker_available
-            else ("base_model", "prediction_market")
-        )
-        if prediction_market_available
-        else (
-            ("base_model", "bookmaker")
-            if bookmaker_available
-            else ("base_model",)
-        )
-    )
+    poisson_probs = context.get("poisson_probs")
+    if not isinstance(poisson_probs, dict):
+        poisson_probs = None
+    allowed_variants = ["base_model"]
+    if bookmaker_available:
+        allowed_variants.append("bookmaker")
+    if prediction_market_available:
+        allowed_variants.append("prediction_market")
+    if poisson_probs is not None:
+        allowed_variants.append("poisson")
     fused = fuse_probabilities(
         base_probs,
         book_probs,
         market_probs,
+        poisson_probs=poisson_probs,
         weights=source_weights,
-        allowed_variants=allowed_variants,
+        allowed_variants=tuple(allowed_variants),
     )
     source_agreement_ratio = build_source_agreement_ratio(
         base_probs=base_probs,
@@ -63,6 +64,7 @@ def build_prediction_row(
         market_probs=market_probs,
         bookmaker_available=bookmaker_available,
         prediction_market_available=prediction_market_available,
+        poisson_probs=poisson_probs,
     )
     scored_context = {
         **context,

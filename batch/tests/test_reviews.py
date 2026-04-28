@@ -2213,6 +2213,179 @@ def test_run_predictions_job_applies_latest_persisted_fusion_policy(monkeypatch)
     }
 
 
+def test_run_predictions_job_fail_closes_poisson_in_persisted_policy(monkeypatch):
+    state: dict[str, list[dict]] = {}
+    historical_calls: list[dict[str, str]] = []
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "target_match_t_minus_24h",
+                        "match_id": "target_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "snapshot_quality": "complete",
+                        "understat_home_xg_for_last_5": 1.8,
+                        "understat_home_xg_against_last_5": 0.9,
+                        "understat_away_xg_for_last_5": 1.1,
+                        "understat_away_xg_against_last_5": 1.4,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "target_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "source_name": "odds_api",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.50,
+                        "draw_prob": 0.30,
+                        "away_prob": 0.20,
+                    },
+                    {
+                        "id": "target_match_t_minus_24h_prediction_market",
+                        "snapshot_id": "target_match_t_minus_24h",
+                        "source_type": "prediction_market",
+                        "source_name": "polymarket",
+                        "market_family": "moneyline_3way",
+                        "home_prob": 0.20,
+                        "draw_prob": 0.30,
+                        "away_prob": 0.50,
+                        "home_price": 0.20,
+                        "draw_price": 0.30,
+                        "away_price": 0.50,
+                    },
+                ],
+                "prediction_fusion_policies": [
+                    {
+                        "id": "latest",
+                        "source_report_id": "latest",
+                        "policy_payload": {
+                            "policy_id": "latest",
+                            "policy_version": 1,
+                            "selection_order": ["overall"],
+                            "weights": {
+                                "overall": {
+                                    "base_model": 0.1,
+                                    "bookmaker": 0.2,
+                                    "prediction_market": 0.3,
+                                    "poisson": 0.4,
+                                },
+                            },
+                        },
+                    }
+                ],
+                "matches": [
+                    {
+                        "id": "target_match",
+                        "competition_id": "epl",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "home_team_id": "home-team",
+                        "away_team_id": "away-team",
+                        "final_result": None,
+                    }
+                ],
+                "teams": [
+                    {"id": "home-team", "name": "Home FC"},
+                    {"id": "away-team", "name": "Away FC"},
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **_kwargs: (
+            {"home": 0.10, "draw": 0.20, "away": 0.70},
+            "trained_baseline",
+            {
+                "selected_candidate": "logistic_regression",
+                "selection_metric": "neg_log_loss",
+                "selection_ran": True,
+                "candidate_scores": {"logistic_regression": 0.8},
+                "poisson_probs": {"home": 0.52, "draw": 0.24, "away": 0.24},
+            },
+        ),
+    )
+
+    def fake_build_historical_source_performance_summary(**kwargs):
+        historical_calls.append(
+            {
+                "checkpoint_type": kwargs["checkpoint_type"],
+                "target_date": kwargs["target_date"],
+                "market_segment": kwargs["market_segment"],
+            }
+        )
+        return {
+            "base_model": {
+                "count": 30,
+                "hit_rate": 0.60,
+                "avg_brier_score": 0.18,
+                "avg_log_loss": 0.55,
+            },
+            "poisson": {
+                "count": 30,
+                "hit_rate": 0.58,
+                "avg_brier_score": 0.19,
+                "avg_log_loss": 0.61,
+            },
+            "bookmaker": {
+                "count": 30,
+                "hit_rate": 0.55,
+                "avg_brier_score": 0.21,
+                "avg_log_loss": 0.65,
+            },
+            "prediction_market": {
+                "count": 30,
+                "hit_rate": 0.53,
+                "avg_brier_score": 0.22,
+                "avg_log_loss": 0.68,
+            },
+        }
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_historical_source_performance_summary",
+        fake_build_historical_source_performance_summary,
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    [prediction] = state["predictions"]
+    source_metadata = prediction["summary_payload"]["source_metadata"]
+
+    assert historical_calls == [
+        {
+            "checkpoint_type": "T_MINUS_24H",
+            "target_date": "2026-04-12",
+            "market_segment": "with_prediction_market",
+        }
+    ]
+    assert source_metadata["fusion_weights"] == {
+        "base_model": 0.1667,
+        "bookmaker": 0.3333,
+        "prediction_market": 0.5,
+    }
+    assert prediction["summary_payload"]["source_agreement_ratio"] == pytest.approx(
+        2 / 3,
+        abs=1e-6,
+    )
+
+
 def test_run_predictions_job_falls_back_to_derived_weights_when_latest_policy_is_invalid(
     monkeypatch,
 ):
@@ -2756,6 +2929,110 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
 
     assert prediction["recommended_pick"] == "DRAW"
     assert prediction["draw_prob"] > prediction["home_prob"]
+
+
+def test_run_predictions_job_local_dataset_mode_skips_auxiliary_side_effects(
+    monkeypatch,
+    tmp_path,
+):
+    archive_calls: list[str] = []
+
+    (tmp_path / "match_snapshots.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "target_match_t_minus_24h",
+                    "match_id": "target_match",
+                    "checkpoint_type": "T_MINUS_24H",
+                    "snapshot_quality": "complete",
+                }
+            ]
+        )
+    )
+    (tmp_path / "market_probabilities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "target_match_t_minus_24h_bookmaker",
+                    "snapshot_id": "target_match_t_minus_24h",
+                    "source_type": "bookmaker",
+                    "source_name": "odds_api",
+                    "market_family": "moneyline_3way",
+                    "home_prob": 0.52,
+                    "draw_prob": 0.26,
+                    "away_prob": 0.22,
+                }
+            ]
+        )
+    )
+    (tmp_path / "matches.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "target_match",
+                    "competition_id": "epl",
+                    "kickoff_at": "2026-04-12T18:00:00+00:00",
+                    "home_team_id": "home-team",
+                    "away_team_id": "away-team",
+                    "final_result": None,
+                }
+            ]
+        )
+    )
+    (tmp_path / "teams.json").write_text(
+        json.dumps(
+            [
+                {"id": "home-team", "name": "Home FC"},
+                {"id": "away-team", "name": "Away FC"},
+            ]
+        )
+    )
+
+    monkeypatch.setenv("MATCH_ANALYZER_LOCAL_DATASET_DIR", str(tmp_path))
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "build_supabase_storage_artifact_client",
+        lambda _settings: object(),
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "archive_json_artifact",
+        lambda **kwargs: archive_calls.append(kwargs["artifact_id"]) or {},
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "predict_base_probabilities",
+        lambda **_kwargs: (
+            {"home": 0.61, "draw": 0.21, "away": 0.18},
+            "trained_baseline",
+            {
+                "selected_candidate": "logistic_regression",
+                "selection_metric": "neg_log_loss",
+                "selection_ran": True,
+                "candidate_scores": {"logistic_regression": 0.8},
+            },
+        ),
+    )
+
+    run_predictions_job.main()
+
+    predictions = json.loads((tmp_path / "predictions.json").read_text())
+    feature_snapshots = json.loads(
+        (tmp_path / "prediction_feature_snapshots.json").read_text()
+    )
+
+    assert archive_calls == []
+    assert len(predictions) == 1
+    assert len(feature_snapshots) == 1
+    assert predictions[0]["explanation_artifact_id"] is None
+    assert not (tmp_path / "stored_artifacts.json").exists()
+    assert not (tmp_path / "model_versions.json").exists()
 
 
 def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch):

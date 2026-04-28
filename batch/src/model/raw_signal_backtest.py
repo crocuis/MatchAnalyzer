@@ -16,8 +16,8 @@ DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND = 0.45
 DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
 DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 50
-DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.74
-DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.64
+DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.70
+DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.62
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
     "T_MINUS_6H": 1,
@@ -120,6 +120,11 @@ def build_raw_moneyline_rows(
             "understat_xg_available",
             external_signals,
         )
+        football_data_match_stats_available = _feature_flag_or_snapshot(
+            feature_context,
+            "football_data_match_stats_available",
+            external_signals,
+        )
         built_rows.append(
             {
                 "prediction_id": str(prediction.get("id") or ""),
@@ -183,6 +188,7 @@ def build_raw_moneyline_rows(
                 **external_signals,
                 "external_rating_available": external_rating_available,
                 "understat_xg_available": understat_xg_available,
+                "football_data_match_stats_available": football_data_match_stats_available,
                 **probability_signals,
                 **rolling_prior_signals,
             }
@@ -274,6 +280,9 @@ def summarize_raw_moneyline_backtest(
             ),
             "understat_xg_available": dict(
                 Counter(bool(row.get("understat_xg_available")) for row in rows)
+            ),
+            "football_data_match_stats_available": dict(
+                Counter(bool(row.get("football_data_match_stats_available")) for row in rows)
             ),
             "external_signal_source_summary": dict(
                 Counter(str(row.get("external_signal_source_summary") or "") for row in rows)
@@ -531,6 +540,7 @@ def _prequential_bucket_candidates(row: dict) -> list[tuple[str, tuple]]:
                 "split_signal_shape",
                 bool(row.get("external_rating_available")),
                 bool(row.get("understat_xg_available")),
+                bool(row.get("football_data_match_stats_available")),
                 round(float(row.get("internal_elo_delta") or 0.0) / 0.25) * 0.25,
                 round(float(row.get("external_elo_delta") or 0.0) / 0.25) * 0.25,
                 round(float(row.get("canonical_xg_delta") or 0.0) / 0.25) * 0.25,
@@ -567,6 +577,7 @@ def _is_daily_pick_candidate(row: dict) -> bool:
     return bool(
         row.get("external_rating_available")
         or row.get("understat_xg_available")
+        or row.get("football_data_match_stats_available")
     )
 
 
@@ -879,15 +890,39 @@ def _snapshot_external_signals(snapshot: dict) -> dict:
         )
     else:
         understat_xg_delta = 0.0
+    home_match_stat_sample = _read_numeric(snapshot.get("home_match_stat_sample"))
+    away_match_stat_sample = _read_numeric(snapshot.get("away_match_stat_sample"))
+    football_data_match_stats_available = (
+        home_match_stat_sample is not None
+        and home_match_stat_sample > 0
+        and away_match_stat_sample is not None
+        and away_match_stat_sample > 0
+        and _has_football_data_attack_signal(snapshot, "home")
+        and _has_football_data_attack_signal(snapshot, "away")
+    )
     return {
         "external_elo_delta": external_elo_delta,
         "understat_xg_delta": understat_xg_delta,
         "external_rating_available": int(external_rating_available),
         "understat_xg_available": int(understat_xg_available),
+        "football_data_match_stats_available": int(
+            football_data_match_stats_available
+        ),
         "external_signal_source_summary": str(
             snapshot.get("external_signal_source_summary") or ""
         ),
     }
+
+
+def _has_football_data_attack_signal(snapshot: dict, side: str) -> bool:
+    return any(
+        _read_numeric(snapshot.get(f"{side}_{field}")) is not None
+        for field in (
+            "shots_for_last_5",
+            "shots_on_target_for_last_5",
+            "corners_for_last_5",
+        )
+    )
 
 
 def _rolling_home_signal_score(

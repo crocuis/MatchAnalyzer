@@ -141,6 +141,64 @@ export R2_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
 경기 상세 예측/리뷰 응답을 정적 artifact로 우선 제공하려면 배치에서 match-level artifact를 내보낸다.
 R2 자격 증명이 없으면 `.tmp/r2/<bucket>`에 로컬 파일로 저장된다.
 
+### 로컬 예측 실험 데이터셋
+
+Supabase egress와 원격 upsert 비용 없이 예측 실험을 반복하려면, 먼저 필요한 읽기 테이블을 로컬 JSON으로 export한다.
+
+```bash
+python3 -m batch.src.jobs.export_local_prediction_dataset_job \
+  --output-dir .tmp/prediction-dataset
+```
+
+이후 예측 생성과 raw signal 평가는 같은 디렉터리를 지정하면 Supabase 대신 로컬 파일을 읽고 쓴다.
+
+```bash
+export MATCH_ANALYZER_LOCAL_DATASET_DIR=.tmp/prediction-dataset
+export LLM_PREDICTION_ADVISORY_ENABLED=0
+export MATCH_ANALYZER_DISABLE_LONG_SIGNAL_REFRESH=1
+export MATCH_ANALYZER_FAST_BASELINE_TRAINING=1
+
+REAL_PREDICTION_MATCH_IDS="match_1,match_2" \
+  python3 -m batch.src.jobs.run_predictions_job
+
+python3 -m batch.src.jobs.evaluate_raw_prediction_signals_job --all-snapshots
+```
+
+로컬 실험 결과는 `.tmp/prediction-dataset/predictions.json`과 `prediction_feature_snapshots.json`에만 반영된다. 운영 DB에 반영하려면 로컬 검증 후 별도 배치 경로로 다시 실행한다.
+
+시즌 전체의 과거 odds 신호를 채울 때는 Odds_API.io historical endpoint를 명시적으로 켠다. 이 경로는 과거 경기의 closing odds를 경기 전 신호로 저장하며, raw payload에 `historical_closing=true`를 남긴다.
+
+```bash
+export ODDS_API_IO_INCLUDE_HISTORICAL=1
+export ODDS_API_IO_HISTORICAL_ONLY=1
+export MATCH_ANALYZER_SKIP_MARKET_ARCHIVE=1
+REAL_MARKET_DATE=2026-02-01 python3 -m batch.src.jobs.ingest_markets_job
+```
+
+`ODDS_API_IO_INCLUDE_HISTORICAL`을 끄면 기존처럼 현재/미래 경기용 events + multi odds 경로를 사용한다.
+`ODDS_API_IO_HISTORICAL_ONLY=1`은 과거 시즌 백필에서 일일 schedule, Betman, Polymarket 호출을 생략해 로컬 실험 시간을 줄인다.
+Odds_API.io의 시간당 제한을 아끼고 Football-Data.co.uk bulk CSV만 사용하려면 `ODDS_API_IO_DISABLE=1`을 함께 지정한다.
+반복 백필에서는 `FOOTBALL_DATA_CACHE_DIR=.tmp/football-data-cache`를 지정해 리그 CSV를 로컬에 캐시한다.
+
+5대 리그의 시즌 전체 historical closing odds를 한 번에 채우려면 전용 배치를 사용한다. 이 배치는 `market_probabilities`와 `market_variants`만 upsert하며, Champions/Europa/Conference League처럼 Football-Data CSV가 없는 대회는 건드리지 않는다.
+
+```bash
+export MATCH_ANALYZER_LOCAL_DATASET_DIR=.tmp/prediction-dataset
+export FOOTBALL_DATA_CACHE_DIR=.tmp/football-data-cache
+FOOTBALL_DATA_BACKFILL_START_DATE=2025-12-01 \
+  python3 -m batch.src.jobs.backfill_football_data_markets_job
+```
+
+유럽 대항전처럼 Football-Data CSV가 없는 대회는 Odds_API.io historical closing odds를 rate-limit 친화적인 캐시형 배치로 채운다. 이 배치는 기본적으로 Champions/Europa/Conference League만 대상으로 하고, `ODDS_API_IO_HISTORICAL_MAX_REQUESTS_PER_RUN`에 도달하면 정상 종료한다. 같은 캐시 디렉터리로 다시 실행하면 이미 받은 events/odds를 재사용해 이어서 채운다.
+
+```bash
+export MATCH_ANALYZER_LOCAL_DATASET_DIR=.tmp/prediction-dataset
+export ODDS_API_IO_HISTORICAL_CACHE_DIR=.tmp/odds-api-io-historical-cache
+export ODDS_API_IO_HISTORICAL_MAX_REQUESTS_PER_RUN=80
+ODDS_API_IO_HISTORICAL_START_DATE=2025-12-01 \
+  python3 -m batch.src.jobs.backfill_odds_api_io_historical_markets_job
+```
+
 ```bash
 python3 -m batch.src.jobs.export_match_artifacts_job
 ```
