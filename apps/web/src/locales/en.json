@@ -23,7 +23,11 @@
     "showHeldCandidates": "Show {{count}} held candidates",
     "summary": {
       "recommendations": "Recommendations",
+      "candidates": "Candidates",
+      "heldCandidates": "Held candidates",
       "count": "{{count}} picks",
+      "heldCount": "{{count}} held",
+      "passedRecommendations": "{{count}} passed",
       "updated": "Updated",
       "markets": "Markets",
       "coverage": "Market coverage",

@@ -39,7 +39,20 @@ export default function DailyPicksTeaser({ onOpen }: DailyPicksTeaserProps) {
     };
   }, [dailyPicksDate, i18n.language]);
 
-  const count = summary?.items.length ?? 0;
+  const recommendationCount = summary?.items.length ?? 0;
+  const heldCount = summary
+    ? summary.coverage.held ?? summary.heldItems.length
+    : 0;
+  const shouldShowHeldAsPrimary = recommendationCount === 0 && heldCount > 0;
+  const primaryCount = shouldShowHeldAsPrimary ? heldCount : recommendationCount;
+  const primaryLabel = shouldShowHeldAsPrimary
+    ? t("dailyPicks.summary.candidates")
+    : t("dailyPicks.summary.recommendations");
+  const secondaryCountLabel = shouldShowHeldAsPrimary
+    ? t("dailyPicks.summary.passedRecommendations", { count: recommendationCount })
+    : heldCount > 0
+      ? t("dailyPicks.summary.heldCount", { count: heldCount })
+      : null;
   const hitRate = summary?.validation?.hitRate;
   const isHighHitRate = hitRate && hitRate >= 0.7;
 
@@ -49,9 +62,14 @@ export default function DailyPicksTeaser({ onOpen }: DailyPicksTeaserProps) {
         <h2>{t("dailyPicks.entry.header")}</h2>
         <div className="dailyPicksTeaserMetrics">
           <div className="dailyPicksTeaserStat">
-            <span className="metricLabel">{t("dailyPicks.summary.recommendations")}</span>
+            <span className="metricLabel">{primaryLabel}</span>
             {summary ? (
-              <strong>{t("dailyPicks.summary.count", { count })}</strong>
+              <>
+                <strong>{t("dailyPicks.summary.count", { count: primaryCount })}</strong>
+                {secondaryCountLabel ? (
+                  <span className="dailyPicksMetricHint">{secondaryCountLabel}</span>
+                ) : null}
+              </>
             ) : (
               <span className="dailyPicksSkeleton" aria-label={t("dailyPicks.summary.loading")} />
             )}

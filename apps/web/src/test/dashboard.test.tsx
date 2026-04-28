@@ -3,6 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import DailyPicksTeaser from "../components/DailyPicksTeaser";
 import FullReportView from "../components/FullReportView";
 import MatchCard from "../components/MatchCard";
 import MatchDetailModal from "../components/MatchDetailModal";
@@ -1202,6 +1203,43 @@ describe("dashboard redesign", () => {
     expect(await screen.findByText("Cumulative hit rate")).toBeInTheDocument();
     expect(await screen.findByText("75.0%")).toBeInTheDocument();
     expect(dailyPicksCalls()).toContainEqual(expect.stringMatching(/^\/api\/daily-picks\?date=\d{4}-\d{2}-\d{2}&locale=en$/));
+  });
+
+  it("surfaces held-only daily pick candidates in the teaser", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/daily-picks")) {
+          return {
+            ok: true,
+            json: async () => ({
+              generatedAt: "2026-04-29T08:00:00Z",
+              date: "2026-04-29",
+              target: { minDailyRecommendations: 5, maxDailyRecommendations: 10, hitRate: 0.7, roi: 0.2 },
+              validation: {
+                hitRate: 0.5652,
+                sampleCount: 46,
+                wilsonLowerBound: 0.4225,
+                confidenceReliability: "settled_daily_picks",
+                modelScope: "daily_pick_settled",
+              },
+              coverage: { moneyline: 1, spreads: 0, totals: 1, held: 2 },
+              items: [],
+              heldItems: [],
+            }),
+          };
+        }
+        return { ok: false, json: async () => ({}) };
+      }),
+    );
+
+    render(<DailyPicksTeaser onOpen={vi.fn()} />);
+
+    expect(await screen.findByText("Candidates")).toBeInTheDocument();
+    expect(await screen.findByText("2 picks")).toBeInTheDocument();
+    expect(await screen.findByText("0 passed")).toBeInTheDocument();
+    expect(await screen.findByText("56.5%")).toBeInTheDocument();
   });
 
   it("opens the daily picks view from the dashboard CTA", async () => {
