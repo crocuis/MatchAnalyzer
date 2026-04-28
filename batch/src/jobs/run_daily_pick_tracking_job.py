@@ -21,6 +21,7 @@ MAX_DAILY_RECOMMENDATIONS = 10
 MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
 DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads"}
+DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -206,8 +207,13 @@ def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | No
         if value_aligned
         else None
     )
+    candidate_base = _resolve_moneyline_daily_pick_gate(
+        base,
+        selection_label=selection_label,
+        confidence=confidence,
+    )
     return {
-        **base,
+        **candidate_base,
         "market_family": "moneyline",
         "selection_label": selection_label,
         "line_value": None,
@@ -225,7 +231,7 @@ def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | No
             confidence=confidence,
         ),
         "reason_labels": _recommendation_reason_labels(
-            base,
+            candidate_base,
             "mainRecommendation",
         ),
     }
@@ -258,7 +264,11 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
     market_price = _read_numeric(
         _first_present(variant, "market_price", "marketPrice")
     )
-    candidate_base = _resolve_variant_daily_pick_gate(base, market_family)
+    candidate_base = _resolve_variant_daily_pick_gate(
+        base,
+        market_family=market_family,
+        selection_label=selection_label,
+    )
     return {
         **candidate_base,
         "market_family": market_family,
@@ -285,15 +295,42 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
     }
 
 
-def _resolve_variant_daily_pick_gate(base: dict, market_family: str) -> dict:
+def _resolve_variant_daily_pick_gate(
+    base: dict,
+    *,
+    market_family: str,
+    selection_label: str,
+) -> dict:
     if base.get("status") == "held":
         return base
-    if market_family not in DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES:
+    hold_reason = None
+    if market_family in DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES:
+        hold_reason = "variant_market_reliability_gap"
+    elif market_family == "totals" and selection_label.lower().startswith("under"):
+        hold_reason = "under_total_reliability_gap"
+    if hold_reason is None:
         return base
     return {
         **base,
         "status": "held",
-        "reliability_hold_reason": "variant_market_reliability_gap",
+        "reliability_hold_reason": hold_reason,
+    }
+
+
+def _resolve_moneyline_daily_pick_gate(
+    base: dict,
+    *,
+    selection_label: str,
+    confidence: float,
+) -> dict:
+    if base.get("status") == "held":
+        return base
+    if selection_label != "AWAY" or confidence >= DAILY_PICK_AWAY_CONFIDENCE_MINIMUM:
+        return base
+    return {
+        **base,
+        "status": "held",
+        "reliability_hold_reason": "away_confidence_reliability_gap",
     }
 
 

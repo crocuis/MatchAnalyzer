@@ -243,6 +243,109 @@ def test_sync_daily_picks_holds_unvalidated_spread_variants() -> None:
     ]
 
 
+def test_sync_daily_picks_holds_low_confidence_away_moneyline() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "AWAY",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "AWAY",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            }
+        ],
+    )
+
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "away_confidence_reliability_gap",
+    ]
+
+
+def test_sync_daily_picks_holds_under_total_variants() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.82,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.82,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+                "variant_markets_summary": [
+                    {
+                        "market_family": "totals",
+                        "line_value": 2.5,
+                        "recommended": True,
+                        "recommended_pick": "Under 2.5",
+                        "expected_value": 0.28,
+                        "edge": 0.12,
+                        "market_price": 0.5,
+                        "model_probability": 0.64,
+                        "market_probability": 0.5,
+                    }
+                ],
+            }
+        ],
+    )
+
+    under_items = [row for row in items if row["market_family"] == "totals"]
+
+    assert len(under_items) == 1
+    assert under_items[0]["status"] == "held"
+    assert under_items[0]["reason_labels"] == [
+        "totals",
+        "variantRecommendation",
+        "heldByRecommendationGate",
+        "under_total_reliability_gap",
+    ]
+
+
 def test_sync_daily_picks_uses_adaptive_recommendation_gate() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
