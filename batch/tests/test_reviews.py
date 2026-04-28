@@ -1960,6 +1960,72 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch
     assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
 
 
+def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upsert(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+    tracking_calls: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_b_t_minus_24h",
+                        "match_id": "match_b",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 4,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_b_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_b_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.55,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.21,
+                    },
+                ],
+                "matches": [
+                    {
+                        "id": "match_b",
+                        "kickoff_at": "2026-04-19T18:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "sync_daily_pick_tracking_for_prediction_dates",
+        lambda *, client, sync_dates: tracking_calls.append(sync_dates) or [
+            {"sync_date": sync_dates[0], "synced_items": 1}
+        ],
+    )
+    monkeypatch.setenv("REAL_PREDICTION_MATCH_IDS", "match_b")
+
+    run_predictions_job.main()
+
+    assert len(state["predictions"]) == 1
+    assert tracking_calls == [["2026-04-19"]]
+
+
 def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):
     state: dict[str, list[dict]] = {}
 

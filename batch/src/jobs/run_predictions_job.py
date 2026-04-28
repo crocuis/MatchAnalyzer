@@ -189,6 +189,81 @@ def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
         raise
 
 
+def resolve_daily_pick_sync_dates_from_predictions(
+    *,
+    prediction_rows: list[dict],
+    match_by_id: dict[str, dict],
+    fallback_date: str | None,
+) -> list[str]:
+    dates: set[str] = set()
+    for row in prediction_rows:
+        match_id = str(row.get("match_id") or "")
+        match = match_by_id.get(match_id, {})
+        kickoff_date = str(match.get("kickoff_at") or "")[:10]
+        sync_date = kickoff_date or fallback_date
+        if sync_date and re.match(r"^\d{4}-\d{2}-\d{2}$", sync_date):
+            dates.add(sync_date)
+    return sorted(dates)
+
+
+def sync_daily_pick_tracking_for_prediction_dates(
+    *,
+    client: SupabaseClient,
+    sync_dates: list[str],
+) -> list[dict]:
+    if not sync_dates:
+        return []
+    if not hasattr(client, "delete_rows"):
+        return [
+            {
+                "sync_date": sync_date,
+                "skipped": "daily_pick_tracking_unavailable",
+                "reason": "client_missing_delete_rows",
+            }
+            for sync_date in sync_dates
+        ]
+
+    from batch.src.jobs.run_daily_pick_tracking_job import run_job
+
+    results: list[dict] = []
+    for sync_date in sync_dates:
+        try:
+            result = run_job(sync_date=sync_date, settle_date=None, client=client)
+        except KeyError as exc:
+            results.append({
+                "sync_date": sync_date,
+                "skipped": "daily_pick_tracking_unavailable",
+                "reason": str(exc),
+            })
+            continue
+        except ValueError as exc:
+            message = str(exc).lower()
+            if (
+                "does not exist" in message
+                or "relation" in message
+                or "schema cache" in message
+            ):
+                results.append({
+                    "sync_date": sync_date,
+                    "skipped": "daily_pick_tracking_unavailable",
+                    "reason": str(exc),
+                })
+                continue
+            raise
+        results.append({"sync_date": sync_date, **result})
+    return results
+
+
+def should_sync_daily_pick_tracking_after_predictions(
+    *,
+    persist_side_effects: bool,
+    use_real_prediction_targets: bool,
+) -> bool:
+    if not persist_side_effects or not use_real_prediction_targets:
+        return False
+    return not read_env_flag("MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC")
+
+
 def read_latest_fusion_policy(client: SupabaseClient) -> dict | None:
     for row in read_optional_rows(client, "prediction_fusion_policies"):
         if row.get("id") == "latest" and isinstance(row.get("policy_payload"), dict):
@@ -2977,6 +3052,21 @@ def main() -> None:
     feature_snapshots_inserted = client.upsert_rows(
         "prediction_feature_snapshots", feature_snapshot_payload
     )
+    daily_pick_sync_dates = []
+    daily_pick_tracking_results = []
+    if should_sync_daily_pick_tracking_after_predictions(
+        persist_side_effects=persist_side_effects,
+        use_real_prediction_targets=use_real_prediction_targets,
+    ):
+        daily_pick_sync_dates = resolve_daily_pick_sync_dates_from_predictions(
+            prediction_rows=persisted_payload,
+            match_by_id=match_by_id,
+            fallback_date=use_real_predictions,
+        )
+        daily_pick_tracking_results = sync_daily_pick_tracking_for_prediction_dates(
+            client=client,
+            sync_dates=daily_pick_sync_dates,
+        )
     result_payload = {
         "snapshot_rows": len(snapshot_rows),
         "target_snapshot_rows": len(target_snapshots),
@@ -2984,6 +3074,8 @@ def main() -> None:
         "artifact_rows": artifact_rows,
         "inserted_rows": inserted,
         "feature_snapshot_rows": feature_snapshots_inserted,
+        "daily_pick_sync_dates": daily_pick_sync_dates,
+        "daily_pick_tracking_results": daily_pick_tracking_results,
         "skipped_snapshots": skipped_snapshots,
     }
     include_output_payload = (
