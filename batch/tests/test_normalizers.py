@@ -3009,6 +3009,129 @@ def test_build_football_data_rows_extracts_moneyline_totals_and_spreads():
     assert {row["market_family"] for row in variant_rows} == {"spreads", "totals"}
 
 
+def test_build_football_data_rows_match_provider_short_team_names():
+    snapshot_rows = [
+        {
+            "id": "snapshot_roma",
+            "match_id": "match_roma",
+            "competition_id": "serie-a",
+            "kickoff_at": "2025-08-23T19:45:00+00:00",
+            "home_team_name": "AS Roma",
+            "away_team_name": "Bologna",
+        },
+        {
+            "id": "snapshot_manchester",
+            "match_id": "match_manchester",
+            "competition_id": "premier-league",
+            "kickoff_at": "2025-08-16T19:45:00+00:00",
+            "home_team_name": "Wolverhampton Wanderers",
+            "away_team_name": "Manchester City",
+        },
+        {
+            "id": "snapshot_paris",
+            "match_id": "match_paris",
+            "competition_id": "ligue-1",
+            "kickoff_at": "2025-08-17T18:45:00+00:00",
+            "home_team_name": "Nantes",
+            "away_team_name": "Paris Saint-Germain",
+        },
+        {
+            "id": "snapshot_athletic",
+            "match_id": "match_athletic",
+            "competition_id": "la-liga",
+            "kickoff_at": "2025-08-17T18:45:00+00:00",
+            "home_team_name": "Athletic Club",
+            "away_team_name": "Sevilla",
+        },
+        {
+            "id": "snapshot_heidenheim",
+            "match_id": "match_heidenheim",
+            "competition_id": "bundesliga",
+            "kickoff_at": "2025-08-23T13:30:00+00:00",
+            "home_team_name": "1. FC Heidenheim 1846",
+            "away_team_name": "VfL Wolfsburg",
+        },
+        {
+            "id": "snapshot_auxerre",
+            "match_id": "match_auxerre",
+            "competition_id": "ligue-1",
+            "kickoff_at": "2025-08-17T18:45:00+00:00",
+            "home_team_name": "AJ Auxerre",
+            "away_team_name": "Lorient",
+        },
+    ]
+    football_rows = [
+        {
+            "Div": "I1",
+            "Date": "23/08/2025",
+            "HomeTeam": "Roma",
+            "AwayTeam": "Bologna",
+            "B365H": "2.10",
+            "B365D": "3.30",
+            "B365A": "3.70",
+        },
+        {
+            "Div": "E0",
+            "Date": "16/08/2025",
+            "HomeTeam": "Wolves",
+            "AwayTeam": "Man City",
+            "B365H": "6.00",
+            "B365D": "4.50",
+            "B365A": "1.50",
+        },
+        {
+            "Div": "F1",
+            "Date": "17/08/2025",
+            "HomeTeam": "Nantes",
+            "AwayTeam": "Paris SG",
+            "B365H": "7.00",
+            "B365D": "4.80",
+            "B365A": "1.45",
+        },
+        {
+            "Div": "SP1",
+            "Date": "17/08/2025",
+            "HomeTeam": "Ath Bilbao",
+            "AwayTeam": "Sevilla",
+            "B365H": "1.95",
+            "B365D": "3.40",
+            "B365A": "4.20",
+        },
+        {
+            "Div": "D1",
+            "Date": "23/08/2025",
+            "HomeTeam": "Heidenheim",
+            "AwayTeam": "Wolfsburg",
+            "B365H": "3.20",
+            "B365D": "3.60",
+            "B365A": "2.20",
+        },
+        {
+            "Div": "F1",
+            "Date": "17/08/2025",
+            "HomeTeam": "Auxerre",
+            "AwayTeam": "Lorient",
+            "B365H": "2.40",
+            "B365D": "3.20",
+            "B365A": "3.10",
+        },
+    ]
+
+    rows = fetch_markets_module.build_football_data_market_rows(
+        football_rows,
+        snapshot_rows,
+    )
+
+    assert {row["snapshot_id"] for row in rows} == {
+        "snapshot_roma",
+        "snapshot_manchester",
+        "snapshot_paris",
+        "snapshot_athletic",
+        "snapshot_heidenheim",
+        "snapshot_auxerre",
+    }
+
+
 def test_build_football_data_snapshot_signal_updates_uses_prior_matches_only():
     snapshot_rows = [
         {

@@ -2,6 +2,7 @@ from pathlib import Path
 import csv
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from functools import lru_cache
 import json
 import os
 import re
@@ -586,6 +587,90 @@ def normalize_market_text(value: str) -> str:
         if token not in {"fc", "cf", "sc", "afc", "club"}
     ]
     return " ".join(tokens)
+
+
+TEAM_NAME_EQUIVALENTS_BY_NORMALIZED = {
+    "1 fc heidenheim 1846": {"heidenheim"},
+    "1 fc union berlin": {"union berlin"},
+    "ac milan": {"milan"},
+    "aj auxerre": {"auxerre"},
+    "as monaco": {"monaco"},
+    "as roma": {"roma"},
+    "athletic bilbao": {"ath bilbao", "athletic club"},
+    "athletic club": {"ath bilbao", "athletic bilbao"},
+    "atletico madrid": {"ath madrid"},
+    "borussia dortmund": {"dortmund"},
+    "borussia monchengladbach": {"m gladbach"},
+    "brighton hove albion": {"brighton"},
+    "bayer leverkusen": {"leverkusen"},
+    "celta vigo": {"celta"},
+    "eintracht frankfurt": {"ein frankfurt"},
+    "espanyol": {"espanol"},
+    "fc cologne": {"koln"},
+    "hamburg sv": {"hamburg"},
+    "hellas verona": {"verona"},
+    "internazionale": {"inter"},
+    "le havre ac": {"le havre"},
+    "manchester city": {"man city"},
+    "manchester united": {"man united"},
+    "nottingham forest": {"nottm forest", "nott m forest"},
+    "paris saint germain": {"paris sg", "psg"},
+    "rayo vallecano": {"vallecano"},
+    "real betis": {"betis"},
+    "real oviedo": {"oviedo"},
+    "real sociedad": {"sociedad"},
+    "rb leipzig": {"leipzig"},
+    "sc freiburg": {"freiburg"},
+    "stade rennais": {"rennes"},
+    "tsg hoffenheim": {"hoffenheim"},
+    "tottenham hotspur": {"tottenham"},
+    "vfb stuttgart": {"stuttgart"},
+    "vfl wolfsburg": {"wolfsburg"},
+    "wolverhampton wanderers": {"wolves"},
+}
+
+
+@lru_cache(maxsize=1)
+def _normalized_team_equivalence_map() -> dict[str, set[str]]:
+    equivalents: dict[str, set[str]] = {}
+    for canonical, aliases in TEAM_NAME_EQUIVALENTS_BY_NORMALIZED.items():
+        normalized_canonical = normalize_market_text(canonical)
+        normalized_aliases = {
+            normalized_alias
+            for alias in aliases
+            if (normalized_alias := normalize_market_text(alias))
+        }
+        if not normalized_canonical:
+            continue
+        group = {normalized_canonical, *normalized_aliases}
+        for value in group:
+            equivalents.setdefault(value, set()).update(group)
+    return equivalents
+
+
+def _market_text_equivalents(value: str) -> set[str]:
+    normalized = normalize_market_text(value)
+    if not normalized:
+        return set()
+    values = {normalized}
+    values.update(_normalized_team_equivalence_map().get(normalized, set()))
+    tokens = normalized.split()
+    if len(tokens) > 1:
+        suffix_tokens = {
+            "1846",
+            "ac",
+            "albion",
+            "cf",
+            "hotspur",
+            "st",
+            "sv",
+            "united",
+            "wanderers",
+        }
+        stripped = [token for token in tokens if token not in suffix_tokens]
+        if stripped and stripped != tokens:
+            values.add(" ".join(stripped))
+    return values
 
 
 def parse_utc_minute(value: str) -> datetime:
@@ -1181,14 +1266,14 @@ def _snapshot_team_aliases(snapshot: dict[str, Any], key: str) -> list[str]:
 
 
 def _team_name_matches(candidate: str, aliases: list[str]) -> bool:
-    normalized_candidate = normalize_market_text(candidate)
-    if not normalized_candidate:
+    candidate_equivalents = _market_text_equivalents(candidate)
+    if not candidate_equivalents:
         return False
     for alias in aliases:
-        normalized_alias = normalize_market_text(alias)
-        if not normalized_alias:
+        alias_equivalents = _market_text_equivalents(alias)
+        if not alias_equivalents:
             continue
-        if normalized_candidate == normalized_alias:
+        if candidate_equivalents & alias_equivalents:
             return True
         if overlap_score(candidate, alias) >= 0.75:
             return True

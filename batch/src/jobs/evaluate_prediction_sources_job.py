@@ -174,9 +174,30 @@ def build_evaluation_report(
             feature_context = prediction_payload.get("feature_context")
             if not isinstance(feature_context, dict):
                 feature_context = {}
-            bookmaker_available = bool(
-                feature_context.get("bookmaker_available", bookmaker_probs is not None)
-            ) and bookmaker_probs is not None
+            current_bookmaker_probs, current_prediction_market = (
+                build_market_probabilities(
+                    snapshot["id"],
+                    market_by_snapshot,
+                    kickoff_at=str(match.get("kickoff_at") or ""),
+                )
+            )
+            current_bookmaker_probs, current_bookmaker_available = (
+                resolve_bookmaker_context(
+                    current_bookmaker_probs,
+                    allow_prior_fallback=False,
+                )
+            )
+            if current_bookmaker_available and current_bookmaker_probs is not None:
+                bookmaker_probs = current_bookmaker_probs
+                bookmaker_available = True
+                feature_context = {
+                    **feature_context,
+                    "bookmaker_available": True,
+                }
+            else:
+                bookmaker_available = bool(
+                    feature_context.get("bookmaker_available", bookmaker_probs is not None)
+                ) and bookmaker_probs is not None
             if bookmaker_probs is None:
                 bookmaker_probs = dict(base_probs)
             fused_probs = choose_current_fused_probabilities(
@@ -188,11 +209,6 @@ def build_evaluation_report(
                     else prediction_payload.get("calibrated_confidence_score")
                 ),
                 context=feature_context,
-            )
-            _, current_prediction_market = build_market_probabilities(
-                snapshot["id"],
-                market_by_snapshot,
-                kickoff_at=str(match.get("kickoff_at") or ""),
             )
             prediction_market_available = bool(
                 prediction_payload.get("prediction_market_available")

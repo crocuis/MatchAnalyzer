@@ -87,6 +87,57 @@ def test_build_market_probabilities_ignores_prediction_market_observed_after_kic
     assert prediction_market is None
 
 
+def test_build_market_probabilities_ignores_bookmaker_observed_after_kickoff():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.51,
+                "draw_prob": 0.25,
+                "away_prob": 0.24,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {}
+    assert prediction_market is None
+
+
+def test_index_market_rows_by_snapshot_prefers_odds_api_over_football_data():
+    football_data_row = {
+        "id": "snapshot-1_football_data_bookmaker",
+        "snapshot_id": "snapshot-1",
+        "source_type": "bookmaker",
+        "source_name": "football_data_moneyline_3way",
+        "market_family": "moneyline_3way",
+        "home_prob": 0.45,
+    }
+    odds_api_row = {
+        "id": "snapshot-1_odds_api_bookmaker",
+        "snapshot_id": "snapshot-1",
+        "source_type": "bookmaker",
+        "source_name": "odds_api_io_moneyline_3way",
+        "market_family": "moneyline_3way",
+        "home_prob": 0.55,
+    }
+
+    for rows in ([football_data_row, odds_api_row], [odds_api_row, football_data_row]):
+        indexed = index_market_rows_by_snapshot(rows)
+
+        assert indexed["snapshot-1"]["bookmaker"]["moneyline_3way"]["home_prob"] == 0.55
+
+
 def test_build_variant_markets_adds_recommendations_for_supported_half_lines():
     variant_markets = run_predictions_job.build_variant_markets(
         [

@@ -294,6 +294,11 @@ def build_market_probabilities(
         kickoff_at=kickoff_at,
     ):
         prediction_market = None
+    if not is_market_observed_before_kickoff(
+        bookmaker,
+        kickoff_at=kickoff_at,
+    ):
+        bookmaker = None
     if not bookmaker:
         return {}, prediction_market
     return {
