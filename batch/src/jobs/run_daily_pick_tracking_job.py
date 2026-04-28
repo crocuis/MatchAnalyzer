@@ -20,6 +20,7 @@ from batch.src.storage.supabase_client import SupabaseClient
 MAX_DAILY_RECOMMENDATIONS = 10
 MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
+DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads"}
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -257,8 +258,9 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
     market_price = _read_numeric(
         _first_present(variant, "market_price", "marketPrice")
     )
+    candidate_base = _resolve_variant_daily_pick_gate(base, market_family)
     return {
-        **base,
+        **candidate_base,
         "market_family": market_family,
         "selection_label": selection_label,
         "line_value": _read_numeric(_first_present(variant, "line_value", "lineValue")),
@@ -276,10 +278,22 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
             confidence=None,
         ),
         "reason_labels": _recommendation_reason_labels(
-            base,
+            candidate_base,
             market_family,
             "variantRecommendation",
         ),
+    }
+
+
+def _resolve_variant_daily_pick_gate(base: dict, market_family: str) -> dict:
+    if base.get("status") == "held":
+        return base
+    if market_family not in DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES:
+        return base
+    return {
+        **base,
+        "status": "held",
+        "reliability_hold_reason": "variant_market_reliability_gap",
     }
 
 

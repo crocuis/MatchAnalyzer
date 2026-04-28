@@ -183,6 +183,66 @@ def test_sync_daily_picks_deduplicates_same_market_selection_before_upsert() -> 
     assert total_items[0]["expected_value"] == 0.32
 
 
+def test_sync_daily_picks_holds_unvalidated_spread_variants() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+                "variant_markets_summary": [
+                    {
+                        "market_family": "spreads",
+                        "line_value": -0.5,
+                        "recommended": True,
+                        "recommended_pick": "Chelsea -0.5",
+                        "expected_value": 0.32,
+                        "edge": 0.14,
+                        "market_price": 0.5,
+                        "model_probability": 0.66,
+                        "market_probability": 0.5,
+                    }
+                ],
+            }
+        ],
+    )
+
+    spread_items = [row for row in items if row["market_family"] == "spreads"]
+
+    assert len(spread_items) == 1
+    assert spread_items[0]["status"] == "held"
+    assert spread_items[0]["reason_labels"] == [
+        "spreads",
+        "variantRecommendation",
+        "heldByRecommendationGate",
+        "variant_market_reliability_gap",
+    ]
+
+
 def test_sync_daily_picks_uses_adaptive_recommendation_gate() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
