@@ -25,7 +25,11 @@ from batch.src.llm.advisory import (
     build_disabled_prediction_advisory,
     request_prediction_advisory,
 )
-from batch.src.markets import index_market_rows_by_snapshot, select_market_row
+from batch.src.markets import (
+    index_market_rows_by_snapshot,
+    select_market_row,
+    select_market_rows,
+)
 from batch.src.model.evaluate_walk_forward import (
     calibrate_confidence_from_buckets,
     summarize_confidence_buckets,
@@ -346,34 +350,45 @@ def is_market_observed_before_kickoff(
     return observed_at <= kickoff
 
 
+def select_market_row_before_kickoff(
+    market_by_snapshot: dict[str, dict[str, dict]],
+    *,
+    snapshot_id: str,
+    source_type: str,
+    market_family: str = "moneyline_3way",
+    kickoff_at: str | None = None,
+) -> dict | None:
+    for row in select_market_rows(
+        market_by_snapshot,
+        snapshot_id=snapshot_id,
+        source_type=source_type,
+        market_family=market_family,
+    ):
+        if is_market_observed_before_kickoff(row, kickoff_at=kickoff_at):
+            return row
+    return None
+
+
 def build_market_probabilities(
     snapshot_id: str,
     market_by_snapshot: dict[str, dict[str, dict]],
     *,
     kickoff_at: str | None = None,
 ) -> tuple[dict, dict | None]:
-    bookmaker = select_market_row(
+    bookmaker = select_market_row_before_kickoff(
         market_by_snapshot,
         snapshot_id=snapshot_id,
         source_type="bookmaker",
         market_family="moneyline_3way",
+        kickoff_at=kickoff_at,
     )
-    prediction_market = select_market_row(
+    prediction_market = select_market_row_before_kickoff(
         market_by_snapshot,
         snapshot_id=snapshot_id,
         source_type="prediction_market",
         market_family="moneyline_3way",
+        kickoff_at=kickoff_at,
     )
-    if not is_market_observed_before_kickoff(
-        prediction_market,
-        kickoff_at=kickoff_at,
-    ):
-        prediction_market = None
-    if not is_market_observed_before_kickoff(
-        bookmaker,
-        kickoff_at=kickoff_at,
-    ):
-        bookmaker = None
     if not bookmaker:
         return {}, prediction_market
     return {
@@ -964,6 +979,7 @@ def build_source_metadata(
     *,
     snapshot_id: str,
     market_by_snapshot: dict[str, dict[str, dict]],
+    kickoff_at: str | None = None,
     base_probs: dict,
     book_probs: dict,
     prediction_market: dict | None,
@@ -975,11 +991,12 @@ def build_source_metadata(
     historical_performance: dict[str, dict[str, float | int]],
     fusion_policy: dict | None,
 ) -> dict:
-    bookmaker_row = select_market_row(
+    bookmaker_row = select_market_row_before_kickoff(
         market_by_snapshot,
         snapshot_id=snapshot_id,
         source_type="bookmaker",
         market_family="moneyline_3way",
+        kickoff_at=kickoff_at,
     )
     prediction_market_row = prediction_market
     return {
@@ -2628,11 +2645,12 @@ def main() -> None:
         )
         source_weights = anchor_calibrated_bookmaker_weight(
             source_weights,
-            bookmaker_row=select_market_row(
+            bookmaker_row=select_market_row_before_kickoff(
                 market_by_snapshot,
                 snapshot_id=signal_snapshot["id"],
                 source_type="bookmaker",
                 market_family="moneyline_3way",
+                kickoff_at=str(match.get("kickoff_at") or ""),
             ),
             prediction_market_available=bool(feature_context["prediction_market_available"]),
         )
@@ -2827,6 +2845,7 @@ def main() -> None:
         source_metadata = build_source_metadata(
             snapshot_id=signal_snapshot["id"],
             market_by_snapshot=market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
             base_probs=base_probs,
             book_probs=book_probs,
             prediction_market=prediction_market,

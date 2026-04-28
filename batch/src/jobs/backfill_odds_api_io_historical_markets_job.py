@@ -54,6 +54,44 @@ def parse_request_limit(value: str | None) -> int:
     return max(int(str(value)), 0)
 
 
+def variant_replacement_key(row: dict) -> tuple[str, str, float | None] | None:
+    snapshot_id = row.get("snapshot_id")
+    market_family = row.get("market_family")
+    if not snapshot_id or market_family not in {"spreads", "totals"}:
+        return None
+    line_value = row.get("line_value")
+    if not isinstance(line_value, (int, float)) or isinstance(line_value, bool):
+        return None
+    return (str(snapshot_id), str(market_family), float(line_value))
+
+
+def is_replaced_odds_api_variant(existing_row: dict, replacement_keys: set[tuple[str, str, float | None]]) -> bool:
+    row_id = str(existing_row.get("id") or "")
+    source_name = str(existing_row.get("source_name") or "")
+    if "bookmaker" not in row_id and "bookmaker" not in source_name:
+        return False
+    key = variant_replacement_key(existing_row)
+    return key in replacement_keys
+
+
+def delete_replaced_variant_rows(client: SupabaseClient, variant_rows: list[dict]) -> int:
+    replacement_keys = {
+        key for row in variant_rows if (key := variant_replacement_key(row)) is not None
+    }
+    if not replacement_keys:
+        return 0
+    existing_rows = read_optional_rows(client, "market_variants")
+    new_ids = {str(row.get("id") or "") for row in variant_rows}
+    stale_ids = [
+        str(row.get("id"))
+        for row in existing_rows
+        if row.get("id") is not None
+        and str(row.get("id")) not in new_ids
+        and is_replaced_odds_api_variant(row, replacement_keys)
+    ]
+    return client.delete_rows("market_variants", "id", stale_ids) if stale_ids else 0
+
+
 def cache_key_part(value: str) -> str:
     return (
         value.replace("/", "_")
@@ -357,11 +395,13 @@ def main() -> None:
 
     inserted = client.upsert_rows("market_probabilities", market_rows) if market_rows else 0
     try:
+        deleted_legacy_variant_rows = delete_replaced_variant_rows(client, variant_rows)
         variant_inserted = (
             client.upsert_rows("market_variants", variant_rows) if variant_rows else 0
         )
     except ValueError as exc:
         if is_optional_missing_table_error(exc, "market_variants"):
+            deleted_legacy_variant_rows = 0
             variant_inserted = 0
         else:
             raise
@@ -377,8 +417,9 @@ def main() -> None:
                 "snapshot_rows": len(snapshot_rows),
                 "odds_rows": len(odds_rows),
                 "market_rows": len(market_rows),
-                "variant_rows": len(variant_rows),
-                "inserted_rows": inserted,
+            "variant_rows": len(variant_rows),
+            "deleted_legacy_variant_rows": deleted_legacy_variant_rows,
+            "inserted_rows": inserted,
                 "variant_inserted_rows": variant_inserted,
                 "request_count": cache.request_count,
                 "cache_hits": cache.cache_hits,

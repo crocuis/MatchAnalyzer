@@ -82,8 +82,9 @@ def sync_daily_picks_for_date(
         recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]
         + held_candidates[:MAX_DAILY_HELD_CANDIDATES]
     )
-    selected_items = [
-        {
+    selected_items_by_id: dict[str, dict] = {}
+    for row in selected_candidates:
+        item = {
             **{
                 key: value
                 for key, value in row.items()
@@ -92,8 +93,8 @@ def sync_daily_picks_for_date(
             "run_id": run_id,
             "id": build_daily_pick_item_id(run_id, row),
         }
-        for row in selected_candidates
-    ]
+        selected_items_by_id.setdefault(str(item["id"]), item)
+    selected_items = list(selected_items_by_id.values())
     model_version_id = next(
         (
             str(row.get("model_version_id"))
@@ -638,6 +639,7 @@ def run_job(
     sync_date: str | None,
     settle_date: str | None,
     client: SupabaseClient,
+    force_resync: bool = False,
 ) -> dict:
     result = {
         "synced_items": 0,
@@ -652,7 +654,7 @@ def run_job(
             (row for row in existing_runs if str(row.get("id") or "") == run_id),
             None,
         )
-        if existing_run and existing_run.get("status") == "settled":
+        if existing_run and existing_run.get("status") == "settled" and not force_resync:
             result["sync_skipped"] = "settled_run_exists"
         else:
             matches = read_rows(client, "matches")
@@ -716,6 +718,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync and settle daily pick tracking rows.")
     parser.add_argument("--sync-date", default=os.environ.get("DAILY_PICK_SYNC_DATE"))
     parser.add_argument("--settle-date", default=os.environ.get("DAILY_PICK_SETTLE_DATE"))
+    parser.add_argument(
+        "--force-resync",
+        action="store_true",
+        default=os.environ.get("DAILY_PICK_FORCE_RESYNC") in {"1", "true", "TRUE", "yes", "YES"},
+        help="Rewrite an existing settled daily-pick run before settling it again.",
+    )
     return parser.parse_args(argv)
 
 
@@ -727,6 +735,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         sync_date=args.sync_date,
         settle_date=args.settle_date,
         client=client,
+        force_resync=args.force_resync,
     )
     print(json.dumps(result, sort_keys=True))
 

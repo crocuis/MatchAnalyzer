@@ -114,6 +114,81 @@ def test_build_market_probabilities_ignores_bookmaker_observed_after_kickoff():
     assert prediction_market is None
 
 
+def test_build_market_probabilities_falls_back_to_on_time_bookmaker_row():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_football_data_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "football_data_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.47,
+                "draw_prob": 0.29,
+                "away_prob": 0.24,
+                "observed_at": "2026-04-22T18:00:00+00:00",
+            },
+            {
+                "id": "match_t_minus_24h_odds_api_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.60,
+                "draw_prob": 0.22,
+                "away_prob": 0.18,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {"home": 0.47, "draw": 0.29, "away": 0.24}
+    assert prediction_market is None
+
+
+def test_build_source_metadata_marks_late_only_bookmaker_unavailable():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_late_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.60,
+                "draw_prob": 0.22,
+                "away_prob": 0.18,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    metadata = run_predictions_job.build_source_metadata(
+        snapshot_id="match_t_minus_24h",
+        market_by_snapshot=market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+        base_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        book_probs={},
+        prediction_market=None,
+        prediction_market_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        poisson_probs=None,
+        feature_context={"prediction_market_available": False},
+        base_model_source="prior_fallback",
+        source_weights={"base_model": 1.0},
+        historical_performance={},
+        fusion_policy=None,
+    )
+
+    assert metadata["market_sources"]["bookmaker"]["available"] is False
+    assert metadata["market_sources"]["bookmaker"]["probabilities"] is None
+
+
 def test_index_market_rows_by_snapshot_prefers_odds_api_over_football_data():
     football_data_row = {
         "id": "snapshot-1_football_data_bookmaker",

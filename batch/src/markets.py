@@ -1,6 +1,9 @@
 from typing import Any
 
 
+CANDIDATE_KEY_PREFIX = "__candidates__:"
+
+
 def market_source_priority(row: dict[str, Any]) -> int:
     source_name = str(row.get("source_name") or "").lower()
     source_type = str(row.get("source_type") or "").lower()
@@ -38,12 +41,34 @@ def index_market_rows_by_snapshot(
         if not snapshot_id or not source_type:
             continue
         family_rows = indexed.setdefault(snapshot_id, {}).setdefault(source_type, {})
+        family_rows.setdefault(f"{CANDIDATE_KEY_PREFIX}{market_family}", []).append(row)
         current = family_rows.get(market_family)
         if current is None or market_row_precedence_key(row) > market_row_precedence_key(
             current
         ):
             family_rows[market_family] = row
     return indexed
+
+
+def select_market_rows(
+    indexed_rows: dict[str, dict[str, dict[str, dict[str, Any]]]],
+    snapshot_id: str,
+    source_type: str,
+    market_family: str = "moneyline_3way",
+) -> list[dict[str, Any]]:
+    rows = (
+        indexed_rows
+        .get(snapshot_id, {})
+        .get(source_type, {})
+        .get(f"{CANDIDATE_KEY_PREFIX}{market_family}", [])
+    )
+    if not isinstance(rows, list):
+        return []
+    return sorted(
+        [row for row in rows if isinstance(row, dict)],
+        key=market_row_precedence_key,
+        reverse=True,
+    )
 
 
 def select_market_row(

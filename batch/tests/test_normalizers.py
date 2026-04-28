@@ -64,6 +64,7 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
 )
 from batch.src.jobs.backfill_odds_api_io_historical_markets_job import (
     HistoricalOddsApiCache,
+    delete_replaced_variant_rows,
     fetch_historical_odds_for_snapshots,
     parse_competition_filter,
     select_backfill_snapshots as select_odds_api_io_historical_backfill_snapshots,
@@ -2905,6 +2906,65 @@ def test_build_odds_api_io_variant_rows_extracts_spreads_and_totals():
     assert totals["selection_b_label"] == "Under 2.5"
     assert totals["selection_a_price"] == pytest.approx(0.555556, abs=0.00001)
     assert totals["selection_b_price"] == pytest.approx(0.5, abs=0.00001)
+
+
+def test_delete_replaced_variant_rows_removes_legacy_semantic_duplicates():
+    state = {
+        "market_variants": [
+            {
+                "id": "snapshot_001_bookmaker_spreads_m0p5",
+                "snapshot_id": "snapshot_001",
+                "source_name": "bookmaker_spreads",
+                "market_family": "spreads",
+                "line_value": -0.5,
+            },
+            {
+                "id": "snapshot_001_odds_api_io_bookmaker_spreads_m0p5",
+                "snapshot_id": "snapshot_001",
+                "source_name": "odds_api_io_spreads",
+                "market_family": "spreads",
+                "line_value": -0.5,
+            },
+            {
+                "id": "snapshot_001_football_data_bookmaker_totals_2p5",
+                "snapshot_id": "snapshot_001",
+                "source_name": "football_data_totals",
+                "market_family": "totals",
+                "line_value": 2.5,
+            },
+        ]
+    }
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state.get(table_name, []))
+
+        def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
+            value_set = set(values)
+            state[table_name] = [
+                row
+                for row in state.get(table_name, [])
+                if str(row.get(column) or "") not in value_set
+            ]
+            return len(value_set)
+
+    deleted = delete_replaced_variant_rows(
+        FakeClient(),
+        [
+            {
+                "id": "snapshot_001_odds_api_io_bookmaker_spreads_m0p5",
+                "snapshot_id": "snapshot_001",
+                "market_family": "spreads",
+                "line_value": -0.5,
+            }
+        ],
+    )
+
+    assert deleted == 1
+    assert [row["id"] for row in state["market_variants"]] == [
+        "snapshot_001_odds_api_io_bookmaker_spreads_m0p5",
+        "snapshot_001_football_data_bookmaker_totals_2p5",
+    ]
 
 
 def test_build_odds_api_io_rows_mark_historical_closing_as_pre_match():
