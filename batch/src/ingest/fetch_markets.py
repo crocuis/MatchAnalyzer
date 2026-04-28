@@ -1,6 +1,7 @@
 from pathlib import Path
 import csv
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import json
 import os
 import re
@@ -108,13 +109,36 @@ def fetch_odds_api_io_json(
             if not should_retry or attempt == ODDS_API_IO_URLOPEN_MAX_ATTEMPTS:
                 raise
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
-            delay = float(retry_after or attempt * 5)
+            delay = _retry_after_delay_seconds(retry_after, fallback_seconds=attempt * 5)
         except URLError:
             if attempt == ODDS_API_IO_URLOPEN_MAX_ATTEMPTS:
                 raise
             delay = float(attempt)
         time.sleep(delay)
     raise RuntimeError("unreachable odds-api.io retry state")
+
+
+def _retry_after_delay_seconds(
+    retry_after: str | None,
+    *,
+    fallback_seconds: float,
+    now: datetime | None = None,
+) -> float:
+    raw_value = str(retry_after or "").strip()
+    if not raw_value:
+        return float(fallback_seconds)
+    try:
+        return max(float(raw_value), 0.0)
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(raw_value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return float(fallback_seconds)
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    reference_time = now or datetime.now(timezone.utc)
+    return max((retry_at - reference_time).total_seconds(), 0.0)
 
 
 def _extract_odds_api_io_list(payload: Any, *keys: str) -> list[dict[str, Any]]:
@@ -1524,7 +1548,7 @@ def build_odds_api_io_variant_rows(
                 source_name = "odds_api_io_totals"
             rows.append(
                 {
-                    "id": f"{snapshot['id']}_bookmaker_{market_family}_{line_token}",
+                    "id": f"{snapshot['id']}_odds_api_io_bookmaker_{market_family}_{line_token}",
                     "snapshot_id": snapshot["id"],
                     "source_type": "bookmaker",
                     "source_name": source_name,

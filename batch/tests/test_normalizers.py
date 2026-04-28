@@ -1,5 +1,6 @@
 import json
 from datetime import date, datetime, timedelta, timezone
+from email.message import Message
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
@@ -2557,6 +2558,57 @@ def test_fetch_odds_api_io_multi_odds_uses_free_plan_bookmaker_defaults(monkeypa
     ]
 
 
+def test_fetch_odds_api_io_json_parses_http_date_retry_after(monkeypatch):
+    class FakeResponse(BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _traceback):
+            self.close()
+
+    calls = []
+    sleeps = []
+    headers = Message()
+    headers["Retry-After"] = "Wed, 29 Apr 2026 00:00:05 GMT"
+
+    def fake_urlopen(_request, timeout=30):
+        del timeout
+        calls.append("call")
+        if len(calls) == 1:
+            raise HTTPError(
+                url="https://api.odds-api.io/v3/events",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=headers,
+                fp=None,
+            )
+        return FakeResponse(b'{"events": []}')
+
+    monkeypatch.setattr(fetch_markets_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(fetch_markets_module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        fetch_markets_module,
+        "datetime",
+        type(
+            "FixedDatetime",
+            (datetime,),
+            {
+                "now": classmethod(
+                    lambda cls, tz=None: datetime(2026, 4, 29, tzinfo=timezone.utc)
+                )
+            },
+        ),
+    )
+
+    payload = fetch_markets_module.fetch_odds_api_io_json("api-key", "events")
+
+    assert payload == {"events": []}
+    assert sleeps == [5.0]
+    assert len(calls) == 2
+
+
 def test_fetch_odds_api_io_events_for_snapshots_queries_supported_leagues(monkeypatch):
     captured_params = []
 
@@ -2839,13 +2891,13 @@ def test_build_odds_api_io_variant_rows_extracts_spreads_and_totals():
     assert len(rows) == 2
     spreads = next(row for row in rows if row["market_family"] == "spreads")
     totals = next(row for row in rows if row["market_family"] == "totals")
-    assert spreads["id"] == "snapshot_001_bookmaker_spreads_m0p5"
+    assert spreads["id"] == "snapshot_001_odds_api_io_bookmaker_spreads_m0p5"
     assert spreads["selection_a_label"] == "Chelsea -0.5"
     assert spreads["selection_b_label"] == "Arsenal +0.5"
     assert spreads["selection_a_price"] == pytest.approx(0.519568, abs=0.00001)
     assert spreads["selection_b_price"] == pytest.approx(0.519568, abs=0.00001)
     assert spreads["raw_payload"]["bookmakers"] == ["Bet365", "Unibet"]
-    assert totals["id"] == "snapshot_001_bookmaker_totals_2p5"
+    assert totals["id"] == "snapshot_001_odds_api_io_bookmaker_totals_2p5"
     assert totals["selection_a_label"] == "Over 2.5"
     assert totals["selection_b_label"] == "Under 2.5"
     assert totals["selection_a_price"] == pytest.approx(0.555556, abs=0.00001)
