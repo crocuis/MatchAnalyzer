@@ -300,24 +300,32 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
         results_by_item_id={
             "daily_pick_item_001": {
                 "pick_item_id": "daily_pick_item_001",
-                "result_status": "void",
+                "result_status": "hit",
+            },
+            "historical_miss": {
+                "pick_item_id": "historical_miss",
+                "result_status": "miss",
+            },
+            "historical_pending": {
+                "pick_item_id": "historical_pending",
+                "result_status": "pending",
             }
-        },
-        performance_summary={
-            "id": "all",
-            "sample_count": 80,
-            "hit_rate": 0.75,
-            "wilson_lower_bound": 0.64,
         },
     )
 
     assert view["date"] == "2026-04-24"
-    assert view["validation"]["sampleCount"] == 80
+    assert view["validation"] == {
+        "hitRate": 0.5,
+        "sampleCount": 2,
+        "wilsonLowerBound": 0.0945,
+        "confidenceReliability": "settled_daily_picks",
+        "modelScope": "daily_pick_settled_runtime",
+    }
     assert view["coverage"]["spreads"] == 2
     assert view["coverage"]["held"] == 1
     assert view["items"][0]["matchId"] == "match_001"
     assert view["items"][0]["homeTeamId"] == "team_home"
-    assert view["items"][0]["status"] == "void"
+    assert view["items"][0]["status"] == "hit"
     assert view["items"][0]["highConfidenceEligible"] is True
     assert view["heldItems"][0]["status"] == "held"
     assert view["heldItems"][0]["noBetReason"] == "variant_market_reliability_gap"

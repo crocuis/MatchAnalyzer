@@ -30,6 +30,13 @@ DAILY_PICK_PRECISION_HOLD_REASONS = {
     "below_wilson_lower_bound",
     "insufficient_sample",
 }
+DAILY_PICK_PRECISION_LEAGUES = {
+    "bundesliga",
+    "la-liga",
+    "ligue-1",
+    "premier-league",
+    "serie-a",
+}
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -137,6 +144,7 @@ def build_recommended_pick_candidates(
 ) -> list[dict]:
     summary = prediction.get("summary_payload")
     summary_payload = summary if isinstance(summary, dict) else {}
+    no_bet_reason = prediction.get("main_recommendation_no_bet_reason")
     status, reliability_hold_reason = _resolve_daily_pick_gate(
         prediction,
         summary_payload,
@@ -158,7 +166,17 @@ def build_recommended_pick_candidates(
     }
 
     candidates: list[dict] = []
-    moneyline_candidate = build_moneyline_pick_candidate(base=base, prediction=prediction)
+    precision_moneyline_eligible = _is_precision_moneyline_candidate(
+        prediction=prediction,
+        summary_payload=summary_payload,
+        no_bet_reason=reliability_hold_reason or no_bet_reason,
+        league_id=_read_text(match.get("competition_id")),
+    )
+    moneyline_candidate = build_moneyline_pick_candidate(
+        base=base,
+        prediction=prediction,
+        precision_moneyline_eligible=precision_moneyline_eligible,
+    )
     if moneyline_candidate is not None:
         candidates.append(moneyline_candidate)
 
@@ -170,7 +188,12 @@ def build_recommended_pick_candidates(
     return candidates
 
 
-def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | None:
+def build_moneyline_pick_candidate(
+    *,
+    base: dict,
+    prediction: dict,
+    precision_moneyline_eligible: bool = False,
+) -> dict | None:
     selection_label = str(
         prediction.get("main_recommendation_pick")
         or prediction.get("recommended_pick")
@@ -218,6 +241,8 @@ def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | No
         selection_label=selection_label,
         confidence=confidence,
     )
+    if precision_moneyline_eligible and candidate_base.get("status") == "held":
+        candidate_base = _promote_precision_moneyline_candidate(candidate_base)
     return {
         **candidate_base,
         "market_family": "moneyline",
@@ -344,6 +369,24 @@ def _with_daily_pick_hold_reason(base: dict, hold_reason: str) -> dict:
     }
 
 
+def _promote_precision_moneyline_candidate(base: dict) -> dict:
+    metadata = dict(base.get("validation_metadata") or {})
+    original_reliability = (
+        metadata.get("confidence_reliability") or base.get("reliability_hold_reason")
+    )
+    if original_reliability:
+        metadata.setdefault("precision_gate_original_reliability", original_reliability)
+    metadata["confidence_reliability"] = "precision_moneyline_supported"
+    metadata["high_confidence_eligible"] = False
+    metadata["daily_pick_precision_gate"] = "domestic_moneyline"
+    return {
+        **base,
+        "status": "recommended",
+        "validation_metadata": metadata,
+        "reliability_hold_reason": None,
+    }
+
+
 def recommendation_score(
     *,
     expected_value: float | None,
@@ -412,7 +455,10 @@ def _is_precision_moneyline_candidate(
     prediction: dict,
     summary_payload: dict,
     no_bet_reason: object,
+    league_id: str | None = None,
 ) -> bool:
+    if league_id not in DAILY_PICK_PRECISION_LEAGUES:
+        return False
     if (
         isinstance(no_bet_reason, str)
         and no_bet_reason not in DAILY_PICK_PRECISION_HOLD_REASONS
@@ -448,14 +494,10 @@ def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[s
             prediction_gate is True
             and has_validation_support
             and not has_no_bet_reason
+            and _resolve_reliability_hold_reason(summary_payload)
+            != "below_high_confidence_threshold"
         )
     if is_recommended:
-        return "recommended", ""
-    if _is_precision_moneyline_candidate(
-        prediction=prediction,
-        summary_payload=summary_payload,
-        no_bet_reason=no_bet_reason,
-    ):
         return "recommended", ""
     if has_no_bet_reason:
         return "held", no_bet_reason

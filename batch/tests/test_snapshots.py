@@ -376,6 +376,20 @@ def test_projection_ssot_boundary_migration_removes_redundant_pick_league():
     assert "from league_prediction_summaries" in migration
 
 
+def test_review_flags_and_runtime_hit_rate_migration_scopes_review_to_representative_prediction():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260429203030_fix_review_flags_and_runtime_hit_rates.sql"
+        ).read_text()
+    )
+
+    assert "predictions.id as representative_prediction_id" in migration
+    assert "review_predictions as ( select distinct prediction_id from post_match_reviews" in migration
+    assert "review_predictions.prediction_id = representative_predictions.representative_prediction_id" in migration
+    assert "match_cards.main_recommendation_recommended is true" in migration
+    assert "from league_prediction_summaries" in migration
+
+
 def test_seed_links_competition_teams_and_match():
     seed = normalize_sql(Path("supabase/seed.sql").read_text())
 
