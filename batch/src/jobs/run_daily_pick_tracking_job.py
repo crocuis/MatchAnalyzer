@@ -20,6 +20,16 @@ from batch.src.storage.supabase_client import SupabaseClient
 MAX_DAILY_RECOMMENDATIONS = 10
 MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
+DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads"}
+DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
+DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.75
+DAILY_PICK_PRECISION_MAX_DIVERGENCE = 0.03
+DAILY_PICK_PRECISION_HOLD_REASONS = {
+    "below_high_confidence_threshold",
+    "below_target_hit_rate",
+    "below_wilson_lower_bound",
+    "insufficient_sample",
+}
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -82,8 +92,9 @@ def sync_daily_picks_for_date(
         recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]
         + held_candidates[:MAX_DAILY_HELD_CANDIDATES]
     )
-    selected_items = [
-        {
+    selected_items_by_id: dict[str, dict] = {}
+    for row in selected_candidates:
+        item = {
             **{
                 key: value
                 for key, value in row.items()
@@ -92,8 +103,8 @@ def sync_daily_picks_for_date(
             "run_id": run_id,
             "id": build_daily_pick_item_id(run_id, row),
         }
-        for row in selected_candidates
-    ]
+        selected_items_by_id.setdefault(str(item["id"]), item)
+    selected_items = list(selected_items_by_id.values())
     model_version_id = next(
         (
             str(row.get("model_version_id"))
@@ -160,8 +171,6 @@ def build_recommended_pick_candidates(
 
 
 def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | None:
-    if prediction.get("main_recommendation_recommended") is False:
-        return None
     selection_label = str(
         prediction.get("main_recommendation_pick")
         or prediction.get("recommended_pick")
@@ -204,8 +213,13 @@ def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | No
         if value_aligned
         else None
     )
+    candidate_base = _resolve_moneyline_daily_pick_gate(
+        base,
+        selection_label=selection_label,
+        confidence=confidence,
+    )
     return {
-        **base,
+        **candidate_base,
         "market_family": "moneyline",
         "selection_label": selection_label,
         "line_value": None,
@@ -223,7 +237,7 @@ def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | No
             confidence=confidence,
         ),
         "reason_labels": _recommendation_reason_labels(
-            base,
+            candidate_base,
             "mainRecommendation",
         ),
     }
@@ -256,8 +270,13 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
     market_price = _read_numeric(
         _first_present(variant, "market_price", "marketPrice")
     )
+    candidate_base = _resolve_variant_daily_pick_gate(
+        base,
+        market_family=market_family,
+        selection_label=selection_label,
+    )
     return {
-        **base,
+        **candidate_base,
         "market_family": market_family,
         "selection_label": selection_label,
         "line_value": _read_numeric(_first_present(variant, "line_value", "lineValue")),
@@ -275,10 +294,53 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
             confidence=None,
         ),
         "reason_labels": _recommendation_reason_labels(
-            base,
+            candidate_base,
             market_family,
             "variantRecommendation",
         ),
+    }
+
+
+def _resolve_variant_daily_pick_gate(
+    base: dict,
+    *,
+    market_family: str,
+    selection_label: str,
+) -> dict:
+    if base.get("status") == "held":
+        return base
+    hold_reason = None
+    if market_family in DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES:
+        hold_reason = "variant_market_reliability_gap"
+    elif market_family == "totals" and selection_label.lower().startswith("under"):
+        hold_reason = "under_total_reliability_gap"
+    if hold_reason is None:
+        return base
+    return _with_daily_pick_hold_reason(base, hold_reason)
+
+
+def _resolve_moneyline_daily_pick_gate(
+    base: dict,
+    *,
+    selection_label: str,
+    confidence: float,
+) -> dict:
+    if base.get("status") == "held":
+        return base
+    if selection_label != "AWAY" or confidence >= DAILY_PICK_AWAY_CONFIDENCE_MINIMUM:
+        return base
+    return _with_daily_pick_hold_reason(base, "away_confidence_reliability_gap")
+
+
+def _with_daily_pick_hold_reason(base: dict, hold_reason: str) -> dict:
+    metadata = dict(base.get("validation_metadata") or {})
+    metadata["confidence_reliability"] = hold_reason
+    metadata["high_confidence_eligible"] = False
+    return {
+        **base,
+        "status": "held",
+        "validation_metadata": metadata,
+        "reliability_hold_reason": hold_reason,
     }
 
 
@@ -331,6 +393,46 @@ def _has_daily_pick_validation_support(summary_payload: dict) -> bool:
     )
 
 
+def _has_pre_match_signal_support(summary_payload: dict) -> bool:
+    feature_context = summary_payload.get("feature_context")
+    if not isinstance(feature_context, dict):
+        return False
+    return any(
+        bool(feature_context.get(field))
+        for field in (
+            "external_rating_available",
+            "understat_xg_available",
+            "football_data_match_stats_available",
+        )
+    )
+
+
+def _is_precision_moneyline_candidate(
+    *,
+    prediction: dict,
+    summary_payload: dict,
+    no_bet_reason: object,
+) -> bool:
+    if (
+        isinstance(no_bet_reason, str)
+        and no_bet_reason not in DAILY_PICK_PRECISION_HOLD_REASONS
+    ):
+        return False
+    confidence = _read_numeric(
+        prediction.get("main_recommendation_confidence")
+        or prediction.get("confidence_score")
+        or summary_payload.get("calibrated_confidence_score")
+    )
+    max_abs_divergence = _read_numeric(summary_payload.get("max_abs_divergence"))
+    return bool(
+        confidence is not None
+        and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
+        and max_abs_divergence is not None
+        and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
+        and _has_pre_match_signal_support(summary_payload)
+    )
+
+
 def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[str, str]:
     prediction_gate = prediction.get("main_recommendation_recommended")
     no_bet_reason = prediction.get("main_recommendation_no_bet_reason")
@@ -348,6 +450,12 @@ def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[s
             and not has_no_bet_reason
         )
     if is_recommended:
+        return "recommended", ""
+    if _is_precision_moneyline_candidate(
+        prediction=prediction,
+        summary_payload=summary_payload,
+        no_bet_reason=no_bet_reason,
+    ):
         return "recommended", ""
     if has_no_bet_reason:
         return "held", no_bet_reason
@@ -638,6 +746,7 @@ def run_job(
     sync_date: str | None,
     settle_date: str | None,
     client: SupabaseClient,
+    force_resync: bool = False,
 ) -> dict:
     result = {
         "synced_items": 0,
@@ -652,7 +761,7 @@ def run_job(
             (row for row in existing_runs if str(row.get("id") or "") == run_id),
             None,
         )
-        if existing_run and existing_run.get("status") == "settled":
+        if existing_run and existing_run.get("status") == "settled" and not force_resync:
             result["sync_skipped"] = "settled_run_exists"
         else:
             matches = read_rows(client, "matches")
@@ -716,6 +825,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync and settle daily pick tracking rows.")
     parser.add_argument("--sync-date", default=os.environ.get("DAILY_PICK_SYNC_DATE"))
     parser.add_argument("--settle-date", default=os.environ.get("DAILY_PICK_SETTLE_DATE"))
+    parser.add_argument(
+        "--force-resync",
+        action="store_true",
+        default=os.environ.get("DAILY_PICK_FORCE_RESYNC") in {"1", "true", "TRUE", "yes", "YES"},
+        help="Rewrite an existing settled daily-pick run before settling it again.",
+    )
     return parser.parse_args(argv)
 
 
@@ -727,6 +842,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         sync_date=args.sync_date,
         settle_date=args.settle_date,
         client=client,
+        force_resync=args.force_resync,
     )
     print(json.dumps(result, sort_keys=True))
 

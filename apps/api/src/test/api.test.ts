@@ -2190,6 +2190,28 @@ describe("prediction API", () => {
             "insufficient_sample",
           ],
         },
+        {
+          id: "daily_pick_item_held_spread",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "spreads",
+          selection_label: "HOME -0.5",
+          confidence: null,
+          score: 0.18,
+          status: "held",
+          validation_metadata: {
+            confidence_reliability: "insufficient_sample",
+            high_confidence_eligible: false,
+            sample_count: 1,
+          },
+          reason_labels: [
+            "spreads",
+            "variantRecommendation",
+            "heldByRecommendationGate",
+            "variant_market_reliability_gap",
+          ],
+        },
       ],
       daily_pick_runs: [
         {
@@ -2245,6 +2267,7 @@ describe("prediction API", () => {
       heldItems: Array<{
         matchId: string;
         status: string;
+        marketFamily: string;
         confidenceReliability: string | null;
         highConfidenceEligible: boolean | null;
         noBetReason: string | null;
@@ -2254,9 +2277,9 @@ describe("prediction API", () => {
     expect(body.validation.sampleCount).toBe(80);
     expect(body.coverage).toEqual({
       moneyline: 2,
-      spreads: 0,
+      spreads: 1,
       totals: 0,
-      held: 1,
+      held: 2,
     });
     expect(body.heldItems).toEqual([]);
     expect(body.items).toEqual([
@@ -2268,7 +2291,7 @@ describe("prediction API", () => {
     ]);
 
     const heldBody = await heldResponse.json() as typeof body;
-    expect(heldBody.heldItems).toEqual([
+    expect(heldBody.heldItems).toEqual(expect.arrayContaining([
       expect.objectContaining({
         matchId: "match-1",
         status: "held",
@@ -2276,7 +2299,15 @@ describe("prediction API", () => {
         highConfidenceEligible: false,
         noBetReason: "insufficient_sample",
       }),
-    ]);
+      expect.objectContaining({
+        matchId: "match-1",
+        status: "held",
+        marketFamily: "spreads",
+        confidenceReliability: "variant_market_reliability_gap",
+        highConfidenceEligible: false,
+        noBetReason: "variant_market_reliability_gap",
+      }),
+    ]));
   });
 
   it("falls back to computed daily picks when tracking tables are unavailable", async () => {

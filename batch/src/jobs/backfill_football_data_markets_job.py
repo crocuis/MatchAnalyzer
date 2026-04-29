@@ -81,6 +81,24 @@ def select_backfill_snapshots(
     return selected
 
 
+def merge_snapshot_signal_updates(
+    *,
+    snapshot_rows: list[dict],
+    updates: list[dict],
+) -> list[dict]:
+    snapshots_by_id = {
+        str(row.get("id") or ""): row for row in snapshot_rows if row.get("id")
+    }
+    return [
+        {
+            **snapshots_by_id.get(str(update.get("id") or ""), {}),
+            **update,
+        }
+        for update in updates
+        if update.get("id")
+    ]
+
+
 def main() -> None:
     settings = load_settings()
     local_dataset_dir = resolve_local_prediction_dataset_dir()
@@ -134,6 +152,10 @@ def main() -> None:
     snapshot_signal_updates = build_football_data_snapshot_signal_updates(
         football_rows,
         snapshot_rows,
+    )
+    snapshot_signal_updates = merge_snapshot_signal_updates(
+        snapshot_rows=all_snapshot_rows,
+        updates=snapshot_signal_updates,
     )
     market_rows = filter_pre_match_market_rows(market_rows, snapshot_rows)
     variant_rows = filter_pre_match_market_rows(variant_rows, snapshot_rows)

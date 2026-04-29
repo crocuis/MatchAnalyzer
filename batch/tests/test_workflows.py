@@ -83,18 +83,18 @@ def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run()
     assert "R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}" in workflow
     assert "R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}" in workflow
     assert '[ "${{ github.event_name }}" = "schedule" ]' not in workflow
-    assert "DAILY_PICK_SYNC_ENABLED=0" in workflow
-    assert "DAILY_PICK_SYNC_ENABLED=1" in workflow
-    assert "DAILY_PICK_SYNC_DATE=" in workflow
+    assert "DAILY_PICK_ARTIFACT_ENABLED=0" in workflow
+    assert "DAILY_PICK_ARTIFACT_ENABLED=1" in workflow
+    assert "MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1" in workflow
+    assert "DAILY_PICK_SYNC_DATE=" not in workflow
     assert "DAILY_PICK_ARTIFACT_DATE=" in workflow
     assert "Backfill external prediction signals" in workflow
     assert "backfill_external_prediction_signals_job" in workflow
     assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
     assert '--kickoff-date "$REAL_PREDICTION_DATE"' in workflow
     assert "--clubelo-date-stride-days 1" in workflow
-    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
     assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
-    assert "if: ${{ env.DAILY_PICK_SYNC_ENABLED == '1' }}" in workflow
+    assert "if: ${{ env.DAILY_PICK_ARTIFACT_ENABLED == '1' }}" in workflow
 
 
 def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick_dates() -> None:
@@ -112,6 +112,7 @@ def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick
     assert "backfill_external_prediction_signals_job" in workflow
     assert '--match-ids "$SYNC_EXTERNAL_SIGNAL_MATCH_IDS"' in workflow
     assert "REAL_PREDICTION_MATCH_IDS=\"$SYNC_TARGET_MATCH_IDS\"" in workflow
+    assert "MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1" in workflow
     assert "No daily-pick prediction checkpoints changed; skipping daily pick refresh." in workflow
     assert "DAILY_PICK_SYNC_DATE=\"$TARGET_DATE\"" in workflow
     assert "DAILY_PICK_ARTIFACT_DATE=\"$TARGET_DATE\"" in workflow

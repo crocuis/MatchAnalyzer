@@ -25,7 +25,11 @@ from batch.src.llm.advisory import (
     build_disabled_prediction_advisory,
     request_prediction_advisory,
 )
-from batch.src.markets import index_market_rows_by_snapshot, select_market_row
+from batch.src.markets import (
+    index_market_rows_by_snapshot,
+    select_market_row,
+    select_market_rows,
+)
 from batch.src.model.evaluate_walk_forward import (
     calibrate_confidence_from_buckets,
     summarize_confidence_buckets,
@@ -50,6 +54,7 @@ from batch.src.model.evaluate_prediction_sources import (
     build_variant_evaluation_rows,
     current_fused_selector_history_ready,
     derive_variant_weights,
+    select_prequential_current_fused_probability,
     summarize_variant_metrics,
 )
 from batch.src.model.confidence_validation import (
@@ -188,6 +193,84 @@ def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
         raise
 
 
+def resolve_daily_pick_sync_dates_from_predictions(
+    *,
+    prediction_rows: list[dict],
+    match_by_id: dict[str, dict],
+    fallback_date: str | None,
+) -> list[str]:
+    dates: set[str] = set()
+    for row in prediction_rows:
+        match_id = str(row.get("match_id") or "")
+        match = match_by_id.get(match_id, {})
+        kickoff_date = str(match.get("kickoff_at") or "")[:10]
+        sync_date = kickoff_date or fallback_date
+        if sync_date and re.match(r"^\d{4}-\d{2}-\d{2}$", sync_date):
+            dates.add(sync_date)
+    return sorted(dates)
+
+
+def sync_daily_pick_tracking_for_prediction_dates(
+    *,
+    client: SupabaseClient,
+    sync_dates: list[str],
+) -> list[dict]:
+    if not sync_dates:
+        return []
+    if not hasattr(client, "delete_rows"):
+        return [
+            {
+                "sync_date": sync_date,
+                "skipped": "daily_pick_tracking_unavailable",
+                "reason": "client_missing_delete_rows",
+            }
+            for sync_date in sync_dates
+        ]
+
+    from batch.src.jobs.run_daily_pick_tracking_job import run_job
+
+    results: list[dict] = []
+    for sync_date in sync_dates:
+        try:
+            result = run_job(sync_date=sync_date, settle_date=None, client=client)
+        except KeyError as exc:
+            results.append({
+                "sync_date": sync_date,
+                "skipped": "daily_pick_tracking_unavailable",
+                "reason": str(exc),
+            })
+            continue
+        except ValueError as exc:
+            message = str(exc).lower()
+            if (
+                "does not exist" in message
+                or "relation" in message
+                or "schema cache" in message
+            ):
+                results.append({
+                    "sync_date": sync_date,
+                    "skipped": "daily_pick_tracking_unavailable",
+                    "reason": str(exc),
+                })
+                continue
+            raise
+        results.append({"sync_date": sync_date, **result})
+    return results
+
+
+def should_sync_daily_pick_tracking_after_predictions(
+    *,
+    persist_side_effects: bool,
+    use_real_prediction_targets: bool,
+    target_match_ids: set[str] | None = None,
+) -> bool:
+    if not persist_side_effects or not use_real_prediction_targets:
+        return False
+    if target_match_ids:
+        return False
+    return not read_env_flag("MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC")
+
+
 def read_latest_fusion_policy(client: SupabaseClient) -> dict | None:
     for row in read_optional_rows(client, "prediction_fusion_policies"):
         if row.get("id") == "latest" and isinstance(row.get("policy_payload"), dict):
@@ -270,29 +353,45 @@ def is_market_observed_before_kickoff(
     return observed_at <= kickoff
 
 
+def select_market_row_before_kickoff(
+    market_by_snapshot: dict[str, dict[str, dict]],
+    *,
+    snapshot_id: str,
+    source_type: str,
+    market_family: str = "moneyline_3way",
+    kickoff_at: str | None = None,
+) -> dict | None:
+    for row in select_market_rows(
+        market_by_snapshot,
+        snapshot_id=snapshot_id,
+        source_type=source_type,
+        market_family=market_family,
+    ):
+        if is_market_observed_before_kickoff(row, kickoff_at=kickoff_at):
+            return row
+    return None
+
+
 def build_market_probabilities(
     snapshot_id: str,
     market_by_snapshot: dict[str, dict[str, dict]],
     *,
     kickoff_at: str | None = None,
 ) -> tuple[dict, dict | None]:
-    bookmaker = select_market_row(
+    bookmaker = select_market_row_before_kickoff(
         market_by_snapshot,
         snapshot_id=snapshot_id,
         source_type="bookmaker",
         market_family="moneyline_3way",
+        kickoff_at=kickoff_at,
     )
-    prediction_market = select_market_row(
+    prediction_market = select_market_row_before_kickoff(
         market_by_snapshot,
         snapshot_id=snapshot_id,
         source_type="prediction_market",
         market_family="moneyline_3way",
-    )
-    if not is_market_observed_before_kickoff(
-        prediction_market,
         kickoff_at=kickoff_at,
-    ):
-        prediction_market = None
+    )
     if not bookmaker:
         return {}, prediction_market
     return {
@@ -883,6 +982,7 @@ def build_source_metadata(
     *,
     snapshot_id: str,
     market_by_snapshot: dict[str, dict[str, dict]],
+    kickoff_at: str | None = None,
     base_probs: dict,
     book_probs: dict,
     prediction_market: dict | None,
@@ -894,11 +994,12 @@ def build_source_metadata(
     historical_performance: dict[str, dict[str, float | int]],
     fusion_policy: dict | None,
 ) -> dict:
-    bookmaker_row = select_market_row(
+    bookmaker_row = select_market_row_before_kickoff(
         market_by_snapshot,
         snapshot_id=snapshot_id,
         source_type="bookmaker",
         market_family="moneyline_3way",
+        kickoff_at=kickoff_at,
     )
     prediction_market_row = prediction_market
     return {
@@ -2377,9 +2478,9 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
-    current_fused_selector_enabled = not read_env_flag(
-        "MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR",
-    )
+    current_fused_selector_enabled = read_env_flag(
+        "MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR",
+    ) and not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
@@ -2547,11 +2648,12 @@ def main() -> None:
         )
         source_weights = anchor_calibrated_bookmaker_weight(
             source_weights,
-            bookmaker_row=select_market_row(
+            bookmaker_row=select_market_row_before_kickoff(
                 market_by_snapshot,
                 snapshot_id=signal_snapshot["id"],
                 source_type="bookmaker",
                 market_family="moneyline_3way",
+                kickoff_at=str(match.get("kickoff_at") or ""),
             ),
             prediction_market_available=bool(feature_context["prediction_market_available"]),
         )
@@ -2628,36 +2730,39 @@ def main() -> None:
                 current_fused_key
             ]
             if current_fused_selector_history_ready(historical_current_fused_candidates):
-                selected_fused_probs = build_current_fused_probabilities(
-                    [
-                        *historical_current_fused_candidates,
-                        {
-                            "snapshot_id": signal_snapshot["id"],
-                            "kickoff_at": next(
-                                (
-                                    str(match.get("kickoff_at") or "")
-                                    for match in match_rows
-                                    if match.get("id") == signal_snapshot["match_id"]
-                                ),
-                                "",
-                            ),
-                            "checkpoint": signal_snapshot["checkpoint_type"],
-                            "prediction_market_available": bool(
-                                feature_context["prediction_market_available"]
-                            ),
-                            "actual_outcome": None,
-                            "base_model_probs": base_probs,
-                            "bookmaker_probs": book_probs,
-                            "raw_fused_probs": raw_fused_probs,
-                            "confidence": raw_confidence_score,
-                            "context": scoring_context,
-                        },
-                    ]
-                )[signal_snapshot["id"]]
+                selector_candidate = {
+                    "snapshot_id": signal_snapshot["id"],
+                    "kickoff_at": str(match.get("kickoff_at") or ""),
+                    "checkpoint": signal_snapshot["checkpoint_type"],
+                    "prediction_market_available": bool(
+                        feature_context["prediction_market_available"]
+                    ),
+                    "actual_outcome": None,
+                    "base_model_probs": base_probs,
+                    "bookmaker_probs": book_probs,
+                    "raw_fused_probs": raw_fused_probs,
+                    "confidence": raw_confidence_score,
+                    "context": scoring_context,
+                }
+                if len(historical_current_fused_candidates) <= 50:
+                    selected_fused_probs = build_current_fused_probabilities(
+                        [
+                            *historical_current_fused_candidates,
+                            selector_candidate,
+                        ]
+                    )[signal_snapshot["id"]]
+                else:
+                    selected_fused_probs = select_prequential_current_fused_probability(
+                        candidate=selector_candidate,
+                        historical_candidates=historical_current_fused_candidates,
+                    )
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]
-                row["recommended_pick"] = choose_recommended_pick(selected_fused_probs)
+                row["recommended_pick"] = choose_recommended_pick(
+                    selected_fused_probs,
+                    context=scoring_context,
+                )
                 row["confidence_score"] = confidence_score(
                     selected_fused_probs,
                     base_probs=base_probs,
@@ -2746,6 +2851,7 @@ def main() -> None:
         source_metadata = build_source_metadata(
             snapshot_id=signal_snapshot["id"],
             market_by_snapshot=market_by_snapshot,
+            kickoff_at=str(match.get("kickoff_at") or ""),
             base_probs=base_probs,
             book_probs=book_probs,
             prediction_market=prediction_market,
@@ -2971,21 +3077,45 @@ def main() -> None:
     feature_snapshots_inserted = client.upsert_rows(
         "prediction_feature_snapshots", feature_snapshot_payload
     )
-    print(
-        json.dumps(
-            {
-                "snapshot_rows": len(snapshot_rows),
-                "target_snapshot_rows": len(target_snapshots),
-                "model_rows": model_rows,
-                "artifact_rows": artifact_rows,
-                "inserted_rows": inserted,
-                "feature_snapshot_rows": feature_snapshots_inserted,
-                "skipped_snapshots": skipped_snapshots,
-                "payload": payload,
-            },
-            sort_keys=True,
+    daily_pick_sync_dates = []
+    daily_pick_tracking_results = []
+    if should_sync_daily_pick_tracking_after_predictions(
+        persist_side_effects=persist_side_effects,
+        use_real_prediction_targets=use_real_prediction_targets,
+        target_match_ids=target_match_ids,
+    ):
+        daily_pick_sync_dates = resolve_daily_pick_sync_dates_from_predictions(
+            prediction_rows=persisted_payload,
+            match_by_id=match_by_id,
+            fallback_date=use_real_predictions,
         )
+        daily_pick_tracking_results = sync_daily_pick_tracking_for_prediction_dates(
+            client=client,
+            sync_dates=daily_pick_sync_dates,
+        )
+    result_payload = {
+        "snapshot_rows": len(snapshot_rows),
+        "target_snapshot_rows": len(target_snapshots),
+        "model_rows": model_rows,
+        "artifact_rows": artifact_rows,
+        "inserted_rows": inserted,
+        "feature_snapshot_rows": feature_snapshots_inserted,
+        "daily_pick_sync_dates": daily_pick_sync_dates,
+        "daily_pick_tracking_results": daily_pick_tracking_results,
+        "skipped_snapshots": skipped_snapshots,
+    }
+    include_output_payload = (
+        os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
+        in {"1", "true", "TRUE", "yes", "YES"}
+        or not use_real_prediction_targets
+        or len(payload) <= 20
     )
+    if include_output_payload:
+        result_payload["payload"] = payload
+    else:
+        result_payload["payload_omitted"] = len(payload)
+        result_payload["payload_sample"] = payload[:3]
+    print(json.dumps(result_payload, sort_keys=True))
 
 
 if __name__ == "__main__":

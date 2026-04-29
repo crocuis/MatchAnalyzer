@@ -441,6 +441,164 @@ def test_build_evaluation_report_ignores_stale_prediction_market_from_payload() 
     assert report["by_market_segment"]["without_prediction_market"]["bookmaker"]["count"] == 1
 
 
+def test_build_evaluation_report_refreshes_bookmaker_source_from_current_market_rows(
+    monkeypatch,
+) -> None:
+    captured_contexts = []
+
+    def fake_choose_current_fused_probabilities(**kwargs):
+        captured_contexts.append(kwargs["context"])
+        return dict(kwargs["bookmaker_probs"])
+
+    monkeypatch.setattr(
+        evaluation_job,
+        "choose_current_fused_probabilities",
+        fake_choose_current_fused_probabilities,
+    )
+
+    report = evaluation_job.build_evaluation_report(
+        snapshot_rows=[
+            {
+                "id": "snapshot-001",
+                "match_id": "match-001",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        prediction_rows=[
+            {
+                "id": "prediction-001",
+                "match_id": "match-001",
+                "snapshot_id": "snapshot-001",
+                "home_prob": 0.40,
+                "draw_prob": 0.35,
+                "away_prob": 0.25,
+                "summary_payload": {
+                    "base_model_probs": {
+                        "home": 0.40,
+                        "draw": 0.35,
+                        "away": 0.25,
+                    },
+                    "prediction_market_available": False,
+                    "feature_context": {
+                        "bookmaker_available": False,
+                        "prediction_market_available": False,
+                    },
+                    "source_metadata": {
+                        "market_sources": {
+                            "bookmaker": {
+                                "available": False,
+                                "source_name": None,
+                                "probabilities": None,
+                            }
+                        }
+                    },
+                },
+            }
+        ],
+        market_rows=[
+            {
+                "id": "snapshot-001_football_data_bookmaker",
+                "snapshot_id": "snapshot-001",
+                "source_type": "bookmaker",
+                "market_family": "moneyline_3way",
+                "source_name": "football_data_moneyline_3way",
+                "home_prob": 0.20,
+                "draw_prob": 0.30,
+                "away_prob": 0.50,
+            },
+            {
+                "id": "snapshot-001_odds_api_io_bookmaker",
+                "snapshot_id": "snapshot-001",
+                "source_type": "bookmaker",
+                "market_family": "moneyline_3way",
+                "source_name": "odds_api_io_moneyline_3way",
+                "home_prob": 0.62,
+                "draw_prob": 0.23,
+                "away_prob": 0.15,
+            },
+        ],
+        match_rows=[
+            {
+                "id": "match-001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-10T19:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+    )
+
+    assert captured_contexts[0]["bookmaker_available"] is True
+    assert report["overall"]["bookmaker"]["count"] == 1
+    assert report["overall"]["bookmaker"]["hit_rate"] == 1.0
+
+
+def test_build_evaluation_report_rejects_post_kickoff_bookmaker_refresh() -> None:
+    report = evaluation_job.build_evaluation_report(
+        snapshot_rows=[
+            {
+                "id": "snapshot-001",
+                "match_id": "match-001",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        prediction_rows=[
+            {
+                "id": "prediction-001",
+                "match_id": "match-001",
+                "snapshot_id": "snapshot-001",
+                "home_prob": 0.40,
+                "draw_prob": 0.35,
+                "away_prob": 0.25,
+                "summary_payload": {
+                    "base_model_probs": {
+                        "home": 0.40,
+                        "draw": 0.35,
+                        "away": 0.25,
+                    },
+                    "prediction_market_available": False,
+                    "feature_context": {
+                        "bookmaker_available": False,
+                        "prediction_market_available": False,
+                    },
+                    "source_metadata": {
+                        "market_sources": {
+                            "bookmaker": {
+                                "available": False,
+                                "source_name": None,
+                                "probabilities": None,
+                            }
+                        }
+                    },
+                },
+            }
+        ],
+        market_rows=[
+            {
+                "id": "snapshot-001_late_bookmaker",
+                "snapshot_id": "snapshot-001",
+                "source_type": "bookmaker",
+                "market_family": "moneyline_3way",
+                "source_name": "odds_api_io_moneyline_3way",
+                "home_prob": 0.62,
+                "draw_prob": 0.23,
+                "away_prob": 0.15,
+                "observed_at": "2026-04-10T20:00:00+00:00",
+            },
+        ],
+        match_rows=[
+            {
+                "id": "match-001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-10T19:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+    )
+
+    assert "bookmaker" not in report["overall"]
+    assert report["overall"]["base_model"]["count"] == 1
+
+
 def test_build_evaluation_report_applies_current_fused_safeguard_to_persisted_payload() -> None:
     report = evaluation_job.build_evaluation_report(
         snapshot_rows=[

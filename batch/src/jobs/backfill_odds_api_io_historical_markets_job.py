@@ -54,6 +54,44 @@ def parse_request_limit(value: str | None) -> int:
     return max(int(str(value)), 0)
 
 
+def variant_replacement_key(row: dict) -> tuple[str, str, float | None] | None:
+    snapshot_id = row.get("snapshot_id")
+    market_family = row.get("market_family")
+    if not snapshot_id or market_family not in {"spreads", "totals"}:
+        return None
+    line_value = row.get("line_value")
+    if not isinstance(line_value, (int, float)) or isinstance(line_value, bool):
+        return None
+    return (str(snapshot_id), str(market_family), float(line_value))
+
+
+def is_replaced_odds_api_variant(existing_row: dict, replacement_keys: set[tuple[str, str, float | None]]) -> bool:
+    row_id = str(existing_row.get("id") or "")
+    source_name = str(existing_row.get("source_name") or "")
+    if "bookmaker" not in row_id and "bookmaker" not in source_name:
+        return False
+    key = variant_replacement_key(existing_row)
+    return key in replacement_keys
+
+
+def delete_replaced_variant_rows(client: SupabaseClient, variant_rows: list[dict]) -> int:
+    replacement_keys = {
+        key for row in variant_rows if (key := variant_replacement_key(row)) is not None
+    }
+    if not replacement_keys:
+        return 0
+    existing_rows = read_optional_rows(client, "market_variants")
+    new_ids = {str(row.get("id") or "") for row in variant_rows}
+    stale_ids = [
+        str(row.get("id"))
+        for row in existing_rows
+        if row.get("id") is not None
+        and str(row.get("id")) not in new_ids
+        and is_replaced_odds_api_variant(row, replacement_keys)
+    ]
+    return client.delete_rows("market_variants", "id", stale_ids) if stale_ids else 0
+
+
 def cache_key_part(value: str) -> str:
     return (
         value.replace("/", "_")
@@ -62,6 +100,19 @@ def cache_key_part(value: str) -> str:
         .replace(".", "_")
         .replace(" ", "_")
     )
+
+
+def bookmaker_cache_key_part(bookmakers: str | None) -> str:
+    normalized = ",".join(
+        sorted(
+            {
+                bookmaker.strip()
+                for bookmaker in str(bookmakers or "").split(",")
+                if bookmaker.strip()
+            }
+        )
+    )
+    return cache_key_part(normalized) if normalized else "all"
 
 
 class HistoricalOddsApiCache:
@@ -131,22 +182,41 @@ class HistoricalOddsApiCache:
             self._write_cached(cache_path, payload)
         return _extract_odds_api_io_list(payload, "events", "results", "data")
 
-    def fetch_odds(self, event_id: str) -> dict | None:
-        cache_path = self.cache_dir / "odds" / f"{cache_key_part(event_id)}.json"
+    def _odds_cache_path(self, event_id: str, bookmakers: str | None) -> Path:
+        bookmaker_key = bookmaker_cache_key_part(bookmakers)
+        return (
+            self.cache_dir
+            / "odds"
+            / bookmaker_key
+            / f"{cache_key_part(event_id)}.json"
+        )
+
+    def _fetch_odds_payload(self, event_id: str, bookmakers: str | None) -> object:
+        cache_path = self._odds_cache_path(event_id, bookmakers)
         payload = self._read_cached(cache_path)
         if payload is None:
-            payload = self._fetch_json(
-                "historical/odds",
-                {
-                    "eventId": event_id,
-                    "bookmakers": self.bookmakers,
-                },
-            )
+            params = {"eventId": event_id}
+            if bookmakers:
+                params["bookmakers"] = bookmakers
+            payload = self._fetch_json("historical/odds", params)
             self._write_cached(cache_path, payload)
+        return payload
+
+    def _normalize_odds_payload(self, payload: object) -> dict | None:
         if isinstance(payload, dict) and payload.get("bookmakers"):
             return payload
         rows = _extract_odds_api_io_list(payload, "odds", "events", "results", "data")
         return rows[0] if rows else None
+
+    def fetch_odds(self, event_id: str) -> dict | None:
+        payload = self._fetch_odds_payload(event_id, self.bookmakers)
+        normalized = self._normalize_odds_payload(payload)
+        if normalized is not None:
+            return normalized
+        if self.bookmakers:
+            fallback_payload = self._fetch_odds_payload(event_id, None)
+            return self._normalize_odds_payload(fallback_payload)
+        return None
 
 
 def select_backfill_snapshots(
@@ -325,11 +395,13 @@ def main() -> None:
 
     inserted = client.upsert_rows("market_probabilities", market_rows) if market_rows else 0
     try:
+        deleted_legacy_variant_rows = delete_replaced_variant_rows(client, variant_rows)
         variant_inserted = (
             client.upsert_rows("market_variants", variant_rows) if variant_rows else 0
         )
     except ValueError as exc:
         if is_optional_missing_table_error(exc, "market_variants"):
+            deleted_legacy_variant_rows = 0
             variant_inserted = 0
         else:
             raise
@@ -345,8 +417,9 @@ def main() -> None:
                 "snapshot_rows": len(snapshot_rows),
                 "odds_rows": len(odds_rows),
                 "market_rows": len(market_rows),
-                "variant_rows": len(variant_rows),
-                "inserted_rows": inserted,
+            "variant_rows": len(variant_rows),
+            "deleted_legacy_variant_rows": deleted_legacy_variant_rows,
+            "inserted_rows": inserted,
                 "variant_inserted_rows": variant_inserted,
                 "request_count": cache.request_count,
                 "cache_hits": cache.cache_hits,

@@ -253,6 +253,32 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
                 "score": 0.18,
                 "validation_metadata": {"sample_count": 80, "hit_rate": 0.75},
                 "reason_labels": ["spreads", "variantRecommendation"],
+            },
+            {
+                "id": "daily_pick_item_held",
+                "pick_date": "2026-04-24",
+                "match_id": "match_001",
+                "prediction_id": "prediction_001",
+                "market_family": "spreads",
+                "selection_label": "Away +0.5",
+                "market_price": 0.51,
+                "model_probability": 0.60,
+                "market_probability": 0.51,
+                "expected_value": 0.12,
+                "edge": 0.09,
+                "score": 0.12,
+                "status": "held",
+                "validation_metadata": {
+                    "confidence_reliability": "insufficient_sample",
+                    "high_confidence_eligible": False,
+                    "sample_count": 1,
+                },
+                "reason_labels": [
+                    "spreads",
+                    "variantRecommendation",
+                    "heldByRecommendationGate",
+                    "variant_market_reliability_gap",
+                ],
             }
         ],
         matches_by_id={
@@ -287,8 +313,15 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
 
     assert view["date"] == "2026-04-24"
     assert view["validation"]["sampleCount"] == 80
-    assert view["coverage"]["spreads"] == 1
+    assert view["coverage"]["spreads"] == 2
+    assert view["coverage"]["held"] == 1
     assert view["items"][0]["matchId"] == "match_001"
     assert view["items"][0]["homeTeamId"] == "team_home"
     assert view["items"][0]["status"] == "void"
     assert view["items"][0]["highConfidenceEligible"] is True
+    assert view["heldItems"][0]["status"] == "held"
+    assert view["heldItems"][0]["noBetReason"] == "variant_market_reliability_gap"
+    assert (
+        view["heldItems"][0]["confidenceReliability"]
+        == "variant_market_reliability_gap"
+    )

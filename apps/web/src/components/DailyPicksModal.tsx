@@ -163,6 +163,7 @@ export default function DailyPicksModal({
   const recommendationCount = payload
     ? payload.items.filter((item) => matchesActiveFilters(item, marketFamily, leagueId)).length
     : 0;
+  const shouldShowHeldMetric = hiddenHeldCount > 0;
   const generatedAtLabel = payload?.generatedAt
     ? new Date(payload.generatedAt).toLocaleString(undefined, {
         month: "short",
@@ -207,6 +208,12 @@ export default function DailyPicksModal({
                   <small>{t("dailyPicks.summary.recommendations")}</small>
                   <strong>{t("dailyPicks.summary.count", { count: recommendationCount })}</strong>
                 </div>
+                {shouldShowHeldMetric ? (
+                  <div className="dailyPicksTargetStat">
+                    <small>{t("dailyPicks.summary.heldCandidates")}</small>
+                    <strong>{t("dailyPicks.summary.count", { count: hiddenHeldCount })}</strong>
+                  </div>
+                ) : null}
                 <div className="dailyPicksTargetStat">
                   <small>{t("dailyPicks.validation.cumulativeHitRate")}</small>
                   <strong>{formatPercent(payload.validation?.hitRate ?? null)}</strong>

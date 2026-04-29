@@ -23,7 +23,11 @@
     "showHeldCandidates": "보류 후보 {{count}}건 보기",
     "summary": {
       "recommendations": "추천 수",
+      "candidates": "추천 후보",
+      "heldCandidates": "보류 후보",
       "count": "{{count}}건",
+      "heldCount": "보류 {{count}}건",
+      "passedRecommendations": "추천 통과 {{count}}건",
       "updated": "업데이트",
       "markets": "시장",
       "coverage": "시장 커버리지",

@@ -13,6 +13,7 @@ import batch.src.jobs.run_predictions_job as run_predictions_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
 from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
+from batch.src.jobs.run_predictions_job import should_sync_daily_pick_tracking_after_predictions
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.prediction_graph_integrity import (
     plan_missing_match_repairs,
@@ -85,6 +86,140 @@ def test_build_market_probabilities_ignores_prediction_market_observed_after_kic
 
     assert book_probs == {"home": 0.51, "draw": 0.25, "away": 0.24}
     assert prediction_market is None
+
+
+def test_prediction_job_skips_daily_pick_sync_for_match_id_refreshes():
+    assert not should_sync_daily_pick_tracking_after_predictions(
+        persist_side_effects=True,
+        use_real_prediction_targets=True,
+        target_match_ids={"match-1"},
+    )
+
+
+def test_build_market_probabilities_ignores_bookmaker_observed_after_kickoff():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.51,
+                "draw_prob": 0.25,
+                "away_prob": 0.24,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {}
+    assert prediction_market is None
+
+
+def test_build_market_probabilities_falls_back_to_on_time_bookmaker_row():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_football_data_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "football_data_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.47,
+                "draw_prob": 0.29,
+                "away_prob": 0.24,
+                "observed_at": "2026-04-22T18:00:00+00:00",
+            },
+            {
+                "id": "match_t_minus_24h_odds_api_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.60,
+                "draw_prob": 0.22,
+                "away_prob": 0.18,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {"home": 0.47, "draw": 0.29, "away": 0.24}
+    assert prediction_market is None
+
+
+def test_build_source_metadata_marks_late_only_bookmaker_unavailable():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_late_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.60,
+                "draw_prob": 0.22,
+                "away_prob": 0.18,
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+        ]
+    )
+
+    metadata = run_predictions_job.build_source_metadata(
+        snapshot_id="match_t_minus_24h",
+        market_by_snapshot=market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+        base_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        book_probs={},
+        prediction_market=None,
+        prediction_market_probs={"home": 0.4, "draw": 0.35, "away": 0.25},
+        poisson_probs=None,
+        feature_context={"prediction_market_available": False},
+        base_model_source="prior_fallback",
+        source_weights={"base_model": 1.0},
+        historical_performance={},
+        fusion_policy=None,
+    )
+
+    assert metadata["market_sources"]["bookmaker"]["available"] is False
+    assert metadata["market_sources"]["bookmaker"]["probabilities"] is None
+
+
+def test_index_market_rows_by_snapshot_prefers_odds_api_over_football_data():
+    football_data_row = {
+        "id": "snapshot-1_football_data_bookmaker",
+        "snapshot_id": "snapshot-1",
+        "source_type": "bookmaker",
+        "source_name": "football_data_moneyline_3way",
+        "market_family": "moneyline_3way",
+        "home_prob": 0.45,
+    }
+    odds_api_row = {
+        "id": "snapshot-1_odds_api_bookmaker",
+        "snapshot_id": "snapshot-1",
+        "source_type": "bookmaker",
+        "source_name": "odds_api_io_moneyline_3way",
+        "market_family": "moneyline_3way",
+        "home_prob": 0.55,
+    }
+
+    for rows in ([football_data_row, odds_api_row], [odds_api_row, football_data_row]):
+        indexed = index_market_rows_by_snapshot(rows)
+
+        assert indexed["snapshot-1"]["bookmaker"]["moneyline_3way"]["home_prob"] == 0.55
 
 
 def test_build_variant_markets_adds_recommendations_for_supported_half_lines():
@@ -1909,6 +2044,72 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch
     assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
 
 
+def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upsert(
+    monkeypatch,
+):
+    state: dict[str, list[dict]] = {}
+    tracking_calls: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "match_b_t_minus_24h",
+                        "match_id": "match_b",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 4,
+                        "rest_delta": 1,
+                        "snapshot_quality": "complete",
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "match_b_t_minus_24h_bookmaker",
+                        "snapshot_id": "match_b_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.55,
+                        "draw_prob": 0.24,
+                        "away_prob": 0.21,
+                    },
+                ],
+                "matches": [
+                    {
+                        "id": "match_b",
+                        "kickoff_at": "2026-04-19T18:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        run_predictions_job,
+        "sync_daily_pick_tracking_for_prediction_dates",
+        lambda *, client, sync_dates: tracking_calls.append(sync_dates) or [
+            {"sync_date": sync_dates[0], "synced_items": 1}
+        ],
+    )
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-19")
+
+    run_predictions_job.main()
+
+    assert len(state["predictions"]) == 1
+    assert tracking_calls == [["2026-04-19"]]
+
+
 def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):
     state: dict[str, list[dict]] = {}
 
@@ -2922,6 +3123,7 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
         lambda **_kwargs: {},
     )
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+    monkeypatch.setenv("MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR", "1")
 
     run_predictions_job.main()
 
@@ -3431,6 +3633,7 @@ def test_run_predictions_job_calibrates_selector_confidence_against_selected_pro
         },
     )
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+    monkeypatch.setenv("MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR", "1")
 
     run_predictions_job.main()
 

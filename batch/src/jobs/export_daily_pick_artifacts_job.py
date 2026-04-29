@@ -92,14 +92,9 @@ def resolve_result_status(
     return read_text(item.get("status")) or "recommended"
 
 
-def resolve_held_reason(item: dict[str, Any], status: str) -> str | None:
+def resolve_held_reason(reason_labels: list[str], status: str) -> str | None:
     if status != "held":
         return None
-    reason_labels = [
-        value
-        for value in read_list(item.get("reason_labels"))
-        if isinstance(value, str)
-    ]
     for label in reversed(reason_labels):
         if label not in {"heldByRecommendationGate", "mainRecommendation"}:
             return label
@@ -131,6 +126,21 @@ def build_daily_pick_item(
     validation_metadata = read_record(item.get("validation_metadata"))
     market_family = read_text(item.get("market_family")) or "moneyline"
     status = resolve_result_status(item, results_by_item_id)
+    reason_labels = [
+        value
+        for value in read_list(item.get("reason_labels"))
+        if isinstance(value, str)
+    ]
+    no_bet_reason = resolve_held_reason(reason_labels, status)
+    metadata_reliability = read_text(
+        validation_metadata.get("confidence_reliability")
+    ) or read_text(validation_metadata.get("confidenceReliability"))
+    confidence_reliability = (
+        no_bet_reason
+        if status == "held" and no_bet_reason and no_bet_reason != "held"
+        else metadata_reliability
+        or ("validated" if status != "held" else "confidence_reliability_missing")
+    )
     return {
         "id": item.get("id"),
         "matchId": match.get("id"),
@@ -156,23 +166,15 @@ def build_daily_pick_item(
             validation_metadata.get("source_agreement_ratio")
             or validation_metadata.get("sourceAgreementRatio")
         ),
-        "confidenceReliability": (
-            read_text(validation_metadata.get("confidence_reliability"))
-            or read_text(validation_metadata.get("confidenceReliability"))
-            or ("validated" if status != "held" else "confidence_reliability_missing")
-        ),
+        "confidenceReliability": confidence_reliability,
         "highConfidenceEligible": _resolve_high_confidence_eligible(
             validation_metadata,
             status,
         ),
         "validationMetadata": validation_metadata or None,
         "status": status,
-        "noBetReason": resolve_held_reason(item, status),
-        "reasonLabels": [
-            value
-            for value in read_list(item.get("reason_labels"))
-            if isinstance(value, str)
-        ],
+        "noBetReason": no_bet_reason,
+        "reasonLabels": reason_labels,
     }
 
 
