@@ -358,7 +358,7 @@ def test_sync_daily_picks_holds_under_total_variants() -> None:
     )
 
 
-def test_sync_daily_picks_uses_adaptive_recommendation_gate() -> None:
+def test_sync_daily_picks_holds_below_high_confidence_threshold_predictions() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -400,8 +400,12 @@ def test_sync_daily_picks_uses_adaptive_recommendation_gate() -> None:
     )
 
     assert len(items) == 1
-    assert items[0]["status"] == "recommended"
-    assert items[0]["reason_labels"] == ["mainRecommendation"]
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_high_confidence_threshold",
+    ]
     assert items[0]["validation_metadata"] == {
         "high_confidence_eligible": False,
         "confidence_reliability": "below_high_confidence_threshold",
@@ -409,6 +413,124 @@ def test_sync_daily_picks_uses_adaptive_recommendation_gate() -> None:
         "hit_rate": 0.75,
         "wilson_lower_bound": 0.35,
     }
+
+
+def test_sync_daily_picks_keeps_precision_gate_moneyline_only() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.76,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.76,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "summary_payload": {
+                    "high_confidence_eligible": False,
+                    "max_abs_divergence": 0.02,
+                    "feature_context": {"external_rating_available": 1},
+                    "validation_metadata": {
+                        "sample_count": 30,
+                        "hit_rate": 0.69,
+                        "wilson_lower_bound": 0.5,
+                    },
+                },
+                "variant_markets_summary": [
+                    {
+                        "market_family": "totals",
+                        "line_value": 2.5,
+                        "recommended": True,
+                        "recommended_pick": "Over 2.5",
+                        "expected_value": 0.2,
+                        "edge": 0.1,
+                        "market_price": 0.45,
+                        "model_probability": 0.55,
+                        "market_probability": 0.45,
+                    }
+                ],
+            }
+        ],
+    )
+
+    moneyline_items = [row for row in items if row["market_family"] == "moneyline"]
+    total_items = [row for row in items if row["market_family"] == "totals"]
+
+    assert moneyline_items[0]["status"] == "recommended"
+    assert total_items[0]["status"] == "held"
+    assert total_items[0]["reason_labels"] == [
+        "totals",
+        "variantRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
+
+
+def test_sync_daily_picks_keeps_precision_gate_to_domestic_leagues() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "champions-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.8,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.8,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "summary_payload": {
+                    "max_abs_divergence": 0.01,
+                    "feature_context": {"external_rating_available": 1},
+                    "validation_metadata": {
+                        "sample_count": 30,
+                        "hit_rate": 0.69,
+                        "wilson_lower_bound": 0.5,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
 
 
 def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> None:
@@ -459,6 +581,14 @@ def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> N
     assert len(items) == 1
     assert items[0]["status"] == "recommended"
     assert items[0]["reason_labels"] == ["mainRecommendation"]
+    assert (
+        items[0]["validation_metadata"]["confidence_reliability"]
+        == "precision_moneyline_supported"
+    )
+    assert (
+        items[0]["validation_metadata"]["precision_gate_original_reliability"]
+        == "below_target_hit_rate"
+    )
 
 
 def test_sync_daily_picks_keeps_unsupported_moneyline_held() -> None:
