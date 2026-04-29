@@ -138,8 +138,6 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
     "id, run_id, pick_date, match_id, prediction_id, market_family, selection_label, line_value, market_price, model_probability, market_probability, expected_value, edge, confidence, score, status, validation_metadata, reason_labels, created_at",
   daily_pick_results:
     "id, pick_item_id, result_status",
-  daily_pick_performance_summary:
-    "id, sample_count, hit_rate, wilson_lower_bound",
 };
 const DAILY_PICK_MATCH_SELECT =
   "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result";
@@ -257,28 +255,6 @@ async function readRowsByColumnValue(
   return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
 }
 
-async function readDailyPickPerformanceSummary(
-  supabase: ApiSupabaseClient,
-): Promise<DailyPicksValidationSummary | null> {
-  const rows = await readRows(supabase, "daily_pick_performance_summary");
-  const row = rows.find((candidate) => readString(candidate.id) === "all");
-  if (!row) {
-    return null;
-  }
-  const sampleCount = readNumber(row.sample_count) ?? 0;
-  const hitRate = readNumber(row.hit_rate);
-  return {
-    hitRate,
-    sampleCount,
-    wilsonLowerBound: readNumber(row.wilson_lower_bound),
-    confidenceReliability:
-      sampleCount > 0 && hitRate !== null
-        ? "settled_daily_picks"
-        : null,
-    modelScope: "daily_pick_settled",
-  };
-}
-
 async function readMatches(
   supabase: ApiSupabaseClient,
   options: LoadDailyPicksOptions,
@@ -373,11 +349,11 @@ export async function loadDailyPicksView(
     return id ? [id] : [];
   }))];
 
-  const [teams, competitions, predictions, performanceSummary] = await Promise.all([
+  const [teams, competitions, predictions, resultRows] = await Promise.all([
     readRowsByIds(supabase, "teams", teamIds),
     readRowsByIds(supabase, "competitions", competitionIds),
     readRowsByIds(supabase, "predictions", matchIds, "match_id"),
-    readDailyPickPerformanceSummary(supabase),
+    readRows(supabase, "daily_pick_results"),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
     supabase,
@@ -397,7 +373,7 @@ export async function loadDailyPicksView(
     competitions,
     snapshots,
     predictions,
-    performanceSummary,
+    performanceSummary: buildRuntimePerformanceSummary(resultRows),
     options: normalizedOptions,
   });
 }
@@ -968,19 +944,10 @@ async function loadTrackedDailyPicksView(
     const matchId = readString(row.match_id);
     return matchId ? [matchId] : [];
   }))];
-  const [matches, results, runs, performanceSummary] = await Promise.all([
+  const [matches, results, runs] = await Promise.all([
     readRowsByIds(supabase, "matches", matchIds),
-    readRowsByIds(
-      supabase,
-      "daily_pick_results",
-      pickRows.flatMap((row) => {
-        const id = readString(row.id);
-        return id ? [id] : [];
-      }),
-      "pick_item_id",
-    ),
+    readRows(supabase, "daily_pick_results"),
     readRowsByColumnValue(supabase, "daily_pick_runs", "pick_date", normalizedOptions.date),
-    readDailyPickPerformanceSummary(supabase),
   ]);
   const matchesById = new Map(
     matches.flatMap((row) => {
@@ -1071,7 +1038,7 @@ async function loadTrackedDailyPicksView(
     generatedAt: readString(runs[0]?.generated_at) ?? new Date().toISOString(),
     date: normalizedOptions.date,
     target: EMPTY_VIEW.target,
-    validation: performanceSummary ?? EMPTY_VIEW.validation,
+    validation: buildRuntimePerformanceSummary(results),
     coverage: {
       moneyline: sortedItems.filter((item) => item.marketFamily === "moneyline").length,
       spreads: sortedItems.filter((item) => item.marketFamily === "spreads").length,
@@ -1098,6 +1065,39 @@ function readTrackedStatus(
   }
   const pickStatus = readString(pick.status);
   return pickStatus === "held" ? "held" : "recommended";
+}
+
+function calculateWilsonLowerBound(hitCount: number, sampleCount: number): number | null {
+  if (sampleCount <= 0) {
+    return null;
+  }
+  const z = 1.96;
+  const proportion = hitCount / sampleCount;
+  const denominator = 1 + (z * z) / sampleCount;
+  const centre = proportion + (z * z) / (2 * sampleCount);
+  const margin = z * Math.sqrt(
+    (proportion * (1 - proportion) + (z * z) / (4 * sampleCount)) / sampleCount,
+  );
+  return Number(((centre - margin) / denominator).toFixed(4));
+}
+
+function buildRuntimePerformanceSummary(
+  resultRows: DailyPickRow[],
+): DailyPicksValidationSummary {
+  const hitCount = resultRows.filter((row) => readString(row.result_status) === "hit").length;
+  const missCount = resultRows.filter((row) => readString(row.result_status) === "miss").length;
+  const sampleCount = hitCount + missCount;
+  const hitRate = sampleCount > 0 ? Number((hitCount / sampleCount).toFixed(4)) : null;
+  return {
+    hitRate,
+    sampleCount,
+    wilsonLowerBound: calculateWilsonLowerBound(hitCount, sampleCount),
+    confidenceReliability:
+      sampleCount > 0 && hitRate !== null
+        ? "settled_daily_picks"
+        : null,
+    modelScope: sampleCount > 0 ? "daily_pick_settled_runtime" : null,
+  };
 }
 
 function buildTrackedDailyPickItem({

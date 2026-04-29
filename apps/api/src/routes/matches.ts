@@ -163,6 +163,7 @@ type MatchListItem = {
 };
 
 type PredictionCandidate = {
+  predictionId: string | null;
   snapshotId: string;
   recommendedPick: string;
   confidence: number;
@@ -184,6 +185,7 @@ type PredictionCandidate = {
 };
 
 type PredictionListSummary = {
+  predictionId: string | null;
   mainRecommendation: MainRecommendation;
   valueRecommendation: ValueRecommendation | null;
   variantMarkets: VariantMarket[];
@@ -388,6 +390,9 @@ function buildPredictionSummary(
 
     const mainRecommendation = prediction.mainRecommendation;
     if (!mainRecommendation) {
+      continue;
+    }
+    if (!mainRecommendation.recommended) {
       continue;
     }
     if (!hasPredictedOutcome(mainRecommendation)) {
@@ -778,18 +783,18 @@ async function loadTeamLabels(
 }
 
 function buildReviewMap(
-  reviewRows: Array<{ match_id: string; cause_tags: unknown }> | null,
+  reviewRows: Array<{ prediction_id: string | null; cause_tags: unknown }> | null,
 ) {
-  const reviewByMatchId = new Map<string, { needsReview: boolean }>();
+  const reviewByPredictionId = new Map<string, { needsReview: boolean }>();
 
   for (const row of reviewRows ?? []) {
-    if (!reviewByMatchId.has(row.match_id)) {
+    if (row.prediction_id && !reviewByPredictionId.has(row.prediction_id)) {
       const causeTags = Array.isArray(row.cause_tags) ? row.cause_tags : [];
-      reviewByMatchId.set(row.match_id, { needsReview: causeTags.length > 0 });
+      reviewByPredictionId.set(row.prediction_id, { needsReview: causeTags.length > 0 });
     }
   }
 
-  return reviewByMatchId;
+  return reviewByPredictionId;
 }
 
 async function loadSelectedLeaguePageView(
@@ -871,7 +876,7 @@ async function loadSelectedLeaguePageView(
     pagedMatchIds.length > 0
       ? supabase
           .from("post_match_reviews")
-          .select("match_id, cause_tags, created_at")
+          .select("prediction_id, cause_tags, created_at")
           .in("match_id", pagedMatchIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -879,7 +884,7 @@ async function loadSelectedLeaguePageView(
     supabase
       .from("predictions")
       .select(
-        "match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, created_at",
+        "id, match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, created_at",
       )
       .in("match_id", matchIds)
       .order("created_at", { ascending: false }),
@@ -893,8 +898,8 @@ async function loadSelectedLeaguePageView(
     throw new Error("related match queries failed");
   }
 
-  const reviewByMatchId = buildReviewMap(
-    (reviewRows ?? []) as Array<{ match_id: string; cause_tags: unknown }>,
+  const reviewByPredictionId = buildReviewMap(
+    (reviewRows ?? []) as Array<{ prediction_id: string | null; cause_tags: unknown }>,
   );
   const snapshotsById = new Map(
     (snapshotRows ?? []).map((row) => [
@@ -906,6 +911,7 @@ async function loadSelectedLeaguePageView(
   for (const row of predictionRows ?? []) {
     const current = predictionCandidatesByMatchId.get(row.match_id) ?? [];
     current.push({
+      predictionId: row.id ?? null,
       snapshotId: row.snapshot_id,
       recommendedPick: row.recommended_pick,
       confidence: Number(row.confidence_score ?? 0),
@@ -959,6 +965,7 @@ async function loadSelectedLeaguePageView(
       matchId,
       representative
         ? {
+            predictionId: representative.predictionId,
             mainRecommendation: normalizeMainRecommendationFromSummary(
               {
                 summaryPayload: representative.summaryPayload,
@@ -1005,7 +1012,9 @@ async function loadSelectedLeaguePageView(
 
   const items = pagedMatches.map((match) => {
     const prediction = predictionByMatchId.get(match.id);
-    const review = reviewByMatchId.get(match.id);
+    const review = prediction?.predictionId
+      ? reviewByPredictionId.get(prediction.predictionId)
+      : undefined;
     const mainRecommendation = prediction?.mainRecommendation ?? null;
     const settledOutcome = resolveSettledOutcome({
       finalResult: match.final_result,

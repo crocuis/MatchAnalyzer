@@ -17,6 +17,7 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 
 MAX_DAILY_RECOMMENDATIONS = 10
+WILSON_Z_SCORE = 1.96
 
 
 def read_date_filter(raw_dates: str | None) -> set[str]:
@@ -59,8 +60,28 @@ def read_list(value: Any) -> list[Any]:
     return []
 
 
-def build_validation_summary(row: dict[str, Any] | None) -> dict[str, Any]:
-    if row is None:
+def calculate_wilson_lower_bound(hit_count: int, sample_count: int) -> float | None:
+    if sample_count <= 0:
+        return None
+    proportion = hit_count / sample_count
+    z_squared = WILSON_Z_SCORE * WILSON_Z_SCORE
+    denominator = 1 + z_squared / sample_count
+    centre = proportion + z_squared / (2 * sample_count)
+    margin = WILSON_Z_SCORE * (
+        (proportion * (1 - proportion) + z_squared / (4 * sample_count))
+        / sample_count
+    ) ** 0.5
+    return max(0.0, (centre - margin) / denominator)
+
+
+def build_validation_summary(results: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    settled_statuses = [
+        read_text(row.get("result_status"))
+        for row in results
+        if read_text(row.get("result_status")) in {"hit", "miss"}
+    ]
+    sample_count = len(settled_statuses)
+    if sample_count == 0:
         return {
             "hitRate": None,
             "sampleCount": 0,
@@ -68,16 +89,19 @@ def build_validation_summary(row: dict[str, Any] | None) -> dict[str, Any]:
             "confidenceReliability": None,
             "modelScope": None,
         }
-    sample_count = int(read_number(row.get("sample_count")) or 0)
-    hit_rate = read_number(row.get("hit_rate"))
+    hit_count = sum(1 for status in settled_statuses if status == "hit")
+    hit_rate = hit_count / sample_count
+    wilson_lower_bound = calculate_wilson_lower_bound(hit_count, sample_count)
     return {
-        "hitRate": hit_rate,
+        "hitRate": round(hit_rate, 4),
         "sampleCount": sample_count,
-        "wilsonLowerBound": read_number(row.get("wilson_lower_bound")),
-        "confidenceReliability": (
-            "settled_daily_picks" if sample_count > 0 and hit_rate is not None else None
+        "wilsonLowerBound": (
+            round(wilson_lower_bound, 4)
+            if wilson_lower_bound is not None
+            else None
         ),
-        "modelScope": "daily_pick_settled",
+        "confidenceReliability": "settled_daily_picks",
+        "modelScope": "daily_pick_settled_runtime",
     }
 
 
@@ -187,7 +211,6 @@ def build_daily_picks_view(
     teams_by_id: dict[str, dict[str, Any]],
     competitions_by_id: dict[str, dict[str, Any]],
     results_by_item_id: dict[str, dict[str, Any]],
-    performance_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
     built_items: list[dict[str, Any]] = []
     score_by_item_id = {
@@ -236,7 +259,7 @@ def build_daily_picks_view(
             "hitRate": 0.7,
             "roi": 0.2,
         },
-        "validation": build_validation_summary(performance_summary),
+        "validation": build_validation_summary(results_by_item_id.values()),
         "coverage": {
             "moneyline": sum(
                 1 for row in built_items if row.get("marketFamily") == "moneyline"
@@ -263,7 +286,6 @@ def build_daily_pick_artifact_rows(
     teams: list[dict[str, Any]],
     competitions: list[dict[str, Any]],
     results: list[dict[str, Any]],
-    performance_summaries: list[dict[str, Any]],
     r2_client: R2Client,
     supabase_storage_client: Any,
     generated_at: str,
@@ -290,14 +312,6 @@ def build_daily_pick_artifact_rows(
         for row in results
         if row.get("pick_item_id")
     }
-    performance_summary = next(
-        (
-            row for row in performance_summaries
-            if str(row.get("id") or "") == "all"
-        ),
-        None,
-    )
-
     artifact_rows: list[dict[str, Any]] = []
     for pick_date in sorted(target_dates):
         view = build_daily_picks_view(
@@ -308,7 +322,6 @@ def build_daily_pick_artifact_rows(
             teams_by_id=teams_by_id,
             competitions_by_id=competitions_by_id,
             results_by_item_id=results_by_item_id,
-            performance_summary=performance_summary,
         )
         artifact_rows.append(
             archive_json_artifact(
@@ -357,10 +370,6 @@ def main(argv: Iterable[str] | None = None) -> None:
         teams=read_optional_rows(client, "teams"),
         competitions=read_optional_rows(client, "competitions"),
         results=read_optional_rows(client, "daily_pick_results"),
-        performance_summaries=read_optional_rows(
-            client,
-            "daily_pick_performance_summary",
-        ),
         r2_client=r2_client,
         supabase_storage_client=supabase_storage_client,
         generated_at=generated_at,

@@ -748,6 +748,13 @@ describe("prediction API", () => {
           wilson_lower_bound: 0.6422,
         },
       ],
+      daily_pick_results: [
+        { id: "result-1", pick_item_id: "historical-1", result_status: "hit" },
+        { id: "result-2", pick_item_id: "historical-2", result_status: "hit" },
+        { id: "result-3", pick_item_id: "historical-3", result_status: "hit" },
+        { id: "result-4", pick_item_id: "historical-4", result_status: "miss" },
+        { id: "result-5", pick_item_id: "historical-5", result_status: "pending" },
+      ],
     };
     const supabase = buildTableSupabase(tables);
 
@@ -776,10 +783,10 @@ describe("prediction API", () => {
     });
     expect(view.validation).toEqual({
       hitRate: 0.75,
-      sampleCount: 76,
-      wilsonLowerBound: 0.6422,
+      sampleCount: 4,
+      wilsonLowerBound: 0.3006,
       confidenceReliability: "settled_daily_picks",
-      modelScope: "daily_pick_settled",
+      modelScope: "daily_pick_settled_runtime",
     });
     expect(view.coverage).toMatchObject({
       moneyline: 4,
@@ -871,6 +878,10 @@ describe("prediction API", () => {
           wilson_lower_bound: 0.6422,
         },
       ],
+      daily_pick_results: [
+        { id: "result-1", pick_item_id: "historical-1", result_status: "hit" },
+        { id: "result-2", pick_item_id: "historical-2", result_status: "hit" },
+      ],
     });
     const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
 
@@ -894,11 +905,11 @@ describe("prediction API", () => {
     expect(await response.json()).toMatchObject({
       date: "2026-04-24",
       validation: {
-        hitRate: 0.75,
-        sampleCount: 76,
-        wilsonLowerBound: 0.6422,
+        hitRate: 1,
+        sampleCount: 2,
+        wilsonLowerBound: 0.3424,
         confidenceReliability: "settled_daily_picks",
-        modelScope: "daily_pick_settled",
+        modelScope: "daily_pick_settled_runtime",
       },
       coverage: {
         held: 1,
@@ -2220,7 +2231,12 @@ describe("prediction API", () => {
           generated_at: "2026-04-24T03:00:00Z",
         },
       ],
-      daily_pick_results: [],
+      daily_pick_results: [
+        { id: "result-hit-1", pick_item_id: "daily_pick_item_001", result_status: "hit" },
+        { id: "result-hit-2", pick_item_id: "historical-2", result_status: "hit" },
+        { id: "result-miss-1", pick_item_id: "historical-3", result_status: "miss" },
+        { id: "result-pending-1", pick_item_id: "historical-4", result_status: "pending" },
+      ],
       daily_pick_performance_summary: [
         {
           id: "all",
@@ -2274,7 +2290,13 @@ describe("prediction API", () => {
       }>;
     };
     expect(body.generatedAt).toBe("2026-04-24T03:00:00Z");
-    expect(body.validation.sampleCount).toBe(80);
+    expect(body.validation).toMatchObject({
+      hitRate: 0.6667,
+      sampleCount: 3,
+      wilsonLowerBound: 0.2077,
+      confidenceReliability: "settled_daily_picks",
+      modelScope: "daily_pick_settled_runtime",
+    });
     expect(body.coverage).toEqual({
       moneyline: 2,
       spreads: 1,
@@ -4368,6 +4390,7 @@ describe("prediction API", () => {
       order: vi.fn().mockResolvedValue({
         data: [
           {
+            id: "prediction-24h",
             match_id: "match-1",
             snapshot_id: "snapshot-24h",
             recommended_pick: "HOME",
@@ -4395,6 +4418,7 @@ describe("prediction API", () => {
             variant_markets_summary: [],
           },
           {
+            id: "prediction-lineup",
             match_id: "match-1",
             snapshot_id: "snapshot-lineup",
             recommended_pick: "DRAW",
@@ -4440,6 +4464,16 @@ describe("prediction API", () => {
       in: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
+    reviews.order.mockResolvedValue({
+      data: [
+        {
+          prediction_id: "prediction-24h",
+          cause_tags: ["directional_miss"],
+          created_at: "2026-04-28T00:00:00Z",
+        },
+      ],
+      error: null,
+    });
 
     const from = vi.fn((tableName: string) => {
       if (tableName === "matches") return matchesQuery;
@@ -4458,6 +4492,8 @@ describe("prediction API", () => {
     expect(items[0]?.recommendedPick).toBe("DRAW");
     expect(items[0]?.confidence).toBe(0.41);
     expect(items[0]?.finalResult).toBe("AWAY");
+    expect(items[0]?.status).toBe("Review Ready");
+    expect(items[0]?.needsReview).toBe(false);
     expect(items[0]?.homeScore).toBe(1);
     expect(items[0]?.awayScore).toBe(2);
     expect(items[0]?.explanationPayload).toBeUndefined();
