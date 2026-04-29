@@ -262,8 +262,11 @@ def should_sync_daily_pick_tracking_after_predictions(
     *,
     persist_side_effects: bool,
     use_real_prediction_targets: bool,
+    target_match_ids: set[str] | None = None,
 ) -> bool:
     if not persist_side_effects or not use_real_prediction_targets:
+        return False
+    if target_match_ids:
         return False
     return not read_env_flag("MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC")
 
@@ -2756,7 +2759,10 @@ def main() -> None:
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]
-                row["recommended_pick"] = choose_recommended_pick(selected_fused_probs)
+                row["recommended_pick"] = choose_recommended_pick(
+                    selected_fused_probs,
+                    context=scoring_context,
+                )
                 row["confidence_score"] = confidence_score(
                     selected_fused_probs,
                     base_probs=base_probs,
@@ -3076,6 +3082,7 @@ def main() -> None:
     if should_sync_daily_pick_tracking_after_predictions(
         persist_side_effects=persist_side_effects,
         use_real_prediction_targets=use_real_prediction_targets,
+        target_match_ids=target_match_ids,
     ):
         daily_pick_sync_dates = resolve_daily_pick_sync_dates_from_predictions(
             prediction_rows=persisted_payload,

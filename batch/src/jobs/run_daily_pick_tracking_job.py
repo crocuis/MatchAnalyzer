@@ -22,6 +22,14 @@ MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
 DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads"}
 DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
+DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.75
+DAILY_PICK_PRECISION_MAX_DIVERGENCE = 0.03
+DAILY_PICK_PRECISION_HOLD_REASONS = {
+    "below_high_confidence_threshold",
+    "below_target_hit_rate",
+    "below_wilson_lower_bound",
+    "insufficient_sample",
+}
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -163,8 +171,6 @@ def build_recommended_pick_candidates(
 
 
 def build_moneyline_pick_candidate(*, base: dict, prediction: dict) -> dict | None:
-    if prediction.get("main_recommendation_recommended") is False:
-        return None
     selection_label = str(
         prediction.get("main_recommendation_pick")
         or prediction.get("recommended_pick")
@@ -310,11 +316,7 @@ def _resolve_variant_daily_pick_gate(
         hold_reason = "under_total_reliability_gap"
     if hold_reason is None:
         return base
-    return {
-        **base,
-        "status": "held",
-        "reliability_hold_reason": hold_reason,
-    }
+    return _with_daily_pick_hold_reason(base, hold_reason)
 
 
 def _resolve_moneyline_daily_pick_gate(
@@ -327,10 +329,18 @@ def _resolve_moneyline_daily_pick_gate(
         return base
     if selection_label != "AWAY" or confidence >= DAILY_PICK_AWAY_CONFIDENCE_MINIMUM:
         return base
+    return _with_daily_pick_hold_reason(base, "away_confidence_reliability_gap")
+
+
+def _with_daily_pick_hold_reason(base: dict, hold_reason: str) -> dict:
+    metadata = dict(base.get("validation_metadata") or {})
+    metadata["confidence_reliability"] = hold_reason
+    metadata["high_confidence_eligible"] = False
     return {
         **base,
         "status": "held",
-        "reliability_hold_reason": "away_confidence_reliability_gap",
+        "validation_metadata": metadata,
+        "reliability_hold_reason": hold_reason,
     }
 
 
@@ -383,6 +393,46 @@ def _has_daily_pick_validation_support(summary_payload: dict) -> bool:
     )
 
 
+def _has_pre_match_signal_support(summary_payload: dict) -> bool:
+    feature_context = summary_payload.get("feature_context")
+    if not isinstance(feature_context, dict):
+        return False
+    return any(
+        bool(feature_context.get(field))
+        for field in (
+            "external_rating_available",
+            "understat_xg_available",
+            "football_data_match_stats_available",
+        )
+    )
+
+
+def _is_precision_moneyline_candidate(
+    *,
+    prediction: dict,
+    summary_payload: dict,
+    no_bet_reason: object,
+) -> bool:
+    if (
+        isinstance(no_bet_reason, str)
+        and no_bet_reason not in DAILY_PICK_PRECISION_HOLD_REASONS
+    ):
+        return False
+    confidence = _read_numeric(
+        prediction.get("main_recommendation_confidence")
+        or prediction.get("confidence_score")
+        or summary_payload.get("calibrated_confidence_score")
+    )
+    max_abs_divergence = _read_numeric(summary_payload.get("max_abs_divergence"))
+    return bool(
+        confidence is not None
+        and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
+        and max_abs_divergence is not None
+        and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
+        and _has_pre_match_signal_support(summary_payload)
+    )
+
+
 def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[str, str]:
     prediction_gate = prediction.get("main_recommendation_recommended")
     no_bet_reason = prediction.get("main_recommendation_no_bet_reason")
@@ -400,6 +450,12 @@ def _resolve_daily_pick_gate(prediction: dict, summary_payload: dict) -> tuple[s
             and not has_no_bet_reason
         )
     if is_recommended:
+        return "recommended", ""
+    if _is_precision_moneyline_candidate(
+        prediction=prediction,
+        summary_payload=summary_payload,
+        no_bet_reason=no_bet_reason,
+    ):
         return "recommended", ""
     if has_no_bet_reason:
         return "held", no_bet_reason

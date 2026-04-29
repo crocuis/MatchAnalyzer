@@ -67,6 +67,7 @@ jobs:
           TARGET_MATCH_IDS="${{ github.event.inputs.target_match_ids }}"
           if [ -n "$TARGET_MATCH_IDS" ]; then
             echo "REAL_PREDICTION_MATCH_IDS=$TARGET_MATCH_IDS" >> "$GITHUB_ENV"
+            echo "MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1" >> "$GITHUB_ENV"
             echo "DAILY_PICK_ARTIFACT_ENABLED=0" >> "$GITHUB_ENV"
             exit 0
           fi

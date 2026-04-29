@@ -13,6 +13,7 @@ import batch.src.jobs.run_predictions_job as run_predictions_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 from batch.src.jobs.run_post_match_review_job import build_review_payload
 from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
+from batch.src.jobs.run_predictions_job import should_sync_daily_pick_tracking_after_predictions
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.prediction_graph_integrity import (
     plan_missing_match_repairs,
@@ -85,6 +86,14 @@ def test_build_market_probabilities_ignores_prediction_market_observed_after_kic
 
     assert book_probs == {"home": 0.51, "draw": 0.25, "away": 0.24}
     assert prediction_market is None
+
+
+def test_prediction_job_skips_daily_pick_sync_for_match_id_refreshes():
+    assert not should_sync_daily_pick_tracking_after_predictions(
+        persist_side_effects=True,
+        use_real_prediction_targets=True,
+        target_match_ids={"match-1"},
+    )
 
 
 def test_build_market_probabilities_ignores_bookmaker_observed_after_kickoff():
@@ -2093,7 +2102,7 @@ def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upse
             {"sync_date": sync_dates[0], "synced_items": 1}
         ],
     )
-    monkeypatch.setenv("REAL_PREDICTION_MATCH_IDS", "match_b")
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-19")
 
     run_predictions_job.main()
 

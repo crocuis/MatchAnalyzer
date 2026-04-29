@@ -30,6 +30,9 @@ DEFAULT_FUSION_POLICY_SELECTION_ORDER = (
 SOURCE_VARIANTS = ("base_model", "bookmaker", "prediction_market", "poisson")
 MARKET_CONSENSUS_VARIANTS = ("base_model", "bookmaker", "prediction_market")
 MAX_INFERRED_SOURCE_WEIGHT = 0.6
+DRAW_CLOSE_MATCH_MIN_PROBABILITY = 0.33
+DRAW_CLOSE_MATCH_MAX_HOME_AWAY_GAP = 0.25
+DRAW_CLOSE_MATCH_MAX_SIDE_PROBABILITY = 0.37
 
 
 def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
@@ -437,7 +440,22 @@ def fuse_probabilities(
     return {key: value / total for key, value in fused.items()}
 
 
-def choose_recommended_pick(fused_probs: dict) -> str:
+def choose_recommended_pick(fused_probs: dict, context: dict | None = None) -> str:
+    context = context or {}
+    draw_probability = float(fused_probs.get("draw") or 0.0)
+    home_probability = float(fused_probs.get("home") or 0.0)
+    away_probability = float(fused_probs.get("away") or 0.0)
+    away_signal_aligned = (
+        float(context.get("xg_proxy_delta") or 0.0) <= -1.5
+        and float(context.get("elo_delta") or 0.0) <= -0.15
+    )
+    if (
+        not away_signal_aligned
+        and draw_probability >= DRAW_CLOSE_MATCH_MIN_PROBABILITY
+        and abs(home_probability - away_probability) <= DRAW_CLOSE_MATCH_MAX_HOME_AWAY_GAP
+        and max(home_probability, away_probability) <= DRAW_CLOSE_MATCH_MAX_SIDE_PROBABILITY
+    ):
+        return "DRAW"
     return max(fused_probs, key=fused_probs.get).upper()
 
 

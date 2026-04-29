@@ -62,6 +62,11 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
     snapshot_has_external_signals,
     snapshot_as_of_date,
 )
+from batch.src.jobs.backfill_match_history_snapshot_signals_job import (
+    build_match_history_snapshot_updates,
+    normalize_bulk_loaded_result_observed_at,
+    snapshot_has_match_history_signals,
+)
 from batch.src.jobs.backfill_odds_api_io_historical_markets_job import (
     HistoricalOddsApiCache,
     delete_replaced_variant_rows,
@@ -4646,6 +4651,166 @@ def test_external_signal_snapshot_updates_preserve_existing_partial_fields(
             "external_signal_source_summary": "understat+clubelo",
         }
     ]
+
+
+def test_snapshot_has_match_history_signals_requires_complete_history_context():
+    assert not snapshot_has_match_history_signals(
+        {
+            "home_points_last_5": 8,
+            "away_points_last_5": 6,
+        }
+    )
+
+    assert snapshot_has_match_history_signals(
+        {
+            "home_elo": 1510.0,
+            "away_elo": 1490.0,
+            "home_xg_for_last_5": 1.6,
+            "home_xg_against_last_5": 0.8,
+            "away_xg_for_last_5": 1.2,
+            "away_xg_against_last_5": 1.4,
+            "home_matches_last_7d": 1,
+            "away_matches_last_7d": 1,
+            "home_points_last_5": 8,
+            "away_points_last_5": 6,
+            "home_rest_days": 5,
+            "away_rest_days": 4,
+        }
+    )
+
+
+def test_match_history_snapshot_backfill_uses_checkpoint_safe_as_of():
+    updates, metadata = build_match_history_snapshot_updates(
+        snapshots=[
+            {
+                "id": "snapshot_001",
+                "match_id": "target_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-08-16T00:00:00+00:00",
+            }
+        ],
+        matches=[
+            {
+                "id": "target_match",
+                "kickoff_at": "2026-08-15T18:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": "HOME",
+            },
+            {
+                "id": "visible_home_result",
+                "kickoff_at": "2026-08-10T18:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "everton",
+                "home_score": 2,
+                "away_score": 0,
+                "final_result": "HOME",
+                "result_observed_at": "2026-08-11T12:00:00+00:00",
+            },
+            {
+                "id": "delayed_home_result",
+                "kickoff_at": "2026-08-12T18:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "spurs",
+                "home_score": 4,
+                "away_score": 0,
+                "final_result": "HOME",
+                "result_observed_at": "2026-08-15T12:00:00+00:00",
+            },
+            {
+                "id": "visible_away_result",
+                "kickoff_at": "2026-08-10T18:00:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "liverpool",
+                "home_score": 1,
+                "away_score": 1,
+                "final_result": "DRAW",
+                "result_observed_at": "2026-08-10T21:00:00+00:00",
+            },
+        ],
+    )
+
+    assert metadata["target_snapshots"] == 1
+    assert updates[0]["home_points_last_5"] == 3
+    assert updates[0]["away_points_last_5"] == 1
+    assert updates[0]["home_xg_for_last_5"] == 2.0
+    assert updates[0]["home_xg_against_last_5"] == 0.0
+
+
+def test_match_history_snapshot_backfill_repairs_bulk_loaded_observed_at():
+    normalized = normalize_bulk_loaded_result_observed_at(
+        {
+            "id": "bulk_loaded_result",
+            "kickoff_at": "2026-02-19T17:45:00+00:00",
+            "result_observed_at": "2026-04-25T02:54:10+00:00",
+            "final_result": "DRAW",
+        }
+    )
+
+    assert normalized["result_observed_at"] == "2026-02-20T17:45:00+00:00"
+
+
+def test_match_history_snapshot_backfill_missing_only_skips_complete_snapshots():
+    complete_snapshot = {
+        "id": "snapshot_complete",
+        "match_id": "target_match",
+        "checkpoint_type": "T_MINUS_24H",
+        "captured_at": "2026-08-14T18:00:00+00:00",
+        "home_elo": 1510.0,
+        "away_elo": 1490.0,
+        "home_xg_for_last_5": 1.6,
+        "home_xg_against_last_5": 0.8,
+        "away_xg_for_last_5": 1.2,
+        "away_xg_against_last_5": 1.4,
+        "home_matches_last_7d": 1,
+        "away_matches_last_7d": 1,
+        "home_points_last_5": 8,
+        "away_points_last_5": 6,
+        "home_rest_days": 5,
+        "away_rest_days": 4,
+    }
+
+    updates, metadata = build_match_history_snapshot_updates(
+        snapshots=[
+            complete_snapshot,
+            {
+                "id": "snapshot_missing",
+                "match_id": "target_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": "2026-08-14T18:00:00+00:00",
+            },
+        ],
+        matches=[
+            {
+                "id": "target_match",
+                "kickoff_at": "2026-08-15T18:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+            },
+            {
+                "id": "visible_home_result",
+                "kickoff_at": "2026-08-10T18:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "everton",
+                "home_score": 2,
+                "away_score": 0,
+                "final_result": "HOME",
+            },
+            {
+                "id": "visible_away_result",
+                "kickoff_at": "2026-08-10T18:00:00+00:00",
+                "home_team_id": "chelsea",
+                "away_team_id": "liverpool",
+                "home_score": 1,
+                "away_score": 1,
+                "final_result": "DRAW",
+            },
+        ],
+        missing_only=True,
+    )
+
+    assert metadata["target_snapshots"] == 1
+    assert [row["id"] for row in updates] == ["snapshot_missing"]
 
 
 def test_r2_client_persists_archived_payload(tmp_path, monkeypatch):

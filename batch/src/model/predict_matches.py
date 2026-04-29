@@ -76,7 +76,7 @@ def build_prediction_row(
         "home_prob": fused["home"],
         "draw_prob": fused["draw"],
         "away_prob": fused["away"],
-        "recommended_pick": choose_recommended_pick(fused),
+        "recommended_pick": choose_recommended_pick(fused, context=scored_context),
         "confidence_score": confidence_score(
             fused,
             base_probs=base_probs,

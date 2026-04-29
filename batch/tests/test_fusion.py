@@ -26,6 +26,37 @@ def test_fuse_probabilities_rewards_consensus_and_preserves_sum():
     assert fused["home"] > 0.48
 
 
+def test_choose_recommended_pick_selects_draw_for_close_high_draw_shape():
+    assert (
+        choose_recommended_pick({"home": 0.35, "draw": 0.33, "away": 0.32})
+        == "DRAW"
+    )
+
+
+def test_choose_recommended_pick_keeps_side_when_draw_shape_is_weak():
+    assert (
+        choose_recommended_pick({"home": 0.46, "draw": 0.32, "away": 0.22})
+        == "HOME"
+    )
+
+
+def test_choose_recommended_pick_keeps_away_when_away_signals_are_aligned():
+    assert (
+        choose_recommended_pick(
+            {"home": 0.291, "draw": 0.353, "away": 0.356},
+            context={"xg_proxy_delta": -2.0, "elo_delta": -0.2},
+        )
+        == "AWAY"
+    )
+
+
+def test_choose_recommended_pick_keeps_side_for_decisive_home_prior():
+    assert (
+        choose_recommended_pick({"home": 0.4, "draw": 0.35, "away": 0.25})
+        == "HOME"
+    )
+
+
 def test_fuse_probabilities_defaults_to_sharper_sources_when_no_weights_are_provided():
     fused = fuse_probabilities(
         base_probs={"home": 0.63, "draw": 0.17, "away": 0.20},

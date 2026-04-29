@@ -85,6 +85,7 @@ def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run()
     assert '[ "${{ github.event_name }}" = "schedule" ]' not in workflow
     assert "DAILY_PICK_ARTIFACT_ENABLED=0" in workflow
     assert "DAILY_PICK_ARTIFACT_ENABLED=1" in workflow
+    assert "MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1" in workflow
     assert "DAILY_PICK_SYNC_DATE=" not in workflow
     assert "DAILY_PICK_ARTIFACT_DATE=" in workflow
     assert "Backfill external prediction signals" in workflow

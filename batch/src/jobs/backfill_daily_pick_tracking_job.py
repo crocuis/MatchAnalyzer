@@ -129,7 +129,7 @@ def backfill_daily_pick_tracking(
     existing_results = client.read_rows("daily_pick_results")
     all_settlement_rows: list[dict] = []
     all_settled_runs: list[dict] = []
-    for pick_date in target_dates:
+    for pick_date in synced_dates:
         settlement_rows, settled_runs = settle_daily_pick_items(
             settle_date=pick_date,
             items=all_items,

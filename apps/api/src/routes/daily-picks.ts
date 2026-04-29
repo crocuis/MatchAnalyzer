@@ -1136,6 +1136,17 @@ function buildTrackedDailyPickItem({
   const competition = competitionsById.get(leagueId);
   const validationMetadata = readRecord(pick.validation_metadata);
   const status = readTrackedStatus(pick, result);
+  const reasonLabels = Array.isArray(pick.reason_labels)
+    ? pick.reason_labels.filter((value): value is string => typeof value === "string")
+    : [];
+  const noBetReason = resolveTrackedNoBetReason(reasonLabels, status);
+  const metadataReliability =
+    readString(validationMetadata?.confidence_reliability)
+    ?? readString(validationMetadata?.confidenceReliability);
+  const confidenceReliability =
+    status === "held" && noBetReason && noBetReason !== "held"
+      ? noBetReason
+      : metadataReliability ?? (status === "held" ? "confidence_reliability_missing" : "validated");
 
   return {
     id: readString(pick.id) ?? `${matchId}:${marketFamily}:${selectionLabel}`,
@@ -1169,33 +1180,25 @@ function buildTrackedDailyPickItem({
     sourceAgreementRatio:
       readNumber(validationMetadata?.source_agreement_ratio)
       ?? readNumber(validationMetadata?.sourceAgreementRatio),
-    confidenceReliability:
-      readString(validationMetadata?.confidence_reliability)
-      ?? readString(validationMetadata?.confidenceReliability)
-      ?? (status === "held" ? "confidence_reliability_missing" : "validated"),
+    confidenceReliability,
     highConfidenceEligible:
       readBoolean(validationMetadata?.high_confidence_eligible)
       ?? readBoolean(validationMetadata?.highConfidenceEligible)
       ?? (status === "held" ? false : true),
     validationMetadata,
     status,
-    noBetReason: resolveTrackedNoBetReason(pick, status),
-    reasonLabels: Array.isArray(pick.reason_labels)
-      ? pick.reason_labels.filter((value): value is string => typeof value === "string")
-      : [],
+    noBetReason,
+    reasonLabels,
   };
 }
 
 function resolveTrackedNoBetReason(
-  pick: DailyPickRow,
+  labels: string[],
   status: DailyPickItem["status"],
 ): string | null {
   if (status !== "held") {
     return null;
   }
-  const labels = Array.isArray(pick.reason_labels)
-    ? pick.reason_labels.filter((value): value is string => typeof value === "string")
-    : [];
   for (const label of [...labels].reverse()) {
     if (label !== "heldByRecommendationGate" && label !== "mainRecommendation") {
       return label;
