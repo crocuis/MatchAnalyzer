@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime, timezone
+from typing import Callable
 
 from batch.src.ingest import fetch_fixtures as fixture_ingest
 from batch.src.ingest.external_signals import (
@@ -315,6 +316,19 @@ def build_sync_snapshot_rows(
     return snapshot_rows
 
 
+def build_optional_bsd_context(
+    builder: Callable[[str, list[dict]], dict[str, dict]],
+    api_key: str | None,
+    events: list[dict],
+) -> dict[str, dict]:
+    if not api_key:
+        return {}
+    try:
+        return builder(api_key, events)
+    except OSError:
+        return {}
+
+
 def main() -> None:
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_key)
@@ -350,15 +364,15 @@ def main() -> None:
                 events
             )
             bsd_api_key = getattr(settings, "bsd_api_key", None)
-            bsd_lineup_context_by_match = (
-                build_bsd_lineup_context_by_match(bsd_api_key, events)
-                if bsd_api_key
-                else {}
+            bsd_lineup_context_by_match = build_optional_bsd_context(
+                build_bsd_lineup_context_by_match,
+                bsd_api_key,
+                events,
             )
-            bsd_event_signal_context_by_match = (
-                build_bsd_event_signal_context_by_match(bsd_api_key, events)
-                if bsd_api_key
-                else {}
+            bsd_event_signal_context_by_match = build_optional_bsd_context(
+                build_bsd_event_signal_context_by_match,
+                bsd_api_key,
+                events,
             )
             lineup_context_by_match = merge_lineup_contexts(
                 lineup_context_by_match,
