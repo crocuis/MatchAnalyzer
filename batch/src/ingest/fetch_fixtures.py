@@ -544,6 +544,14 @@ def _normalize_missing_players_team_name(name: str) -> str:
     return normalize_team_name(name, MISSING_PLAYERS_TEAM_ALIASES)
 
 
+def _missing_players_source_label(competition_id: str) -> str:
+    return (
+        "pl_missing_players"
+        if competition_id == "premier-league"
+        else f"{competition_id}_missing_players"
+    )
+
+
 def _extract_season_year(season_id: str) -> str | None:
     if not season_id or "-" not in season_id:
         return None
@@ -647,6 +655,27 @@ def _bsd_unavailable_count(team_payload: dict[str, Any]) -> int | None:
     if isinstance(players, list):
         return len(players)
     return None
+
+
+def _bsd_event_unavailable_players(
+    bsd_event: dict[str, Any],
+    qualifier: str,
+) -> list[dict[str, Any]]:
+    unavailable_players = bsd_event.get("unavailable_players")
+    if not isinstance(unavailable_players, dict):
+        return []
+    players = unavailable_players.get(qualifier)
+    if not isinstance(players, list):
+        return []
+    return [player for player in players if isinstance(player, dict)]
+
+
+def _bsd_event_absence_count(players: list[dict[str, Any]]) -> int:
+    return sum(1 for player in players if _absence_probability(player) > 0)
+
+
+def _bsd_event_absence_impact(players: list[dict[str, Any]]) -> float:
+    return round(sum(_absence_impact(player) for player in players), 4)
 
 
 def _bsd_event_date(value: dict[str, Any]) -> str | None:
@@ -1016,6 +1045,42 @@ def build_rotowire_lineup_context_by_match(
     return build_rotowire_lineup_contexts_from_matches(matched)
 
 
+def _context_has_lineup_values(context: dict[str, Any]) -> bool:
+    return any(
+        context.get(field) is not None
+        for field in (
+            "home_lineup_score",
+            "away_lineup_score",
+            "lineup_strength_delta",
+        )
+    )
+
+
+def _context_has_absence_values(context: dict[str, Any]) -> bool:
+    return (
+        context.get("home_absence_count") is not None
+        or context.get("away_absence_count") is not None
+    )
+
+
+def normalize_lineup_context_source_summary(context: dict[str, Any]) -> dict[str, Any]:
+    if not context:
+        return context
+    if context.get("lineup_source_summary"):
+        return context
+    source_parts: list[str] = []
+    if _context_has_lineup_values(context):
+        source_parts.append("derived_lineup_context")
+    if _context_has_absence_values(context):
+        source_parts.append("derived_absence_context")
+    if not source_parts:
+        return context
+    return {
+        **context,
+        "lineup_source_summary": "+".join(source_parts),
+    }
+
+
 def build_bsd_lineup_contexts_from_payloads(
     lineup_payloads_by_match_id: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
@@ -1044,6 +1109,34 @@ def build_bsd_lineup_contexts_from_payloads(
             "away_lineup_score": away_score,
             "lineup_strength_delta": round(home_score - away_score, 4),
             "lineup_source_summary": "bsd_predicted_lineups",
+        }
+    return contexts
+
+
+def build_bsd_absence_contexts_from_events(
+    schedule_events: list[dict[str, Any]],
+    bsd_events: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    matched = match_bsd_events_to_schedule_events(schedule_events, bsd_events)
+    contexts: dict[str, dict[str, Any]] = {}
+    for match_id, bsd_event in matched.items():
+        home_players = _bsd_event_unavailable_players(bsd_event, "home")
+        away_players = _bsd_event_unavailable_players(bsd_event, "away")
+        if not home_players and not away_players:
+            continue
+
+        home_absence_count = _bsd_event_absence_count(home_players)
+        away_absence_count = _bsd_event_absence_count(away_players)
+        home_absence_impact = _bsd_event_absence_impact(home_players)
+        away_absence_impact = _bsd_event_absence_impact(away_players)
+        contexts[str(match_id)] = {
+            "home_absence_count": home_absence_count,
+            "away_absence_count": away_absence_count,
+            "lineup_strength_delta": round(
+                away_absence_impact - home_absence_impact,
+                4,
+            ),
+            "lineup_source_summary": "bsd_unavailable_players",
         }
     return contexts
 
@@ -1112,11 +1205,13 @@ def merge_lineup_contexts(
     base_contexts: dict[str, dict[str, Any]],
     preferred_contexts: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    merged = {match_id: dict(context) for match_id, context in base_contexts.items()}
+    merged = {
+        match_id: normalize_lineup_context_source_summary(dict(context))
+        for match_id, context in base_contexts.items()
+    }
     for match_id, preferred in preferred_contexts.items():
         base = merged.get(match_id, {})
-        if base.get("lineup_status") == "confirmed":
-            continue
+        preferred = normalize_lineup_context_source_summary(dict(preferred))
         source_parts = [
             part
             for part in (
@@ -1125,11 +1220,45 @@ def merge_lineup_contexts(
             )
             if part and part != "none"
         ]
+        if base.get("lineup_status") == "confirmed":
+            continue
         merged[match_id] = {
             **base,
             **preferred,
             "lineup_source_summary": "+".join(dict.fromkeys(source_parts)) or "none",
         }
+    return merged
+
+
+def merge_bsd_lineup_absence_contexts(
+    lineup_contexts: dict[str, dict[str, Any]],
+    absence_contexts: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    merged = {
+        match_id: normalize_lineup_context_source_summary(dict(context))
+        for match_id, context in lineup_contexts.items()
+    }
+    for match_id, absence in absence_contexts.items():
+        base = merged.get(match_id, {})
+        absence = normalize_lineup_context_source_summary(dict(absence))
+        source_parts = [
+            part
+            for part in (
+                str(base.get("lineup_source_summary") or ""),
+                str(absence.get("lineup_source_summary") or ""),
+            )
+            if part and part != "none"
+        ]
+        row = {
+            **base,
+            "lineup_source_summary": "+".join(dict.fromkeys(source_parts)) or "none",
+        }
+        for key in ("home_absence_count", "away_absence_count"):
+            if absence.get(key) is not None:
+                row[key] = absence[key]
+        if base.get("lineup_strength_delta") is None:
+            row["lineup_strength_delta"] = absence.get("lineup_strength_delta")
+        merged[match_id] = normalize_lineup_context_source_summary(row)
     return merged
 
 
@@ -1175,7 +1304,10 @@ def build_bsd_lineup_context_by_match(
         for match_id, bsd_event in bsd_by_match_id.items()
         if (lineup := fetch_bsd_predicted_lineup(api_key, bsd_event["id"])) is not None
     }
-    return build_bsd_lineup_contexts_from_payloads(lineup_payloads)
+    return merge_bsd_lineup_absence_contexts(
+        build_bsd_lineup_contexts_from_payloads(lineup_payloads),
+        build_bsd_absence_contexts_from_events(target_events, bsd_events),
+    )
 
 
 def _derived_absence_count(
@@ -1418,27 +1550,33 @@ def build_match_row_from_event(
 def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     target_events = [event for event in events if _should_fetch_lineup_context(event)]
     missing_by_season: dict[str, dict[str, dict[str, float | int]]] = {}
+    missing_source_by_season: dict[str, str] = {}
     recent_form_cache: dict[tuple[str, str, str], dict[str, float]] = {}
     for event in target_events:
         season_id = event.get("season", {}).get("id", "")
         competition_id = event.get("competition", {}).get("id", "")
-        if (
-            (competition_id == "premier-league" or season_id.startswith("premier-league-"))
-            and season_id
-            and season_id not in missing_by_season
-        ):
+        if not season_id or season_id in missing_by_season:
+            continue
+        try:
             missing_players = fetch_missing_players(season_id)
-            team_absences: dict[str, dict[str, float | int]] = {}
-            for team_entry in missing_players.get("teams", []):
-                team_name = team_entry.get("team", {}).get("name")
-                if not team_name:
-                    continue
-                players = team_entry.get("players", [])
-                team_absences[_normalize_missing_players_team_name(team_name)] = {
-                    "count": len(players),
-                    "impact": round(sum(_absence_impact(player) for player in players), 4),
-                }
-            missing_by_season[season_id] = team_absences
+        except (LookupError, OSError, ValueError, KeyError):
+            missing_by_season[season_id] = {}
+            continue
+        team_absences: dict[str, dict[str, float | int]] = {}
+        for team_entry in missing_players.get("teams", []):
+            team_name = team_entry.get("team", {}).get("name")
+            if not team_name:
+                continue
+            players = team_entry.get("players", [])
+            team_absences[_normalize_missing_players_team_name(team_name)] = {
+                "count": len(players),
+                "impact": round(sum(_absence_impact(player) for player in players), 4),
+            }
+        missing_by_season[season_id] = team_absences
+        if team_absences:
+            missing_source_by_season[season_id] = _missing_players_source_label(
+                competition_id
+            )
 
     contexts: dict[str, dict[str, Any]] = {}
     for event in target_events:
@@ -1472,6 +1610,11 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
             _normalize_missing_players_team_name(away_competitor["team"]["name"]),
             {},
         )
+        season_has_missing_feed = season_id in missing_source_by_season
+        if season_has_missing_feed and not home_absence:
+            home_absence = {"count": 0, "impact": 0.0}
+        if season_has_missing_feed and not away_absence:
+            away_absence = {"count": 0, "impact": 0.0}
         home_lineup = lineups_by_qualifier.get("home", {})
         away_lineup = lineups_by_qualifier.get("away", {})
         home_recent_key = (str(home_competitor["team"]["id"]), competition_id, season_id)
@@ -1526,8 +1669,10 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
             lineup_source_parts.append("espn_lineups")
         if recent_form_cache[home_recent_key] or recent_form_cache[away_recent_key]:
             lineup_source_parts.append("recent_starters")
-        if home_absence or away_absence:
-            lineup_source_parts.append("pl_missing_players")
+        if season_has_missing_feed:
+            lineup_source_parts.append(
+                missing_source_by_season.get(season_id, "missing_players")
+            )
         contexts[event_id] = {
             "lineup_status": "confirmed" if lineups_confirmed else "unknown",
             "home_absence_count": home_absence_count,
@@ -1539,7 +1684,10 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
                 "+".join(lineup_source_parts) if lineup_source_parts else "none"
             ),
         }
-    return contexts
+    return {
+        match_id: normalize_lineup_context_source_summary(context)
+        for match_id, context in contexts.items()
+    }
 
 
 def _parse_kickoff(value: str) -> datetime:
@@ -1766,7 +1914,9 @@ def build_snapshot_rows_from_matches(
             historical_rows,
             as_of=snapshot_captured_at,
         )
-        lineup_context = lineup_contexts.get(match["id"], {})
+        lineup_context = normalize_lineup_context_source_summary(
+            dict(lineup_contexts.get(match["id"], {}))
+        )
         external_context = external_contexts.get(match["id"], {})
         snapshot = build_snapshot(
             match_id=match["id"],

@@ -16,6 +16,7 @@ from batch.src.ingest.external_signals import build_uefa_profile_context_by_matc
 from batch.src.ingest.external_signals import merge_external_signal_contexts
 from batch.src.ingest.fetch_fixtures import build_fixture_row
 from batch.src.ingest.fetch_fixtures import build_bsd_event_signal_contexts_from_events
+from batch.src.ingest.fetch_fixtures import build_bsd_lineup_context_by_match
 from batch.src.ingest.fetch_fixtures import build_bsd_lineup_contexts_from_payloads
 from batch.src.ingest.fetch_fixtures import build_match_history_snapshot_fields
 from batch.src.ingest.fetch_fixtures import build_match_row_from_event
@@ -2366,7 +2367,8 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
 
         @staticmethod
         def get_missing_players(*, season_id: str):
-            raise AssertionError("PL-only missing player feed should not be used here")
+            assert season_id == "champions-league-2026"
+            return {"status": True, "data": {"teams": []}, "message": ""}
 
         @staticmethod
         def get_team_schedule(
@@ -2453,6 +2455,77 @@ def test_build_lineup_context_by_match_uses_all_league_lineup_shape_without_pl_m
         "lineup_strength_delta": 0.3173,
         "lineup_source_summary": "espn_lineups+recent_starters",
     }
+
+
+def test_build_lineup_context_by_match_uses_competition_aware_missing_players(
+    monkeypatch,
+):
+    class FakeFootball:
+        @staticmethod
+        def get_event_lineups(*, event_id: str):
+            assert event_id == "match_laliga"
+            return {"status": True, "data": {"lineups": []}, "message": ""}
+
+        @staticmethod
+        def get_missing_players(*, season_id: str):
+            assert season_id == "la-liga-2026"
+            return {
+                "status": True,
+                "data": {
+                    "teams": [
+                        {
+                            "team": {"name": "Real Madrid"},
+                            "players": [
+                                {"status": "injured", "position": "Forward"},
+                                {"status": "suspended", "position": "Defender"},
+                            ],
+                        }
+                    ]
+                },
+                "message": "",
+            }
+
+        @staticmethod
+        def get_team_schedule(
+            *,
+            team_id: str,
+            competition_id: str | None = None,
+            season_year: str | None = None,
+        ):
+            return {"status": True, "data": {"events": []}, "message": ""}
+
+        @staticmethod
+        def get_event_players_statistics(*, event_id: str):
+            return {"status": True, "data": {"teams": []}, "message": ""}
+
+    monkeypatch.setattr(
+        "batch.src.ingest.fetch_fixtures.load_sports_skills_football",
+        lambda: FakeFootball,
+    )
+
+    contexts = build_lineup_context_by_match(
+        [
+            {
+                "id": "match_laliga",
+                "competition": {"id": "la-liga"},
+                "season": {"id": "la-liga-2026"},
+                "competitors": [
+                    {
+                        "team": {"id": "real-madrid", "name": "Real Madrid"},
+                        "qualifier": "home",
+                    },
+                    {
+                        "team": {"id": "barcelona", "name": "Barcelona"},
+                        "qualifier": "away",
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert contexts["match_laliga"]["home_absence_count"] == 2
+    assert contexts["match_laliga"]["away_absence_count"] == 0
+    assert contexts["match_laliga"]["lineup_source_summary"] == "la-liga_missing_players"
 
 
 def test_load_settings_reads_required_environment_variables(monkeypatch):
@@ -3741,6 +3814,142 @@ def test_bsd_event_signal_contexts_capture_event_xg_fields():
         "bsd_actual_away_xg": 0.9,
         "bsd_home_xg_live": 1.3,
         "bsd_away_xg_live": 0.6,
+    }
+
+
+def test_bsd_lineup_context_by_match_uses_event_unavailable_players(monkeypatch):
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "fetch_bsd_events",
+        lambda api_key, *, date_from, date_to, tz: [
+            {
+                "id": 123,
+                "event_date": "2026-04-25T11:30:00Z",
+                "home_team": "Chelsea",
+                "away_team": "Arsenal",
+                "unavailable_players": {
+                    "home": [
+                        {"name": "Home Injured", "status": "injured"},
+                        {"name": "Home Suspended", "status": "suspended"},
+                    ],
+                    "away": [
+                        {"name": "Away Doubtful", "status": "doubtful"},
+                    ],
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "fetch_bsd_predicted_lineup",
+        lambda api_key, event_id: None,
+    )
+
+    contexts = build_bsd_lineup_context_by_match(
+        "bsd_key",
+        [
+            {
+                "id": "match_001",
+                "start_time": "2026-04-25T11:30:00Z",
+                "status": "scheduled",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+    )
+
+    assert contexts["match_001"] == {
+        "home_absence_count": 2,
+        "away_absence_count": 1,
+        "lineup_strength_delta": -1.5,
+        "lineup_source_summary": "bsd_unavailable_players",
+    }
+
+
+def test_bsd_lineup_context_by_match_merges_event_absences_with_projection(
+    monkeypatch,
+):
+    starter_positions = [
+        "G",
+        "D",
+        "D",
+        "D",
+        "D",
+        "M",
+        "M",
+        "M",
+        "F",
+        "F",
+        "F",
+    ]
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "fetch_bsd_events",
+        lambda api_key, *, date_from, date_to, tz: [
+            {
+                "id": 123,
+                "event_date": "2026-04-25T11:30:00Z",
+                "home_team": "Chelsea",
+                "away_team": "Arsenal",
+                "unavailable_players": {
+                    "home": [{"name": "Home Injured", "status": "injured"}],
+                    "away": [{"name": "Away Suspended", "status": "suspended"}],
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "fetch_bsd_predicted_lineup",
+        lambda api_key, event_id: {
+            "lineups": {
+                "home": {
+                    "predicted_formation": "4-3-3",
+                    "starters": [
+                        {"name": f"Home {index}", "position": position}
+                        for index, position in enumerate(starter_positions, start=1)
+                    ],
+                    "substitutes": [],
+                    "unavailable_players": [],
+                },
+                "away": {
+                    "predicted_formation": "4-4-2",
+                    "starters": [
+                        {"name": f"Away {index}", "position": position}
+                        for index, position in enumerate(starter_positions, start=1)
+                    ],
+                    "substitutes": [],
+                    "unavailable_players": [],
+                },
+            }
+        },
+    )
+
+    contexts = build_bsd_lineup_context_by_match(
+        "bsd_key",
+        [
+            {
+                "id": "match_001",
+                "start_time": "2026-04-25T11:30:00Z",
+                "status": "scheduled",
+                "competitors": [
+                    {"qualifier": "home", "team": {"name": "Chelsea"}},
+                    {"qualifier": "away", "team": {"name": "Arsenal"}},
+                ],
+            }
+        ],
+    )
+
+    assert contexts["match_001"] == {
+        "lineup_status": "projected",
+        "home_absence_count": 1,
+        "away_absence_count": 1,
+        "home_lineup_score": 1.1318,
+        "away_lineup_score": 1.1318,
+        "lineup_strength_delta": 0.0,
+        "lineup_source_summary": "bsd_predicted_lineups+bsd_unavailable_players",
     }
 
 

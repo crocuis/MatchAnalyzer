@@ -2803,7 +2803,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("uses league summary rows instead of scanning every card for dashboard prediction summary", async () => {
+  it("recomputes dashboard prediction summary from card outcomes", async () => {
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -2830,10 +2830,43 @@ describe("prediction API", () => {
       order: vi.fn().mockReturnThis(),
       range: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
+    const buildSummaryCard = (
+      index: number,
+      finalResult: string | null,
+      predictedOutcome: string,
+    ) => ({
+      id: `summary-match-${index}`,
+      kickoff_at: finalResult ? "2026-04-20T19:00:00Z" : "2026-04-30T19:00:00Z",
+      final_result: finalResult,
+      home_score: null,
+      away_score: null,
+      representative_recommended_pick: predictedOutcome,
+      main_recommendation_pick: predictedOutcome,
+      has_prediction: true,
+    });
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          buildSummaryCard(1, "HOME", "HOME"),
+          buildSummaryCard(2, "HOME", "HOME"),
+          buildSummaryCard(3, "DRAW", "DRAW"),
+          buildSummaryCard(4, "AWAY", "AWAY"),
+          buildSummaryCard(5, "HOME", "AWAY"),
+          buildSummaryCard(6, "DRAW", "HOME"),
+          buildSummaryCard(7, null, "HOME"),
+          buildSummaryCard(8, null, "DRAW"),
+          buildSummaryCard(9, null, "AWAY"),
+        ],
+        error: null,
+      }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(leagueSummaries)
-      .mockReturnValueOnce(cardsQuery);
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
 
     const page = await loadDashboardMatchCardsPageView({ from } as never, {
       leagueId: "premier-league",
@@ -2841,7 +2874,7 @@ describe("prediction API", () => {
       cursor: "0",
     });
 
-    expect(from).toHaveBeenCalledTimes(2);
+    expect(from).toHaveBeenCalledTimes(3);
     expect(page.predictionSummary).toEqual({
       predictedCount: 9,
       evaluatedCount: 6,
@@ -2851,7 +2884,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("caps dashboard prediction coverage at the league match count", async () => {
+  it("does not use stale league summary counters for dashboard prediction summary", async () => {
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -2878,10 +2911,28 @@ describe("prediction API", () => {
       order: vi.fn().mockReturnThis(),
       range: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: Array.from({ length: 7 }, (_, index) => ({
+          id: `summary-match-${index + 1}`,
+          kickoff_at: "2026-04-20T19:00:00Z",
+          final_result: "HOME",
+          home_score: null,
+          away_score: null,
+          representative_recommended_pick: "HOME",
+          main_recommendation_pick: "HOME",
+          has_prediction: true,
+        })),
+        error: null,
+      }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(leagueSummaries)
-      .mockReturnValueOnce(cardsQuery);
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
 
     const page = await loadDashboardMatchCardsPageView({ from } as never, {
       leagueId: "premier-league",
@@ -2962,10 +3013,50 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "summary-1",
+            kickoff_at: "2026-04-20T19:00:00Z",
+            final_result: "HOME",
+            home_score: null,
+            away_score: null,
+            representative_recommended_pick: "HOME",
+            main_recommendation_pick: "HOME",
+            has_prediction: true,
+          },
+          {
+            id: "summary-2",
+            kickoff_at: "2026-04-21T19:00:00Z",
+            final_result: "DRAW",
+            home_score: null,
+            away_score: null,
+            representative_recommended_pick: "DRAW",
+            main_recommendation_pick: "DRAW",
+            has_prediction: true,
+          },
+          {
+            id: "summary-3",
+            kickoff_at: "2026-04-22T19:00:00Z",
+            final_result: "AWAY",
+            home_score: null,
+            away_score: null,
+            representative_recommended_pick: "HOME",
+            main_recommendation_pick: "HOME",
+            has_prediction: true,
+          },
+        ],
+        error: null,
+      }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(leagueSummaries)
-      .mockReturnValueOnce(cardsQuery);
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
 
     const page = await loadDashboardMatchCardsPageView({ from } as never, {
       leagueId: "premier-league",
@@ -2976,11 +3067,11 @@ describe("prediction API", () => {
 
     expect(page.totalMatches).toBe(7);
     expect(page.predictionSummary).toEqual({
-      predictedCount: 340,
-      evaluatedCount: 333,
-      correctCount: 140,
-      incorrectCount: 193,
-      successRate: 140 / 333,
+      predictedCount: 3,
+      evaluatedCount: 3,
+      correctCount: 2,
+      incorrectCount: 1,
+      successRate: 2 / 3,
     });
   });
 
@@ -3011,10 +3102,16 @@ describe("prediction API", () => {
       order: vi.fn().mockReturnThis(),
       range: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(leagueSummaries)
-      .mockReturnValueOnce(cardsQuery);
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
 
     await loadDashboardMatchCardsPageView({ from } as never, {
       leagueId: "premier-league",
@@ -4902,10 +4999,30 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            kickoff_at: "2026-04-27T21:00:00Z",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+            representative_recommended_pick: "HOME",
+            main_recommendation_pick: "HOME",
+            has_prediction: true,
+          },
+        ],
+        error: null,
+      }),
+    };
     const from = vi
       .fn()
       .mockReturnValueOnce(leagueSummaries)
-      .mockReturnValueOnce(cardsQuery);
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
 
     const page = await loadDashboardMatchCardsPageView({ from } as never, {
       leagueId: "premier-league",
