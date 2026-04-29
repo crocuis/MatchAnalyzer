@@ -218,6 +218,15 @@ def _alternate_resolved_signal_fields(snapshot: dict) -> set[str]:
         resolved_fields.update(CANONICAL_RATING_SIGNAL_FIELDS)
     if all(snapshot.get(field) is not None for field in UNDERSTAT_XG_SIGNAL_FIELDS):
         resolved_fields.update(CANONICAL_XG_SIGNAL_FIELDS)
+    if any(
+        snapshot.get(field) is not None
+        for field in (
+            "home_lineup_score",
+            "away_lineup_score",
+            "lineup_strength_delta",
+        )
+    ):
+        resolved_fields.add("lineup_source_summary")
     return resolved_fields
 
 

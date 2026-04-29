@@ -23,10 +23,6 @@ interface MatchTableProps {
   isLoadingMore?: boolean;
 }
 
-function formatPercent(value: number | null | undefined): string {
-  return value === null || value === undefined ? "—" : `${(value * 100).toFixed(1)}%`;
-}
-
 export default function MatchTable({
   matches,
   currentLeagueId,

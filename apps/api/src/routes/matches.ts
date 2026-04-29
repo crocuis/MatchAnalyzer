@@ -285,6 +285,17 @@ type DashboardPredictionSummaryRow = {
   has_prediction: boolean;
 };
 
+type MatchCardPredictionSummaryRow = {
+  id: string;
+  kickoff_at: string;
+  final_result: string | null;
+  home_score: number | null;
+  away_score: number | null;
+  representative_recommended_pick: string | null;
+  main_recommendation_pick: string | null;
+  has_prediction: boolean;
+};
+
 function resolveSettledOutcome(args: {
   finalResult: string | null | undefined;
   kickoffAt: string | null | undefined;
@@ -356,6 +367,19 @@ function hasPredictedOutcome(
   );
 }
 
+function readPredictedOutcome(value: unknown) {
+  return value === "HOME" || value === "DRAW" || value === "AWAY" ? value : null;
+}
+
+function resolveCardPredictedOutcome(row: MatchCardPredictionSummaryRow) {
+  if (!row.has_prediction) {
+    return null;
+  }
+  return readPredictedOutcome(
+    row.main_recommendation_pick ?? row.representative_recommended_pick,
+  );
+}
+
 function buildPredictionSummary(
   matches: Array<{
     id: string;
@@ -392,9 +416,6 @@ function buildPredictionSummary(
     if (!mainRecommendation) {
       continue;
     }
-    if (!mainRecommendation.recommended) {
-      continue;
-    }
     if (!hasPredictedOutcome(mainRecommendation)) {
       continue;
     }
@@ -416,34 +437,42 @@ function buildPredictionSummary(
   };
 }
 
-function buildPredictionSummaryFromLeagueSummary(
-  league: LeagueSummaryRow | {
-    matchCount?: number | null;
-    predictedCount?: number | null;
-    evaluatedCount?: number | null;
-    correctCount?: number | null;
-    incorrectCount?: number | null;
-    successRate?: number | null;
-  } | null,
-): MatchPredictionSummary | null {
-  if (!league) {
-    return null;
+function buildPredictionSummaryFromMatchCards(
+  rows: MatchCardPredictionSummaryRow[],
+): MatchPredictionSummary {
+  let predictedCount = 0;
+  let evaluatedCount = 0;
+  let correctCount = 0;
+
+  for (const row of rows) {
+    const predictedOutcome = resolveCardPredictedOutcome(row);
+    if (!row.has_prediction) {
+      continue;
+    }
+    predictedCount += 1;
+    if (!predictedOutcome) {
+      continue;
+    }
+
+    const settledOutcome = resolveSettledOutcome({
+      finalResult: row.final_result,
+      kickoffAt: row.kickoff_at,
+      homeScore: row.home_score,
+      awayScore: row.away_score,
+    });
+    if (!settledOutcome) {
+      continue;
+    }
+
+    evaluatedCount += 1;
+    if (predictedOutcome === settledOutcome) {
+      correctCount += 1;
+    }
   }
-  const leagueRecord = league as Record<string, unknown>;
-  const matchCountValue = leagueRecord.matchCount ?? leagueRecord.match_count;
-  const predictedCount = leagueRecord.predictedCount ?? leagueRecord.predicted_count;
-  const evaluatedCountValue = leagueRecord.evaluatedCount ?? leagueRecord.evaluated_count;
-  const correctCountValue = leagueRecord.correctCount ?? leagueRecord.correct_count;
-  const matchCount = Number(matchCountValue ?? Number.POSITIVE_INFINITY);
-  const maximumCount = Number.isFinite(matchCount)
-    ? Math.max(matchCount, 0)
-    : Number.POSITIVE_INFINITY;
-  const predictedCountValue = Math.min(Number(predictedCount ?? 0), maximumCount);
-  const evaluatedCount = Math.min(Number(evaluatedCountValue ?? 0), predictedCountValue);
-  const correctCount = Math.min(Number(correctCountValue ?? 0), evaluatedCount);
-  const incorrectCount = Math.max(evaluatedCount - correctCount, 0);
+
+  const incorrectCount = evaluatedCount - correctCount;
   return {
-    predictedCount: predictedCountValue,
+    predictedCount,
     evaluatedCount,
     correctCount,
     incorrectCount,
@@ -594,7 +623,29 @@ export async function loadDashboardMatchCardsPageView(
     throw new Error(`dashboard card query failed: ${error.message}`);
   }
 
-  const predictionSummary = buildPredictionSummaryFromLeagueSummary(selectedLeague);
+  const summaryCardsQuery: any = supabase
+    .from("match_cards")
+    .select(
+      "id, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, main_recommendation_pick, has_prediction",
+    );
+  const scopedSummaryCardsQuery =
+    typeof summaryCardsQuery.eq === "function"
+      ? summaryCardsQuery.eq("league_id", selectedLeagueId)
+      : summaryCardsQuery;
+  const boundedSummaryCardsQuery =
+    typeof scopedSummaryCardsQuery.range === "function"
+      ? scopedSummaryCardsQuery.range(0, MAX_MATCH_SUMMARY_ROWS - 1)
+      : scopedSummaryCardsQuery;
+  const { data: summaryCardRows, error: summaryCardsError } =
+    await boundedSummaryCardsQuery;
+
+  if (summaryCardsError) {
+    throw new Error(`dashboard summary card query failed: ${summaryCardsError.message}`);
+  }
+
+  const predictionSummary = buildPredictionSummaryFromMatchCards(
+    (summaryCardRows ?? []) as MatchCardPredictionSummaryRow[],
+  );
 
   const rows = (cardRows ?? []) as MatchCardProjectionRow[];
   const hasNextPage = rows.length > limit;

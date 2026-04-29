@@ -343,7 +343,7 @@ describe("supabase schema integration", () => {
     ).rejects.toThrow();
   });
 
-  it("counts held predictions in coverage but excludes them from evaluated accuracy", async () => {
+  it("counts held card predictions in result accuracy", async () => {
     const db = await createDb();
 
     await db.exec(`
@@ -426,9 +426,9 @@ describe("supabase schema integration", () => {
     expect(summaries.rows).toEqual([
       {
         predicted_count: 2,
-        evaluated_count: 1,
+        evaluated_count: 2,
         correct_count: 1,
-        incorrect_count: 0,
+        incorrect_count: 1,
       },
     ]);
   });
