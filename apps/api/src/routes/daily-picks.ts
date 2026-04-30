@@ -300,6 +300,26 @@ async function readDailyPickPerformanceSummary(
   }
 }
 
+async function readSettledDailyPickPerformanceSummary(
+  supabase: ApiSupabaseClient,
+): Promise<DailyPicksValidationSummary | null> {
+  try {
+    const resultRows = await readRows(supabase, "daily_pick_results");
+    return buildRuntimePerformanceSummary(resultRows);
+  } catch {
+    return null;
+  }
+}
+
+async function readDailyPickRuntimePerformanceSummary(
+  supabase: ApiSupabaseClient,
+): Promise<DailyPicksValidationSummary | null> {
+  return (
+    await readDailyPickPerformanceSummary(supabase)
+    ?? await readSettledDailyPickPerformanceSummary(supabase)
+  );
+}
+
 async function readMatches(
   supabase: ApiSupabaseClient,
   options: LoadDailyPicksOptions,
@@ -398,7 +418,7 @@ export async function loadDailyPicksView(
     readRowsByIds(supabase, "teams", teamIds),
     readRowsByIds(supabase, "competitions", competitionIds),
     readRowsByIds(supabase, "predictions", matchIds, "match_id"),
-    readDailyPickPerformanceSummary(supabase),
+    readDailyPickRuntimePerformanceSummary(supabase),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
     supabase,
@@ -552,7 +572,7 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     generatedAt: new Date().toISOString(),
     date: args.options.date ?? null,
     target: EMPTY_VIEW.target,
-    validation: args.performanceSummary ?? summarizeDailyPickValidation(allCandidates),
+    validation: args.performanceSummary ?? EMPTY_VIEW.validation,
     coverage: {
       moneyline: allCandidates.filter((item) => item.marketFamily === "moneyline").length,
       spreads: allCandidates.filter((item) => item.marketFamily === "spreads").length,
@@ -562,44 +582,6 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     items: visibleItems,
     heldItems: visibleHeldItems,
   };
-}
-
-function summarizeDailyPickValidation(
-  candidates: DailyPickItem[],
-): DailyPicksValidationSummary {
-  const summaries = candidates
-    .map((item) => {
-      const metadata = item.validationMetadata;
-      if (!metadata) {
-        return null;
-      }
-      const sampleCount = readNumber(metadata.sample_count)
-        ?? readNumber(metadata.sampleCount)
-        ?? 0;
-      const hitRate = readNumber(metadata.hit_rate)
-        ?? readNumber(metadata.hitRate);
-      return {
-        hitRate,
-        sampleCount,
-        wilsonLowerBound:
-          readNumber(metadata.wilson_lower_bound)
-          ?? readNumber(metadata.wilsonLowerBound),
-        confidenceReliability: item.confidenceReliability,
-        modelScope:
-          readString(metadata.model_scope)
-          ?? readString(metadata.modelScope),
-      };
-    })
-    .filter((summary): summary is DailyPicksValidationSummary => (
-      summary !== null && summary.hitRate !== null
-    ));
-  if (summaries.length === 0) {
-    return EMPTY_VIEW.validation;
-  }
-  return summaries.sort((left, right) => (
-    right.sampleCount - left.sampleCount
-    || (right.hitRate ?? 0) - (left.hitRate ?? 0)
-  ))[0];
 }
 
 function buildBasePickContext(
@@ -953,7 +935,7 @@ async function loadDailyPicksArtifactView(
     filteredHeldItems,
     options.locale,
   );
-  const performanceSummary = await readDailyPickPerformanceSummary(supabase);
+  const performanceSummary = await readDailyPickRuntimePerformanceSummary(supabase);
 
   return {
     ...loaded,
@@ -999,7 +981,7 @@ async function loadTrackedDailyPicksView(
     readRowsByIds(supabase, "matches", matchIds),
     readRowsByIds(supabase, "daily_pick_results", pickItemIds, "pick_item_id"),
     readRowsByColumnValue(supabase, "daily_pick_runs", "pick_date", normalizedOptions.date),
-    readDailyPickPerformanceSummary(supabase),
+    readDailyPickRuntimePerformanceSummary(supabase),
   ]);
   const matchesById = new Map(
     matches.flatMap((row) => {
