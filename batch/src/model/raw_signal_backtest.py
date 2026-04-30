@@ -18,6 +18,11 @@ DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
 DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
 DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
+UEFA_CUP_COMPETITIONS = {
+    "champions-league",
+    "conference-league",
+    "europa-league",
+}
 DAILY_PICK_PRECISION_LEAGUES = {
     "bundesliga",
     "la-liga",
@@ -416,6 +421,13 @@ def _apply_prequential_bucket_calibration(
             if bucket_choice is not None
             else "raw_fallback"
         )
+        prior_repair = _choose_prequential_prior_repair(
+            row,
+            current_pick=prequential_pick,
+        )
+        if prior_repair is not None:
+            prequential_pick = prior_repair["pick"]
+            strategy = prior_repair["strategy"]
         calibrated_by_prediction_id[str(row.get("prediction_id") or "")] = {
             **row,
             "prequential_pick": prequential_pick,
@@ -491,6 +503,26 @@ def _choose_prequential_bucket(
             int(item["sample"]),
         ),
     )
+
+
+def _choose_prequential_prior_repair(
+    row: dict,
+    *,
+    current_pick: str,
+) -> dict | None:
+    if (
+        str(row.get("probability_source") or "") in {"base_model", "base_model_probs"}
+        and str(row.get("probability_favorite_pick") or "") == "AWAY"
+        and str(current_pick or "") != "AWAY"
+    ):
+        return {"pick": "AWAY", "strategy": "base_model_away_prior_repair"}
+    if (
+        str(row.get("competition_id") or "") in UEFA_CUP_COMPETITIONS
+        and str(row.get("base_model_source") or "") == "trained_baseline"
+        and str(current_pick or "") != "HOME"
+    ):
+        return {"pick": "HOME", "strategy": "uefa_home_prior_repair"}
+    return None
 
 
 def _prequential_bucket_candidates(row: dict) -> list[tuple[str, tuple]]:

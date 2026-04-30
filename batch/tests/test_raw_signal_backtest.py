@@ -92,6 +92,110 @@ def test_build_raw_moneyline_rows_includes_held_predictions_with_raw_signals():
     assert rows[0]["prequential_strategy"] == "raw_fallback"
 
 
+def test_build_raw_moneyline_rows_repairs_uefa_trained_baseline_to_home_prior():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "champions-league",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 1,
+            },
+        ],
+        snapshots=[
+            {
+                "id": "snap-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snap-1",
+                "recommended_pick": "AWAY",
+                "confidence_score": 0.61,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline",
+                    "source_agreement_ratio": 0.0,
+                    "max_abs_divergence": 0.2,
+                    "main_recommendation": {
+                        "pick": "AWAY",
+                        "confidence": 0.61,
+                        "recommended": False,
+                    },
+                    "feature_context": {},
+                },
+            }
+        ],
+    )
+
+    assert rows[0]["pick"] == "AWAY"
+    assert rows[0]["prequential_pick"] == "HOME"
+    assert rows[0]["prequential_hit"] == 1
+    assert rows[0]["prequential_strategy"] == "uefa_home_prior_repair"
+
+
+def test_build_raw_moneyline_rows_keeps_base_model_away_favorite_before_home_prior():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "champions-league",
+                "kickoff_at": "2026-04-21T19:00:00Z",
+                "home_team_id": "home",
+                "away_team_id": "away",
+                "final_result": "AWAY",
+                "home_score": 0,
+                "away_score": 2,
+            },
+        ],
+        snapshots=[
+            {
+                "id": "snap-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snap-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.61,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline",
+                    "base_model_probs": {
+                        "home": 0.25,
+                        "draw": 0.2,
+                        "away": 0.55,
+                    },
+                    "source_agreement_ratio": 0.0,
+                    "max_abs_divergence": 0.2,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.61,
+                        "recommended": False,
+                    },
+                    "feature_context": {},
+                },
+            }
+        ],
+    )
+
+    assert rows[0]["probability_source"] == "base_model_probs"
+    assert rows[0]["probability_favorite_pick"] == "AWAY"
+    assert rows[0]["prequential_pick"] == "AWAY"
+    assert rows[0]["prequential_hit"] == 1
+    assert rows[0]["prequential_strategy"] == "base_model_away_prior_repair"
+
+
 def test_build_raw_moneyline_rows_adds_external_snapshot_signals_to_signal_score():
     rows = build_raw_moneyline_rows(
         matches=[
