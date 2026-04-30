@@ -15,15 +15,29 @@ DEFAULT_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND = 0.45
 DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
-DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 50
-DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.70
-DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.62
+DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
+DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
+DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
+DAILY_PICK_PRECISION_LEAGUES = {
+    "bundesliga",
+    "la-liga",
+    "ligue-1",
+    "premier-league",
+    "serie-a",
+}
+DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
+    "centroid_poisson_blend",
+    "trained_baseline_poisson_blend",
+}
+DAILY_PICK_PRECISION_MIN_CONFIDENCE = 0.70
+DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE = 0.03
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
     "T_MINUS_6H": 1,
     "T_MINUS_1H": 2,
     "LINEUP_CONFIRMED": 3,
 }
+PRE_MATCH_CHECKPOINTS = set(CHECKPOINT_PRIORITY)
 
 
 def build_raw_moneyline_rows(
@@ -129,6 +143,7 @@ def build_raw_moneyline_rows(
             {
                 "prediction_id": str(prediction.get("id") or ""),
                 "match_id": str(match.get("id") or ""),
+                "competition_id": str(match.get("competition_id") or ""),
                 "date": str(match.get("kickoff_at") or "")[:10],
                 "checkpoint": str(snapshot.get("checkpoint_type") or ""),
                 "pick": pick,
@@ -209,9 +224,7 @@ def summarize_raw_moneyline_backtest(
     prequential_quality_candidates = [
         row for row in rows if row.get("prequential_quality_candidate")
     ]
-    daily_pick_prequential_rows = [
-        row for row in prequential_quality_candidates if _is_daily_pick_candidate(row)
-    ]
+    daily_pick_prequential_rows = [row for row in rows if _is_daily_pick_candidate(row)]
     all_raw = _summarize_rows(rows, total_count=len(rows))
     all_prequential = _summarize_rows(
         rows,
@@ -361,9 +374,7 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
             "minimum_wilson_lower_bound": (
                 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
             ),
-            "eligibility_filter": (
-                "prequential_quality_candidate_with_external_pre_match_signal"
-            ),
+            "eligibility_filter": "domestic_poisson_blend_precision_gate",
         },
     }
 
@@ -574,10 +585,25 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
 
 
 def _is_daily_pick_candidate(row: dict) -> bool:
-    return bool(
+    if str(row.get("checkpoint") or "") not in PRE_MATCH_CHECKPOINTS:
+        return False
+    max_abs_divergence = _read_numeric(row.get("max_abs_divergence"))
+    if max_abs_divergence is None:
+        return False
+    has_pre_match_signal = bool(
         row.get("external_rating_available")
         or row.get("understat_xg_available")
         or row.get("football_data_match_stats_available")
+    )
+    if not has_pre_match_signal:
+        return False
+    return (
+        str(row.get("competition_id") or "") in DAILY_PICK_PRECISION_LEAGUES
+        and str(row.get("base_model_source") or "")
+        in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
+        and float(row.get("confidence") or 0.0)
+        >= DAILY_PICK_PRECISION_MIN_CONFIDENCE
+        and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
     )
 
 

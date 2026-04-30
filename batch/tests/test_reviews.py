@@ -1179,6 +1179,50 @@ def test_should_archive_prediction_artifacts_skips_bulk_real_backfill():
     )
 
 
+def test_should_archive_prediction_artifacts_can_be_disabled_for_experiments(monkeypatch):
+    monkeypatch.setenv("MATCH_ANALYZER_SKIP_PREDICTION_ARTIFACT_ARCHIVE", "1")
+
+    assert not run_predictions_job.should_archive_prediction_artifacts(
+        target_snapshot_count=25,
+        use_real_prediction_targets=True,
+    )
+    assert not run_predictions_job.should_archive_prediction_artifacts(
+        target_snapshot_count=4,
+        use_real_prediction_targets=False,
+    )
+
+
+def test_attach_prediction_output_payload_can_omit_bulk_sample(monkeypatch):
+    monkeypatch.setenv("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_SAMPLE", "1")
+    payload = [{"id": f"prediction_{index}"} for index in range(25)]
+
+    result = run_predictions_job.attach_prediction_output_payload(
+        {"snapshot_rows": 25},
+        payload,
+        use_real_prediction_targets=True,
+    )
+
+    assert result["payload_omitted"] == 25
+    assert "payload_sample" not in result
+    assert "payload" not in result
+
+
+def test_attach_prediction_output_payload_keeps_small_payload_even_when_sample_omitted(
+    monkeypatch,
+):
+    monkeypatch.setenv("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_SAMPLE", "1")
+    payload = [{"id": f"prediction_{index}"} for index in range(2)]
+
+    result = run_predictions_job.attach_prediction_output_payload(
+        {"snapshot_rows": 2},
+        payload,
+        use_real_prediction_targets=True,
+    )
+
+    assert result["payload"] == payload
+    assert "payload_omitted" not in result
+
+
 def test_apply_adaptive_recommendation_gate_requires_validation_support():
     recommendation = {
         "pick": "HOME",
@@ -3603,10 +3647,13 @@ def test_run_predictions_job_calibrates_selector_confidence_against_selected_pro
     )
     monkeypatch.setattr(
         run_predictions_job,
-        "build_current_fused_probabilities",
-        lambda _candidates: {
-            "target_match_t_minus_24h": {"home": 0.34, "draw": 0.33, "away": 0.33},
-        },
+        "fit_prequential_current_fused_selector_model",
+        lambda **_kwargs: {"model": "cached"},
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "select_prequential_current_fused_probability",
+        lambda **_kwargs: {"home": 0.34, "draw": 0.33, "away": 0.33},
     )
     monkeypatch.setattr(
         run_predictions_job,

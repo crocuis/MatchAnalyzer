@@ -14,6 +14,8 @@ import batch.src.jobs.ingest_markets_job as ingest_markets_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 import batch.src.jobs.run_predictions_job as run_predictions_job
 from batch.src.settings import load_settings
+from batch.src.storage.local_dataset_client import LocalDatasetClient
+from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.supabase_client import SupabaseClient
 
 
@@ -436,7 +438,12 @@ def resolve_pipeline_dates(
         raise ValueError(f"Unknown PIPELINE_BACKFILL_DATE_SOURCE: {date_source}")
 
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    local_dataset_dir = resolve_local_prediction_dataset_dir()
+    client = (
+        LocalDatasetClient(local_dataset_dir)
+        if local_dataset_dir is not None
+        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+    )
     target_dates = sorted(
         {
             str(row.get("kickoff_at", ""))[:10]

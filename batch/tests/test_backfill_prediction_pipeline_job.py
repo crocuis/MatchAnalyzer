@@ -265,6 +265,54 @@ def test_backfill_prediction_pipeline_job_uses_match_dates_for_non_fixture_stage
     ]
 
 
+def test_backfill_prediction_pipeline_job_uses_local_dataset_for_match_dates(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    calls: list[tuple[str, str | None]] = []
+    dataset_dir = tmp_path / "prediction-dataset"
+    dataset_dir.mkdir()
+    (dataset_dir / "matches.json").write_text(
+        json.dumps(
+            [
+                {"id": "outside", "kickoff_at": "2026-04-18T19:00:00+00:00"},
+                {"id": "match-a", "kickoff_at": "2026-04-20T19:00:00+00:00"},
+                {"id": "match-b", "kickoff_at": "2026-04-22T21:00:00+00:00"},
+            ]
+        )
+    )
+
+    def fake_predictions() -> None:
+        calls.append(("predictions", os.environ.get("REAL_PREDICTION_DATE")))
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs) -> None:
+            raise AssertionError("remote Supabase should not be used")
+
+    monkeypatch.setenv("MATCH_ANALYZER_LOCAL_DATASET_DIR", str(dataset_dir))
+    monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-19")
+    monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-22")
+    monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "predictions")
+    monkeypatch.setattr(pipeline_job, "SupabaseClient", FailingClient)
+    monkeypatch.setitem(
+        pipeline_job.PIPELINE_STAGE_CONFIG,
+        "predictions",
+        ("REAL_PREDICTION_DATE", fake_predictions),
+    )
+    monkeypatch.setattr(pipeline_job, "run_evaluation", lambda: {})
+
+    pipeline_job.main()
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["date_source"] == "matches"
+    assert payload["date_count"] == 2
+    assert calls == [
+        ("predictions", "2026-04-20"),
+        ("predictions", "2026-04-22"),
+    ]
+
+
 def test_backfill_prediction_pipeline_job_uses_explicit_dates_without_reading_matches(
     monkeypatch,
     capsys,

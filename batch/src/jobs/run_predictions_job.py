@@ -4,6 +4,7 @@ import os
 import re
 from copy import deepcopy
 from datetime import datetime
+from typing import Any
 
 from batch.src.features.feature_builder import (
     build_prediction_feature_snapshot_row,
@@ -50,10 +51,10 @@ from batch.src.model.fusion import (
     confidence_score,
 )
 from batch.src.model.evaluate_prediction_sources import (
-    build_current_fused_probabilities,
     build_variant_evaluation_rows,
     current_fused_selector_history_ready,
     derive_variant_weights,
+    fit_prequential_current_fused_selector_model,
     select_prequential_current_fused_probability,
     summarize_variant_metrics,
 )
@@ -315,10 +316,34 @@ def should_archive_prediction_artifacts(
     target_snapshot_count: int,
     use_real_prediction_targets: bool,
 ) -> bool:
+    if read_env_flag("MATCH_ANALYZER_SKIP_PREDICTION_ARTIFACT_ARCHIVE"):
+        return False
     return (
         not use_real_prediction_targets
         or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
     )
+
+
+def attach_prediction_output_payload(
+    result_payload: dict[str, Any],
+    payload: list[dict[str, Any]],
+    *,
+    use_real_prediction_targets: bool,
+) -> dict[str, Any]:
+    include_output_payload = (
+        os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
+        in {"1", "true", "TRUE", "yes", "YES"}
+        or not use_real_prediction_targets
+        or len(payload) <= 20
+    )
+    if include_output_payload:
+        result_payload["payload"] = payload
+        return result_payload
+
+    result_payload["payload_omitted"] = len(payload)
+    if not read_env_flag("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_SAMPLE"):
+        result_payload["payload_sample"] = payload[:3]
+    return result_payload
 
 
 def local_dataset_side_effects_enabled(local_dataset_dir: object) -> bool:
@@ -2478,6 +2503,10 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
+    current_fused_selector_model_cache: dict[
+        tuple[str, str | None, bool],
+        object | None,
+    ] = {}
     current_fused_selector_enabled = read_env_flag(
         "MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR",
     ) and not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
@@ -2744,18 +2773,20 @@ def main() -> None:
                     "confidence": raw_confidence_score,
                     "context": scoring_context,
                 }
-                if len(historical_current_fused_candidates) <= 50:
-                    selected_fused_probs = build_current_fused_probabilities(
-                        [
-                            *historical_current_fused_candidates,
-                            selector_candidate,
-                        ]
-                    )[signal_snapshot["id"]]
-                else:
-                    selected_fused_probs = select_prequential_current_fused_probability(
-                        candidate=selector_candidate,
-                        historical_candidates=historical_current_fused_candidates,
+                if current_fused_key not in current_fused_selector_model_cache:
+                    current_fused_selector_model_cache[current_fused_key] = (
+                        fit_prequential_current_fused_selector_model(
+                            candidate=selector_candidate,
+                            historical_candidates=historical_current_fused_candidates,
+                        )
                     )
+                selected_fused_probs = select_prequential_current_fused_probability(
+                    candidate=selector_candidate,
+                    historical_candidates=historical_current_fused_candidates,
+                    selector_model=current_fused_selector_model_cache[
+                        current_fused_key
+                    ],
+                )
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]
@@ -3104,17 +3135,11 @@ def main() -> None:
         "daily_pick_tracking_results": daily_pick_tracking_results,
         "skipped_snapshots": skipped_snapshots,
     }
-    include_output_payload = (
-        os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
-        in {"1", "true", "TRUE", "yes", "YES"}
-        or not use_real_prediction_targets
-        or len(payload) <= 20
+    attach_prediction_output_payload(
+        result_payload,
+        payload,
+        use_real_prediction_targets=use_real_prediction_targets,
     )
-    if include_output_payload:
-        result_payload["payload"] = payload
-    else:
-        result_payload["payload_omitted"] = len(payload)
-        result_payload["payload_sample"] = payload[:3]
     print(json.dumps(result_payload, sort_keys=True))
 
 

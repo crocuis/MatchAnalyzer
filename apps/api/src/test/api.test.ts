@@ -783,8 +783,8 @@ describe("prediction API", () => {
     });
     expect(view.validation).toEqual({
       hitRate: 0.75,
-      sampleCount: 4,
-      wilsonLowerBound: 0.3006,
+      sampleCount: 76,
+      wilsonLowerBound: 0.6422,
       confidenceReliability: "settled_daily_picks",
       modelScope: "daily_pick_settled_runtime",
     });
@@ -811,6 +811,88 @@ describe("prediction API", () => {
       modelProbability: null,
       noBetReason: "variant_market_price_only",
     });
+  });
+
+  it("uses settled daily pick results when performance summary is unavailable", async () => {
+    setDailyPicksClock();
+    const baseSupabase = buildTableSupabase({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: validatedDailyPickSummary({
+            validation_metadata: {
+              model_scope: "daily_pick_prequential",
+              sample_count: 999,
+              hit_rate: 0.99,
+              wilson_lower_bound: 0.98,
+            },
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+      daily_pick_results: [
+        { id: "result-1", pick_item_id: "historical-1", result_status: "hit" },
+        { id: "result-2", pick_item_id: "historical-2", result_status: "hit" },
+        { id: "result-3", pick_item_id: "historical-3", result_status: "miss" },
+        { id: "result-4", pick_item_id: "historical-4", result_status: "pending" },
+      ],
+    });
+    const baseFrom = baseSupabase.from.bind(baseSupabase);
+    const missingSummaryQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'relation "daily_pick_performance_summary" does not exist' },
+      }),
+    };
+    const supabase: MockSupabaseClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "daily_pick_performance_summary"
+          ? missingSummaryQuery
+          : baseFrom(tableName)
+      )),
+    };
+
+    const view = await loadDailyPicksView(supabase as never, {
+      date: "2026-04-24",
+    });
+
+    expect(view.validation).toMatchObject({
+      hitRate: 0.6667,
+      sampleCount: 3,
+      confidenceReliability: "settled_daily_picks",
+      modelScope: "daily_pick_settled_runtime",
+    });
+    expect(view.validation.hitRate).not.toBe(0.99);
+    expect(view.validation.sampleCount).not.toBe(999);
   });
 
   it("filters daily picks by market family and includeHeld at the route level", async () => {
@@ -905,9 +987,9 @@ describe("prediction API", () => {
     expect(await response.json()).toMatchObject({
       date: "2026-04-24",
       validation: {
-        hitRate: 1,
-        sampleCount: 2,
-        wilsonLowerBound: 0.3424,
+        hitRate: 0.75,
+        sampleCount: 76,
+        wilsonLowerBound: 0.6422,
         confidenceReliability: "settled_daily_picks",
         modelScope: "daily_pick_settled_runtime",
       },
@@ -2127,8 +2209,33 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    const performanceSummaryQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "all",
+            scope: "all",
+            scope_value: null,
+            sample_count: 100,
+            hit_count: 84,
+            miss_count: 16,
+            void_count: 0,
+            pending_count: 0,
+            hit_rate: 0.84,
+            wilson_lower_bound: 0.7558,
+          },
+        ],
+        error: null,
+      }),
+    };
     const supabase: MockSupabaseClient = {
-      from: vi.fn(() => artifactQuery),
+      from: vi.fn((tableName: string) => (
+        tableName === "daily_pick_performance_summary"
+          ? performanceSummaryQuery
+          : artifactQuery
+      )),
     };
     vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
     vi.stubGlobal(
@@ -2146,9 +2253,15 @@ describe("prediction API", () => {
       "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
     );
     const body = await response.json() as {
+      validation: { hitRate: number; sampleCount: number; wilsonLowerBound: number };
       coverage: Record<string, number>;
       items: Array<{ marketFamily: string }>;
     };
+    expect(body.validation).toMatchObject({
+      hitRate: 0.84,
+      sampleCount: 100,
+      wilsonLowerBound: 0.7558,
+    });
     expect(body.items).toHaveLength(1);
     expect(body.items[0].marketFamily).toBe("spreads");
     expect(body.coverage).toEqual({
@@ -2157,7 +2270,7 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(supabase.from).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to persisted daily pick tracking rows when the date artifact is unavailable", async () => {
@@ -2291,9 +2404,9 @@ describe("prediction API", () => {
     };
     expect(body.generatedAt).toBe("2026-04-24T03:00:00Z");
     expect(body.validation).toMatchObject({
-      hitRate: 0.6667,
-      sampleCount: 3,
-      wilsonLowerBound: 0.2077,
+      hitRate: 0.75,
+      sampleCount: 80,
+      wilsonLowerBound: 0.64,
       confidenceReliability: "settled_daily_picks",
       modelScope: "daily_pick_settled_runtime",
     });
@@ -2330,6 +2443,97 @@ describe("prediction API", () => {
         noBetReason: "variant_market_reliability_gap",
       }),
     ]));
+  });
+
+  it("keeps global settled validation when tracked rows need performance fallback", async () => {
+    const baseSupabase = buildTableSupabase({
+      stored_artifacts: [],
+      daily_pick_items: [
+        {
+          id: "daily_pick_item_current",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "moneyline",
+          selection_label: "HOME",
+          confidence: 0.82,
+          score: 0.82,
+          status: "recommended",
+          validation_metadata: {
+            confidence_reliability: "validated",
+            high_confidence_eligible: true,
+            sample_count: 80,
+          },
+          reason_labels: ["mainRecommendation"],
+        },
+      ],
+      daily_pick_runs: [
+        {
+          id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          generated_at: "2026-04-24T03:00:00Z",
+        },
+      ],
+      daily_pick_results: [
+        {
+          id: "result-current",
+          pick_item_id: "daily_pick_item_current",
+          result_status: "miss",
+        },
+        { id: "result-hit-1", pick_item_id: "historical-1", result_status: "hit" },
+        { id: "result-hit-2", pick_item_id: "historical-2", result_status: "hit" },
+        { id: "result-pending", pick_item_id: "historical-3", result_status: "pending" },
+      ],
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "league-1",
+          kickoff_at: "2026-04-24T12:00:00Z",
+          home_team_id: "team-home",
+          away_team_id: "team-away",
+        },
+      ],
+      teams: [
+        { id: "team-home", name: "Arsenal", crest_url: "home.png" },
+        { id: "team-away", name: "Chelsea", crest_url: "away.png" },
+      ],
+      competitions: [
+        { id: "league-1", name: "Premier League" },
+      ],
+    });
+    const baseFrom = baseSupabase.from.bind(baseSupabase);
+    const missingSummaryQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'relation "daily_pick_performance_summary" does not exist' },
+      }),
+    };
+    const supabase: MockSupabaseClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "daily_pick_performance_summary"
+          ? missingSummaryQuery
+          : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("tracked-fallback");
+    const body = await response.json() as {
+      validation: { hitRate: number; sampleCount: number };
+      items: Array<{ status: string }>;
+    };
+    expect(body.validation).toMatchObject({
+      hitRate: 0.6667,
+      sampleCount: 3,
+    });
+    expect(body.items).toEqual([
+      expect.objectContaining({ status: "miss" }),
+    ]);
   });
 
   it("falls back to computed daily picks when tracking tables are unavailable", async () => {
