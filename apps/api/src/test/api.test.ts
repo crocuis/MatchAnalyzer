@@ -783,8 +783,8 @@ describe("prediction API", () => {
     });
     expect(view.validation).toEqual({
       hitRate: 0.75,
-      sampleCount: 4,
-      wilsonLowerBound: 0.3006,
+      sampleCount: 76,
+      wilsonLowerBound: 0.6422,
       confidenceReliability: "settled_daily_picks",
       modelScope: "daily_pick_settled_runtime",
     });
@@ -905,9 +905,9 @@ describe("prediction API", () => {
     expect(await response.json()).toMatchObject({
       date: "2026-04-24",
       validation: {
-        hitRate: 1,
-        sampleCount: 2,
-        wilsonLowerBound: 0.3424,
+        hitRate: 0.75,
+        sampleCount: 76,
+        wilsonLowerBound: 0.6422,
         confidenceReliability: "settled_daily_picks",
         modelScope: "daily_pick_settled_runtime",
       },
@@ -2127,8 +2127,33 @@ describe("prediction API", () => {
         error: null,
       }),
     };
+    const performanceSummaryQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "all",
+            scope: "all",
+            scope_value: null,
+            sample_count: 100,
+            hit_count: 84,
+            miss_count: 16,
+            void_count: 0,
+            pending_count: 0,
+            hit_rate: 0.84,
+            wilson_lower_bound: 0.7558,
+          },
+        ],
+        error: null,
+      }),
+    };
     const supabase: MockSupabaseClient = {
-      from: vi.fn(() => artifactQuery),
+      from: vi.fn((tableName: string) => (
+        tableName === "daily_pick_performance_summary"
+          ? performanceSummaryQuery
+          : artifactQuery
+      )),
     };
     vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
     vi.stubGlobal(
@@ -2146,9 +2171,15 @@ describe("prediction API", () => {
       "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
     );
     const body = await response.json() as {
+      validation: { hitRate: number; sampleCount: number; wilsonLowerBound: number };
       coverage: Record<string, number>;
       items: Array<{ marketFamily: string }>;
     };
+    expect(body.validation).toMatchObject({
+      hitRate: 0.84,
+      sampleCount: 100,
+      wilsonLowerBound: 0.7558,
+    });
     expect(body.items).toHaveLength(1);
     expect(body.items[0].marketFamily).toBe("spreads");
     expect(body.coverage).toEqual({
@@ -2157,7 +2188,7 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(supabase.from).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to persisted daily pick tracking rows when the date artifact is unavailable", async () => {
@@ -2291,9 +2322,9 @@ describe("prediction API", () => {
     };
     expect(body.generatedAt).toBe("2026-04-24T03:00:00Z");
     expect(body.validation).toMatchObject({
-      hitRate: 0.6667,
-      sampleCount: 3,
-      wilsonLowerBound: 0.2077,
+      hitRate: 0.75,
+      sampleCount: 80,
+      wilsonLowerBound: 0.64,
       confidenceReliability: "settled_daily_picks",
       modelScope: "daily_pick_settled_runtime",
     });

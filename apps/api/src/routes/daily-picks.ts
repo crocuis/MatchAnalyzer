@@ -138,6 +138,8 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
     "id, run_id, pick_date, match_id, prediction_id, market_family, selection_label, line_value, market_price, model_probability, market_probability, expected_value, edge, confidence, score, status, validation_metadata, reason_labels, created_at",
   daily_pick_results:
     "id, pick_item_id, result_status",
+  daily_pick_performance_summary:
+    "id, scope, scope_value, sample_count, hit_count, miss_count, void_count, pending_count, hit_rate, wilson_lower_bound, updated_at",
 };
 const DAILY_PICK_MATCH_SELECT =
   "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result";
@@ -206,7 +208,14 @@ function readString(value: unknown): string | null {
 }
 
 function readNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function readBoolean(value: unknown): boolean | null {
@@ -253,6 +262,42 @@ async function readRowsByColumnValue(
     throw new Error(result.error.message);
   }
   return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
+}
+
+function buildPerformanceSummaryFromRow(
+  row: DailyPickRow | null | undefined,
+): DailyPicksValidationSummary | null {
+  if (!row) {
+    return null;
+  }
+  const sampleCount = Math.trunc(readNumber(row.sample_count) ?? 0);
+  const hitRate = readNumber(row.hit_rate);
+  return {
+    hitRate,
+    sampleCount,
+    wilsonLowerBound: readNumber(row.wilson_lower_bound),
+    confidenceReliability:
+      sampleCount > 0 && hitRate !== null
+        ? "settled_daily_picks"
+        : null,
+    modelScope: sampleCount > 0 ? "daily_pick_settled_runtime" : null,
+  };
+}
+
+async function readDailyPickPerformanceSummary(
+  supabase: ApiSupabaseClient,
+): Promise<DailyPicksValidationSummary | null> {
+  try {
+    const rows = await readRowsByColumnValue(
+      supabase,
+      "daily_pick_performance_summary",
+      "id",
+      "all",
+    );
+    return buildPerformanceSummaryFromRow(rows[0]);
+  } catch {
+    return null;
+  }
 }
 
 async function readMatches(
@@ -349,11 +394,11 @@ export async function loadDailyPicksView(
     return id ? [id] : [];
   }))];
 
-  const [teams, competitions, predictions, resultRows] = await Promise.all([
+  const [teams, competitions, predictions, performanceSummary] = await Promise.all([
     readRowsByIds(supabase, "teams", teamIds),
     readRowsByIds(supabase, "competitions", competitionIds),
     readRowsByIds(supabase, "predictions", matchIds, "match_id"),
-    readRows(supabase, "daily_pick_results"),
+    readDailyPickPerformanceSummary(supabase),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
     supabase,
@@ -373,7 +418,7 @@ export async function loadDailyPicksView(
     competitions,
     snapshots,
     predictions,
-    performanceSummary: buildRuntimePerformanceSummary(resultRows),
+    performanceSummary,
     options: normalizedOptions,
   });
 }
@@ -908,10 +953,12 @@ async function loadDailyPicksArtifactView(
     filteredHeldItems,
     options.locale,
   );
+  const performanceSummary = await readDailyPickPerformanceSummary(supabase);
 
   return {
     ...loaded,
     date,
+    validation: performanceSummary ?? loaded.validation,
     coverage: recomputeCoverage(localizedItems, localizedHeldItems),
     items: localizedItems,
     heldItems: localizedHeldItems,
@@ -944,10 +991,15 @@ async function loadTrackedDailyPicksView(
     const matchId = readString(row.match_id);
     return matchId ? [matchId] : [];
   }))];
-  const [matches, results, runs] = await Promise.all([
+  const pickItemIds = [...new Set(pickRows.flatMap((row) => {
+    const pickItemId = readString(row.id);
+    return pickItemId ? [pickItemId] : [];
+  }))];
+  const [matches, results, runs, performanceSummary] = await Promise.all([
     readRowsByIds(supabase, "matches", matchIds),
-    readRows(supabase, "daily_pick_results"),
+    readRowsByIds(supabase, "daily_pick_results", pickItemIds, "pick_item_id"),
     readRowsByColumnValue(supabase, "daily_pick_runs", "pick_date", normalizedOptions.date),
+    readDailyPickPerformanceSummary(supabase),
   ]);
   const matchesById = new Map(
     matches.flatMap((row) => {
@@ -1038,7 +1090,7 @@ async function loadTrackedDailyPicksView(
     generatedAt: readString(runs[0]?.generated_at) ?? new Date().toISOString(),
     date: normalizedOptions.date,
     target: EMPTY_VIEW.target,
-    validation: buildRuntimePerformanceSummary(results),
+    validation: performanceSummary ?? buildRuntimePerformanceSummary(results),
     coverage: {
       moneyline: sortedItems.filter((item) => item.marketFamily === "moneyline").length,
       spreads: sortedItems.filter((item) => item.marketFamily === "spreads").length,
