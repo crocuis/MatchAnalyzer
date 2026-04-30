@@ -1283,6 +1283,59 @@ def test_apply_adaptive_recommendation_gate_holds_weak_segments():
     assert gated["adaptive_validation_gate"]["reasons"] == ["insufficient_sample"]
 
 
+def test_apply_pre_match_prior_repair_prefers_base_model_away_signal():
+    row, repair = run_predictions_job.apply_pre_match_prior_repair_to_prediction_row(
+        {"recommended_pick": "HOME"},
+        match={"competition_id": "champions-league"},
+        base_model_source="trained_baseline",
+        base_model_probs={"home": 0.25, "draw": 0.2, "away": 0.55},
+    )
+
+    assert row["recommended_pick"] == "AWAY"
+    assert repair == {
+        "pick": "AWAY",
+        "strategy": "base_model_away_prior_repair",
+        "source": "base_model_probs",
+    }
+
+
+def test_apply_pre_match_prior_repair_uses_uefa_home_prior_when_away_is_not_favorite():
+    row, repair = run_predictions_job.apply_pre_match_prior_repair_to_prediction_row(
+        {"recommended_pick": "AWAY"},
+        match={"competition_id": "europa-league"},
+        base_model_source="trained_baseline",
+        base_model_probs={"home": 0.42, "draw": 0.31, "away": 0.27},
+    )
+
+    assert row["recommended_pick"] == "HOME"
+    assert repair == {
+        "pick": "HOME",
+        "strategy": "uefa_home_prior_repair",
+        "source": "competition_home_prior",
+    }
+
+
+def test_build_prediction_summary_payload_preserves_prior_repair_metadata():
+    summary = run_predictions_job.build_prediction_summary_payload(
+        {
+            "prior_repair": {
+                "pick": "AWAY",
+                "strategy": "base_model_away_prior_repair",
+                "source": "base_model_probs",
+            },
+            "main_recommendation": {"pick": "AWAY"},
+        }
+    )
+
+    assert summary == {
+        "prior_repair": {
+            "pick": "AWAY",
+            "strategy": "base_model_away_prior_repair",
+            "source": "base_model_probs",
+        }
+    }
+
+
 def test_select_real_prediction_inputs_prefers_explicit_match_ids_over_date():
     snapshot_rows = [
         {"id": "match_a_t_minus_24h", "match_id": "match_a", "checkpoint_type": "T_MINUS_24H"},

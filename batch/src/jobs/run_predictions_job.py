@@ -64,6 +64,7 @@ from batch.src.model.confidence_validation import (
     evaluate_high_confidence_eligibility,
     summarize_validation_segments,
 )
+from batch.src.model.pre_match_prior_repair import choose_pre_match_prior_repair
 from batch.src.model.train_baseline import train_baseline_model
 from batch.src.settings import load_settings
 from batch.src.storage.artifact_store import (
@@ -518,6 +519,27 @@ def apply_adaptive_recommendation_gate(
             ),
         },
     }
+
+
+def apply_pre_match_prior_repair_to_prediction_row(
+    row: dict[str, Any],
+    *,
+    match: dict,
+    base_model_source: str,
+    base_model_probs: dict,
+) -> tuple[dict[str, Any], dict | None]:
+    repair = choose_pre_match_prior_repair(
+        current_pick=str(row.get("recommended_pick") or ""),
+        competition_id=str(match.get("competition_id") or ""),
+        base_model_source=base_model_source,
+        base_model_probs=base_model_probs,
+    )
+    if repair is None:
+        return row, None
+    return {
+        **row,
+        "recommended_pick": repair["pick"],
+    }, repair
 
 
 def read_persisted_value_recommendation(prediction: dict | None) -> dict | None:
@@ -2311,6 +2333,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "base_model_probs",
         "raw_current_fused_probs",
         "current_fused_selection",
+        "prior_repair",
         "raw_confidence_score",
         "calibrated_confidence_score",
         "prediction_market_available",
@@ -2736,6 +2759,7 @@ def main() -> None:
             "selected_source": "raw_fused",
             "historical_candidate_count": 0,
         }
+        prior_repair = None
         if use_real_prediction_targets and current_fused_selector_enabled:
             current_fused_key = (
                 signal_snapshot["checkpoint_type"],
@@ -2807,6 +2831,12 @@ def main() -> None:
                     "selected_source": selected_source,
                     "historical_candidate_count": len(historical_current_fused_candidates),
                 }
+        row, prior_repair = apply_pre_match_prior_repair_to_prediction_row(
+            row,
+            match=match,
+            base_model_source=base_model_source,
+            base_model_probs=base_probs,
+        )
         confidence_bucket_summary = {}
         if use_real_prediction_targets:
             confidence_key = (
@@ -2948,6 +2978,7 @@ def main() -> None:
             "base_model_probs": base_probs,
             "raw_current_fused_probs": raw_fused_probs,
             "current_fused_selection": current_fused_selection,
+            "prior_repair": prior_repair,
             "raw_confidence_score": raw_confidence_score,
             "calibrated_confidence_score": row["confidence_score"],
             "prediction_market_available": feature_context[
