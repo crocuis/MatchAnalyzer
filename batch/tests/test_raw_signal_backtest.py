@@ -296,6 +296,9 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
             "football_data_match_stats_available": 0,
         }
     )
+    missing_divergence_row = dict(base_row)
+    del missing_divergence_row["max_abs_divergence"]
+    assert not _is_daily_pick_candidate(missing_divergence_row)
     assert not _is_daily_pick_candidate(
         {
             **base_row,

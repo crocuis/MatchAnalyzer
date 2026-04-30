@@ -587,6 +587,9 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
 def _is_daily_pick_candidate(row: dict) -> bool:
     if str(row.get("checkpoint") or "") not in PRE_MATCH_CHECKPOINTS:
         return False
+    max_abs_divergence = _read_numeric(row.get("max_abs_divergence"))
+    if max_abs_divergence is None:
+        return False
     has_pre_match_signal = bool(
         row.get("external_rating_available")
         or row.get("understat_xg_available")
@@ -600,8 +603,7 @@ def _is_daily_pick_candidate(row: dict) -> bool:
         in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and float(row.get("confidence") or 0.0)
         >= DAILY_PICK_PRECISION_MIN_CONFIDENCE
-        and float(row.get("max_abs_divergence") or 0.0)
-        <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
+        and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
     )
 
 
