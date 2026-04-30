@@ -7,6 +7,7 @@ from batch.src.model.betting_recommendations import (
     _read_numeric,
 )
 from batch.src.model.confidence_validation import wilson_lower_bound
+from batch.src.model.pre_match_prior_repair import choose_pre_match_prior_repair
 
 
 OUTCOMES = {"HOME", "DRAW", "AWAY"}
@@ -18,11 +19,6 @@ DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
 DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
 DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
-UEFA_CUP_COMPETITIONS = {
-    "champions-league",
-    "conference-league",
-    "europa-league",
-}
 DAILY_PICK_PRECISION_LEAGUES = {
     "bundesliga",
     "la-liga",
@@ -510,19 +506,13 @@ def _choose_prequential_prior_repair(
     *,
     current_pick: str,
 ) -> dict | None:
-    if (
-        str(row.get("probability_source") or "") in {"base_model", "base_model_probs"}
-        and str(row.get("probability_favorite_pick") or "") == "AWAY"
-        and str(current_pick or "") != "AWAY"
-    ):
-        return {"pick": "AWAY", "strategy": "base_model_away_prior_repair"}
-    if (
-        str(row.get("competition_id") or "") in UEFA_CUP_COMPETITIONS
-        and str(row.get("base_model_source") or "") == "trained_baseline"
-        and str(current_pick or "") != "HOME"
-    ):
-        return {"pick": "HOME", "strategy": "uefa_home_prior_repair"}
-    return None
+    return choose_pre_match_prior_repair(
+        current_pick=current_pick,
+        competition_id=str(row.get("competition_id") or ""),
+        base_model_source=str(row.get("base_model_source") or ""),
+        probability_source=str(row.get("probability_source") or ""),
+        probability_favorite_pick=str(row.get("probability_favorite_pick") or ""),
+    )
 
 
 def _prequential_bucket_candidates(row: dict) -> list[tuple[str, tuple]]:
