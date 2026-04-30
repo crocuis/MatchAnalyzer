@@ -127,6 +127,83 @@ def test_sync_daily_picks_tracks_unvalidated_predictions_as_held() -> None:
     ]
 
 
+def test_sync_daily_picks_ignores_post_match_prediction_checkpoints() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-pre",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "snapshot-post",
+                "match_id": "match-1",
+                "checkpoint_type": "POST_MATCH",
+            },
+        ],
+        predictions=[
+            {
+                "id": "prediction-pre",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-pre",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.74,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.74,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "high_confidence_eligible": False,
+                    "confidence_reliability": "insufficient_sample",
+                    "max_abs_divergence": 0.02,
+                    "feature_context": {"external_rating_available": 1},
+                    "validation_metadata": {
+                        "sample_count": 250,
+                        "hit_rate": 0.8,
+                        "wilson_lower_bound": 0.75,
+                    },
+                },
+                "created_at": "2026-04-24T08:00:00Z",
+            },
+            {
+                "id": "prediction-post",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-post",
+                "recommended_pick": "AWAY",
+                "confidence_score": 0.99,
+                "main_recommendation_pick": "AWAY",
+                "main_recommendation_confidence": 0.99,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "high_confidence_eligible": False,
+                    "confidence_reliability": "insufficient_sample",
+                    "max_abs_divergence": 0.0,
+                    "feature_context": {"external_rating_available": 1},
+                    "validation_metadata": {
+                        "sample_count": 250,
+                        "hit_rate": 0.8,
+                        "wilson_lower_bound": 0.75,
+                    },
+                },
+                "created_at": "2026-04-24T21:00:00Z",
+            },
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["prediction_id"] == "prediction-pre"
+    assert items[0]["selection_label"] == "HOME"
+
+
 def test_sync_daily_picks_holds_generic_validated_moneyline_without_precision_support() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",

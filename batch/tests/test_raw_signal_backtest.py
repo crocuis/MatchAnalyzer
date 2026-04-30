@@ -228,6 +228,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
     assert _is_daily_pick_candidate(
         {
             "external_signal_source_summary": "",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 0,
             "competition_id": "premier-league",
@@ -247,6 +248,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
     assert _is_daily_pick_candidate(
         {
             "external_signal_source_summary": "",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 0,
             "understat_xg_available": 0,
             "football_data_match_stats_available": 1,
@@ -262,6 +264,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
 def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
     base_row = {
         "competition_id": "premier-league",
+        "checkpoint": "T_MINUS_24H",
         "external_rating_available": 1,
         "understat_xg_available": 1,
         "football_data_match_stats_available": 1,
@@ -291,6 +294,12 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
             "external_rating_available": 0,
             "understat_xg_available": 0,
             "football_data_match_stats_available": 0,
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
+            "checkpoint": "POST_MATCH",
         }
     )
 
@@ -586,6 +595,7 @@ def test_summarize_raw_moneyline_backtest_separates_full_and_eligible_prequentia
             "prequential_hit": 1,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 0,
             "competition_id": "premier-league",
@@ -632,6 +642,7 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
             "prequential_hit": 1 if index < 205 else 0,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 0,
             "competition_id": "premier-league",
@@ -673,6 +684,7 @@ def test_daily_pick_reliability_requires_250_samples():
             "prequential_hit": 1,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 0,
             "competition_id": "premier-league",
@@ -706,6 +718,7 @@ def test_daily_pick_candidates_include_broad_high_signal_external_rows():
             "prequential_hit": 1 if index < 195 else 0,
             "prequential_quality_candidate": False,
             "external_signal_source_summary": "clubelo+understat",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 1,
             "football_data_match_stats_available": 1,
@@ -738,6 +751,7 @@ def test_daily_pick_precision_candidates_validate_at_eighty_percent_target():
             "prequential_hit": 1 if index < 205 else 0,
             "prequential_quality_candidate": False,
             "external_signal_source_summary": "clubelo+understat",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 1,
             "football_data_match_stats_available": 1,
@@ -766,6 +780,7 @@ def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
             "prequential_hit": 1 if index < 174 else 0,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
+            "checkpoint": "T_MINUS_24H",
             "external_rating_available": 1,
             "understat_xg_available": 0,
             "competition_id": "premier-league",

@@ -41,6 +41,12 @@ DAILY_PICK_PRECISION_LEAGUES = {
     "premier-league",
     "serie-a",
 }
+DAILY_PICK_PRE_MATCH_CHECKPOINTS = {
+    "T_MINUS_24H",
+    "T_MINUS_6H",
+    "T_MINUS_1H",
+    "LINEUP_CONFIRMED",
+}
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -74,7 +80,14 @@ def sync_daily_picks_for_date(
         if not match_id:
             continue
         representative = choose_latest_prediction(
-            predictions_by_match.get(match_id) or [],
+            [
+                row
+                for row in predictions_by_match.get(match_id) or []
+                if _is_pre_match_prediction_checkpoint(
+                    row,
+                    snapshots_by_id=snapshots_by_id,
+                )
+            ],
             snapshots_by_id=snapshots_by_id,
         )
         if representative is None:
@@ -487,6 +500,19 @@ def _is_precision_moneyline_candidate(
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
         and base_model_source in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and _has_pre_match_signal_support(summary_payload)
+    )
+
+
+def _is_pre_match_prediction_checkpoint(
+    prediction: dict,
+    *,
+    snapshots_by_id: dict[str, dict],
+) -> bool:
+    snapshot_id = str(prediction.get("snapshot_id") or "")
+    snapshot = snapshots_by_id.get(snapshot_id)
+    return (
+        str((snapshot or {}).get("checkpoint_type") or "")
+        in DAILY_PICK_PRE_MATCH_CHECKPOINTS
     )
 
 

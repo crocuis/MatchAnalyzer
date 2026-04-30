@@ -37,6 +37,7 @@ CHECKPOINT_PRIORITY = {
     "T_MINUS_1H": 2,
     "LINEUP_CONFIRMED": 3,
 }
+PRE_MATCH_CHECKPOINTS = set(CHECKPOINT_PRIORITY)
 
 
 def build_raw_moneyline_rows(
@@ -584,6 +585,8 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
 
 
 def _is_daily_pick_candidate(row: dict) -> bool:
+    if str(row.get("checkpoint") or "") not in PRE_MATCH_CHECKPOINTS:
+        return False
     has_pre_match_signal = bool(
         row.get("external_rating_available")
         or row.get("understat_xg_available")
