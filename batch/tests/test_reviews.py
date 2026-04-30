@@ -3647,10 +3647,13 @@ def test_run_predictions_job_calibrates_selector_confidence_against_selected_pro
     )
     monkeypatch.setattr(
         run_predictions_job,
-        "build_current_fused_probabilities",
-        lambda _candidates: {
-            "target_match_t_minus_24h": {"home": 0.34, "draw": 0.33, "away": 0.33},
-        },
+        "fit_prequential_current_fused_selector_model",
+        lambda **_kwargs: {"model": "cached"},
+    )
+    monkeypatch.setattr(
+        run_predictions_job,
+        "select_prequential_current_fused_probability",
+        lambda **_kwargs: {"home": 0.34, "draw": 0.33, "away": 0.33},
     )
     monkeypatch.setattr(
         run_predictions_job,

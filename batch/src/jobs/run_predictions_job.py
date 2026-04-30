@@ -50,10 +50,10 @@ from batch.src.model.fusion import (
     confidence_score,
 )
 from batch.src.model.evaluate_prediction_sources import (
-    build_current_fused_probabilities,
     build_variant_evaluation_rows,
     current_fused_selector_history_ready,
     derive_variant_weights,
+    fit_prequential_current_fused_selector_model,
     select_prequential_current_fused_probability,
     summarize_variant_metrics,
 )
@@ -2502,6 +2502,10 @@ def main() -> None:
         tuple[str, str | None, bool],
         list[dict],
     ] = {}
+    current_fused_selector_model_cache: dict[
+        tuple[str, str | None, bool],
+        object | None,
+    ] = {}
     current_fused_selector_enabled = read_env_flag(
         "MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR",
     ) and not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
@@ -2768,18 +2772,20 @@ def main() -> None:
                     "confidence": raw_confidence_score,
                     "context": scoring_context,
                 }
-                if len(historical_current_fused_candidates) <= 50:
-                    selected_fused_probs = build_current_fused_probabilities(
-                        [
-                            *historical_current_fused_candidates,
-                            selector_candidate,
-                        ]
-                    )[signal_snapshot["id"]]
-                else:
-                    selected_fused_probs = select_prequential_current_fused_probability(
-                        candidate=selector_candidate,
-                        historical_candidates=historical_current_fused_candidates,
+                if current_fused_key not in current_fused_selector_model_cache:
+                    current_fused_selector_model_cache[current_fused_key] = (
+                        fit_prequential_current_fused_selector_model(
+                            candidate=selector_candidate,
+                            historical_candidates=historical_current_fused_candidates,
+                        )
                     )
+                selected_fused_probs = select_prequential_current_fused_probability(
+                    candidate=selector_candidate,
+                    historical_candidates=historical_current_fused_candidates,
+                    selector_model=current_fused_selector_model_cache[
+                        current_fused_key
+                    ],
+                )
                 row["home_prob"] = selected_fused_probs["home"]
                 row["draw_prob"] = selected_fused_probs["draw"]
                 row["away_prob"] = selected_fused_probs["away"]

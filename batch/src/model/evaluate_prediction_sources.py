@@ -23,6 +23,7 @@ CURRENT_FUSED_SELECTOR_MIN_ROWS = 6
 CURRENT_FUSED_SELECTOR_MIN_CLASS_COUNT = 2
 MIN_SOURCE_EXCLUSION_SAMPLE = 50
 MAX_BASELINE_HIT_RATE_REGRET = 0.05
+_SELECTOR_MODEL_NOT_PROVIDED = object()
 
 
 def multiclass_brier_score(
@@ -503,7 +504,16 @@ def select_prequential_current_fused_probability(
     *,
     candidate: dict,
     historical_candidates: list[dict],
+    selector_model: object | None = _SELECTOR_MODEL_NOT_PROVIDED,
 ) -> dict[str, float]:
+    if selector_model is not _SELECTOR_MODEL_NOT_PROVIDED:
+        fallback = _current_fused_fallback(candidate)
+        if selector_model is None or not _selector_history_eligible(candidate):
+            return fallback
+        try:
+            return _predict_current_fused_with_selector(candidate, selector_model)
+        except (KeyError, TypeError, ValueError):
+            return fallback
     matching_historical = _matching_historical_candidates(
         candidate=candidate,
         candidates=[
@@ -516,6 +526,30 @@ def select_prequential_current_fused_probability(
         candidate=candidate,
         historical_candidates=matching_historical,
     )
+
+
+def fit_prequential_current_fused_selector_model(
+    *,
+    candidate: dict,
+    historical_candidates: list[dict],
+) -> object | None:
+    matching_historical = _matching_historical_candidates(
+        candidate=candidate,
+        candidates=[
+            row
+            for row in historical_candidates
+            if row.get("actual_outcome") and _selector_history_eligible(row)
+        ],
+    )
+    if (
+        not _selector_history_eligible(candidate)
+        or not current_fused_selector_history_ready(matching_historical)
+    ):
+        return None
+    try:
+        return _fit_current_fused_selector(matching_historical)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def build_current_fused_probabilities(

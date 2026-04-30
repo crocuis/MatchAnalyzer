@@ -3,12 +3,15 @@ import json
 import pytest
 
 from batch.src.jobs import evaluate_prediction_sources_job
+import batch.src.model.evaluate_prediction_sources as source_evaluation
 from batch.src.model.evaluate_prediction_sources import (
     build_current_fused_probabilities,
     build_variant_evaluation_rows,
     derive_variant_weights,
+    fit_prequential_current_fused_selector_model,
     multiclass_brier_score,
     multiclass_log_loss,
+    select_prequential_current_fused_probability,
     summarize_variant_metrics,
     summarize_variant_metrics_by_field,
 )
@@ -302,6 +305,71 @@ def test_build_current_fused_probabilities_fits_in_sample_selector_when_rows_are
     assert max(probabilities["draw-1"], key=probabilities["draw-1"].get) == "draw"
     assert max(probabilities["away-1"], key=probabilities["away-1"].get) == "away"
     assert round(sum(probabilities["away-2"].values()), 5) == 1.0
+
+
+def test_prequential_current_fused_selector_can_reuse_supplied_model(monkeypatch) -> None:
+    historical_candidates = [
+        {
+            "snapshot_id": f"{outcome.lower()}-{index}",
+            "checkpoint": "T_MINUS_24H",
+            "prediction_market_available": False,
+            "actual_outcome": outcome,
+            "base_model_probs": {"home": 0.60, "draw": 0.25, "away": 0.15},
+            "bookmaker_probs": {"home": 0.55, "draw": 0.25, "away": 0.20},
+            "raw_fused_probs": {"home": 0.62, "draw": 0.23, "away": 0.15},
+            "confidence": 0.72,
+            "context": {"source_agreement_ratio": 1.0, "max_abs_divergence": 0.01},
+        }
+        for index, outcome in enumerate(("HOME", "HOME", "DRAW", "DRAW", "AWAY", "AWAY"))
+    ]
+    candidate = {
+        "snapshot_id": "target",
+        "checkpoint": "T_MINUS_24H",
+        "prediction_market_available": False,
+        "actual_outcome": None,
+        "base_model_probs": {"home": 0.50, "draw": 0.30, "away": 0.20},
+        "bookmaker_probs": {"home": 0.45, "draw": 0.35, "away": 0.20},
+        "raw_fused_probs": {"home": 0.48, "draw": 0.34, "away": 0.18},
+        "confidence": 0.58,
+        "context": {"source_agreement_ratio": 0.8, "max_abs_divergence": 0.02},
+    }
+    fit_calls = []
+
+    def fake_fit(rows):
+        fit_calls.append(len(rows))
+        return {"model": "cached"}
+
+    monkeypatch.setattr(source_evaluation, "_fit_current_fused_selector", fake_fit)
+
+    selector_model = fit_prequential_current_fused_selector_model(
+        candidate=candidate,
+        historical_candidates=historical_candidates,
+    )
+
+    assert selector_model == {"model": "cached"}
+    assert fit_calls == [6]
+
+    def fail_if_refit(_rows):
+        raise AssertionError("selector model should be reused")
+
+    monkeypatch.setattr(
+        source_evaluation,
+        "_fit_current_fused_selector",
+        fail_if_refit,
+    )
+    monkeypatch.setattr(
+        source_evaluation,
+        "_predict_current_fused_with_selector",
+        lambda _candidate, _model: {"home": 0.2, "draw": 0.7, "away": 0.1},
+    )
+
+    probabilities = select_prequential_current_fused_probability(
+        candidate=candidate,
+        historical_candidates=historical_candidates,
+        selector_model=selector_model,
+    )
+
+    assert probabilities == {"home": 0.2, "draw": 0.7, "away": 0.1}
 
 
 def test_build_current_fused_probabilities_falls_back_when_class_coverage_is_insufficient() -> None:
