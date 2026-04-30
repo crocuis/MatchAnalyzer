@@ -20,10 +20,14 @@ from batch.src.storage.supabase_client import SupabaseClient
 MAX_DAILY_RECOMMENDATIONS = 10
 MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
-DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads"}
+DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads", "totals"}
 DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
-DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.75
+DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.70
 DAILY_PICK_PRECISION_MAX_DIVERGENCE = 0.03
+DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
+    "centroid_poisson_blend",
+    "trained_baseline_poisson_blend",
+}
 DAILY_PICK_PRECISION_HOLD_REASONS = {
     "below_high_confidence_threshold",
     "below_target_hit_rate",
@@ -241,8 +245,13 @@ def build_moneyline_pick_candidate(
         selection_label=selection_label,
         confidence=confidence,
     )
-    if precision_moneyline_eligible and candidate_base.get("status") == "held":
+    if precision_moneyline_eligible:
         candidate_base = _promote_precision_moneyline_candidate(candidate_base)
+    elif candidate_base.get("status") != "held":
+        candidate_base = _with_daily_pick_hold_reason(
+            candidate_base,
+            "daily_pick_precision_gate_required",
+        )
     return {
         **candidate_base,
         "market_family": "moneyline",
@@ -335,10 +344,10 @@ def _resolve_variant_daily_pick_gate(
     if base.get("status") == "held":
         return base
     hold_reason = None
-    if market_family in DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES:
-        hold_reason = "variant_market_reliability_gap"
-    elif market_family == "totals" and selection_label.lower().startswith("under"):
+    if market_family == "totals" and selection_label.lower().startswith("under"):
         hold_reason = "under_total_reliability_gap"
+    elif market_family in DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES:
+        hold_reason = "variant_market_reliability_gap"
     if hold_reason is None:
         return base
     return _with_daily_pick_hold_reason(base, hold_reason)
@@ -470,11 +479,13 @@ def _is_precision_moneyline_candidate(
         or summary_payload.get("calibrated_confidence_score")
     )
     max_abs_divergence = _read_numeric(summary_payload.get("max_abs_divergence"))
+    base_model_source = _read_text(summary_payload.get("base_model_source"))
     return bool(
         confidence is not None
         and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
         and max_abs_divergence is not None
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
+        and base_model_source in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and _has_pre_match_signal_support(summary_payload)
     )
 

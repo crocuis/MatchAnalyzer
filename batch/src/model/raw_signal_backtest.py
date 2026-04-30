@@ -16,11 +16,21 @@ DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND = 0.45
 DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
 DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
-DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.70
-DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.62
-DEFAULT_DAILY_PICK_MIN_CONFIDENCE = 0.70
-DEFAULT_DAILY_PICK_MIN_SIGNAL_SCORE = 4.0
-DEFAULT_DAILY_PICK_MAX_ABS_DIVERGENCE = 0.03
+DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
+DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
+DAILY_PICK_PRECISION_LEAGUES = {
+    "bundesliga",
+    "la-liga",
+    "ligue-1",
+    "premier-league",
+    "serie-a",
+}
+DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
+    "centroid_poisson_blend",
+    "trained_baseline_poisson_blend",
+}
+DAILY_PICK_PRECISION_MIN_CONFIDENCE = 0.70
+DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE = 0.03
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
     "T_MINUS_6H": 1,
@@ -132,6 +142,7 @@ def build_raw_moneyline_rows(
             {
                 "prediction_id": str(prediction.get("id") or ""),
                 "match_id": str(match.get("id") or ""),
+                "competition_id": str(match.get("competition_id") or ""),
                 "date": str(match.get("kickoff_at") or "")[:10],
                 "checkpoint": str(snapshot.get("checkpoint_type") or ""),
                 "pick": pick,
@@ -362,9 +373,7 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
             "minimum_wilson_lower_bound": (
                 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
             ),
-            "eligibility_filter": (
-                "external_pre_match_signal_with_quality_or_broad_high_signal_gate"
-            ),
+            "eligibility_filter": "domestic_poisson_blend_precision_gate",
         },
     }
 
@@ -582,13 +591,14 @@ def _is_daily_pick_candidate(row: dict) -> bool:
     )
     if not has_pre_match_signal:
         return False
-    if row.get("prequential_quality_candidate") or _is_prequential_quality_candidate(row):
-        return True
     return (
-        float(row.get("confidence") or 0.0) >= DEFAULT_DAILY_PICK_MIN_CONFIDENCE
-        and float(row.get("signal_score") or 0.0) >= DEFAULT_DAILY_PICK_MIN_SIGNAL_SCORE
+        str(row.get("competition_id") or "") in DAILY_PICK_PRECISION_LEAGUES
+        and str(row.get("base_model_source") or "")
+        in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
+        and float(row.get("confidence") or 0.0)
+        >= DAILY_PICK_PRECISION_MIN_CONFIDENCE
         and float(row.get("max_abs_divergence") or 0.0)
-        <= DEFAULT_DAILY_PICK_MAX_ABS_DIVERGENCE
+        <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
     )
 
 

@@ -230,7 +230,10 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
             "external_signal_source_summary": "",
             "external_rating_available": 1,
             "understat_xg_available": 0,
-            "prequential_quality_candidate": True,
+            "competition_id": "premier-league",
+            "base_model_source": "trained_baseline_poisson_blend",
+            "confidence": 0.70,
+            "max_abs_divergence": 0.03,
         }
     )
     assert not _is_daily_pick_candidate(
@@ -247,9 +250,47 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
             "external_rating_available": 0,
             "understat_xg_available": 0,
             "football_data_match_stats_available": 1,
+            "competition_id": "premier-league",
+            "base_model_source": "trained_baseline_poisson_blend",
             "confidence": 0.7,
             "signal_score": 4.0,
             "max_abs_divergence": 0.03,
+        }
+    )
+
+
+def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
+    base_row = {
+        "competition_id": "premier-league",
+        "external_rating_available": 1,
+        "understat_xg_available": 1,
+        "football_data_match_stats_available": 1,
+        "base_model_source": "trained_baseline_poisson_blend",
+        "confidence": 0.70,
+        "signal_score": -12.0,
+        "source_agreement_ratio": 0.0,
+        "max_abs_divergence": 0.03,
+    }
+
+    assert _is_daily_pick_candidate(base_row)
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
+            "competition_id": "champions-league",
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
+            "base_model_source": "trained_baseline",
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
+            "external_rating_available": 0,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
         }
     )
 
@@ -547,11 +588,12 @@ def test_summarize_raw_moneyline_backtest_separates_full_and_eligible_prequentia
             "external_signal_source_summary": "clubelo",
             "external_rating_available": 1,
             "understat_xg_available": 0,
-            "confidence": 0.6,
+            "competition_id": "premier-league",
+            "confidence": 0.7,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
             "max_abs_divergence": 0.0,
-            "base_model_source": "trained_baseline",
+            "base_model_source": "trained_baseline_poisson_blend",
         }
         for index in range(6)
     ]
@@ -587,16 +629,17 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
         {
             "date": f"2026-04-{index + 1:02d}",
             "adjusted_hit": 0,
-            "prequential_hit": 1 if index < 195 else 0,
+            "prequential_hit": 1 if index < 205 else 0,
             "prequential_quality_candidate": True,
             "external_signal_source_summary": "clubelo",
             "external_rating_available": 1,
             "understat_xg_available": 0,
-            "confidence": 0.6,
+            "competition_id": "premier-league",
+            "confidence": 0.7,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
             "max_abs_divergence": 0.0,
-            "base_model_source": "trained_baseline",
+            "base_model_source": "trained_baseline_poisson_blend",
         }
         for index in range(250)
     ]
@@ -604,23 +647,21 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
     summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
 
     assert summary["daily_pick_prequential"]["evaluated_bets"] == 250
-    assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.78
+    assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.82
     assert summary["daily_pick_reliability"]["high_confidence_eligible"] is True
     assert summary["daily_pick_reliability"]["decision"] == "bet"
     assert summary["daily_pick_reliability"]["confidence_reliability"] == "validated"
     assert summary["daily_pick_reliability"]["validation_metadata"] == {
         "model_scope": "daily_pick_prequential",
         "sample_count": 250,
-        "hit_count": 195,
-        "hit_rate": 0.78,
+        "hit_count": 205,
+        "hit_rate": 0.82,
         "coverage": 1.0,
-        "wilson_lower_bound": 0.7246,
+        "wilson_lower_bound": 0.7676,
         "minimum_sample_count": 250,
-        "target_hit_rate": 0.7,
-        "minimum_wilson_lower_bound": 0.62,
-        "eligibility_filter": (
-            "external_pre_match_signal_with_quality_or_broad_high_signal_gate"
-        ),
+        "target_hit_rate": 0.8,
+        "minimum_wilson_lower_bound": 0.75,
+        "eligibility_filter": "domestic_poisson_blend_precision_gate",
     }
 
 
@@ -634,11 +675,12 @@ def test_daily_pick_reliability_requires_250_samples():
             "external_signal_source_summary": "clubelo",
             "external_rating_available": 1,
             "understat_xg_available": 0,
-            "confidence": 0.6,
+            "competition_id": "premier-league",
+            "confidence": 0.7,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
             "max_abs_divergence": 0.0,
-            "base_model_source": "trained_baseline",
+            "base_model_source": "trained_baseline_poisson_blend",
         }
         for index in range(249)
     ]
@@ -667,6 +709,7 @@ def test_daily_pick_candidates_include_broad_high_signal_external_rows():
             "external_rating_available": 1,
             "understat_xg_available": 1,
             "football_data_match_stats_available": 1,
+            "competition_id": "premier-league",
             "confidence": 0.7,
             "signal_score": 4.0,
             "source_agreement_ratio": 1.0,
@@ -681,6 +724,37 @@ def test_daily_pick_candidates_include_broad_high_signal_external_rows():
     assert summary["prequential_quality_candidates"]["evaluated_bets"] == 0
     assert summary["daily_pick_prequential"]["evaluated_bets"] == 250
     assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.78
+    assert (
+        summary["daily_pick_reliability"]["confidence_reliability"]
+        == "below_target_hit_rate"
+    )
+
+
+def test_daily_pick_precision_candidates_validate_at_eighty_percent_target():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 205 else 0,
+            "prequential_quality_candidate": False,
+            "external_signal_source_summary": "clubelo+understat",
+            "external_rating_available": 1,
+            "understat_xg_available": 1,
+            "football_data_match_stats_available": 1,
+            "competition_id": "premier-league",
+            "confidence": 0.7,
+            "signal_score": -12.0,
+            "source_agreement_ratio": 0.0,
+            "max_abs_divergence": 0.03,
+            "base_model_source": "trained_baseline_poisson_blend",
+        }
+        for index in range(250)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["daily_pick_prequential"]["evaluated_bets"] == 250
+    assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.82
     assert summary["daily_pick_reliability"]["confidence_reliability"] == "validated"
 
 
@@ -694,11 +768,12 @@ def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
             "external_signal_source_summary": "clubelo",
             "external_rating_available": 1,
             "understat_xg_available": 0,
-            "confidence": 0.6,
+            "competition_id": "premier-league",
+            "confidence": 0.7,
             "signal_score": 6.0,
             "source_agreement_ratio": 1.0,
             "max_abs_divergence": 0.0,
-            "base_model_source": "trained_baseline",
+            "base_model_source": "trained_baseline_poisson_blend",
         }
         for index in range(250)
     ]
