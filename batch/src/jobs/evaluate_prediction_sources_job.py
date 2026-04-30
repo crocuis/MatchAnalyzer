@@ -7,6 +7,7 @@ from batch.src.jobs.run_predictions_job import (
     build_snapshot_context,
     local_dataset_side_effects_enabled,
     predict_base_probabilities,
+    read_env_flag,
 )
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.evaluate_prediction_sources import (
@@ -47,6 +48,15 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 
 OUTCOME_KEYS = ("home", "draw", "away")
+
+
+def should_archive_source_evaluation_artifacts(local_dataset_dir: object) -> bool:
+    if not local_dataset_side_effects_enabled(local_dataset_dir):
+        return False
+    return not (
+        read_env_flag("MATCH_ANALYZER_SKIP_SOURCE_EVALUATION_ARTIFACT_ARCHIVE")
+        or read_env_flag("MATCH_ANALYZER_SKIP_PREDICTION_ARTIFACT_ARCHIVE")
+    )
 
 
 def read_prediction_payload(prediction: dict | None) -> dict:
@@ -482,7 +492,9 @@ def main() -> None:
         if local_dataset_dir is not None
         else SupabaseClient(settings.supabase_url, settings.supabase_key)
     )
-    persist_external_artifacts = local_dataset_side_effects_enabled(local_dataset_dir)
+    persist_external_artifacts = should_archive_source_evaluation_artifacts(
+        local_dataset_dir
+    )
     r2_client = None
     supabase_storage_client = None
     if persist_external_artifacts:

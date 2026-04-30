@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from batch.src.jobs import evaluate_prediction_sources_job
 from batch.src.model.evaluate_prediction_sources import (
     build_current_fused_probabilities,
     build_variant_evaluation_rows,
@@ -12,6 +13,14 @@ from batch.src.model.evaluate_prediction_sources import (
     summarize_variant_metrics_by_field,
 )
 from batch.src.model.fusion import choose_current_fused_probabilities
+
+
+def test_source_evaluation_artifacts_can_be_disabled_for_experiments(monkeypatch):
+    monkeypatch.setenv("MATCH_ANALYZER_SKIP_PREDICTION_ARTIFACT_ARCHIVE", "1")
+
+    assert not evaluate_prediction_sources_job.should_archive_source_evaluation_artifacts(
+        None
+    )
 
 
 def test_multiclass_scores_reward_better_probabilities() -> None:
@@ -136,6 +145,35 @@ def test_derive_variant_weights_rewards_better_historical_sources() -> None:
     assert round(sum(weights.values()), 5) == 1.0
     assert weights["base_model"] > weights["bookmaker"] > weights["prediction_market"]
     assert weights["base_model"] > 0.4
+
+
+def test_derive_variant_weights_excludes_sources_worse_than_baseline() -> None:
+    weights = derive_variant_weights(
+        {
+            "base_model": {
+                "count": 320,
+                "hit_rate": 0.58,
+                "avg_brier_score": 0.18,
+                "avg_log_loss": 0.93,
+            },
+            "bookmaker": {
+                "count": 278,
+                "hit_rate": 0.56,
+                "avg_brier_score": 0.19,
+                "avg_log_loss": 0.94,
+            },
+            "poisson": {
+                "count": 212,
+                "hit_rate": 0.47,
+                "avg_brier_score": 0.21,
+                "avg_log_loss": 1.04,
+            },
+        }
+    )
+
+    assert round(sum(weights.values()), 5) == 1.0
+    assert "poisson" not in weights
+    assert weights["base_model"] > weights["bookmaker"]
 
 
 def test_build_current_fused_probabilities_fits_in_sample_selector_when_rows_are_separable() -> None:

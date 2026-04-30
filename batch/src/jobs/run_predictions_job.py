@@ -315,10 +315,34 @@ def should_archive_prediction_artifacts(
     target_snapshot_count: int,
     use_real_prediction_targets: bool,
 ) -> bool:
+    if read_env_flag("MATCH_ANALYZER_SKIP_PREDICTION_ARTIFACT_ARCHIVE"):
+        return False
     return (
         not use_real_prediction_targets
         or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
     )
+
+
+def attach_prediction_output_payload(
+    result_payload: dict[str, Any],
+    payload: list[dict[str, Any]],
+    *,
+    use_real_prediction_targets: bool,
+) -> dict[str, Any]:
+    include_output_payload = (
+        os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
+        in {"1", "true", "TRUE", "yes", "YES"}
+        or not use_real_prediction_targets
+        or len(payload) <= 20
+    )
+    if include_output_payload:
+        result_payload["payload"] = payload
+        return result_payload
+
+    result_payload["payload_omitted"] = len(payload)
+    if not read_env_flag("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_SAMPLE"):
+        result_payload["payload_sample"] = payload[:3]
+    return result_payload
 
 
 def local_dataset_side_effects_enabled(local_dataset_dir: object) -> bool:
@@ -3104,17 +3128,11 @@ def main() -> None:
         "daily_pick_tracking_results": daily_pick_tracking_results,
         "skipped_snapshots": skipped_snapshots,
     }
-    include_output_payload = (
-        os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
-        in {"1", "true", "TRUE", "yes", "YES"}
-        or not use_real_prediction_targets
-        or len(payload) <= 20
+    attach_prediction_output_payload(
+        result_payload,
+        payload,
+        use_real_prediction_targets=use_real_prediction_targets,
     )
-    if include_output_payload:
-        result_payload["payload"] = payload
-    else:
-        result_payload["payload_omitted"] = len(payload)
-        result_payload["payload_sample"] = payload[:3]
     print(json.dumps(result_payload, sort_keys=True))
 
 

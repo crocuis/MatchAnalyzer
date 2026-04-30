@@ -21,6 +21,8 @@ CURRENT_FUSED_SELECTOR_MAX_DEPTH = 4
 CURRENT_FUSED_SELECTOR_MIN_SAMPLES_LEAF = 1
 CURRENT_FUSED_SELECTOR_MIN_ROWS = 6
 CURRENT_FUSED_SELECTOR_MIN_CLASS_COUNT = 2
+MIN_SOURCE_EXCLUSION_SAMPLE = 50
+MAX_BASELINE_HIT_RATE_REGRET = 0.05
 
 
 def multiclass_brier_score(
@@ -243,7 +245,13 @@ def derive_variant_weights(
     allowed_variants: tuple[str, ...] = SOURCE_VARIANTS,
 ) -> dict[str, float]:
     scored_variants: dict[str, float] = {}
+    excluded_variants = _underperforming_variants(summary, allowed_variants)
+    active_variants = tuple(
+        variant for variant in allowed_variants if variant not in excluded_variants
+    )
     for variant in allowed_variants:
+        if variant in excluded_variants:
+            continue
         metrics = summary.get(variant)
         if not metrics:
             continue
@@ -264,11 +272,11 @@ def derive_variant_weights(
             scored_variants[variant] = score
 
     if not scored_variants:
-        equal_weight = round(1.0 / len(allowed_variants), 4)
-        return {variant: equal_weight for variant in allowed_variants}
+        equal_weight = round(1.0 / len(active_variants), 4)
+        return {variant: equal_weight for variant in active_variants}
 
     prior_score = min(scored_variants.values()) * 0.6
-    for variant in allowed_variants:
+    for variant in active_variants:
         scored_variants.setdefault(variant, prior_score)
 
     total_score = sum(scored_variants.values())
@@ -284,6 +292,41 @@ def derive_variant_weights(
     first_variant = next(iter(rounded))
     rounded[first_variant] = round(rounded[first_variant] + remainder, 4)
     return rounded
+
+
+def _underperforming_variants(
+    summary: dict[str, dict[str, float | int]],
+    allowed_variants: tuple[str, ...],
+) -> set[str]:
+    baseline = summary.get("base_model")
+    if "base_model" not in allowed_variants or not baseline:
+        return set()
+    baseline_count = int(baseline.get("count", 0))
+    if baseline_count < MIN_SOURCE_EXCLUSION_SAMPLE:
+        return set()
+    baseline_hit_rate = float(baseline.get("hit_rate", 0.0))
+    baseline_brier = float(baseline.get("avg_brier_score", 1.0))
+    baseline_log_loss = float(baseline.get("avg_log_loss", 1.0))
+    excluded = set()
+    for variant in allowed_variants:
+        if variant == "base_model":
+            continue
+        metrics = summary.get(variant)
+        if not metrics:
+            continue
+        count = int(metrics.get("count", 0))
+        if count < MIN_SOURCE_EXCLUSION_SAMPLE:
+            continue
+        hit_rate = float(metrics.get("hit_rate", 0.0))
+        avg_brier_score = float(metrics.get("avg_brier_score", 1.0))
+        avg_log_loss = float(metrics.get("avg_log_loss", 1.0))
+        if (
+            hit_rate <= baseline_hit_rate - MAX_BASELINE_HIT_RATE_REGRET
+            and avg_brier_score >= baseline_brier
+            and avg_log_loss >= baseline_log_loss
+        ):
+            excluded.add(variant)
+    return excluded
 
 
 def build_current_fused_feature_vector(
