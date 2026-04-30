@@ -80,6 +80,7 @@ from batch.src.jobs.backfill_football_data_markets_job import (
 )
 from batch.src.jobs.backfill_assets_job import backfill_assets, iter_dates
 from batch.src.jobs.ingest_fixtures_job import (
+    build_optional_bsd_context,
     build_sync_snapshot_rows,
     build_team_translation_rows,
     collect_changed_fixture_match_ids,
@@ -3951,6 +3952,17 @@ def test_bsd_lineup_context_by_match_merges_event_absences_with_projection(
         "lineup_strength_delta": 0.0,
         "lineup_source_summary": "bsd_predicted_lineups+bsd_unavailable_players",
     }
+
+
+def test_build_optional_bsd_context_skips_transient_network_errors():
+    def failing_builder(api_key: str, events: list[dict]):
+        raise OSError("BSD timeout")
+
+    assert build_optional_bsd_context(
+        failing_builder,
+        "bsd-key",
+        [{"id": "match_001"}],
+    ) == {}
 
 
 def test_match_bsd_events_to_schedule_events_uses_kickoff_and_team_names():
