@@ -15,9 +15,12 @@ DEFAULT_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND = 0.45
 DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
-DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 50
+DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
 DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.70
 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.62
+DEFAULT_DAILY_PICK_MIN_CONFIDENCE = 0.70
+DEFAULT_DAILY_PICK_MIN_SIGNAL_SCORE = 4.0
+DEFAULT_DAILY_PICK_MAX_ABS_DIVERGENCE = 0.03
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
     "T_MINUS_6H": 1,
@@ -209,9 +212,7 @@ def summarize_raw_moneyline_backtest(
     prequential_quality_candidates = [
         row for row in rows if row.get("prequential_quality_candidate")
     ]
-    daily_pick_prequential_rows = [
-        row for row in prequential_quality_candidates if _is_daily_pick_candidate(row)
-    ]
+    daily_pick_prequential_rows = [row for row in rows if _is_daily_pick_candidate(row)]
     all_raw = _summarize_rows(rows, total_count=len(rows))
     all_prequential = _summarize_rows(
         rows,
@@ -362,7 +363,7 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
                 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
             ),
             "eligibility_filter": (
-                "prequential_quality_candidate_with_external_pre_match_signal"
+                "external_pre_match_signal_with_quality_or_broad_high_signal_gate"
             ),
         },
     }
@@ -574,10 +575,20 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
 
 
 def _is_daily_pick_candidate(row: dict) -> bool:
-    return bool(
+    has_pre_match_signal = bool(
         row.get("external_rating_available")
         or row.get("understat_xg_available")
         or row.get("football_data_match_stats_available")
+    )
+    if not has_pre_match_signal:
+        return False
+    if row.get("prequential_quality_candidate") or _is_prequential_quality_candidate(row):
+        return True
+    return (
+        float(row.get("confidence") or 0.0) >= DEFAULT_DAILY_PICK_MIN_CONFIDENCE
+        and float(row.get("signal_score") or 0.0) >= DEFAULT_DAILY_PICK_MIN_SIGNAL_SCORE
+        and float(row.get("max_abs_divergence") or 0.0)
+        <= DEFAULT_DAILY_PICK_MAX_ABS_DIVERGENCE
     )
 
 
