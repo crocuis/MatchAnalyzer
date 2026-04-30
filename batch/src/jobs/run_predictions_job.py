@@ -4,6 +4,7 @@ import os
 import re
 from copy import deepcopy
 from datetime import datetime
+from typing import Any
 
 from batch.src.features.feature_builder import (
     build_prediction_feature_snapshot_row,
