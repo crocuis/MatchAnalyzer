@@ -46,6 +46,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Merge ClubElo/Understat signal updates into snapshots in memory before evaluating.",
     )
     parser.add_argument(
+        "--enable-pre-match-prior-repair",
+        action="store_true",
+        help=(
+            "Include experimental hardcoded pre-match prior repairs in the "
+            "prequential evaluator. Disabled by default because deployment "
+            "eligibility should be driven by validated buckets."
+        ),
+    )
+    parser.add_argument(
         "--clubelo-date-stride-days",
         type=int,
         default=7,
@@ -123,6 +132,7 @@ def main(argv: list[str] | None = None) -> None:
         snapshots=snapshots,
         predictions=predictions,
         latest_per_match=not args.all_snapshots,
+        enable_pre_match_prior_repair=args.enable_pre_match_prior_repair,
     )
     minimum_samples = tuple(args.minimum_samples or (100, 200, 500))
     summary = summarize_raw_moneyline_backtest(

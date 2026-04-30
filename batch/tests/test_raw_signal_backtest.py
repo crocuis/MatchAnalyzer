@@ -60,6 +60,7 @@ def test_build_raw_moneyline_rows_includes_held_predictions_with_raw_signals():
                 },
             }
         ],
+        enable_pre_match_prior_repair=True,
     )
 
     assert len(rows) == 1
@@ -133,6 +134,7 @@ def test_build_raw_moneyline_rows_repairs_uefa_trained_baseline_to_home_prior():
                 },
             }
         ],
+        enable_pre_match_prior_repair=True,
     )
 
     assert rows[0]["pick"] == "AWAY"
@@ -187,6 +189,7 @@ def test_build_raw_moneyline_rows_keeps_base_model_away_favorite_before_home_pri
                 },
             }
         ],
+        enable_pre_match_prior_repair=True,
     )
 
     assert rows[0]["probability_source"] == "base_model_probs"
@@ -338,6 +341,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
             "competition_id": "premier-league",
             "base_model_source": "trained_baseline_poisson_blend",
             "confidence": 0.70,
+            "signal_score": -3.0,
             "max_abs_divergence": 0.03,
         }
     )
@@ -374,7 +378,7 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
         "football_data_match_stats_available": 1,
         "base_model_source": "trained_baseline_poisson_blend",
         "confidence": 0.70,
-        "signal_score": -12.0,
+        "signal_score": -3.0,
         "source_agreement_ratio": 0.0,
         "max_abs_divergence": 0.03,
     }
@@ -395,6 +399,12 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
     assert not _is_daily_pick_candidate(
         {
             **base_row,
+            "base_model_source": "centroid_poisson_blend",
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
             "external_rating_available": 0,
             "understat_xg_available": 0,
             "football_data_match_stats_available": 0,
@@ -407,6 +417,12 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
         {
             **base_row,
             "checkpoint": "POST_MATCH",
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
+            "signal_score": -3.01,
         }
     )
 
@@ -568,9 +584,67 @@ def test_build_raw_moneyline_rows_uses_only_prior_rows_for_prequential_calibrati
 
     assert rows_by_id["prediction-0"]["prequential_strategy"] == "raw_fallback"
     assert rows_by_id["prediction-0"]["prequential_pick"] == "DRAW"
+    assert rows_by_id["prediction-20"]["prequential_strategy"] == "raw_fallback"
+    assert rows_by_id["prediction-20"]["prequential_bucket_sample"] == 0
+    assert rows_by_id["prediction-20"]["prequential_pick"] == "DRAW"
+    assert rows_by_id["prediction-20"]["prequential_hit"] == 0
+
+
+def test_build_raw_moneyline_rows_requires_bucket_to_validate_current_pick():
+    rows = build_raw_moneyline_rows(
+        matches=[
+            {
+                "id": f"match-{index}",
+                "kickoff_at": f"2026-04-{index + 1:02d}T19:00:00Z",
+                "home_team_id": f"home-{index}",
+                "away_team_id": f"away-{index}",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            }
+            for index in range(21)
+        ],
+        snapshots=[
+            {
+                "id": f"snap-{index}",
+                "match_id": f"match-{index}",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+            for index in range(21)
+        ],
+        predictions=[
+            {
+                "id": f"prediction-{index}",
+                "match_id": f"match-{index}",
+                "snapshot_id": f"snap-{index}",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.35,
+                "summary_payload": {
+                    "base_model_source": "prior_fallback",
+                    "source_agreement_ratio": 1.0,
+                    "max_abs_divergence": 0.0,
+                    "main_recommendation": {
+                        "pick": "HOME",
+                        "confidence": 0.35,
+                        "recommended": False,
+                    },
+                    "feature_context": {
+                        "elo_delta": 0.0,
+                        "xg_proxy_delta": 0.0,
+                        "form_delta": 0.0,
+                    },
+                },
+            }
+            for index in range(21)
+        ],
+        latest_per_match=False,
+    )
+
+    rows_by_id = {row["prediction_id"]: row for row in rows}
+
     assert rows_by_id["prediction-20"]["prequential_strategy"] == "bucket_calibrated"
     assert rows_by_id["prediction-20"]["prequential_bucket_sample"] == 20
-    assert rows_by_id["prediction-20"]["prequential_pick"] == "AWAY"
+    assert rows_by_id["prediction-20"]["prequential_pick"] == "HOME"
     assert rows_by_id["prediction-20"]["prequential_hit"] == 1
 
 
@@ -656,10 +730,11 @@ def test_build_raw_moneyline_rows_adds_probability_and_prior_signals():
 
 def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
     rows = [
-        {
-            "date": f"2026-04-{index + 1:02d}",
-            "adjusted_hit": 1 if index < 8 else 0,
-            "prequential_hit": 1 if index < 8 else 0,
+            {
+                "date": f"2026-04-{index + 1:02d}",
+                "hit": 1 if index < 8 else 0,
+                "adjusted_hit": 1 if index < 8 else 0,
+                "prequential_hit": 1 if index < 8 else 0,
             "confidence": 0.6,
             "signal_score": 5.0,
             "source_agreement_ratio": 1.0,
@@ -669,10 +744,11 @@ def test_summarize_raw_moneyline_backtest_reports_best_sample_thresholds():
         for index in range(10)
     ]
     rows.extend(
-        {
-            "date": f"2026-05-{index + 1:02d}",
-            "adjusted_hit": 0,
-            "prequential_hit": 0,
+            {
+                "date": f"2026-05-{index + 1:02d}",
+                "hit": 0,
+                "adjusted_hit": 0,
+                "prequential_hit": 0,
             "confidence": 0.4,
             "signal_score": 0.0,
             "source_agreement_ratio": 0.5,
@@ -779,7 +855,8 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
         "minimum_sample_count": 250,
         "target_hit_rate": 0.8,
         "minimum_wilson_lower_bound": 0.75,
-        "eligibility_filter": "domestic_poisson_blend_precision_gate",
+        "minimum_signal_score": -3.0,
+        "eligibility_filter": "domestic_poisson_blend_signal_score_precision_gate",
     }
 
 
@@ -864,7 +941,7 @@ def test_daily_pick_precision_candidates_validate_at_eighty_percent_target():
             "football_data_match_stats_available": 1,
             "competition_id": "premier-league",
             "confidence": 0.7,
-            "signal_score": -12.0,
+            "signal_score": -3.0,
             "source_agreement_ratio": 0.0,
             "max_abs_divergence": 0.03,
             "base_model_source": "trained_baseline_poisson_blend",
