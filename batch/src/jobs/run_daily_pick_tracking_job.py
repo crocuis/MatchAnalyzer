@@ -18,6 +18,11 @@ from batch.src.model.deployability import (
     is_deployable_base_model_source,
 )
 from batch.src.model.raw_signal_backtest import (
+    DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE,
+    DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT,
+    DAILY_PICK_PRECISION_BASE_MODEL_SOURCES,
+    DAILY_PICK_PRECISION_LEAGUES,
+    DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE,
     DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
     DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
 )
@@ -31,23 +36,12 @@ TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
 DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads", "totals"}
 DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
 DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.70
-DAILY_PICK_PRECISION_MAX_DIVERGENCE = 0.03
-DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
-    "trained_baseline_poisson_blend",
-}
 DAILY_PICK_PRECISION_HOLD_REASONS = {
     "below_high_confidence_threshold",
     "below_target_hit_rate",
     "below_wilson_lower_bound",
     "insufficient_sample",
     CENTROID_DEPLOYABILITY_HOLD_REASON,
-}
-DAILY_PICK_PRECISION_LEAGUES = {
-    "bundesliga",
-    "la-liga",
-    "ligue-1",
-    "premier-league",
-    "serie-a",
 }
 DAILY_PICK_PRE_MATCH_CHECKPOINTS = {
     "T_MINUS_24H",
@@ -408,10 +402,16 @@ def _promote_precision_moneyline_candidate(base: dict) -> dict:
         metadata.setdefault("precision_gate_original_reliability", original_reliability)
     metadata["confidence_reliability"] = "precision_moneyline_supported"
     metadata["high_confidence_eligible"] = False
-    metadata["daily_pick_precision_gate"] = "domestic_moneyline_signal_agreement"
+    metadata["daily_pick_precision_gate"] = (
+        "covered_league_moneyline_signal_agreement_or_high_signal"
+    )
     metadata["minimum_signal_score"] = DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
     metadata["minimum_source_agreement_ratio"] = (
         DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
+    )
+    metadata["expansion_minimum_signal_score"] = DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE
+    metadata["expansion_minimum_source_agreement_ratio"] = (
+        DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT
     )
     return {
         **base,
@@ -513,15 +513,24 @@ def _is_precision_moneyline_candidate(
     moneyline_signal_score = _read_numeric(summary_payload.get("moneyline_signal_score"))
     source_agreement_ratio = _read_numeric(summary_payload.get("source_agreement_ratio"))
     base_model_source = _read_text(summary_payload.get("base_model_source"))
-    return bool(
-        confidence is not None
-        and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
-        and moneyline_signal_score is not None
+    precision_supported = (
+        moneyline_signal_score is not None
         and moneyline_signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
         and source_agreement_ratio is not None
         and source_agreement_ratio >= DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
+    )
+    high_signal_supported = (
+        moneyline_signal_score is not None
+        and moneyline_signal_score >= DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE
+        and source_agreement_ratio is not None
+        and source_agreement_ratio >= DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT
+    )
+    return bool(
+        confidence is not None
+        and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
         and max_abs_divergence is not None
-        and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
+        and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
+        and (precision_supported or high_signal_supported)
         and is_deployable_base_model_source(base_model_source)
         and base_model_source in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and _has_pre_match_signal_support(summary_payload)

@@ -23,17 +23,23 @@ DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
 DAILY_PICK_PRECISION_LEAGUES = {
     "bundesliga",
+    "champions-league",
+    "conference-league",
+    "europa-league",
     "la-liga",
     "ligue-1",
     "premier-league",
     "serie-a",
 }
 DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
+    "trained_baseline",
     "trained_baseline_poisson_blend",
 }
 DAILY_PICK_PRECISION_MIN_CONFIDENCE = 0.70
 DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE = -5.0
 DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT = 0.67
+DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE = 3.0
+DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT = 0.0
 DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE = 0.03
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
@@ -408,8 +414,12 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
             ),
             "minimum_signal_score": DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
             "minimum_source_agreement_ratio": DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
+            "expansion_minimum_signal_score": DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE,
+            "expansion_minimum_source_agreement_ratio": (
+                DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT
+            ),
             "eligibility_filter": (
-                "domestic_poisson_blend_signal_agreement_precision_gate"
+                "covered_league_trained_precision_or_high_signal_gate"
             ),
         },
     }
@@ -801,6 +811,10 @@ def _is_daily_pick_candidate(
     minimum_confidence: float = DAILY_PICK_PRECISION_MIN_CONFIDENCE,
     minimum_signal_score: float = DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
     minimum_source_agreement: float = DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
+    expansion_minimum_signal_score: float = DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE,
+    expansion_minimum_source_agreement: float = (
+        DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT
+    ),
 ) -> bool:
     if str(row.get("checkpoint") or "") not in PRE_MATCH_CHECKPOINTS:
         return False
@@ -817,14 +831,21 @@ def _is_daily_pick_candidate(
     )
     if not has_pre_match_signal:
         return False
+    source_agreement = float(row.get("source_agreement_ratio") or 0.0)
+    precision_supported = (
+        signal_score >= minimum_signal_score
+        and source_agreement >= minimum_source_agreement
+    )
+    high_signal_supported = (
+        signal_score >= expansion_minimum_signal_score
+        and source_agreement >= expansion_minimum_source_agreement
+    )
     return (
         str(row.get("competition_id") or "") in DAILY_PICK_PRECISION_LEAGUES
         and str(row.get("base_model_source") or "")
         in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and float(row.get("confidence") or 0.0) >= minimum_confidence
-        and signal_score >= minimum_signal_score
-        and float(row.get("source_agreement_ratio") or 0.0)
-        >= minimum_source_agreement
+        and (precision_supported or high_signal_supported)
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
     )
 

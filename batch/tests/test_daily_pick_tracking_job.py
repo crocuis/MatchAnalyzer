@@ -675,7 +675,7 @@ def test_sync_daily_picks_keeps_precision_gate_moneyline_only() -> None:
     ]
 
 
-def test_sync_daily_picks_keeps_precision_gate_to_domestic_leagues() -> None:
+def test_sync_daily_picks_allows_precision_gate_for_covered_european_leagues() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -704,7 +704,10 @@ def test_sync_daily_picks_keeps_precision_gate_to_domestic_leagues() -> None:
                 "main_recommendation_recommended": False,
                 "main_recommendation_no_bet_reason": "below_target_hit_rate",
                 "summary_payload": {
+                    "base_model_source": "trained_baseline",
                     "max_abs_divergence": 0.01,
+                    "moneyline_signal_score": 3.0,
+                    "source_agreement_ratio": 0.0,
                     "feature_context": {"external_rating_available": 1},
                     "validation_metadata": {
                         "sample_count": 30,
@@ -717,12 +720,8 @@ def test_sync_daily_picks_keeps_precision_gate_to_domestic_leagues() -> None:
     )
 
     assert len(items) == 1
-    assert items[0]["status"] == "held"
-    assert items[0]["reason_labels"] == [
-        "mainRecommendation",
-        "heldByRecommendationGate",
-        "below_target_hit_rate",
-    ]
+    assert items[0]["status"] == "recommended"
+    assert items[0]["reason_labels"] == ["mainRecommendation"]
 
 
 def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> None:
@@ -787,11 +786,71 @@ def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> N
     assert items[0]["validation_metadata"]["moneyline_signal_score"] == 4.0
     assert (
         items[0]["validation_metadata"]["daily_pick_precision_gate"]
-        == "domestic_moneyline_signal_agreement"
+        == "covered_league_moneyline_signal_agreement_or_high_signal"
     )
     assert (
         items[0]["validation_metadata"]["minimum_source_agreement_ratio"]
         == 0.67
+    )
+    assert (
+        items[0]["validation_metadata"]["expansion_minimum_signal_score"]
+        == 3.0
+    )
+
+
+def test_sync_daily_picks_allows_high_signal_moneyline_without_source_agreement() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.70,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.70,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "high_confidence_eligible": False,
+                    "max_abs_divergence": 0.03,
+                    "moneyline_signal_score": 3.0,
+                    "source_agreement_ratio": 0.0,
+                    "feature_context": {
+                        "external_rating_available": 1,
+                        "understat_xg_available": 1,
+                    },
+                    "validation_metadata": {
+                        "sample_count": 254,
+                        "hit_rate": 0.752,
+                        "wilson_lower_bound": 0.6954,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "recommended"
+    assert (
+        items[0]["validation_metadata"]["confidence_reliability"]
+        == "precision_moneyline_supported"
     )
 
 
