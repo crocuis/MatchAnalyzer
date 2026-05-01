@@ -61,6 +61,18 @@ def is_betman_market_source(value: object) -> bool:
     return "betman" in str(value or "").lower()
 
 
+def is_betman_daily_pick_item(item: dict) -> bool:
+    metadata = item.get("validation_metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    reason_labels = item.get("reason_labels")
+    reason_labels = reason_labels if isinstance(reason_labels, list) else []
+    return (
+        metadata.get("betman_market_available") is True
+        or is_betman_market_source(metadata.get("value_recommendation_market_source"))
+        or "betmanValue" in reason_labels
+    )
+
+
 def sync_daily_picks_for_date(
     *,
     pick_date: str,
@@ -682,7 +694,10 @@ def settle_daily_pick_items(
                 and str(row.get("id") or "") in pending_result_item_ids
             )
         )
-        and row.get("status") == "recommended"
+        and (
+            row.get("status") == "recommended"
+            or is_betman_daily_pick_item(row)
+        )
     ]
 
     results = [
@@ -707,6 +722,19 @@ def settle_daily_pick_items(
                 "settled_item_count": sum(
                     1 for row in selected_items if str(row.get("run_id") or "") == run_id
                 ),
+                "settled_recommended_item_count": sum(
+                    1
+                    for row in selected_items
+                    if str(row.get("run_id") or "") == run_id
+                    and row.get("status") == "recommended"
+                ),
+                "settled_betman_watchlist_item_count": sum(
+                    1
+                    for row in selected_items
+                    if str(row.get("run_id") or "") == run_id
+                    and row.get("status") != "recommended"
+                    and is_betman_daily_pick_item(row)
+                ),
                 "settled_at": datetime.now(timezone.utc).isoformat(),
             },
         }
@@ -722,6 +750,7 @@ def settle_daily_pick_item(
     teams_by_id: dict[str, dict],
 ) -> dict:
     item_id = str(item.get("id") or "")
+    base_metadata = daily_pick_result_metadata(item)
     pending = {
         "id": f"daily_pick_result_{item_id}",
         "pick_item_id": item_id,
@@ -731,10 +760,10 @@ def settle_daily_pick_item(
         "home_score": None,
         "away_score": None,
         "profit": None,
-        "metadata": {},
+        "metadata": base_metadata,
     }
     if match is None:
-        return {**pending, "metadata": {"reason": "match_not_found"}}
+        return {**pending, "metadata": {**base_metadata, "reason": "match_not_found"}}
 
     final_result = _read_text(match.get("final_result"))
     home_score = _read_int(match.get("home_score"))
@@ -750,13 +779,16 @@ def settle_daily_pick_item(
 
     if market_family == "moneyline":
         if final_result not in {"HOME", "DRAW", "AWAY"}:
-            return {**base, "metadata": {"reason": "final_result_missing"}}
+            return {
+                **base,
+                "metadata": {**base_metadata, "reason": "final_result_missing"},
+            }
         hit = selection_label.upper() == final_result
         return {
             **base,
             "result_status": "hit" if hit else "miss",
             "profit": _moneyline_profit(item, hit),
-            "metadata": {"selection_label": selection_label},
+            "metadata": {**base_metadata, "selection_label": selection_label},
         }
 
     if market_family in {"spreads", "totals"}:
@@ -769,7 +801,13 @@ def settle_daily_pick_item(
             teams_by_id=teams_by_id,
         )
         if profit is None:
-            return {**base, "metadata": {"reason": "variant_settlement_incomplete"}}
+            return {
+                **base,
+                "metadata": {
+                    **base_metadata,
+                    "reason": "variant_settlement_incomplete",
+                },
+            }
         if profit > 0:
             result_status = "hit"
         elif profit == 0:
@@ -780,10 +818,25 @@ def settle_daily_pick_item(
             **base,
             "result_status": result_status,
             "profit": profit,
-            "metadata": {"selection_label": selection_label},
+            "metadata": {**base_metadata, "selection_label": selection_label},
         }
 
-    return {**base, "metadata": {"reason": "unknown_market_family"}}
+    return {**base, "metadata": {**base_metadata, "reason": "unknown_market_family"}}
+
+
+def daily_pick_result_metadata(item: dict) -> dict:
+    item_status = str(item.get("status") or "unknown")
+    tracking_scope = (
+        "recommended"
+        if item_status == "recommended"
+        else "betman_watchlist"
+        if is_betman_daily_pick_item(item)
+        else "held"
+    )
+    return {
+        "item_status": item_status,
+        "tracking_scope": tracking_scope,
+    }
 
 
 def build_performance_summaries(
@@ -801,12 +854,21 @@ def build_performance_summaries(
                 )
                 or ""
             ),
+            "item_status": str(
+                (items_by_id.get(str(result.get("pick_item_id") or "")) or {}).get(
+                    "status"
+                )
+                or ""
+            ),
         }
         for result in results
     ]
+    recommended_joined = [
+        row for row in joined if row.get("item_status") == "recommended"
+    ]
 
     summaries = [
-        summarize_result_rows("all", "all", None, joined),
+        summarize_result_rows("all", "all", None, recommended_joined),
     ]
     for market_family in sorted(TRACKED_MARKET_FAMILIES):
         summaries.append(
@@ -816,7 +878,7 @@ def build_performance_summaries(
                 market_family,
                 [
                     row
-                    for row in joined
+                    for row in recommended_joined
                     if row.get("market_family") == market_family
                 ],
             )
