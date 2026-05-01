@@ -420,6 +420,7 @@ def _daily_pick_expansion_diagnostics(
     *,
     current_summary: dict,
 ) -> dict:
+    current_gate_rows = [row for row in rows if _is_daily_pick_candidate(row)]
     high_precision_seed_rows = [
         row
         for row in rows
@@ -484,8 +485,82 @@ def _daily_pick_expansion_diagnostics(
             ),
             "maximum_abs_divergence": DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE,
         },
+        "current_gate_segments": {
+            "by_pick": _segment_summaries(
+                current_gate_rows,
+                lambda row: str(row.get("pick") or "unknown"),
+            ),
+            "by_competition": _segment_summaries(
+                current_gate_rows,
+                lambda row: str(row.get("competition_id") or "unknown"),
+            ),
+            "by_favorite_probability": _segment_summaries(
+                current_gate_rows,
+                _favorite_probability_segment,
+            ),
+            "by_confidence": _segment_summaries(
+                current_gate_rows,
+                _confidence_segment,
+            ),
+            "by_signal_score": _segment_summaries(
+                current_gate_rows,
+                _signal_score_segment,
+            ),
+        },
         "hit_rate_loss_from_seed": round(seed_hit_rate - hit_rate, 4),
     }
+
+
+def _segment_summaries(
+    rows: list[dict],
+    segment_fn,
+    *,
+    minimum_sample_count: int = 10,
+) -> dict:
+    segmented: dict[str, list[dict]] = {}
+    for row in rows:
+        segmented.setdefault(str(segment_fn(row)), []).append(row)
+    summaries = {}
+    for segment, segment_rows in segmented.items():
+        if len(segment_rows) < minimum_sample_count:
+            continue
+        summary = _summarize_rows(
+            segment_rows,
+            hit_field="prequential_hit",
+            total_count=len(rows),
+        )
+        summaries[segment] = {
+            "sample_count": summary.get("evaluated_bets", 0),
+            "hit_count": summary.get("hit_count", 0),
+            "hit_rate": summary.get("live_betting_hit_rate", 0.0),
+            "wilson_lower_bound": summary.get("wilson_lower_bound", 0.0),
+        }
+    return summaries
+
+
+def _favorite_probability_segment(row: dict) -> str:
+    probability = float(row.get("probability_favorite_probability") or 0.0)
+    if probability >= 0.65:
+        return "favorite_probability>=0.65"
+    if probability >= 0.60:
+        return "favorite_probability=0.60-0.65"
+    return "favorite_probability<0.60"
+
+
+def _confidence_segment(row: dict) -> str:
+    confidence = float(row.get("confidence") or 0.0)
+    if confidence >= 0.75:
+        return "confidence>=0.75"
+    return "confidence=0.70-0.75"
+
+
+def _signal_score_segment(row: dict) -> str:
+    signal_score = float(row.get("signal_score") or 0.0)
+    if signal_score >= 4.0:
+        return "signal_score>=4"
+    if signal_score >= 1.0:
+        return "signal_score=1-4"
+    return "signal_score=-5-1"
 
 
 def _read_prediction_payload(prediction: dict) -> dict:
