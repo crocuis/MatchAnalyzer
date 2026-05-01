@@ -965,6 +965,42 @@ def test_daily_pick_precision_candidates_validate_at_eighty_percent_target():
     assert summary["daily_pick_reliability"]["confidence_reliability"] == "validated"
 
 
+def test_daily_pick_expansion_diagnostics_explain_precision_gap():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 191 else 0,
+            "prequential_quality_candidate": False,
+            "external_signal_source_summary": "clubelo+understat",
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 1,
+            "football_data_match_stats_available": 1,
+            "competition_id": "premier-league",
+            "confidence": 0.75 if index < 112 else 0.7,
+            "signal_score": 4.0 if index < 112 else -5.0,
+            "source_agreement_ratio": 0.67,
+            "max_abs_divergence": 0.03,
+            "base_model_source": "trained_baseline_poisson_blend",
+        }
+        for index in range(251)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows)
+
+    assert "250" in summary["prequential_best_by_minimum_sample"]
+    diagnostics = summary["daily_pick_expansion_diagnostics"]
+    assert diagnostics["status"] == "needs_precision_improvement"
+    assert diagnostics["sample_shortfall"] == 0
+    assert diagnostics["additional_hits_needed_for_target"] == 10
+    assert diagnostics["current_gate"]["sample_count"] == 251
+    assert diagnostics["current_gate"]["hit_rate"] == 0.761
+    assert diagnostics["high_precision_seed"]["sample_count"] == 112
+    assert diagnostics["high_precision_seed"]["hit_rate"] == 1.0
+    assert diagnostics["hit_rate_loss_from_seed"] == 0.239
+
+
 def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
     rows = [
         {

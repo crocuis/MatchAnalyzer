@@ -17,6 +17,7 @@ DEFAULT_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND = 0.45
 DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE = 0.58
 DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND = 0.55
+DEFAULT_BACKTEST_MINIMUM_SAMPLES = (100, 200, 250, 500)
 DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
 DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
@@ -223,7 +224,7 @@ def build_raw_moneyline_rows(
 def summarize_raw_moneyline_backtest(
     rows: list[dict],
     *,
-    minimum_samples: tuple[int, ...] = (100, 200, 500),
+    minimum_samples: tuple[int, ...] = DEFAULT_BACKTEST_MINIMUM_SAMPLES,
 ) -> dict:
     prequential_calibrated_rows = [
         row for row in rows if row.get("prequential_strategy") == "bucket_calibrated"
@@ -275,6 +276,10 @@ def summarize_raw_moneyline_backtest(
         "daily_pick_prequential": daily_pick_prequential,
         "daily_pick_reliability": _daily_pick_reliability_summary(
             daily_pick_prequential,
+        ),
+        "daily_pick_expansion_diagnostics": _daily_pick_expansion_diagnostics(
+            rows,
+            current_summary=daily_pick_prequential,
         ),
         "prequential_calibrated": _summarize_rows(
             prequential_calibrated_rows,
@@ -407,6 +412,79 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
                 "domestic_poisson_blend_signal_agreement_precision_gate"
             ),
         },
+    }
+
+
+def _daily_pick_expansion_diagnostics(
+    rows: list[dict],
+    *,
+    current_summary: dict,
+) -> dict:
+    high_precision_seed_rows = [
+        row
+        for row in rows
+        if _is_daily_pick_candidate(
+            row,
+            minimum_confidence=0.75,
+            minimum_signal_score=4.0,
+            minimum_source_agreement=DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
+        )
+    ]
+    high_precision_seed = _summarize_rows(
+        high_precision_seed_rows,
+        hit_field="prequential_hit",
+        total_count=len(rows),
+    )
+    sample_count = int(current_summary.get("evaluated_bets") or 0)
+    hit_count = int(current_summary.get("hit_count") or 0)
+    required_hits = int((DEFAULT_DAILY_PICK_TARGET_HIT_RATE * sample_count) + 0.999999)
+    sample_shortfall = max(DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT - sample_count, 0)
+    additional_hits_needed = max(required_hits - hit_count, 0)
+    hit_rate = float(current_summary.get("live_betting_hit_rate") or 0.0)
+    lower_bound = float(current_summary.get("wilson_lower_bound") or 0.0)
+    seed_hit_rate = float(high_precision_seed.get("live_betting_hit_rate") or 0.0)
+    if sample_shortfall > 0:
+        status = "insufficient_sample"
+    elif (
+        hit_rate >= DEFAULT_DAILY_PICK_TARGET_HIT_RATE
+        and lower_bound >= DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
+    ):
+        status = "validated"
+    else:
+        status = "needs_precision_improvement"
+    return {
+        "status": status,
+        "minimum_sample_count": DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+        "target_hit_rate": DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
+        "minimum_wilson_lower_bound": DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND,
+        "sample_shortfall": sample_shortfall,
+        "additional_hits_needed_for_target": additional_hits_needed,
+        "required_hits_for_target": required_hits,
+        "current_gate": {
+            "sample_count": sample_count,
+            "hit_count": hit_count,
+            "hit_rate": hit_rate,
+            "wilson_lower_bound": lower_bound,
+            "minimum_confidence": DAILY_PICK_PRECISION_MIN_CONFIDENCE,
+            "minimum_signal_score": DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
+            "minimum_source_agreement_ratio": (
+                DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
+            ),
+            "maximum_abs_divergence": DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE,
+        },
+        "high_precision_seed": {
+            "sample_count": high_precision_seed.get("evaluated_bets", 0),
+            "hit_count": high_precision_seed.get("hit_count", 0),
+            "hit_rate": seed_hit_rate,
+            "wilson_lower_bound": high_precision_seed.get("wilson_lower_bound", 0.0),
+            "minimum_confidence": 0.75,
+            "minimum_signal_score": 4.0,
+            "minimum_source_agreement_ratio": (
+                DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
+            ),
+            "maximum_abs_divergence": DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE,
+        },
+        "hit_rate_loss_from_seed": round(seed_hit_rate - hit_rate, 4),
     }
 
 
@@ -642,7 +720,13 @@ def _is_prequential_quality_candidate(row: dict) -> bool:
     )
 
 
-def _is_daily_pick_candidate(row: dict) -> bool:
+def _is_daily_pick_candidate(
+    row: dict,
+    *,
+    minimum_confidence: float = DAILY_PICK_PRECISION_MIN_CONFIDENCE,
+    minimum_signal_score: float = DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
+    minimum_source_agreement: float = DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
+) -> bool:
     if str(row.get("checkpoint") or "") not in PRE_MATCH_CHECKPOINTS:
         return False
     max_abs_divergence = _read_numeric(row.get("max_abs_divergence"))
@@ -662,11 +746,10 @@ def _is_daily_pick_candidate(row: dict) -> bool:
         str(row.get("competition_id") or "") in DAILY_PICK_PRECISION_LEAGUES
         and str(row.get("base_model_source") or "")
         in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
-        and float(row.get("confidence") or 0.0)
-        >= DAILY_PICK_PRECISION_MIN_CONFIDENCE
-        and signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
+        and float(row.get("confidence") or 0.0) >= minimum_confidence
+        and signal_score >= minimum_signal_score
         and float(row.get("source_agreement_ratio") or 0.0)
-        >= DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
+        >= minimum_source_agreement
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
     )
 
