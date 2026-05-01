@@ -141,7 +141,10 @@ def prediction_stage_read_cache():
 def run_stage_for_date(stage: str, target_date: str) -> dict:
     env_name, runner = PIPELINE_STAGE_CONFIG[stage]
     previous_value = os.environ.get(env_name)
+    previous_exact_date_only = os.environ.get("REAL_PREDICTION_EXACT_DATE_ONLY")
     os.environ[env_name] = target_date
+    if stage == "predictions":
+        os.environ["REAL_PREDICTION_EXACT_DATE_ONLY"] = "1"
     buffer = io.StringIO()
     try:
         with contextlib.redirect_stdout(buffer):
@@ -164,6 +167,10 @@ def run_stage_for_date(stage: str, target_date: str) -> dict:
             os.environ.pop(env_name, None)
         else:
             os.environ[env_name] = previous_value
+        if previous_exact_date_only is None:
+            os.environ.pop("REAL_PREDICTION_EXACT_DATE_ONLY", None)
+        else:
+            os.environ["REAL_PREDICTION_EXACT_DATE_ONLY"] = previous_exact_date_only
 
     lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
     if not lines:

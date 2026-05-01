@@ -625,6 +625,14 @@ def main() -> None:
         if artifact_rows
         else 0
     )
+    latest_report_row_artifact_id = (
+        latest_report_artifact_id
+        if persist_external_artifacts
+        else (previous_latest_report or {}).get("artifact_id")
+    )
+    history_report_row_artifact_id = (
+        history_report_artifact_id if persist_external_artifacts else None
+    )
     persisted_rows = client.upsert_rows(
         "prediction_source_evaluation_reports",
         [
@@ -634,7 +642,7 @@ def main() -> None:
                     "report_payload": report_summary,
                     "snapshots_evaluated": report["snapshots_evaluated"],
                     "rows_evaluated": report["rows_evaluated"],
-                    "artifact_id": latest_report_artifact_id,
+                    "artifact_id": latest_report_row_artifact_id,
                 },
                 rollout_channel=rollout_channel,
                 rollout_version=rollout_version,
@@ -653,7 +661,7 @@ def main() -> None:
                     "report_payload": report_summary,
                     "snapshots_evaluated": report["snapshots_evaluated"],
                     "rows_evaluated": report["rows_evaluated"],
-                    "artifact_id": history_report_artifact_id,
+                    "artifact_id": history_report_row_artifact_id,
                 },
                 rollout_channel=rollout_channel,
                 rollout_version=rollout_version,
@@ -671,6 +679,14 @@ def main() -> None:
         current_policy_payload,
         previous_latest_policy.get("policy_payload") if previous_latest_policy else None,
     )
+    latest_policy_row_artifact_id = (
+        latest_policy_artifact_id
+        if persist_external_artifacts
+        else (previous_latest_policy or {}).get("artifact_id")
+    )
+    history_policy_row_artifact_id = (
+        history_policy_artifact_id if persist_external_artifacts else None
+    )
     persisted_policy_rows = client.upsert_rows(
         "prediction_fusion_policies",
         [
@@ -683,7 +699,7 @@ def main() -> None:
                     comparison_payload=policy_comparison,
                     history_row_id=policy_history_id,
                     created_at=created_at,
-                    artifact_id=latest_policy_artifact_id,
+                    artifact_id=latest_policy_row_artifact_id,
                     policy_id="latest",
                 ),
                 "policy_payload": current_policy_summary,
@@ -702,7 +718,7 @@ def main() -> None:
                     rollout_channel=rollout_channel,
                     comparison_payload=policy_comparison,
                     created_at=created_at,
-                    artifact_id=history_policy_artifact_id,
+                    artifact_id=history_policy_row_artifact_id,
                 ),
                 "policy_payload": current_policy_summary,
             }
