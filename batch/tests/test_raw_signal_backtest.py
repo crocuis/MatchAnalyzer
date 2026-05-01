@@ -371,7 +371,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
     )
 
 
-def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
+def test_daily_pick_candidate_uses_covered_league_trained_precision_gate():
     base_row = {
         "competition_id": "premier-league",
         "checkpoint": "T_MINUS_24H",
@@ -386,16 +386,19 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
     }
 
     assert _is_daily_pick_candidate(base_row)
-    assert not _is_daily_pick_candidate(
+    assert _is_daily_pick_candidate(
         {
             **base_row,
             "competition_id": "champions-league",
+            "base_model_source": "trained_baseline",
+            "signal_score": 3.0,
+            "source_agreement_ratio": 0.0,
         }
     )
     assert not _is_daily_pick_candidate(
         {
             **base_row,
-            "base_model_source": "trained_baseline",
+            "competition_id": "world-cup",
         }
     )
     assert not _is_daily_pick_candidate(
@@ -865,7 +868,9 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
         "minimum_wilson_lower_bound": 0.75,
         "minimum_signal_score": -5.0,
         "minimum_source_agreement_ratio": 0.67,
-        "eligibility_filter": "domestic_poisson_blend_signal_agreement_precision_gate",
+        "expansion_minimum_signal_score": 3.0,
+        "expansion_minimum_source_agreement_ratio": 0.0,
+        "eligibility_filter": "covered_league_trained_precision_or_high_signal_gate",
     }
 
 
@@ -930,6 +935,38 @@ def test_daily_pick_candidates_include_broad_high_signal_external_rows():
     assert summary["prequential_quality_candidates"]["evaluated_bets"] == 0
     assert summary["daily_pick_prequential"]["evaluated_bets"] == 250
     assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.78
+    assert (
+        summary["daily_pick_reliability"]["confidence_reliability"]
+        == "below_target_hit_rate"
+    )
+
+
+def test_daily_pick_candidates_include_high_signal_rows_without_source_agreement():
+    rows = [
+        {
+            "date": f"2026-04-{index + 1:02d}",
+            "adjusted_hit": 0,
+            "prequential_hit": 1 if index < 188 else 0,
+            "prequential_quality_candidate": False,
+            "external_signal_source_summary": "clubelo+understat",
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 1,
+            "football_data_match_stats_available": 1,
+            "competition_id": "premier-league",
+            "confidence": 0.7,
+            "signal_score": 3.0,
+            "source_agreement_ratio": 0.0,
+            "max_abs_divergence": 0.03,
+            "base_model_source": "trained_baseline_poisson_blend",
+        }
+        for index in range(250)
+    ]
+
+    summary = summarize_raw_moneyline_backtest(rows, minimum_samples=(5,))
+
+    assert summary["daily_pick_prequential"]["evaluated_bets"] == 250
+    assert summary["daily_pick_prequential"]["live_betting_hit_rate"] == 0.752
     assert (
         summary["daily_pick_reliability"]["confidence_reliability"]
         == "below_target_hit_rate"
