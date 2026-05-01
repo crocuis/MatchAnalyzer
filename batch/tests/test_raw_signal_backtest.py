@@ -404,6 +404,12 @@ def test_daily_pick_candidate_uses_covered_league_trained_precision_gate():
     assert not _is_daily_pick_candidate(
         {
             **base_row,
+            "competition_id": "serie-a",
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
             "base_model_source": "centroid_poisson_blend",
         }
     )
