@@ -15,6 +15,7 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 
 DEFAULT_LOOKBACK_MINUTES = 60
+DEFAULT_TARGET_DATE_CHECKPOINT_TYPES = ("T_MINUS_24H", "T_MINUS_6H", "T_MINUS_1H")
 EXTERNAL_SIGNAL_FIELDS = (
     "external_home_elo",
     "external_away_elo",
@@ -132,6 +133,17 @@ def read_positive_int_env(name: str, default: int) -> int:
     return value
 
 
+def parse_checkpoint_types(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return DEFAULT_TARGET_DATE_CHECKPOINT_TYPES
+    checkpoint_types = tuple(
+        checkpoint.strip().upper()
+        for checkpoint in value.split(",")
+        if checkpoint.strip()
+    )
+    return checkpoint_types or DEFAULT_TARGET_DATE_CHECKPOINT_TYPES
+
+
 def select_due_prediction_targets(
     matches: list[dict],
     *,
@@ -173,6 +185,42 @@ def select_due_prediction_targets(
             )
     return sorted(
         targets_by_key.values(),
+        key=lambda target: (target.kickoff_at, target.match_id, target.checkpoint),
+    )
+
+
+def select_target_date_prediction_targets(
+    matches: list[dict],
+    *,
+    now: datetime,
+    target_date: str,
+    checkpoint_types: tuple[str, ...] = DEFAULT_TARGET_DATE_CHECKPOINT_TYPES,
+) -> list[PredictionSyncTarget]:
+    targets: list[PredictionSyncTarget] = []
+    for match in matches:
+        match_id = str(match.get("id") or "")
+        kickoff_at = parse_utc_datetime(match.get("kickoff_at"))
+        if not match_id or kickoff_at is None or kickoff_at <= now:
+            continue
+        if kickoff_at.date().isoformat() != target_date:
+            continue
+        if match.get("final_result") is not None:
+            continue
+        for checkpoint in checkpoint_types:
+            targets.append(
+                PredictionSyncTarget(
+                    match_id=match_id,
+                    kickoff_at=kickoff_at,
+                    checkpoint=checkpoint,
+                    window_name="TARGET_DATE_MARKET_SYNC",
+                    refresh_daily_pick=checkpoint != "T_MINUS_72H",
+                    refresh_external_signals=checkpoint == "T_MINUS_24H",
+                    refresh_lineup=checkpoint
+                    in {"T_MINUS_24H", "T_MINUS_6H", "T_MINUS_1H", "LINEUP_CONFIRMED"},
+                )
+            )
+    return sorted(
+        targets,
         key=lambda target: (target.kickoff_at, target.match_id, target.checkpoint),
     )
 
@@ -353,16 +401,26 @@ def sync_prediction_checkpoints(
     *,
     now: datetime | None = None,
     lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
+    target_date: str | None = None,
+    target_checkpoint_types: tuple[str, ...] = DEFAULT_TARGET_DATE_CHECKPOINT_TYPES,
     bsd_api_key: str | None = None,
 ) -> dict:
     observed_at = now or datetime.now(timezone.utc)
     matches = client.read_rows("matches")
     existing_snapshots = client.read_rows("match_snapshots")
-    targets = select_due_prediction_targets(
-        matches,
-        now=observed_at,
-        lookback_minutes=lookback_minutes,
-    )
+    if target_date:
+        targets = select_target_date_prediction_targets(
+            matches,
+            now=observed_at,
+            target_date=target_date,
+            checkpoint_types=target_checkpoint_types,
+        )
+    else:
+        targets = select_due_prediction_targets(
+            matches,
+            now=observed_at,
+            lookback_minutes=lookback_minutes,
+        )
     lineup_targets = [target for target in targets if target.refresh_lineup]
     teams = client.read_rows("teams") if lineup_targets else []
     rotowire_lineup_contexts = refresh_rotowire_lineup_contexts_for_targets(
@@ -418,6 +476,10 @@ def sync_prediction_checkpoints(
         "bsd_lineup_contexts": len(bsd_lineup_contexts),
         "bsd_lineup_target_match_ids": bsd_lineup_target_match_ids,
         "lookback_minutes": lookback_minutes,
+        "target_date": target_date,
+        "target_checkpoint_types": list(target_checkpoint_types)
+        if target_date
+        else None,
         "targets": [
             {
                 "match_id": target.match_id,
@@ -442,6 +504,10 @@ def main() -> None:
         lookback_minutes=read_positive_int_env(
             "PREDICTION_SYNC_LOOKBACK_MINUTES",
             DEFAULT_LOOKBACK_MINUTES,
+        ),
+        target_date=os.environ.get("PREDICTION_SYNC_TARGET_DATE"),
+        target_checkpoint_types=parse_checkpoint_types(
+            os.environ.get("PREDICTION_SYNC_TARGET_CHECKPOINT_TYPES")
         ),
         bsd_api_key=getattr(settings, "bsd_api_key", None),
     )

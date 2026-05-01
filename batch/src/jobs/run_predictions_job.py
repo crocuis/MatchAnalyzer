@@ -463,6 +463,18 @@ def select_betman_moneyline_market_row(
     return None
 
 
+def select_variant_rows_before_kickoff(
+    variant_rows: list[dict],
+    *,
+    kickoff_at: str | None = None,
+) -> list[dict]:
+    return [
+        row
+        for row in variant_rows
+        if is_market_observed_before_kickoff(row, kickoff_at=kickoff_at)
+    ]
+
+
 def build_market_probabilities(
     snapshot_id: str,
     market_by_snapshot: dict[str, dict[str, dict]],
@@ -2345,7 +2357,11 @@ def build_variant_markets(
     teams_by_id: dict[str, dict] | None = None,
 ) -> list[dict]:
     markets = []
-    for row in variant_rows:
+    kickoff_at = str(match.get("kickoff_at") or "") if match else None
+    for row in select_variant_rows_before_kickoff(
+        variant_rows,
+        kickoff_at=kickoff_at,
+    ):
         raw_payload = row.get("raw_payload") or {}
         line_value = _read_numeric(row.get("line_value"))
         market_family = row["market_family"]
@@ -2988,8 +3004,12 @@ def main() -> None:
                 else "betman_missing"
             ),
         )
-        variant_markets = build_variant_markets(
+        snapshot_variant_rows = select_variant_rows_before_kickoff(
             variant_rows_by_snapshot.get(snapshot["id"], []),
+            kickoff_at=match.get("kickoff_at"),
+        )
+        variant_markets = build_variant_markets(
+            snapshot_variant_rows,
             snapshot=signal_snapshot,
             match=match,
             teams_by_id=teams_by_id,
@@ -3105,7 +3125,7 @@ def main() -> None:
             "source_metadata": source_metadata,
             "market_enrichment": build_market_enrichment_summary(
                 prediction_market=prediction_market,
-                variant_market_rows=variant_rows_by_snapshot.get(snapshot["id"], []),
+                variant_market_rows=snapshot_variant_rows,
                 existing_prediction=existing_prediction,
                 existing_prediction_payload=existing_prediction_payload,
                 preserved_market_enrichment=preserved_market_enrichment,

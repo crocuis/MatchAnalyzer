@@ -47,8 +47,14 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
     assert "workflow_dispatch:" in workflow
     assert "target_date:" in workflow
     assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
+    assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
+    assert "BSD_LINEUP_LOOKAHEAD_HOURS: 48" in workflow
     assert "MARKET_CHECKPOINT_TYPES: T_MINUS_24H,T_MINUS_6H,T_MINUS_1H,LINEUP_CONFIRMED" in workflow
     assert "REAL_MARKET_DATE=" in workflow
+    assert "Sync market target snapshots" in workflow
+    assert 'PREDICTION_SYNC_TARGET_DATE="$REAL_MARKET_DATE"' in workflow
+    assert 'PREDICTION_SYNC_TARGET_CHECKPOINT_TYPES="$MARKET_CHECKPOINT_TYPES"' in workflow
+    assert "python3 -m batch.src.jobs.sync_prediction_checkpoints_job" in workflow
     assert "Changed market match ids: $CHANGED_MATCH_IDS" in workflow
     assert "Prediction refresh is intentionally deferred" in workflow
     assert "REAL_PREDICTION_MATCH_IDS" not in workflow

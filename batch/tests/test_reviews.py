@@ -88,6 +88,44 @@ def test_build_market_probabilities_ignores_prediction_market_observed_after_kic
     assert prediction_market is None
 
 
+def test_build_variant_markets_ignores_rows_observed_after_kickoff():
+    markets = run_predictions_job.build_variant_markets(
+        [
+            {
+                "id": "match_t_minus_24h_betman_spreads",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "betman_spreads",
+                "market_family": "spreads",
+                "selection_a_label": "Home -1",
+                "selection_a_price": 0.61,
+                "selection_b_label": "Away +1",
+                "selection_b_price": 0.39,
+                "line_value": -1,
+                "raw_payload": {},
+                "observed_at": "2026-04-22T23:06:19+00:00",
+            },
+            {
+                "id": "match_t_minus_24h_football_data_spreads",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "football_data_spreads",
+                "market_family": "spreads",
+                "selection_a_label": "Home -0.25",
+                "selection_a_price": 0.52,
+                "selection_b_label": "Away +0.25",
+                "selection_b_price": 0.48,
+                "line_value": -0.25,
+                "raw_payload": {},
+                "observed_at": "2026-04-22T18:00:00+00:00",
+            },
+        ],
+        match={"kickoff_at": "2026-04-22T19:00:00+00:00"},
+    )
+
+    assert [market["source_name"] for market in markets] == ["football_data_spreads"]
+
+
 def test_prediction_job_skips_daily_pick_sync_for_match_id_refreshes():
     assert not should_sync_daily_pick_tracking_after_predictions(
         persist_side_effects=True,
