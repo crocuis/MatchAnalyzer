@@ -543,6 +543,11 @@ def _daily_pick_expansion_diagnostics(
             target_hit_rate=DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
             minimum_sample_count=DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
         ),
+        "weak_segment_frontier": _daily_pick_weak_segment_frontier(
+            current_gate_rows,
+            target_hit_rate=DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
+            minimum_sample_count=DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+        ),
         "hit_rate_loss_from_seed": round(seed_hit_rate - hit_rate, 4),
     }
 
@@ -586,6 +591,113 @@ def _daily_pick_target_feasibility(
         "best_case_hit_rate": round(best_case_hit_rate, 4),
         "target_reachable_by_filtering": target_reachable_by_filtering,
     }
+
+
+def _daily_pick_weak_segment_frontier(
+    rows: list[dict],
+    *,
+    target_hit_rate: float,
+    minimum_sample_count: int,
+    minimum_segment_sample: int = 5,
+    maximum_candidates: int = 10,
+) -> list[dict]:
+    if not rows:
+        return []
+    current_sample_count = len(rows)
+    current_hit_count = sum(int(row.get("prequential_hit") or 0) for row in rows)
+    removal_budget = max(current_sample_count - minimum_sample_count, 0)
+    if removal_budget <= 0:
+        return []
+
+    segment_rows: dict[tuple[tuple[str, object], ...], list[dict]] = {}
+    for row in rows:
+        values = _daily_pick_frontier_segment_values(row)
+        for segment in [(value,) for value in values]:
+            segment_rows.setdefault(segment, []).append(row)
+        for index, left in enumerate(values):
+            for right in values[index + 1 :]:
+                if left[0] == right[0]:
+                    continue
+                segment_rows.setdefault((left, right), []).append(row)
+
+    candidates = []
+    for segment, segment_group in segment_rows.items():
+        sample_count = len(segment_group)
+        if sample_count < minimum_segment_sample or sample_count > removal_budget:
+            continue
+        hit_count = sum(int(row.get("prequential_hit") or 0) for row in segment_group)
+        miss_count = sample_count - hit_count
+        if miss_count <= 0:
+            continue
+        remaining_sample_count = current_sample_count - sample_count
+        remaining_hit_count = current_hit_count - hit_count
+        remaining_hit_rate = (
+            remaining_hit_count / remaining_sample_count
+            if remaining_sample_count
+            else 0.0
+        )
+        candidates.append(
+            {
+                "segment": {
+                    field: value
+                    for field, value in segment
+                },
+                "sample_count": sample_count,
+                "hit_count": hit_count,
+                "miss_count": miss_count,
+                "hit_rate": round(hit_count / sample_count, 4),
+                "remaining_sample_count": remaining_sample_count,
+                "remaining_hit_count": remaining_hit_count,
+                "remaining_hit_rate": round(remaining_hit_rate, 4),
+                "remaining_wilson_lower_bound": wilson_lower_bound(
+                    remaining_hit_count,
+                    remaining_sample_count,
+                ),
+                "target_reached_if_removed": remaining_hit_rate >= target_hit_rate,
+                "diagnostic_only": True,
+            }
+        )
+    return sorted(
+        candidates,
+        key=lambda item: (
+            bool(item["target_reached_if_removed"]),
+            float(item["remaining_hit_rate"]),
+            int(item["miss_count"]),
+            -int(item["sample_count"]),
+        ),
+        reverse=True,
+    )[:maximum_candidates]
+
+
+def _daily_pick_frontier_segment_values(row: dict) -> list[tuple[str, object]]:
+    return [
+        ("bookmaker_available", bool(row.get("bookmaker_available"))),
+        ("competition_id", str(row.get("competition_id") or "unknown")),
+        ("pick", str(row.get("pick") or "unknown")),
+        ("confidence_bucket", _confidence_segment(row)),
+        ("favorite_probability_bucket", _favorite_probability_segment(row)),
+        ("signal_score_bucket", _signal_score_segment(row)),
+        ("source_summary", str(row.get("external_signal_source_summary") or "unknown")),
+        ("probability_margin_bucket", _frontier_numeric_bucket(
+            row.get("probability_favorite_margin"),
+            step=0.05,
+        )),
+        ("rolling_ppg_delta_bucket", _frontier_numeric_bucket(
+            row.get("rolling_ppg_delta"),
+            step=0.5,
+        )),
+        ("rolling_venue_ppg_delta_bucket", _frontier_numeric_bucket(
+            row.get("rolling_venue_ppg_delta"),
+            step=0.5,
+        )),
+    ]
+
+
+def _frontier_numeric_bucket(value: object, *, step: float) -> float | None:
+    numeric = _read_numeric(value)
+    if numeric is None:
+        return None
+    return round(round(float(numeric) / step) * step, 4)
 
 
 def _segment_summaries(
