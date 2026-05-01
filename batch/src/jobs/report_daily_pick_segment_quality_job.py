@@ -5,7 +5,10 @@ import json
 from collections import Counter, defaultdict
 from typing import Iterable
 
-from batch.src.jobs.run_daily_pick_tracking_job import is_betman_market_source
+from batch.src.jobs.run_daily_pick_tracking_job import (
+    is_betman_daily_pick_item,
+    is_betman_market_source,
+)
 from batch.src.model.confidence_validation import (
     implied_probability_bucket_label,
     wilson_lower_bound,
@@ -82,6 +85,12 @@ def build_daily_pick_segment_quality_report(
         target_hit_rate=target_hit_rate,
         min_wilson_lower_bound=min_wilson_lower_bound,
     )
+    betman_tracked_quality = summarize_quality(
+        betman_items,
+        min_sample_count=min_sample_count,
+        target_hit_rate=target_hit_rate,
+        min_wilson_lower_bound=min_wilson_lower_bound,
+    )
     report = {
         "items": len(enriched_items),
         "results": len(results),
@@ -95,7 +104,9 @@ def build_daily_pick_segment_quality_report(
             "item_count": len(betman_items),
             "recommended_count": len(betman_recommended_items),
             "held_count": len(betman_held_items),
-            "quality": betman_recommended_quality,
+            "quality": betman_tracked_quality,
+            "recommended_quality": betman_recommended_quality,
+            "tracked_quality": betman_tracked_quality,
             "status_counts": dict(Counter(row["status"] for row in betman_items)),
             "market_family_counts": dict(
                 Counter(row["market_family"] for row in betman_items)
@@ -107,7 +118,7 @@ def build_daily_pick_segment_quality_report(
         "betman_held_candidates": build_betman_held_candidates(
             betman_held_items,
             global_recommended_moneyline=global_recommended_moneyline,
-            betman_recommended_quality=betman_recommended_quality,
+            betman_tracked_quality=betman_tracked_quality,
             limit=candidate_limit,
         ),
     }
@@ -125,8 +136,6 @@ def enrich_daily_pick_item(item: dict, result: dict | None) -> dict:
     metadata = item.get("validation_metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
     source_name = str(metadata.get("value_recommendation_market_source") or "")
-    reason_labels = item.get("reason_labels")
-    reason_labels = reason_labels if isinstance(reason_labels, list) else []
     result_status = str((result or {}).get("result_status") or "pending")
     market_probability = read_float(item.get("market_probability"))
     confidence = read_float(item.get("confidence"))
@@ -159,11 +168,7 @@ def enrich_daily_pick_item(item: dict, result: dict | None) -> dict:
             or ""
         ),
         "source_name": source_name or "unknown",
-        "is_betman": (
-            metadata.get("betman_market_available") is True
-            or is_betman_market_source(source_name)
-            or "betmanValue" in reason_labels
-        ),
+        "is_betman": is_betman_daily_pick_item(item),
         "result_status": result_status,
         "is_hit": result_status == "hit",
         "is_miss": result_status == "miss",
@@ -266,7 +271,7 @@ def build_betman_held_candidates(
     rows: Iterable[dict],
     *,
     global_recommended_moneyline: dict,
-    betman_recommended_quality: dict,
+    betman_tracked_quality: dict,
     limit: int,
 ) -> list[dict]:
     candidates = []
@@ -274,7 +279,7 @@ def build_betman_held_candidates(
         blockers = build_betman_promotion_blockers(
             row,
             global_recommended_moneyline=global_recommended_moneyline,
-            betman_recommended_quality=betman_recommended_quality,
+            betman_tracked_quality=betman_tracked_quality,
         )
         candidates.append(
             {
@@ -302,7 +307,7 @@ def build_betman_promotion_blockers(
     row: dict,
     *,
     global_recommended_moneyline: dict,
-    betman_recommended_quality: dict,
+    betman_tracked_quality: dict,
 ) -> list[str]:
     blockers = []
     if row["market_family"] != "moneyline":
@@ -318,7 +323,7 @@ def build_betman_promotion_blockers(
         blockers.append("betman_value_source_missing")
     if not global_recommended_moneyline.get("meets_quality_floor"):
         blockers.append("global_daily_pick_quality_below_floor")
-    if not betman_recommended_quality.get("meets_quality_floor"):
+    if not betman_tracked_quality.get("meets_quality_floor"):
         blockers.append("betman_settled_sample_below_floor")
     return blockers
 

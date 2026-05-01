@@ -1334,6 +1334,8 @@ def test_settle_daily_picks_and_build_cumulative_summary() -> None:
             "status": "settled",
             "metadata": {
                 "settled_item_count": 3,
+                "settled_recommended_item_count": 3,
+                "settled_betman_watchlist_item_count": 0,
                 "settled_at": runs[0]["metadata"]["settled_at"],
             },
         }
@@ -1386,6 +1388,67 @@ def test_settle_daily_picks_ignores_held_candidates() -> None:
 
     assert [row["pick_item_id"] for row in results] == ["item-recommended"]
     assert runs[0]["metadata"]["settled_item_count"] == 1
+    assert runs[0]["metadata"]["settled_recommended_item_count"] == 1
+    assert runs[0]["metadata"]["settled_betman_watchlist_item_count"] == 0
+
+
+def test_settle_daily_picks_tracks_held_betman_candidates_without_summary_pollution() -> None:
+    items = [
+        {
+            "id": "item-recommended",
+            "run_id": "daily_pick_run_2026-04-24",
+            "pick_date": "2026-04-24",
+            "match_id": "match-1",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "market_price": 0.5,
+            "status": "recommended",
+        },
+        {
+            "id": "item-held-betman",
+            "run_id": "daily_pick_run_2026-04-24",
+            "pick_date": "2026-04-24",
+            "match_id": "match-1",
+            "market_family": "moneyline",
+            "selection_label": "AWAY",
+            "market_price": 0.5,
+            "status": "held",
+            "reason_labels": ["mainRecommendation", "betmanValue"],
+            "validation_metadata": {
+                "betman_market_available": True,
+                "value_recommendation_market_source": "betman_moneyline_3way",
+            },
+        },
+    ]
+
+    results, runs = settle_daily_pick_items(
+        settle_date="2026-04-24",
+        items=items,
+        matches=[
+            {
+                "id": "match-1",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            }
+        ],
+        teams=[],
+    )
+    summaries = build_performance_summaries(items=items, results=results)
+
+    assert [row["pick_item_id"] for row in results] == [
+        "item-recommended",
+        "item-held-betman",
+    ]
+    assert [row["result_status"] for row in results] == ["hit", "miss"]
+    assert results[0]["metadata"]["tracking_scope"] == "recommended"
+    assert results[1]["metadata"]["tracking_scope"] == "betman_watchlist"
+    assert runs[0]["metadata"]["settled_item_count"] == 2
+    assert runs[0]["metadata"]["settled_recommended_item_count"] == 1
+    assert runs[0]["metadata"]["settled_betman_watchlist_item_count"] == 1
+    assert summaries[0]["sample_count"] == 1
+    assert summaries[0]["hit_count"] == 1
+    assert summaries[0]["miss_count"] == 0
 
 
 def test_settle_daily_picks_retries_previous_pending_results() -> None:

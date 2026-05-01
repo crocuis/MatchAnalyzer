@@ -169,6 +169,7 @@ python3 -m batch.src.jobs.evaluate_raw_prediction_signals_job --all-snapshots
 추천 가능한 시장은 Betman 구매 가능 시장을 실행 기준으로 삼는다. `market_probabilities`에 Betman과 다른 bookmaker row가 같이 있으면 Betman moneyline이 우선 선택되고, 데일리 픽은 Betman value recommendation 또는 Betman variant market이 없으면 `betman_market_missing`/`betman_value_edge_missing`으로 보류된다. Odds_API.io, Football-Data, Polymarket은 모델/coverage 보조 신호로만 사용한다.
 
 Betman 기준 데일리 픽 품질과 보류 사유는 별도 리포트로 확인한다. 기본 출력은 운영 로그용 요약이며, segment 전체가 필요하면 `--include-segments`를 붙인다.
+Betman held 후보는 경기 종료 후 watchlist 표본으로 정산되어 `betman.tracked_quality`에 쌓인다. 단, 추천 카드의 누적 적중률은 기존처럼 `recommended` 항목만 계산해 보류 후보 성과와 섞지 않는다.
 
 ```bash
 python3 -m batch.src.jobs.report_daily_pick_segment_quality_job --candidate-limit 10
