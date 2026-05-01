@@ -177,7 +177,10 @@ def build_recommended_pick_candidates(
     reliability_hold_reason = (
         None if status == "recommended" else reliability_hold_reason
     )
-    validation_metadata = _build_daily_pick_validation_metadata(summary_payload)
+    validation_metadata = _build_daily_pick_validation_metadata(
+        summary_payload,
+        prediction=prediction,
+    )
 
     match_id = str(match.get("id") or "")
     base = {
@@ -480,9 +483,23 @@ def recommendation_score(
     return confidence or model_probability or 0.0
 
 
-def _build_daily_pick_validation_metadata(summary_payload: dict) -> dict:
+def _build_daily_pick_validation_metadata(
+    summary_payload: dict,
+    *,
+    prediction: dict | None = None,
+) -> dict:
     raw_metadata = summary_payload.get("validation_metadata")
     metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    betman_market_available = summary_payload.get("betman_market_available")
+    if isinstance(betman_market_available, bool):
+        metadata.setdefault("betman_market_available", betman_market_available)
+    value_market_source = (
+        (prediction or {}).get("value_recommendation_market_source")
+        if prediction is not None
+        else None
+    )
+    if isinstance(value_market_source, str) and value_market_source:
+        metadata.setdefault("value_recommendation_market_source", value_market_source)
     if "high_confidence_eligible" not in metadata:
         metadata["high_confidence_eligible"] = (
             summary_payload.get("high_confidence_eligible") is True

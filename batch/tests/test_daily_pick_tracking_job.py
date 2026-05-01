@@ -121,6 +121,10 @@ def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
 
     assert len(items) == 1
     assert items[0]["status"] == "held"
+    assert items[0]["validation_metadata"]["betman_market_available"] is False
+    assert items[0]["validation_metadata"]["value_recommendation_market_source"] == (
+        "odds_api_io_moneyline_3way"
+    )
     assert items[0]["validation_metadata"]["confidence_reliability"] == (
         "betman_market_missing"
     )
@@ -173,6 +177,10 @@ def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
     assert len(items) == 1
     assert items[0]["selection_label"] == "AWAY"
     assert items[0]["market_price"] == 0.28
+    assert items[0]["validation_metadata"]["betman_market_available"] is True
+    assert items[0]["validation_metadata"]["value_recommendation_market_source"] == (
+        "betman_moneyline_3way"
+    )
     assert "betmanValue" in items[0]["reason_labels"]
 
 
