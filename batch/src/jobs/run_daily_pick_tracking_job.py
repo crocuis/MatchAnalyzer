@@ -57,6 +57,10 @@ def build_daily_pick_run_id(pick_date: str) -> str:
     return f"daily_pick_run_{pick_date}"
 
 
+def is_betman_market_source(value: object) -> bool:
+    return "betman" in str(value or "").lower()
+
+
 def sync_daily_picks_for_date(
     *,
     pick_date: str,
@@ -173,7 +177,10 @@ def build_recommended_pick_candidates(
     reliability_hold_reason = (
         None if status == "recommended" else reliability_hold_reason
     )
-    validation_metadata = _build_daily_pick_validation_metadata(summary_payload)
+    validation_metadata = _build_daily_pick_validation_metadata(
+        summary_payload,
+        prediction=prediction,
+    )
 
     match_id = str(match.get("id") or "")
     base = {
@@ -184,6 +191,7 @@ def build_recommended_pick_candidates(
         "status": status,
         "validation_metadata": validation_metadata,
         "reliability_hold_reason": reliability_hold_reason,
+        "betman_market_available": summary_payload.get("betman_market_available"),
     }
     league_id = _read_text(match.get("competition_id"))
     if league_id in DAILY_PICK_SEGMENT_HOLD_COMPETITIONS:
@@ -218,12 +226,12 @@ def build_moneyline_pick_candidate(
     prediction: dict,
     precision_moneyline_eligible: bool = False,
 ) -> dict | None:
-    selection_label = str(
+    main_selection_label = str(
         prediction.get("main_recommendation_pick")
         or prediction.get("recommended_pick")
         or ""
     ).upper()
-    if selection_label not in {"HOME", "DRAW", "AWAY"}:
+    if main_selection_label not in {"HOME", "DRAW", "AWAY"}:
         return None
 
     confidence = _read_numeric(
@@ -234,7 +242,21 @@ def build_moneyline_pick_candidate(
         return None
 
     value_pick = str(prediction.get("value_recommendation_pick") or "").upper()
-    value_aligned = value_pick == selection_label
+    value_market_source = prediction.get("value_recommendation_market_source")
+    value_is_betman = is_betman_market_source(value_market_source)
+    value_recommended = prediction.get("value_recommendation_recommended") is True
+    betman_market_known = (
+        base.get("betman_market_available") is not None
+        or value_market_source is not None
+    )
+    selection_label = (
+        value_pick
+        if value_is_betman and value_recommended and value_pick in {"HOME", "DRAW", "AWAY"}
+        else main_selection_label
+    )
+    value_aligned = value_pick == selection_label and (
+        value_is_betman or not betman_market_known
+    )
     market_price = (
         _read_numeric(prediction.get("value_recommendation_market_price"))
         if value_aligned
@@ -265,7 +287,21 @@ def build_moneyline_pick_candidate(
         selection_label=selection_label,
         confidence=confidence,
     )
-    if precision_moneyline_eligible:
+    if betman_market_known and not value_is_betman:
+        candidate_base = _with_daily_pick_hold_reason(
+            candidate_base,
+            "betman_market_missing",
+        )
+    elif betman_market_known and (not value_aligned or not value_recommended):
+        candidate_base = _with_daily_pick_hold_reason(
+            candidate_base,
+            "betman_value_edge_missing",
+        )
+    betman_executable_value = (
+        not betman_market_known
+        or (value_is_betman and value_aligned and value_recommended)
+    )
+    if precision_moneyline_eligible and betman_executable_value:
         candidate_base = _promote_precision_moneyline_candidate(candidate_base)
     elif candidate_base.get("status") != "held":
         candidate_base = _with_daily_pick_hold_reason(
@@ -293,6 +329,7 @@ def build_moneyline_pick_candidate(
         "reason_labels": _recommendation_reason_labels(
             candidate_base,
             "mainRecommendation",
+            "betmanValue" if value_is_betman else "",
         ),
     }
 
@@ -324,6 +361,9 @@ def build_variant_pick_candidate(*, base: dict, variant: dict) -> dict | None:
     market_price = _read_numeric(
         _first_present(variant, "market_price", "marketPrice")
     )
+    variant_source = variant.get("source_name") or variant.get("sourceName")
+    if variant_source is not None and not is_betman_market_source(variant_source):
+        base = _with_daily_pick_hold_reason(base, "betman_market_missing")
     candidate_base = _resolve_variant_daily_pick_gate(
         base,
         market_family=market_family,
@@ -443,9 +483,23 @@ def recommendation_score(
     return confidence or model_probability or 0.0
 
 
-def _build_daily_pick_validation_metadata(summary_payload: dict) -> dict:
+def _build_daily_pick_validation_metadata(
+    summary_payload: dict,
+    *,
+    prediction: dict | None = None,
+) -> dict:
     raw_metadata = summary_payload.get("validation_metadata")
     metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    betman_market_available = summary_payload.get("betman_market_available")
+    if isinstance(betman_market_available, bool):
+        metadata.setdefault("betman_market_available", betman_market_available)
+    value_market_source = (
+        (prediction or {}).get("value_recommendation_market_source")
+        if prediction is not None
+        else None
+    )
+    if isinstance(value_market_source, str) and value_market_source:
+        metadata.setdefault("value_recommendation_market_source", value_market_source)
     if "high_confidence_eligible" not in metadata:
         metadata["high_confidence_eligible"] = (
             summary_payload.get("high_confidence_eligible") is True

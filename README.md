@@ -166,6 +166,8 @@ python3 -m batch.src.jobs.evaluate_raw_prediction_signals_job --all-snapshots
 
 로컬 실험 결과는 `.tmp/prediction-dataset/predictions.json`과 `prediction_feature_snapshots.json`에만 반영된다. 운영 DB에 반영하려면 로컬 검증 후 별도 배치 경로로 다시 실행한다.
 
+추천 가능한 시장은 Betman 구매 가능 시장을 실행 기준으로 삼는다. `market_probabilities`에 Betman과 다른 bookmaker row가 같이 있으면 Betman moneyline이 우선 선택되고, 데일리 픽은 Betman value recommendation 또는 Betman variant market이 없으면 `betman_market_missing`/`betman_value_edge_missing`으로 보류된다. Odds_API.io, Football-Data, Polymarket은 모델/coverage 보조 신호로만 사용한다.
+
 시즌 전체의 과거 odds 신호를 채울 때는 Odds_API.io historical endpoint를 명시적으로 켠다. 이 경로는 과거 경기의 closing odds를 경기 전 신호로 저장하며, raw payload에 `historical_closing=true`를 남긴다.
 
 ```bash

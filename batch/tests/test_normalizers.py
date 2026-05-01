@@ -45,6 +45,7 @@ from batch.src.ingest.fetch_markets import (
 from batch.src.ingest.normalizers import normalize_team_name
 from batch.src.jobs.ingest_markets_job import (
     attach_team_translation_aliases,
+    build_betman_ingest_diagnostics,
     build_market_coverage_summary,
     collect_changed_market_match_ids,
     filter_pre_match_market_rows,
@@ -6082,6 +6083,8 @@ def test_ingest_markets_job_reports_noop_when_real_market_payload_is_empty(
     assert payload["skip_reason"] == "no_market_payload"
     assert payload["snapshot_rows"] == 1
     assert payload["coverage_summary"]["T_MINUS_24H"]["snapshot_count"] == 1
+    assert payload["betman_ingest_diagnostics"]["detail_payload_count"] == 0
+    assert payload["betman_ingest_diagnostics"]["pre_match_moneyline_rows"] == 0
     assert payload["inserted_rows"] == 0
 
 
@@ -7005,6 +7008,150 @@ def test_build_betman_market_rows_matches_unique_snapshot_and_extracts_variant_l
     ]
 
 
+def test_build_betman_market_rows_uses_fetch_time_as_observed_at_when_available():
+    market_rows, variant_rows = build_betman_market_rows(
+        detail_payloads=[
+            {
+                "_betman_fetched_at": "2026-04-25T10:00:00Z",
+                "currentLottery": {
+                    "saleEndDate": 1777120200000,
+                },
+                "compSchedules": {
+                    "keys": [
+                        "itemCode",
+                        "gameDate",
+                        "leagueName",
+                        "matchSeq",
+                        "winTxt",
+                        "winAllot",
+                        "drawTxt",
+                        "drawAllot",
+                        "loseTxt",
+                        "loseAllot",
+                        "handi",
+                        "winHandi",
+                        "drawHandi",
+                        "loseHandi",
+                        "betTypNm",
+                        "gameKey",
+                    ],
+                    "datas": [
+                        [
+                            "SC",
+                            1777116600000,
+                            "EPL",
+                            11,
+                            "승",
+                            1.91,
+                            "무",
+                            3.55,
+                            "패",
+                            4.2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            "축구 승무패",
+                            "첼시:아스널",
+                        ],
+                        [
+                            "SC",
+                            1777116600000,
+                            "EPL",
+                            12,
+                            "승",
+                            2.15,
+                            "-",
+                            0,
+                            "패",
+                            1.66,
+                            23,
+                            -0.5,
+                            0,
+                            0.5,
+                            "축구 핸디캡",
+                            "첼시:아스널",
+                        ],
+                    ],
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+                "home_team_name": "Chelsea",
+                "away_team_name": "Arsenal",
+            }
+        ],
+    )
+
+    assert market_rows[0]["observed_at"] == "2026-04-25T10:00:00Z"
+    assert variant_rows[0]["observed_at"] == "2026-04-25T10:00:00Z"
+
+
+def test_build_betman_ingest_diagnostics_reports_pre_match_and_post_kickoff_rows():
+    diagnostics = build_betman_ingest_diagnostics(
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T11:30:00+00:00",
+            }
+        ],
+        detail_payloads=[
+            {
+                "compSchedules": {
+                    "keys": ["itemCode", "gameDate", "leagueName", "gameKey"],
+                    "datas": [
+                        [
+                            "SC",
+                            1777116600000,
+                            "EPL",
+                            "첼시:아스널",
+                        ]
+                    ],
+                },
+            }
+        ],
+        raw_market_rows=[
+            {
+                "id": "snapshot_001_bookmaker",
+                "snapshot_id": "snapshot_001",
+            },
+            {
+                "id": "snapshot_001_late_bookmaker",
+                "snapshot_id": "snapshot_001",
+            },
+        ],
+        raw_variant_rows=[
+            {
+                "id": "snapshot_001_bookmaker_spreads",
+                "snapshot_id": "snapshot_001",
+            }
+        ],
+        pre_match_market_rows=[
+            {
+                "id": "snapshot_001_bookmaker",
+                "snapshot_id": "snapshot_001",
+            }
+        ],
+        pre_match_variant_rows=[],
+        team_translation_rows=[{"id": "chelsea:ko:betman:첼시"}],
+    )
+
+    assert diagnostics["soccer_schedule_row_count"] == 1
+    assert diagnostics["candidate_kickoff_key_count"] == 1
+    assert diagnostics["raw_moneyline_rows"] == 2
+    assert diagnostics["pre_match_moneyline_rows"] == 1
+    assert diagnostics["post_kickoff_moneyline_rows"] == 1
+    assert diagnostics["post_kickoff_variant_rows"] == 1
+    assert diagnostics["matched_snapshot_count"] == 1
+    assert diagnostics["team_translation_candidate_rows"] == 1
+
+
 def test_build_betman_market_rows_skips_ambiguous_same_kickoff_groups():
     market_rows, variant_rows = build_betman_market_rows(
         detail_payloads=[
@@ -7519,14 +7666,18 @@ def test_build_market_coverage_summary_counts_checkpoints_and_sources():
         "moneyline_count": 1,
         "variant_count": 0,
         "source_counts": {"bookmaker": 1},
+        "source_name_counts": {"unknown": 1},
         "variant_family_counts": {},
+        "variant_source_name_counts": {},
     }
     assert summary["T_MINUS_6H"] == {
         "snapshot_count": 1,
         "moneyline_count": 1,
         "variant_count": 1,
         "source_counts": {"prediction_market": 1},
+        "source_name_counts": {"unknown": 1},
         "variant_family_counts": {"totals": 1},
+        "variant_source_name_counts": {"unknown": 1},
     }
 
 

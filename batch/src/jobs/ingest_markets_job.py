@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from batch.src.ingest.fetch_markets import (
     build_betman_market_rows,
+    build_betman_match_market_groups,
     build_betman_team_translation_rows,
     build_football_data_market_rows,
     build_football_data_snapshot_signal_updates,
@@ -23,6 +24,7 @@ from batch.src.ingest.fetch_markets import (
     fetch_odds_api_io_historical_events_for_snapshots,
     fetch_odds_api_io_historical_odds,
     fetch_odds_api_io_multi_odds,
+    expand_betman_comp_schedules,
     football_data_code_for_competition,
     football_data_season_code,
 )
@@ -131,6 +133,13 @@ def parse_bool_env(name: str) -> bool:
     }
 
 
+def format_utc_minute(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(
+        second=0,
+        microsecond=0,
+    ).isoformat().replace("+00:00", "Z")
+
+
 def select_real_market_snapshots(
     snapshot_rows: list[dict],
     match_rows: list[dict],
@@ -213,7 +222,9 @@ def build_market_coverage_summary(
                 "moneyline_count": 0,
                 "variant_count": 0,
                 "source_counts": {},
+                "source_name_counts": {},
                 "variant_family_counts": {},
+                "variant_source_name_counts": {},
             },
         )
         checkpoint_summary["snapshot_count"] += 1
@@ -229,13 +240,19 @@ def build_market_coverage_summary(
                 "moneyline_count": 0,
                 "variant_count": 0,
                 "source_counts": {},
+                "source_name_counts": {},
                 "variant_family_counts": {},
+                "variant_source_name_counts": {},
             },
         )
         checkpoint_summary["moneyline_count"] += 1
         source_type = str(row.get("source_type") or "unknown")
         checkpoint_summary["source_counts"][source_type] = (
             int(checkpoint_summary["source_counts"].get(source_type) or 0) + 1
+        )
+        source_name = str(row.get("source_name") or "unknown")
+        checkpoint_summary["source_name_counts"][source_name] = (
+            int(checkpoint_summary["source_name_counts"].get(source_name) or 0) + 1
         )
     for row in variant_rows:
         snapshot = snapshot_by_id.get(row.get("snapshot_id"))
@@ -249,7 +266,9 @@ def build_market_coverage_summary(
                 "moneyline_count": 0,
                 "variant_count": 0,
                 "source_counts": {},
+                "source_name_counts": {},
                 "variant_family_counts": {},
+                "variant_source_name_counts": {},
             },
         )
         checkpoint_summary["variant_count"] += 1
@@ -257,7 +276,85 @@ def build_market_coverage_summary(
         checkpoint_summary["variant_family_counts"][market_family] = (
             int(checkpoint_summary["variant_family_counts"].get(market_family) or 0) + 1
         )
+        source_name = str(row.get("source_name") or "unknown")
+        checkpoint_summary["variant_source_name_counts"][source_name] = (
+            int(checkpoint_summary["variant_source_name_counts"].get(source_name) or 0)
+            + 1
+        )
     return summary
+
+
+def build_betman_ingest_diagnostics(
+    *,
+    snapshot_rows: list[dict],
+    detail_payloads: list[dict],
+    raw_market_rows: list[dict],
+    raw_variant_rows: list[dict],
+    pre_match_market_rows: list[dict],
+    pre_match_variant_rows: list[dict],
+    team_translation_rows: list[dict],
+) -> dict:
+    schedule_rows = [
+        row
+        for payload in detail_payloads
+        for row in expand_betman_comp_schedules(payload.get("compSchedules"))
+    ]
+    soccer_schedule_rows = [
+        row for row in schedule_rows if str(row.get("itemCode") or "") == "SC"
+    ]
+    grouped = build_betman_match_market_groups(detail_payloads)
+    def snapshot_kickoff_key(snapshot: dict) -> str:
+        parsed = parse_iso_datetime(snapshot.get("kickoff_at"))
+        if parsed is None:
+            return ""
+        return parsed.replace(second=0, microsecond=0).isoformat().replace(
+            "+00:00",
+            "Z",
+        )
+
+    snapshot_keys = {
+        (
+            str(snapshot.get("competition_id") or "").strip().lower(),
+            snapshot_kickoff_key(snapshot),
+        )
+        for snapshot in snapshot_rows
+    }
+    snapshot_keys.discard(("", ""))
+    grouped_competition_kickoffs = {
+        (competition_id, kickoff_at)
+        for competition_id, kickoff_at, _game_key in grouped
+    }
+    raw_market_ids = {str(row.get("id") or "") for row in raw_market_rows}
+    raw_variant_ids = {str(row.get("id") or "") for row in raw_variant_rows}
+    pre_match_market_ids = {str(row.get("id") or "") for row in pre_match_market_rows}
+    pre_match_variant_ids = {str(row.get("id") or "") for row in pre_match_variant_rows}
+    return {
+        "detail_payload_count": len(detail_payloads),
+        "schedule_row_count": len(schedule_rows),
+        "soccer_schedule_row_count": len(soccer_schedule_rows),
+        "group_count": len(grouped),
+        "snapshot_key_count": len(snapshot_keys),
+        "candidate_kickoff_key_count": len(
+            snapshot_keys & grouped_competition_kickoffs
+        ),
+        "raw_moneyline_rows": len(raw_market_rows),
+        "raw_variant_rows": len(raw_variant_rows),
+        "pre_match_moneyline_rows": len(pre_match_market_rows),
+        "pre_match_variant_rows": len(pre_match_variant_rows),
+        "post_kickoff_moneyline_rows": len(raw_market_ids - pre_match_market_ids),
+        "post_kickoff_variant_rows": len(raw_variant_ids - pre_match_variant_ids),
+        "matched_snapshot_count": len(
+            {str(row.get("snapshot_id") or "") for row in raw_market_rows}
+        ),
+        "team_translation_candidate_rows": len(team_translation_rows),
+    }
+
+
+def attach_betman_fetch_timestamp(payload: dict, fetched_at: str) -> dict:
+    return {
+        **payload,
+        "_betman_fetched_at": fetched_at,
+    }
 
 
 def attach_team_translation_aliases(
@@ -516,6 +613,7 @@ def main() -> None:
     football_data_market_rows = []
     football_data_snapshot_signal_updates = []
     football_data_variant_rows = []
+    betman_ingest_diagnostics = {}
 
     if use_real_schedule:
         match_rows = client.read_rows("matches")
@@ -648,13 +746,26 @@ def main() -> None:
             betman_market_rows = []
             betman_variant_rows = []
             betman_team_translation_rows = []
+            betman_ingest_diagnostics = build_betman_ingest_diagnostics(
+                snapshot_rows=snapshot_rows,
+                detail_payloads=[],
+                raw_market_rows=[],
+                raw_variant_rows=[],
+                pre_match_market_rows=[],
+                pre_match_variant_rows=[],
+                team_translation_rows=[],
+            )
         else:
             betman_buyable_games = fetch_betman_buyable_games()
+            betman_fetched_at = format_utc_minute(datetime.now(timezone.utc))
             betman_detail_payloads = [
-                fetch_betman_game_detail(
-                    game["gmId"],
-                    game["gmTs"],
-                    game_year=game.get("gmOsidTsYear"),
+                attach_betman_fetch_timestamp(
+                    fetch_betman_game_detail(
+                        game["gmId"],
+                        game["gmTs"],
+                        game_year=game.get("gmOsidTsYear"),
+                    ),
+                    betman_fetched_at,
                 )
                 for game in betman_buyable_games.get("protoGames", [])
                 if game.get("gmId") and game.get("gmTs")
@@ -664,6 +775,8 @@ def main() -> None:
                 snapshot_rows=snapshot_rows,
                 bookmaker_rows=payload,
             )
+            raw_betman_market_rows = list(betman_market_rows)
+            raw_betman_variant_rows = list(betman_variant_rows)
             betman_market_rows = filter_pre_match_market_rows(
                 betman_market_rows,
                 snapshot_rows,
@@ -680,6 +793,15 @@ def main() -> None:
             betman_team_translation_rows = filter_existing_team_translation_rows(
                 existing_rows=team_translation_rows,
                 incoming_rows=betman_team_translation_rows,
+            )
+            betman_ingest_diagnostics = build_betman_ingest_diagnostics(
+                snapshot_rows=snapshot_rows,
+                detail_payloads=betman_detail_payloads,
+                raw_market_rows=raw_betman_market_rows,
+                raw_variant_rows=raw_betman_variant_rows,
+                pre_match_market_rows=betman_market_rows,
+                pre_match_variant_rows=betman_variant_rows,
+                team_translation_rows=betman_team_translation_rows,
             )
         payload = overlay_market_rows(payload, betman_market_rows)
         payload = overlay_market_rows(payload, football_data_market_rows)
@@ -836,6 +958,7 @@ def main() -> None:
                             football_data_snapshot_signal_updates
                         ),
                         "updated_snapshot_signals": updated_snapshot_signals,
+                        "betman_ingest_diagnostics": betman_ingest_diagnostics,
                         "coverage_summary": coverage_summary,
                         "changed_match_ids": [],
                         "payload": [],
@@ -946,6 +1069,7 @@ def main() -> None:
                     football_data_snapshot_signal_updates
                 ),
                 "updated_snapshot_signals": updated_snapshot_signals,
+                "betman_ingest_diagnostics": betman_ingest_diagnostics,
                 "coverage_summary": coverage_summary,
                 "changed_match_ids": changed_match_ids,
                 "payload": payload,

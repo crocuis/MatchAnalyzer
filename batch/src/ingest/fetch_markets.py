@@ -1846,10 +1846,15 @@ def build_betman_match_market_groups(
     for payload in detail_payloads:
         current_lottery = payload.get("currentLottery") if isinstance(payload, dict) else None
         observed_at = (
-            format_betman_observed_at((current_lottery or {}).get("saleEndDate"))
-            if isinstance(current_lottery, dict)
-            else None
+            str(payload.get("_betman_fetched_at") or "").strip()
+            if isinstance(payload, dict)
+            else ""
         )
+        if not observed_at and isinstance(current_lottery, dict):
+            observed_at = (
+                format_betman_observed_at((current_lottery or {}).get("saleEndDate"))
+                or ""
+            )
         for row in expand_betman_comp_schedules(payload.get("compSchedules")):
             if str(row.get("itemCode") or "") != "SC":
                 continue

@@ -760,6 +760,21 @@ def test_build_value_recommendation_uses_positive_market_edge():
     }
 
 
+def test_build_value_recommendation_can_use_betman_as_executable_market():
+    recommendation = build_value_recommendation(
+        base_probs={"home": 0.34, "draw": 0.24, "away": 0.42},
+        market_probs={"home": 0.39, "draw": 0.27, "away": 0.32},
+        market_prices={"home": 0.39, "draw": 0.26, "away": 0.24},
+        prediction_market_available=False,
+        market_available=True,
+        market_source="betman_moneyline_3way",
+    )
+
+    assert recommendation is not None
+    assert recommendation["market_source"] == "betman_moneyline_3way"
+    assert recommendation["pick"] == "AWAY"
+
+
 def test_build_value_recommendation_allows_low_probability_pick_with_strong_ev():
     recommendation = build_value_recommendation(
         base_probs={"home": 0.13, "draw": 0.24, "away": 0.63},

@@ -24,6 +24,8 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       ODDS_API_IO_BOOKMAKERS: Bet365,Unibet
+      BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
+      BSD_LINEUP_LOOKAHEAD_HOURS: 48
       MARKET_CHECKPOINT_TYPES: T_MINUS_24H,T_MINUS_6H,T_MINUS_1H,LINEUP_CONFIRMED
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
@@ -48,6 +50,12 @@ jobs:
           fi
           echo "REAL_MARKET_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
       - run: python3 -m pip install -r batch/requirements.txt
+      - name: Sync market target snapshots
+        shell: bash
+        run: |
+          PREDICTION_SYNC_TARGET_DATE="$REAL_MARKET_DATE" \
+          PREDICTION_SYNC_TARGET_CHECKPOINT_TYPES="$MARKET_CHECKPOINT_TYPES" \
+            python3 -m batch.src.jobs.sync_prediction_checkpoints_job
       - name: Ingest markets
         shell: bash
         run: |

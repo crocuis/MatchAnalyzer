@@ -80,6 +80,110 @@ def test_sync_daily_picks_stores_ranked_cross_market_candidates() -> None:
     assert all("league_id" not in row for row in items)
 
 
+def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "value_recommendation_pick": "HOME",
+                "value_recommendation_recommended": True,
+                "value_recommendation_market_source": "odds_api_io_moneyline_3way",
+                "summary_payload": {
+                    "betman_market_available": False,
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["validation_metadata"]["betman_market_available"] is False
+    assert items[0]["validation_metadata"]["value_recommendation_market_source"] == (
+        "odds_api_io_moneyline_3way"
+    )
+    assert items[0]["validation_metadata"]["confidence_reliability"] == (
+        "betman_market_missing"
+    )
+
+
+def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "value_recommendation_pick": "AWAY",
+                "value_recommendation_recommended": True,
+                "value_recommendation_expected_value": 0.24,
+                "value_recommendation_edge": 0.1,
+                "value_recommendation_market_price": 0.28,
+                "value_recommendation_model_probability": 0.35,
+                "value_recommendation_market_probability": 0.25,
+                "value_recommendation_market_source": "betman_moneyline_3way",
+                "summary_payload": {
+                    "betman_market_available": True,
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["selection_label"] == "AWAY"
+    assert items[0]["market_price"] == 0.28
+    assert items[0]["validation_metadata"]["betman_market_available"] is True
+    assert items[0]["validation_metadata"]["value_recommendation_market_source"] == (
+        "betman_moneyline_3way"
+    )
+    assert "betmanValue" in items[0]["reason_labels"]
+
+
 def test_sync_daily_picks_tracks_unvalidated_predictions_as_held() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",

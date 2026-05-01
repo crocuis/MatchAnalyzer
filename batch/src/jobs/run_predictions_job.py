@@ -415,6 +415,66 @@ def select_market_row_before_kickoff(
     return None
 
 
+def is_betman_market_row(row: dict | None) -> bool:
+    return "betman" in str((row or {}).get("source_name") or "").lower()
+
+
+def market_probabilities_from_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    if not all(key in row for key in ("home_prob", "draw_prob", "away_prob")):
+        return None
+    return {
+        "home": row["home_prob"],
+        "draw": row["draw_prob"],
+        "away": row["away_prob"],
+    }
+
+
+def market_prices_from_row(row: dict | None, fallback_probs: dict) -> dict | None:
+    if not row:
+        return None
+    if not all(key in fallback_probs for key in ("home", "draw", "away")):
+        return None
+    return {
+        "home": row.get("home_price", fallback_probs["home"]),
+        "draw": row.get("draw_price", fallback_probs["draw"]),
+        "away": row.get("away_price", fallback_probs["away"]),
+    }
+
+
+def select_betman_moneyline_market_row(
+    market_by_snapshot: dict[str, dict[str, dict]],
+    *,
+    snapshot_id: str,
+    kickoff_at: str | None = None,
+) -> dict | None:
+    for row in select_market_rows(
+        market_by_snapshot,
+        snapshot_id=snapshot_id,
+        source_type="bookmaker",
+        market_family="moneyline_3way",
+    ):
+        if is_betman_market_row(row) and is_market_observed_before_kickoff(
+            row,
+            kickoff_at=kickoff_at,
+        ):
+            return row
+    return None
+
+
+def select_variant_rows_before_kickoff(
+    variant_rows: list[dict],
+    *,
+    kickoff_at: str | None = None,
+) -> list[dict]:
+    return [
+        row
+        for row in variant_rows
+        if is_market_observed_before_kickoff(row, kickoff_at=kickoff_at)
+    ]
+
+
 def build_market_probabilities(
     snapshot_id: str,
     market_by_snapshot: dict[str, dict[str, dict]],
@@ -2297,7 +2357,11 @@ def build_variant_markets(
     teams_by_id: dict[str, dict] | None = None,
 ) -> list[dict]:
     markets = []
-    for row in variant_rows:
+    kickoff_at = str(match.get("kickoff_at") or "") if match else None
+    for row in select_variant_rows_before_kickoff(
+        variant_rows,
+        kickoff_at=kickoff_at,
+    ):
         raw_payload = row.get("raw_payload") or {}
         line_value = _read_numeric(row.get("line_value"))
         market_family = row["market_family"]
@@ -2373,6 +2437,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "calibrated_confidence_score",
         "moneyline_signal_score",
         "prediction_market_available",
+        "betman_market_available",
         "confidence_calibration",
         "validation_metadata",
         "confidence_reliability",
@@ -2643,6 +2708,19 @@ def main() -> None:
             if prediction_market
             else book_probs["away"],
         }
+        executable_market_row = select_betman_moneyline_market_row(
+            market_by_snapshot,
+            snapshot_id=signal_snapshot["id"],
+            kickoff_at=str(match.get("kickoff_at") or ""),
+        )
+        executable_market_probs = market_probabilities_from_row(executable_market_row)
+        executable_market_prices = market_prices_from_row(
+            executable_market_row,
+            executable_market_probs or {},
+        )
+        executable_market_available = (
+            executable_market_probs is not None and executable_market_prices is not None
+        )
         scoring_context = {
             **feature_context,
             "base_model_source": base_model_source,
@@ -2916,12 +2994,22 @@ def main() -> None:
         )
         value_recommendation = build_value_recommendation(
             base_probs=base_probs,
-            market_probs=prediction_market_probs,
-            market_prices=prediction_market_prices,
+            market_probs=executable_market_probs or prediction_market_probs,
+            market_prices=executable_market_prices or prediction_market_prices,
             prediction_market_available=feature_context["prediction_market_available"],
+            market_available=executable_market_available,
+            market_source=(
+                str(executable_market_row.get("source_name"))
+                if executable_market_available and executable_market_row
+                else "betman_missing"
+            ),
+        )
+        snapshot_variant_rows = select_variant_rows_before_kickoff(
+            variant_rows_by_snapshot.get(snapshot["id"], []),
+            kickoff_at=match.get("kickoff_at"),
         )
         variant_markets = build_variant_markets(
-            variant_rows_by_snapshot.get(snapshot["id"], []),
+            snapshot_variant_rows,
             snapshot=signal_snapshot,
             match=match,
             teams_by_id=teams_by_id,
@@ -3023,6 +3111,7 @@ def main() -> None:
             "prediction_market_available": feature_context[
                 "prediction_market_available"
             ],
+            "betman_market_available": executable_market_available,
             "confidence_calibration": confidence_bucket_summary,
             "main_recommendation": main_recommendation,
             "value_recommendation": value_recommendation,
@@ -3036,7 +3125,7 @@ def main() -> None:
             "source_metadata": source_metadata,
             "market_enrichment": build_market_enrichment_summary(
                 prediction_market=prediction_market,
-                variant_market_rows=variant_rows_by_snapshot.get(snapshot["id"], []),
+                variant_market_rows=snapshot_variant_rows,
                 existing_prediction=existing_prediction,
                 existing_prediction_payload=existing_prediction_payload,
                 preserved_market_enrichment=preserved_market_enrichment,

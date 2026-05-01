@@ -49,6 +49,37 @@ def test_select_due_prediction_targets_uses_checkpoint_windows_and_daily_pick_su
     ]
 
 
+def test_select_target_date_prediction_targets_builds_market_sync_checkpoints():
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+
+    targets = sync_job.select_target_date_prediction_targets(
+        [
+            _match("same_day_future", "2026-04-26T17:30:00+00:00"),
+            _match("next_day", "2026-04-27T11:45:00+00:00"),
+            _match("same_day_started", "2026-04-26T11:30:00+00:00"),
+            {
+                **_match("settled", "2026-04-26T17:30:00+00:00"),
+                "final_result": "HOME",
+            },
+        ],
+        now=now,
+        target_date="2026-04-26",
+        checkpoint_types=("T_MINUS_24H", "T_MINUS_6H"),
+    )
+
+    assert [(target.match_id, target.checkpoint) for target in targets] == [
+        ("same_day_future", "T_MINUS_24H"),
+        ("same_day_future", "T_MINUS_6H"),
+    ]
+    assert [target.match_id for target in targets if target.refresh_external_signals] == [
+        "same_day_future"
+    ]
+    assert [target.match_id for target in targets if target.refresh_lineup] == [
+        "same_day_future",
+        "same_day_future",
+    ]
+
+
 def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(monkeypatch):
     now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
     state = {
@@ -106,6 +137,50 @@ def test_sync_prediction_checkpoints_upserts_due_snapshots_and_reports_dates(mon
     assert rows_by_id["day_before_t_minus_24h"]["checkpoint_type"] == "T_MINUS_24H"
     assert rows_by_id["six_hours_t_minus_6h"]["checkpoint_type"] == "T_MINUS_6H"
     assert rows_by_id["six_hours_t_minus_6h"]["external_signal_source_summary"] == "clubelo"
+
+
+def test_sync_prediction_checkpoints_accepts_market_target_date(monkeypatch):
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+    state = {
+        "matches": [_match("same_day_future", "2026-04-26T17:30:00+00:00")],
+        "match_snapshots": [],
+        "teams": [
+            {"id": "arsenal", "name": "Arsenal"},
+            {"id": "chelsea", "name": "Chelsea"},
+        ],
+    }
+    upserts = []
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            assert table_name == "match_snapshots"
+            upserts.append(rows)
+            return len(rows)
+
+    monkeypatch.setattr(
+        sync_job,
+        "build_rotowire_lineup_context_by_match",
+        lambda _events: {},
+    )
+
+    result = sync_job.sync_prediction_checkpoints(
+        FakeClient(),
+        now=now,
+        target_date="2026-04-26",
+        target_checkpoint_types=("T_MINUS_24H", "T_MINUS_6H"),
+    )
+
+    assert result["target_date"] == "2026-04-26"
+    assert result["target_checkpoint_types"] == ["T_MINUS_24H", "T_MINUS_6H"]
+    assert result["target_match_ids"] == ["same_day_future"]
+    assert result["daily_pick_dates"] == ["2026-04-26"]
+    assert result["target_count"] == 2
+    rows_by_id = {row["id"]: row for row in upserts[0]}
+    assert rows_by_id["same_day_future_t_minus_24h"]["checkpoint_type"] == "T_MINUS_24H"
+    assert rows_by_id["same_day_future_t_minus_6h"]["checkpoint_type"] == "T_MINUS_6H"
 
 
 def test_external_signal_source_summary_alone_does_not_skip_backfill():
