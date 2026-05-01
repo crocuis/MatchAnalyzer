@@ -123,14 +123,19 @@ class HistoricalOddsApiCache:
         cache_dir: str | Path,
         bookmakers: str | None,
         max_requests: int,
+        fallback_bookmakers: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.cache_dir = Path(cache_dir)
         self.bookmakers = bookmakers
+        self.fallback_bookmakers = fallback_bookmakers
         self.max_requests = max_requests
         self.request_count = 0
         self.cache_hits = 0
         self.stopped_early = False
+        self.bad_request_count = 0
+        self.forbidden_count = 0
+        self.empty_odds_count = 0
 
     def _read_cached(self, path: Path) -> object | None:
         if not path.exists():
@@ -209,14 +214,42 @@ class HistoricalOddsApiCache:
         return rows[0] if rows else None
 
     def fetch_odds(self, event_id: str) -> dict | None:
-        payload = self._fetch_odds_payload(event_id, self.bookmakers)
+        try:
+            payload = self._fetch_odds_payload(event_id, self.bookmakers)
+        except HTTPError as exc:
+            if self._record_skippable_odds_error(exc):
+                payload = None
+            else:
+                raise
         normalized = self._normalize_odds_payload(payload)
         if normalized is not None:
             return normalized
+        if self.bookmakers and self.fallback_bookmakers:
+            try:
+                fallback_payload = self._fetch_odds_payload(
+                    event_id,
+                    self.fallback_bookmakers,
+                )
+            except HTTPError as exc:
+                if self._record_skippable_odds_error(exc):
+                    return None
+                raise
+            fallback_normalized = self._normalize_odds_payload(fallback_payload)
+            if fallback_normalized is None:
+                self.empty_odds_count += 1
+            return fallback_normalized
         if self.bookmakers:
-            fallback_payload = self._fetch_odds_payload(event_id, None)
-            return self._normalize_odds_payload(fallback_payload)
+            self.empty_odds_count += 1
         return None
+
+    def _record_skippable_odds_error(self, exc: HTTPError) -> bool:
+        if exc.code == 400:
+            self.bad_request_count += 1
+            return True
+        if exc.code == 403:
+            self.forbidden_count += 1
+            return True
+        return False
 
 
 def select_backfill_snapshots(
@@ -355,6 +388,9 @@ def main() -> None:
         cache_dir=os.environ.get("ODDS_API_IO_HISTORICAL_CACHE_DIR")
         or DEFAULT_ODDS_API_IO_HISTORICAL_CACHE_DIR,
         bookmakers=getattr(settings, "odds_api_io_bookmakers", "Bet365,Unibet"),
+        fallback_bookmakers=os.environ.get(
+            "ODDS_API_IO_HISTORICAL_FALLBACK_BOOKMAKERS"
+        ),
         max_requests=parse_request_limit(
             os.environ.get("ODDS_API_IO_HISTORICAL_MAX_REQUESTS_PER_RUN")
         ),
@@ -423,6 +459,10 @@ def main() -> None:
                 "variant_inserted_rows": variant_inserted,
                 "request_count": cache.request_count,
                 "cache_hits": cache.cache_hits,
+                "fallback_bookmakers_configured": bool(cache.fallback_bookmakers),
+                "bad_request_count": cache.bad_request_count,
+                "forbidden_count": cache.forbidden_count,
+                "empty_odds_count": cache.empty_odds_count,
                 "stopped_early": cache.stopped_early,
                 "changed_match_ids": sorted(
                     {
