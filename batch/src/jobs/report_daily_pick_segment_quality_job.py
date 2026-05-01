@@ -40,6 +40,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--candidate-limit", type=int, default=20)
     parser.add_argument("--include-segments", action="store_true")
+    parser.add_argument(
+        "--pending-dates-only",
+        action="store_true",
+        help="Print one pending Betman watchlist pick date per line for workflow retries.",
+    )
     return parser.parse_args(argv)
 
 
@@ -47,6 +52,7 @@ def build_daily_pick_segment_quality_report(
     *,
     items: list[dict],
     results: list[dict],
+    matches: list[dict] | None = None,
     min_sample_count: int = DEFAULT_MIN_SAMPLE_COUNT,
     target_hit_rate: float = DEFAULT_TARGET_HIT_RATE,
     min_wilson_lower_bound: float = DEFAULT_MIN_WILSON_LOWER_BOUND,
@@ -62,6 +68,11 @@ def build_daily_pick_segment_quality_report(
         enrich_daily_pick_item(row, result_by_item_id.get(str(row.get("id") or "")))
         for row in items
     ]
+    matches_by_id = {
+        str(row.get("id") or ""): row
+        for row in (matches or [])
+        if row.get("id") is not None
+    }
     betman_items = [row for row in enriched_items if row["is_betman"]]
     recommended_items = [
         row for row in enriched_items if row["status"] == "recommended"
@@ -114,6 +125,10 @@ def build_daily_pick_segment_quality_report(
             "hold_reason_counts": dict(
                 Counter(row["hold_reason"] for row in betman_held_items)
             ),
+            "pending_watchlist_monitor": build_betman_pending_watchlist_monitor(
+                betman_items,
+                matches_by_id=matches_by_id,
+            ),
         },
         "betman_held_candidates": build_betman_held_candidates(
             betman_held_items,
@@ -130,6 +145,34 @@ def build_daily_pick_segment_quality_report(
             min_wilson_lower_bound=min_wilson_lower_bound,
         )
     return report
+
+
+def build_betman_pending_watchlist_monitor(
+    rows: Iterable[dict],
+    *,
+    matches_by_id: dict[str, dict] | None = None,
+) -> dict:
+    matches_by_id = matches_by_id or {}
+    pending_rows = [
+        row
+        for row in rows
+        if row["result_status"] == "pending"
+    ]
+    final_result_available_rows = [
+        row
+        for row in pending_rows
+        if read_final_result(matches_by_id.get(row["match_id"])) is not None
+    ]
+    pending_dates = sorted({row["pick_date"] for row in pending_rows if row["pick_date"]})
+    return {
+        "pending_count": len(pending_rows),
+        "pending_dates": pending_dates,
+        "oldest_pending_pick_date": pending_dates[0] if pending_dates else None,
+        "final_result_available_pending_count": len(final_result_available_rows),
+        "final_result_available_pending_match_ids": sorted(
+            {row["match_id"] for row in final_result_available_rows if row["match_id"]}
+        ),
+    }
 
 
 def enrich_daily_pick_item(item: dict, result: dict | None) -> dict:
@@ -336,19 +379,34 @@ def read_float(value: object) -> float | None:
     return None
 
 
+def read_final_result(match: dict | None) -> str | None:
+    if not isinstance(match, dict):
+        return None
+    value = match.get("final_result")
+    return value if isinstance(value, str) and value else None
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
     client = SupabaseClient(settings.supabase_url, settings.supabase_service_role_key)
+    items = read_optional_rows(client, "daily_pick_items")
+    results = read_optional_rows(client, "daily_pick_results")
+    matches = read_optional_rows(client, "matches")
     report = build_daily_pick_segment_quality_report(
-        items=read_optional_rows(client, "daily_pick_items"),
-        results=read_optional_rows(client, "daily_pick_results"),
+        items=items,
+        results=results,
+        matches=matches,
         min_sample_count=args.min_sample_count,
         target_hit_rate=args.target_hit_rate,
         min_wilson_lower_bound=args.min_wilson_lower_bound,
         candidate_limit=args.candidate_limit,
         include_segments=args.include_segments,
     )
+    if args.pending_dates_only:
+        for pick_date in report["betman"]["pending_watchlist_monitor"]["pending_dates"]:
+            print(pick_date)
+        return
     print(json.dumps(report, sort_keys=True))
 
 
