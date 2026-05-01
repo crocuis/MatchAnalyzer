@@ -70,6 +70,12 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
     report = build_daily_pick_segment_quality_report(
         items=items,
         results=results,
+        matches=[
+            {
+                "id": "match-betman",
+                "final_result": "AWAY",
+            }
+        ],
         min_sample_count=2,
         target_hit_rate=0.5,
         min_wilson_lower_bound=0.0,
@@ -81,6 +87,13 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
     assert report["betman"]["item_count"] == 1
     assert report["betman"]["held_count"] == 1
     assert report["betman"]["hold_reason_counts"] == {"insufficient_sample": 1}
+    assert report["betman"]["pending_watchlist_monitor"] == {
+        "pending_count": 1,
+        "pending_dates": ["2026-05-02"],
+        "oldest_pending_pick_date": "2026-05-02",
+        "final_result_available_pending_count": 1,
+        "final_result_available_pending_match_ids": ["match-betman"],
+    }
     assert report["betman_held_candidates"][0]["promotion_status"] == "blocked"
     assert "betman_settled_sample_below_floor" in (
         report["betman_held_candidates"][0]["blockers"]
@@ -133,5 +146,6 @@ def test_daily_pick_segment_quality_marks_betman_watchlist_after_floor() -> None
 
     assert report["overall_recommended_moneyline"]["meets_quality_floor"] is True
     assert report["betman"]["quality"]["meets_quality_floor"] is True
+    assert report["betman"]["pending_watchlist_monitor"]["pending_count"] == 1
     assert report["betman_held_candidates"][0]["promotion_status"] == "watchlist"
     assert report["betman_held_candidates"][0]["blockers"] == []

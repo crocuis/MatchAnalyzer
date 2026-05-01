@@ -77,3 +77,31 @@ jobs:
             DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
             echo "::endgroup::"
           done <<< "$SYNC_CHANGED_DATES"
+      - name: Collect pending Betman watchlist dates
+        shell: bash
+        run: |
+          python3 -m batch.src.jobs.report_daily_pick_segment_quality_job --pending-dates-only > betman-watchlist-dates.txt
+          {
+            echo "BETMAN_WATCHLIST_DATES<<EOF"
+            cat betman-watchlist-dates.txt
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+      - name: Retry pending Betman watchlist settlements
+        shell: bash
+        run: |
+          if [ -z "$BETMAN_WATCHLIST_DATES" ]; then
+            echo "No pending Betman watchlist dates detected."
+            exit 0
+          fi
+          while IFS= read -r TARGET_DATE; do
+            if [ -z "$TARGET_DATE" ]; then
+              continue
+            fi
+            echo "::group::BETMAN_WATCHLIST_SETTLE_DATE=$TARGET_DATE"
+            DAILY_PICK_SETTLE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
+            DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            echo "::endgroup::"
+          done <<< "$BETMAN_WATCHLIST_DATES"
+      - name: Report Betman watchlist quality
+        shell: bash
+        run: python3 -m batch.src.jobs.report_daily_pick_segment_quality_job --candidate-limit 10
