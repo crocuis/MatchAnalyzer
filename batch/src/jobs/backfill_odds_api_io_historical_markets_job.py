@@ -58,6 +58,70 @@ def parse_bool_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def parse_bookmaker_sets(value: str | None) -> list[str]:
+    if not str(value or "").strip():
+        return []
+    groups: list[str] = []
+    for raw_group in str(value).replace("|", ";").split(";"):
+        bookmakers = []
+        seen: set[str] = set()
+        for bookmaker in raw_group.split(","):
+            normalized = bookmaker.strip()
+            if not normalized or normalized in seen:
+                continue
+            bookmakers.append(normalized)
+            seen.add(normalized)
+        if bookmakers:
+            groups.append(",".join(bookmakers))
+    return groups
+
+
+def bookmaker_names(bookmakers: str | None) -> list[str]:
+    return [
+        bookmaker.strip()
+        for bookmaker in str(bookmakers or "").split(",")
+        if bookmaker.strip()
+    ]
+
+
+def extract_selected_bookmakers(payload: object) -> set[str]:
+    if isinstance(payload, dict):
+        raw_bookmakers = payload.get("bookmakers") or payload.get("selected") or []
+    else:
+        raw_bookmakers = payload
+    if not isinstance(raw_bookmakers, list):
+        return set()
+    selected: set[str] = set()
+    for entry in raw_bookmakers:
+        if isinstance(entry, str):
+            selected.add(entry.strip())
+        elif isinstance(entry, dict) and entry.get("name"):
+            selected.add(str(entry["name"]).strip())
+    return {bookmaker for bookmaker in selected if bookmaker}
+
+
+def filter_selected_bookmaker_sets(
+    groups: list[str],
+    selected_bookmakers: set[str] | None,
+) -> tuple[list[str], dict[str, list[str]]]:
+    if selected_bookmakers is None:
+        return groups, {}
+    selected_lookup = {bookmaker.lower() for bookmaker in selected_bookmakers}
+    selected_groups: list[str] = []
+    unselected_groups: dict[str, list[str]] = {}
+    for group in groups:
+        missing = [
+            bookmaker
+            for bookmaker in bookmaker_names(group)
+            if bookmaker.lower() not in selected_lookup
+        ]
+        if missing:
+            unselected_groups[bookmaker_cache_key_part(group)] = missing
+            continue
+        selected_groups.append(group)
+    return selected_groups, unselected_groups
+
+
 def variant_replacement_key(row: dict) -> tuple[str, str, float | None] | None:
     snapshot_id = row.get("snapshot_id")
     market_family = row.get("market_family")
@@ -164,11 +228,20 @@ class HistoricalOddsApiCache:
         bookmakers: str | None,
         max_requests: int,
         fallback_bookmakers: str | None = None,
+        selected_bookmakers: set[str] | None = None,
     ) -> None:
         self.api_key = api_key
         self.cache_dir = Path(cache_dir)
         self.bookmakers = bookmakers
         self.fallback_bookmakers = fallback_bookmakers
+        self.selected_bookmakers = selected_bookmakers
+        (
+            self.fallback_bookmaker_sets,
+            self.unselected_fallback_bookmaker_groups,
+        ) = filter_selected_bookmaker_sets(
+            parse_bookmaker_sets(fallback_bookmakers),
+            selected_bookmakers,
+        )
         self.max_requests = max_requests
         self.request_count = 0
         self.cache_hits = 0
@@ -272,25 +345,33 @@ class HistoricalOddsApiCache:
         if normalized is not None:
             self._increment_counter(self.bookmaker_success_counts, primary_key)
             return normalized
-        if self.bookmakers and self.fallback_bookmakers:
-            fallback_key = bookmaker_cache_key_part(self.fallback_bookmakers)
-            self._increment_counter(self.bookmaker_attempt_counts, fallback_key)
-            try:
-                fallback_payload = self._fetch_odds_payload(
-                    event_id,
-                    self.fallback_bookmakers,
-                )
-            except HTTPError as exc:
-                if self._record_skippable_odds_error(exc, bookmaker_key=fallback_key):
-                    return None
-                raise
-            fallback_normalized = self._normalize_odds_payload(fallback_payload)
-            if fallback_normalized is None:
-                self.empty_odds_count += 1
-                self._increment_counter(self.bookmaker_empty_counts, fallback_key)
-            else:
+        if self.bookmakers and self.fallback_bookmaker_sets:
+            fallback_had_empty_payload = False
+            for fallback_bookmakers in self.fallback_bookmaker_sets:
+                fallback_key = bookmaker_cache_key_part(fallback_bookmakers)
+                self._increment_counter(self.bookmaker_attempt_counts, fallback_key)
+                try:
+                    fallback_payload = self._fetch_odds_payload(
+                        event_id,
+                        fallback_bookmakers,
+                    )
+                except HTTPError as exc:
+                    if self._record_skippable_odds_error(
+                        exc,
+                        bookmaker_key=fallback_key,
+                    ):
+                        continue
+                    raise
+                fallback_normalized = self._normalize_odds_payload(fallback_payload)
+                if fallback_normalized is None:
+                    fallback_had_empty_payload = True
+                    self._increment_counter(self.bookmaker_empty_counts, fallback_key)
+                    continue
                 self._increment_counter(self.bookmaker_success_counts, fallback_key)
-            return fallback_normalized
+                return fallback_normalized
+            if fallback_had_empty_payload:
+                self.empty_odds_count += 1
+            return None
         if self.bookmakers:
             self.empty_odds_count += 1
             self._increment_counter(self.bookmaker_empty_counts, primary_key)
@@ -448,14 +529,29 @@ def main() -> None:
         os.environ.get("ODDS_API_IO_HISTORICAL_COMPETITIONS")
     )
     dry_run = parse_bool_env(os.environ.get("ODDS_API_IO_HISTORICAL_DRY_RUN"))
+    fallback_bookmakers = os.environ.get("ODDS_API_IO_HISTORICAL_FALLBACK_BOOKMAKERS")
+    validate_selected_raw = os.environ.get(
+        "ODDS_API_IO_HISTORICAL_VALIDATE_SELECTED_BOOKMAKERS"
+    )
+    validate_selected_bookmakers = (
+        parse_bool_env(validate_selected_raw)
+        if validate_selected_raw is not None
+        else bool(fallback_bookmakers)
+    )
+    selected_bookmakers = (
+        extract_selected_bookmakers(
+            fetch_odds_api_io_json(api_key, "bookmakers/selected")
+        )
+        if validate_selected_bookmakers
+        else None
+    )
     cache = HistoricalOddsApiCache(
         api_key=api_key,
         cache_dir=os.environ.get("ODDS_API_IO_HISTORICAL_CACHE_DIR")
         or DEFAULT_ODDS_API_IO_HISTORICAL_CACHE_DIR,
         bookmakers=getattr(settings, "odds_api_io_bookmakers", "Bet365,Unibet"),
-        fallback_bookmakers=os.environ.get(
-            "ODDS_API_IO_HISTORICAL_FALLBACK_BOOKMAKERS"
-        ),
+        fallback_bookmakers=fallback_bookmakers,
+        selected_bookmakers=selected_bookmakers,
         max_requests=parse_request_limit(
             os.environ.get("ODDS_API_IO_HISTORICAL_MAX_REQUESTS_PER_RUN")
         ),
@@ -518,6 +614,11 @@ def main() -> None:
                 "request_count": cache.request_count,
                 "cache_hits": cache.cache_hits,
                 "fallback_bookmakers_configured": bool(cache.fallback_bookmakers),
+                "selected_bookmaker_validation": validate_selected_bookmakers,
+                "selected_bookmakers": sorted(selected_bookmakers or []),
+                "unselected_fallback_bookmaker_groups": (
+                    cache.unselected_fallback_bookmaker_groups
+                ),
                 "bad_request_count": cache.bad_request_count,
                 "forbidden_count": cache.forbidden_count,
                 "empty_odds_count": cache.empty_odds_count,
