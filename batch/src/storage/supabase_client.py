@@ -2,12 +2,13 @@ import json
 import re
 from hashlib import sha256
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REMOTE_READ_PAGE_SIZE = 1000
 REMOTE_UPSERT_BATCH_SIZE = 250
+REMOTE_TRANSIENT_RETRY_COUNT = 3
 
 REMOTE_READ_DEFAULT_COLUMNS = {
     "prediction_feature_snapshots": (
@@ -83,6 +84,21 @@ class SupabaseClient:
             "Content-Type": "application/json",
         }
 
+    def _urlopen_with_transient_retry(self, request: Request, *, timeout: int = 30):
+        last_error: URLError | None = None
+        for attempt in range(REMOTE_TRANSIENT_RETRY_COUNT):
+            try:
+                return urlopen(request, timeout=timeout)
+            except HTTPError:
+                raise
+            except URLError as exc:
+                last_error = exc
+                if attempt == REMOTE_TRANSIENT_RETRY_COUNT - 1:
+                    raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("unreachable Supabase retry state")
+
     def _read_remote_rows_page(
         self,
         table_name: str,
@@ -104,7 +120,7 @@ class SupabaseClient:
             },
             method="GET",
         )
-        with urlopen(request, timeout=30) as response:
+        with self._urlopen_with_transient_retry(request, timeout=30) as response:
             if response.status >= 400:
                 raise ValueError(f"Supabase read failed with status {response.status}")
             return json.loads(response.read().decode("utf-8"))
@@ -196,7 +212,7 @@ class SupabaseClient:
                 method="POST",
             )
             try:
-                with urlopen(request, timeout=30) as response:
+                with self._urlopen_with_transient_retry(request, timeout=30) as response:
                     if response.status >= 400:
                         raise ValueError(
                             f"Supabase upsert failed with status {response.status}"
@@ -250,7 +266,7 @@ class SupabaseClient:
                     f"?{column}=in.({quote(in_filter, safe=',()-_')})"
                 )
                 request = Request(url=url, headers=headers, method="DELETE")
-                with urlopen(request, timeout=30) as response:
+                with self._urlopen_with_transient_retry(request, timeout=30) as response:
                     if response.status >= 400:
                         raise ValueError(
                             f"Supabase delete failed for table={table_name}"
