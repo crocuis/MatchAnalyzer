@@ -17,7 +17,10 @@ from batch.src.model.deployability import (
     CENTROID_DEPLOYABILITY_HOLD_REASON,
     is_deployable_base_model_source,
 )
-from batch.src.model.raw_signal_backtest import DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
+from batch.src.model.raw_signal_backtest import (
+    DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
+    DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
+)
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -405,8 +408,11 @@ def _promote_precision_moneyline_candidate(base: dict) -> dict:
         metadata.setdefault("precision_gate_original_reliability", original_reliability)
     metadata["confidence_reliability"] = "precision_moneyline_supported"
     metadata["high_confidence_eligible"] = False
-    metadata["daily_pick_precision_gate"] = "domestic_moneyline_signal_score"
+    metadata["daily_pick_precision_gate"] = "domestic_moneyline_signal_agreement"
     metadata["minimum_signal_score"] = DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
+    metadata["minimum_source_agreement_ratio"] = (
+        DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
+    )
     return {
         **base,
         "status": "recommended",
@@ -505,12 +511,15 @@ def _is_precision_moneyline_candidate(
     )
     max_abs_divergence = _read_numeric(summary_payload.get("max_abs_divergence"))
     moneyline_signal_score = _read_numeric(summary_payload.get("moneyline_signal_score"))
+    source_agreement_ratio = _read_numeric(summary_payload.get("source_agreement_ratio"))
     base_model_source = _read_text(summary_payload.get("base_model_source"))
     return bool(
         confidence is not None
         and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
         and moneyline_signal_score is not None
         and moneyline_signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
+        and source_agreement_ratio is not None
+        and source_agreement_ratio >= DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
         and max_abs_divergence is not None
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
         and is_deployable_base_model_source(base_model_source)
