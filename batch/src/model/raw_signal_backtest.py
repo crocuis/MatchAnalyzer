@@ -7,6 +7,7 @@ from batch.src.model.betting_recommendations import (
     _read_numeric,
 )
 from batch.src.model.confidence_validation import wilson_lower_bound
+from batch.src.model.deployability import is_deployable_base_model_source
 from batch.src.model.pre_match_prior_repair import choose_pre_match_prior_repair
 
 
@@ -27,10 +28,10 @@ DAILY_PICK_PRECISION_LEAGUES = {
     "serie-a",
 }
 DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
-    "centroid_poisson_blend",
     "trained_baseline_poisson_blend",
 }
 DAILY_PICK_PRECISION_MIN_CONFIDENCE = 0.70
+DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE = -3.0
 DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE = 0.03
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
@@ -47,6 +48,7 @@ def build_raw_moneyline_rows(
     snapshots: list[dict],
     predictions: list[dict],
     latest_per_match: bool = True,
+    enable_pre_match_prior_repair: bool = False,
 ) -> list[dict]:
     match_by_id = {
         str(row.get("id")): row
@@ -211,7 +213,10 @@ def build_raw_moneyline_rows(
         )
     if latest_per_match:
         built_rows = list(_latest_rows_by_match(built_rows).values())
-    return _apply_prequential_bucket_calibration(built_rows)
+    return _apply_prequential_bucket_calibration(
+        built_rows,
+        enable_pre_match_prior_repair=enable_pre_match_prior_repair,
+    )
 
 
 def summarize_raw_moneyline_backtest(
@@ -225,8 +230,13 @@ def summarize_raw_moneyline_backtest(
     prequential_quality_candidates = [
         row for row in rows if row.get("prequential_quality_candidate")
     ]
+    deployable_prequential_rows = [
+        row
+        for row in rows
+        if is_deployable_base_model_source(row.get("base_model_source"))
+    ]
     daily_pick_prequential_rows = [row for row in rows if _is_daily_pick_candidate(row)]
-    all_raw = _summarize_rows(rows, total_count=len(rows))
+    all_raw = _summarize_rows(rows, hit_field="hit", total_count=len(rows))
     all_prequential = _summarize_rows(
         rows,
         hit_field="prequential_hit",
@@ -234,6 +244,11 @@ def summarize_raw_moneyline_backtest(
     )
     prequential_quality_candidates_summary = _summarize_rows(
         prequential_quality_candidates,
+        hit_field="prequential_hit",
+        total_count=len(rows),
+    )
+    deployable_prequential = _summarize_rows(
+        deployable_prequential_rows,
         hit_field="prequential_hit",
         total_count=len(rows),
     )
@@ -247,6 +262,15 @@ def summarize_raw_moneyline_backtest(
         "all_prequential": all_prequential,
         "all_prequential_full": all_prequential,
         "eligible_prequential": daily_pick_prequential,
+        "deployable_prequential": deployable_prequential,
+        "deployable_prequential_target": _overall_prequential_target_summary(
+            deployable_prequential,
+            candidate_summary=deployable_prequential,
+            target_hit_rate=DEFAULT_OVERALL_PREQUENTIAL_TARGET_HIT_RATE,
+            future_ready_min_wilson_lower_bound=(
+                DEFAULT_FUTURE_READY_MIN_WILSON_LOWER_BOUND
+            ),
+        ),
         "daily_pick_prequential": daily_pick_prequential,
         "daily_pick_reliability": _daily_pick_reliability_summary(
             daily_pick_prequential,
@@ -267,6 +291,7 @@ def summarize_raw_moneyline_backtest(
         ),
         "recommended_raw": _summarize_rows(
             [row for row in rows if row.get("recommended")],
+            hit_field="hit",
             total_count=len(rows),
         ),
         "best_by_minimum_sample": {
@@ -375,7 +400,10 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
             "minimum_wilson_lower_bound": (
                 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
             ),
-            "eligibility_filter": "domestic_poisson_blend_precision_gate",
+            "minimum_signal_score": DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
+            "eligibility_filter": (
+                "domestic_poisson_blend_signal_score_precision_gate"
+            ),
         },
     }
 
@@ -396,6 +424,7 @@ def _apply_prequential_bucket_calibration(
     minimum_bucket_sample: int = DEFAULT_PREQUENTIAL_MIN_BUCKET_SAMPLE,
     target_hit_rate: float = DEFAULT_PREQUENTIAL_TARGET_HIT_RATE,
     minimum_wilson_lower_bound: float = DEFAULT_PREQUENTIAL_MIN_WILSON_LOWER_BOUND,
+    enable_pre_match_prior_repair: bool = False,
 ) -> list[dict]:
     bucket_counts: dict[tuple, Counter] = {}
     calibrated_by_prediction_id: dict[str, dict] = {}
@@ -407,19 +436,19 @@ def _apply_prequential_bucket_calibration(
             target_hit_rate=target_hit_rate,
             minimum_wilson_lower_bound=minimum_wilson_lower_bound,
         )
-        prequential_pick = (
-            str(bucket_choice["pick"])
-            if bucket_choice is not None
-            else str(row.get("pick") or "")
-        )
+        prequential_pick = str(row.get("pick") or "")
         strategy = (
             "bucket_calibrated"
             if bucket_choice is not None
             else "raw_fallback"
         )
-        prior_repair = _choose_prequential_prior_repair(
-            row,
-            current_pick=prequential_pick,
+        prior_repair = (
+            _choose_prequential_prior_repair(
+                row,
+                current_pick=prequential_pick,
+            )
+            if enable_pre_match_prior_repair
+            else None
         )
         if prior_repair is not None:
             prequential_pick = prior_repair["pick"]
@@ -467,11 +496,16 @@ def _choose_prequential_bucket(
     minimum_wilson_lower_bound: float,
 ) -> dict | None:
     eligible = []
+    current_pick = str(row.get("pick") or "")
     for kind, bucket in _prequential_bucket_candidates(row):
         outcomes = bucket_counts.get(bucket, Counter())
         bucket_sample = sum(outcomes.values())
         top_outcome, top_hits = _top_bucket_outcome(outcomes)
-        if bucket_sample < minimum_bucket_sample or top_outcome not in OUTCOMES:
+        if (
+            bucket_sample < minimum_bucket_sample
+            or top_outcome not in OUTCOMES
+            or top_outcome != current_pick
+        ):
             continue
         bucket_hit_rate = round(top_hits / bucket_sample, 4)
         bucket_lower_bound = wilson_lower_bound(top_hits, bucket_sample)
@@ -612,6 +646,9 @@ def _is_daily_pick_candidate(row: dict) -> bool:
     max_abs_divergence = _read_numeric(row.get("max_abs_divergence"))
     if max_abs_divergence is None:
         return False
+    signal_score = _read_numeric(row.get("signal_score"))
+    if signal_score is None:
+        return False
     has_pre_match_signal = bool(
         row.get("external_rating_available")
         or row.get("understat_xg_available")
@@ -625,7 +662,23 @@ def _is_daily_pick_candidate(row: dict) -> bool:
         in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and float(row.get("confidence") or 0.0)
         >= DAILY_PICK_PRECISION_MIN_CONFIDENCE
+        and signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
+    )
+
+
+def build_moneyline_signal_score(
+    prediction: dict,
+    *,
+    match: dict | None = None,
+    snapshot: dict | None = None,
+    historical_matches: list[dict] | None = None,
+) -> float:
+    return _moneyline_signal_score(
+        prediction,
+        match=match,
+        snapshot=snapshot,
+        historical_matches=historical_matches,
     )
 
 

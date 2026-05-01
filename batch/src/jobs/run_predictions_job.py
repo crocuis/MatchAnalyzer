@@ -64,6 +64,10 @@ from batch.src.model.confidence_validation import (
     evaluate_high_confidence_eligibility,
     summarize_validation_segments,
 )
+from batch.src.model.deployability import (
+    CENTROID_DEPLOYABILITY_HOLD_REASON,
+    build_model_source_deployment_gate,
+)
 from batch.src.model.pre_match_prior_repair import choose_pre_match_prior_repair
 from batch.src.model.train_baseline import train_baseline_model
 from batch.src.settings import load_settings
@@ -331,6 +335,13 @@ def attach_prediction_output_payload(
     *,
     use_real_prediction_targets: bool,
 ) -> dict[str, Any]:
+    if (
+        use_real_prediction_targets
+        and read_env_flag("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_PAYLOAD")
+    ):
+        result_payload["payload_omitted"] = len(payload)
+        return result_payload
+
     include_output_payload = (
         os.environ.get("MATCH_ANALYZER_INCLUDE_PREDICTION_OUTPUT_PAYLOAD")
         in {"1", "true", "TRUE", "yes", "YES"}
@@ -521,6 +532,22 @@ def apply_adaptive_recommendation_gate(
     }
 
 
+def apply_model_source_deployment_gate(
+    main_recommendation: dict,
+    *,
+    base_model_source: object,
+) -> dict:
+    deployment_gate = build_model_source_deployment_gate(base_model_source)
+    if deployment_gate is None:
+        return main_recommendation
+    return {
+        **main_recommendation,
+        "recommended": False,
+        "no_bet_reason": CENTROID_DEPLOYABILITY_HOLD_REASON,
+        "deployment_gate": deployment_gate,
+    }
+
+
 def apply_pre_match_prior_repair_to_prediction_row(
     row: dict[str, Any],
     *,
@@ -528,6 +555,8 @@ def apply_pre_match_prior_repair_to_prediction_row(
     base_model_source: str,
     base_model_probs: dict,
 ) -> tuple[dict[str, Any], dict | None]:
+    if not read_env_flag("MATCH_ANALYZER_ENABLE_PRE_MATCH_PRIOR_REPAIR"):
+        return row, None
     repair = choose_pre_match_prior_repair(
         current_pick=str(row.get("recommended_pick") or ""),
         competition_id=str(match.get("competition_id") or ""),
@@ -2336,6 +2365,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "prior_repair",
         "raw_confidence_score",
         "calibrated_confidence_score",
+        "moneyline_signal_score",
         "prediction_market_available",
         "confidence_calibration",
         "validation_metadata",
@@ -2349,6 +2379,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "feature_metadata",
         "source_metadata",
         "market_enrichment",
+        "deployment_gate",
     )
     return {
         key: explanation_payload[key]
@@ -2542,6 +2573,8 @@ def main() -> None:
         use_real_prediction_targets=use_real_prediction_targets,
     )
     archive_prediction_artifacts = archive_prediction_artifacts and persist_side_effects
+    from batch.src.model.raw_signal_backtest import build_moneyline_signal_score
+
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
@@ -3003,6 +3036,12 @@ def main() -> None:
                 preserved_market_enrichment=preserved_market_enrichment,
             ),
         }
+        explanation_payload["moneyline_signal_score"] = build_moneyline_signal_score(
+            {"summary_payload": explanation_payload},
+            match=match,
+            snapshot=signal_snapshot,
+            historical_matches=match_rows,
+        )
         if use_real_prediction_targets:
             if snapshot_target_date not in validation_segment_cache:
                 validation_segment_cache[snapshot_target_date] = summarize_validation_segments(
@@ -3027,8 +3066,14 @@ def main() -> None:
                 main_recommendation,
                 eligibility,
             )
-            explanation_payload["main_recommendation"] = main_recommendation
-            explanation_payload["no_bet_reason"] = main_recommendation["no_bet_reason"]
+        main_recommendation = apply_model_source_deployment_gate(
+            main_recommendation,
+            base_model_source=base_model_source,
+        )
+        explanation_payload["main_recommendation"] = main_recommendation
+        explanation_payload["no_bet_reason"] = main_recommendation["no_bet_reason"]
+        if main_recommendation.get("deployment_gate") is not None:
+            explanation_payload["deployment_gate"] = main_recommendation["deployment_gate"]
         if llm_advisory is not None:
             explanation_payload["llm_advisory"] = llm_advisory
         summary_payload = build_prediction_summary_payload(explanation_payload)

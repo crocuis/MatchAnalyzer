@@ -999,6 +999,7 @@ def test_build_prediction_summary_payload_preserves_llm_advisory():
                 "status": "available",
                 "risk_flags": ["lineup_uncertainty"],
             },
+            "moneyline_signal_score": -2.5,
             "main_recommendation": {
                 "pick": "HOME",
                 "recommended": True,
@@ -1011,6 +1012,7 @@ def test_build_prediction_summary_payload_preserves_llm_advisory():
         "status": "available",
         "risk_flags": ["lineup_uncertainty"],
     }
+    assert summary["moneyline_signal_score"] == -2.5
     assert "main_recommendation" not in summary
 
 
@@ -1223,6 +1225,21 @@ def test_attach_prediction_output_payload_keeps_small_payload_even_when_sample_o
     assert "payload_omitted" not in result
 
 
+def test_attach_prediction_output_payload_can_force_omit_small_real_payload(monkeypatch):
+    monkeypatch.setenv("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_PAYLOAD", "1")
+    payload = [{"id": f"prediction_{index}"} for index in range(2)]
+
+    result = run_predictions_job.attach_prediction_output_payload(
+        {"snapshot_rows": 2},
+        payload,
+        use_real_prediction_targets=True,
+    )
+
+    assert result["payload_omitted"] == 2
+    assert "payload" not in result
+    assert "payload_sample" not in result
+
+
 def test_apply_adaptive_recommendation_gate_requires_validation_support():
     recommendation = {
         "pick": "HOME",
@@ -1283,7 +1300,59 @@ def test_apply_adaptive_recommendation_gate_holds_weak_segments():
     assert gated["adaptive_validation_gate"]["reasons"] == ["insufficient_sample"]
 
 
-def test_apply_pre_match_prior_repair_prefers_base_model_away_signal():
+def test_apply_model_source_deployment_gate_holds_centroid_predictions():
+    gated = run_predictions_job.apply_model_source_deployment_gate(
+        {
+            "pick": "HOME",
+            "confidence": 0.82,
+            "recommended": True,
+            "no_bet_reason": None,
+        },
+        base_model_source="centroid_poisson_blend",
+    )
+
+    assert gated["recommended"] is False
+    assert gated["no_bet_reason"] == "unvalidated_centroid_fallback"
+    assert gated["deployment_gate"] == {
+        "recommended": False,
+        "reason": "unvalidated_centroid_fallback",
+        "base_model_source": "centroid_poisson_blend",
+    }
+
+
+def test_apply_model_source_deployment_gate_allows_trained_predictions():
+    recommendation = {
+        "pick": "HOME",
+        "confidence": 0.82,
+        "recommended": True,
+        "no_bet_reason": None,
+    }
+
+    gated = run_predictions_job.apply_model_source_deployment_gate(
+        recommendation,
+        base_model_source="trained_baseline_poisson_blend",
+    )
+
+    assert gated == recommendation
+
+
+def test_apply_pre_match_prior_repair_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("MATCH_ANALYZER_ENABLE_PRE_MATCH_PRIOR_REPAIR", raising=False)
+
+    row, repair = run_predictions_job.apply_pre_match_prior_repair_to_prediction_row(
+        {"recommended_pick": "HOME"},
+        match={"competition_id": "champions-league"},
+        base_model_source="trained_baseline",
+        base_model_probs={"home": 0.25, "draw": 0.2, "away": 0.55},
+    )
+
+    assert row["recommended_pick"] == "HOME"
+    assert repair is None
+
+
+def test_apply_pre_match_prior_repair_prefers_base_model_away_signal(monkeypatch):
+    monkeypatch.setenv("MATCH_ANALYZER_ENABLE_PRE_MATCH_PRIOR_REPAIR", "1")
+
     row, repair = run_predictions_job.apply_pre_match_prior_repair_to_prediction_row(
         {"recommended_pick": "HOME"},
         match={"competition_id": "champions-league"},
@@ -1299,7 +1368,11 @@ def test_apply_pre_match_prior_repair_prefers_base_model_away_signal():
     }
 
 
-def test_apply_pre_match_prior_repair_uses_uefa_home_prior_when_away_is_not_favorite():
+def test_apply_pre_match_prior_repair_uses_uefa_home_prior_when_away_is_not_favorite(
+    monkeypatch,
+):
+    monkeypatch.setenv("MATCH_ANALYZER_ENABLE_PRE_MATCH_PRIOR_REPAIR", "1")
+
     row, repair = run_predictions_job.apply_pre_match_prior_repair_to_prediction_row(
         {"recommended_pick": "AWAY"},
         match={"competition_id": "europa-league"},

@@ -636,6 +636,7 @@ def test_sync_daily_picks_keeps_precision_gate_moneyline_only() -> None:
                     "base_model_source": "trained_baseline_poisson_blend",
                     "high_confidence_eligible": False,
                     "max_abs_divergence": 0.02,
+                    "moneyline_signal_score": -3.0,
                     "feature_context": {"external_rating_available": 1},
                     "validation_metadata": {
                         "sample_count": 30,
@@ -755,6 +756,7 @@ def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> N
                     "base_model_source": "trained_baseline_poisson_blend",
                     "high_confidence_eligible": False,
                     "max_abs_divergence": 0.02,
+                    "moneyline_signal_score": 4.0,
                     "feature_context": {
                         "external_rating_available": 1,
                         "understat_xg_available": 1,
@@ -780,6 +782,67 @@ def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> N
         items[0]["validation_metadata"]["precision_gate_original_reliability"]
         == "below_target_hit_rate"
     )
+    assert items[0]["validation_metadata"]["moneyline_signal_score"] == 4.0
+    assert (
+        items[0]["validation_metadata"]["daily_pick_precision_gate"]
+        == "domestic_moneyline_signal_score"
+    )
+
+
+def test_sync_daily_picks_holds_precision_moneyline_below_signal_floor() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.76,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.76,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "high_confidence_eligible": False,
+                    "max_abs_divergence": 0.02,
+                    "moneyline_signal_score": -3.01,
+                    "feature_context": {
+                        "external_rating_available": 1,
+                        "understat_xg_available": 1,
+                    },
+                    "validation_metadata": {
+                        "sample_count": 30,
+                        "hit_rate": 0.69,
+                        "wilson_lower_bound": 0.5,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
 
 
 def test_sync_daily_picks_allows_precision_poisson_blend_at_calibrated_threshold() -> None:
@@ -814,6 +877,7 @@ def test_sync_daily_picks_allows_precision_poisson_blend_at_calibrated_threshold
                     "base_model_source": "trained_baseline_poisson_blend",
                     "high_confidence_eligible": False,
                     "max_abs_divergence": 0.03,
+                    "moneyline_signal_score": -3.0,
                     "feature_context": {
                         "external_rating_available": 1,
                         "understat_xg_available": 1,
@@ -834,6 +898,61 @@ def test_sync_daily_picks_allows_precision_poisson_blend_at_calibrated_threshold
         items[0]["validation_metadata"]["confidence_reliability"]
         == "precision_moneyline_supported"
     )
+
+
+def test_sync_daily_picks_keeps_centroid_precision_candidate_held() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "unvalidated_centroid_fallback",
+                "summary_payload": {
+                    "base_model_source": "centroid_poisson_blend",
+                    "high_confidence_eligible": False,
+                    "max_abs_divergence": 0.02,
+                    "feature_context": {
+                        "external_rating_available": 1,
+                        "understat_xg_available": 1,
+                    },
+                    "validation_metadata": {
+                        "sample_count": 250,
+                        "hit_rate": 0.75,
+                        "wilson_lower_bound": 0.68,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "unvalidated_centroid_fallback",
+    ]
 
 
 def test_sync_daily_picks_keeps_unsupported_moneyline_held() -> None:
@@ -1356,6 +1475,7 @@ def test_backfill_daily_pick_tracking_recomputes_season_summary() -> None:
                     "base_model_source": "trained_baseline_poisson_blend",
                     "high_confidence_eligible": True,
                     "max_abs_divergence": 0.02,
+                    "moneyline_signal_score": -3.0,
                     "feature_context": {"external_rating_available": 1},
                     "validation_metadata": {"sample_count": 90},
                 },
@@ -1373,6 +1493,7 @@ def test_backfill_daily_pick_tracking_recomputes_season_summary() -> None:
                     "base_model_source": "trained_baseline_poisson_blend",
                     "high_confidence_eligible": True,
                     "max_abs_divergence": 0.02,
+                    "moneyline_signal_score": -3.0,
                     "feature_context": {"external_rating_available": 1},
                     "validation_metadata": {"sample_count": 90},
                 },

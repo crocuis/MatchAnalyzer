@@ -13,6 +13,11 @@ from batch.src.model.betting_recommendations import (
     settle_variant_candidate,
 )
 from batch.src.model.confidence_validation import wilson_lower_bound
+from batch.src.model.deployability import (
+    CENTROID_DEPLOYABILITY_HOLD_REASON,
+    is_deployable_base_model_source,
+)
+from batch.src.model.raw_signal_backtest import DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
 
@@ -25,7 +30,6 @@ DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
 DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.70
 DAILY_PICK_PRECISION_MAX_DIVERGENCE = 0.03
 DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
-    "centroid_poisson_blend",
     "trained_baseline_poisson_blend",
 }
 DAILY_PICK_PRECISION_HOLD_REASONS = {
@@ -33,6 +37,7 @@ DAILY_PICK_PRECISION_HOLD_REASONS = {
     "below_target_hit_rate",
     "below_wilson_lower_bound",
     "insufficient_sample",
+    CENTROID_DEPLOYABILITY_HOLD_REASON,
 }
 DAILY_PICK_PRECISION_LEAGUES = {
     "bundesliga",
@@ -400,7 +405,8 @@ def _promote_precision_moneyline_candidate(base: dict) -> dict:
         metadata.setdefault("precision_gate_original_reliability", original_reliability)
     metadata["confidence_reliability"] = "precision_moneyline_supported"
     metadata["high_confidence_eligible"] = False
-    metadata["daily_pick_precision_gate"] = "domestic_moneyline"
+    metadata["daily_pick_precision_gate"] = "domestic_moneyline_signal_score"
+    metadata["minimum_signal_score"] = DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
     return {
         **base,
         "status": "recommended",
@@ -443,6 +449,12 @@ def _build_daily_pick_validation_metadata(summary_payload: dict) -> dict:
         bool,
     ):
         metadata.setdefault("source_agreement_ratio", float(source_agreement_ratio))
+    moneyline_signal_score = summary_payload.get("moneyline_signal_score")
+    if isinstance(moneyline_signal_score, (int, float)) and not isinstance(
+        moneyline_signal_score,
+        bool,
+    ):
+        metadata.setdefault("moneyline_signal_score", float(moneyline_signal_score))
     return metadata
 
 
@@ -492,12 +504,16 @@ def _is_precision_moneyline_candidate(
         or summary_payload.get("calibrated_confidence_score")
     )
     max_abs_divergence = _read_numeric(summary_payload.get("max_abs_divergence"))
+    moneyline_signal_score = _read_numeric(summary_payload.get("moneyline_signal_score"))
     base_model_source = _read_text(summary_payload.get("base_model_source"))
     return bool(
         confidence is not None
         and confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
+        and moneyline_signal_score is not None
+        and moneyline_signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
         and max_abs_divergence is not None
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_DIVERGENCE
+        and is_deployable_base_model_source(base_model_source)
         and base_model_source in DAILY_PICK_PRECISION_BASE_MODEL_SOURCES
         and _has_pre_match_signal_support(summary_payload)
     )
