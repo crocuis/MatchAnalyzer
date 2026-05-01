@@ -971,6 +971,7 @@ def test_daily_pick_expansion_diagnostics_explain_precision_gap():
             "date": f"2026-04-{index + 1:02d}",
             "adjusted_hit": 0,
             "prequential_hit": 1 if index < 191 else 0,
+            "pick": "HOME",
             "prequential_quality_candidate": False,
             "external_signal_source_summary": "clubelo+understat",
             "checkpoint": "T_MINUS_24H",
@@ -982,6 +983,7 @@ def test_daily_pick_expansion_diagnostics_explain_precision_gap():
             "signal_score": 4.0 if index < 112 else -5.0,
             "source_agreement_ratio": 0.67,
             "max_abs_divergence": 0.03,
+            "probability_favorite_probability": 0.7,
             "base_model_source": "trained_baseline_poisson_blend",
         }
         for index in range(251)
@@ -999,6 +1001,15 @@ def test_daily_pick_expansion_diagnostics_explain_precision_gap():
     assert diagnostics["high_precision_seed"]["sample_count"] == 112
     assert diagnostics["high_precision_seed"]["hit_rate"] == 1.0
     assert diagnostics["hit_rate_loss_from_seed"] == 0.239
+    assert diagnostics["current_gate_segments"]["by_pick"]["HOME"] == {
+        "sample_count": 251,
+        "hit_count": 191,
+        "hit_rate": 0.761,
+        "wilson_lower_bound": 0.7045,
+    }
+    assert diagnostics["current_gate_segments"]["by_favorite_probability"][
+        "favorite_probability>=0.65"
+    ]["sample_count"] == 251
 
 
 def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
