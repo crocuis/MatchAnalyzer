@@ -35,6 +35,10 @@ DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
     "trained_baseline",
     "trained_baseline_poisson_blend",
 }
+DAILY_PICK_SEGMENT_HOLD_COMPETITIONS = {
+    "serie-a",
+}
+DAILY_PICK_SEGMENT_HOLD_REASON = "below_segment_reliability"
 DAILY_PICK_PRECISION_MIN_CONFIDENCE = 0.70
 DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE = -5.0
 DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT = 0.67
@@ -830,6 +834,8 @@ def _is_daily_pick_candidate(
         or row.get("football_data_match_stats_available")
     )
     if not has_pre_match_signal:
+        return False
+    if str(row.get("competition_id") or "") in DAILY_PICK_SEGMENT_HOLD_COMPETITIONS:
         return False
     source_agreement = float(row.get("source_agreement_ratio") or 0.0)
     precision_supported = (

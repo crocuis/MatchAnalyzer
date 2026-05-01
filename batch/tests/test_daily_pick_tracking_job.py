@@ -724,6 +724,59 @@ def test_sync_daily_picks_allows_precision_gate_for_covered_european_leagues() -
     assert items[0]["reason_labels"] == ["mainRecommendation"]
 
 
+def test_sync_daily_picks_holds_weak_validated_competition_segments() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "serie-a",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.80,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.80,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "max_abs_divergence": 0.01,
+                    "moneyline_signal_score": 6.0,
+                    "source_agreement_ratio": 1.0,
+                    "feature_context": {"external_rating_available": 1},
+                    "validation_metadata": {
+                        "sample_count": 300,
+                        "hit_rate": 0.7567,
+                        "wilson_lower_bound": 0.7051,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_segment_reliability",
+    ]
+
+
 def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",

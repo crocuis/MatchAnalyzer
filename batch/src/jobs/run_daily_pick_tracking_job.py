@@ -25,6 +25,8 @@ from batch.src.model.raw_signal_backtest import (
     DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE,
     DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
     DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
+    DAILY_PICK_SEGMENT_HOLD_COMPETITIONS,
+    DAILY_PICK_SEGMENT_HOLD_REASON,
 )
 from batch.src.settings import load_settings
 from batch.src.storage.supabase_client import SupabaseClient
@@ -183,13 +185,16 @@ def build_recommended_pick_candidates(
         "validation_metadata": validation_metadata,
         "reliability_hold_reason": reliability_hold_reason,
     }
+    league_id = _read_text(match.get("competition_id"))
+    if league_id in DAILY_PICK_SEGMENT_HOLD_COMPETITIONS:
+        base = _with_daily_pick_hold_reason(base, DAILY_PICK_SEGMENT_HOLD_REASON)
 
     candidates: list[dict] = []
     precision_moneyline_eligible = _is_precision_moneyline_candidate(
         prediction=prediction,
         summary_payload=summary_payload,
         no_bet_reason=reliability_hold_reason or no_bet_reason,
-        league_id=_read_text(match.get("competition_id")),
+        league_id=league_id,
     )
     moneyline_candidate = build_moneyline_pick_candidate(
         base=base,
@@ -513,6 +518,8 @@ def _is_precision_moneyline_candidate(
     moneyline_signal_score = _read_numeric(summary_payload.get("moneyline_signal_score"))
     source_agreement_ratio = _read_numeric(summary_payload.get("source_agreement_ratio"))
     base_model_source = _read_text(summary_payload.get("base_model_source"))
+    if league_id in DAILY_PICK_SEGMENT_HOLD_COMPETITIONS:
+        return False
     precision_supported = (
         moneyline_signal_score is not None
         and moneyline_signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
