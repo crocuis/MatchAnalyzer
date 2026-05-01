@@ -6,6 +6,7 @@ from batch.src.jobs.run_daily_pick_tracking_job import (
 )
 from batch.src.jobs.backfill_daily_pick_tracking_job import (
     backfill_daily_pick_tracking,
+    replace_existing_daily_pick_items_for_runs,
     select_daily_pick_backfill_dates,
 )
 
@@ -1559,6 +1560,56 @@ def test_select_daily_pick_backfill_dates_uses_prediction_backed_match_dates() -
     )
 
     assert dates == ["2026-04-24"]
+
+
+def test_replace_existing_daily_pick_items_for_runs_deletes_in_bulk() -> None:
+    state = {
+        "daily_pick_items": [
+            {"id": "item-1", "run_id": "daily_pick_run_2026-04-24"},
+            {"id": "item-2", "run_id": "daily_pick_run_2026-04-25"},
+            {"id": "item-other", "run_id": "daily_pick_run_2026-04-26"},
+        ],
+        "daily_pick_results": [
+            {"id": "result-1", "pick_item_id": "item-1"},
+            {"id": "result-2", "pick_item_id": "item-2"},
+            {"id": "result-other", "pick_item_id": "item-other"},
+        ],
+    }
+    delete_calls: list[tuple[str, str, list[str]]] = []
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state.get(table_name, []))
+
+        def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
+            delete_calls.append((table_name, column, values))
+            value_set = set(values)
+            state[table_name] = [
+                row
+                for row in state.get(table_name, [])
+                if str(row.get(column) or "") not in value_set
+            ]
+            return len(values)
+
+    replace_existing_daily_pick_items_for_runs(
+        FakeClient(),
+        ["daily_pick_run_2026-04-24", "daily_pick_run_2026-04-25"],
+    )
+
+    assert delete_calls == [
+        ("daily_pick_results", "pick_item_id", ["item-1", "item-2"]),
+        (
+            "daily_pick_items",
+            "run_id",
+            ["daily_pick_run_2026-04-24", "daily_pick_run_2026-04-25"],
+        ),
+    ]
+    assert state["daily_pick_items"] == [
+        {"id": "item-other", "run_id": "daily_pick_run_2026-04-26"}
+    ]
+    assert state["daily_pick_results"] == [
+        {"id": "result-other", "pick_item_id": "item-other"}
+    ]
 
 
 def test_backfill_daily_pick_tracking_recomputes_season_summary() -> None:

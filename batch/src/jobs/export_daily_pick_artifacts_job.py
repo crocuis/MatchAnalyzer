@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -17,6 +18,7 @@ from batch.src.storage.supabase_client import SupabaseClient
 
 
 MAX_DAILY_RECOMMENDATIONS = 10
+DAILY_PICK_ARTIFACT_EXPORT_WORKERS = 8
 WILSON_Z_SCORE = 1.96
 
 
@@ -289,6 +291,7 @@ def build_daily_pick_artifact_rows(
     r2_client: R2Client,
     supabase_storage_client: Any,
     generated_at: str,
+    max_workers: int = DAILY_PICK_ARTIFACT_EXPORT_WORKERS,
 ) -> list[dict[str, Any]]:
     runs_by_date = {
         str(row.get("pick_date") or ""): row
@@ -312,7 +315,7 @@ def build_daily_pick_artifact_rows(
         for row in results
         if row.get("pick_item_id")
     }
-    artifact_rows: list[dict[str, Any]] = []
+    tasks: list[tuple[str, dict[str, Any]]] = []
     for pick_date in sorted(target_dates):
         view = build_daily_picks_view(
             pick_date=pick_date,
@@ -323,25 +326,38 @@ def build_daily_pick_artifact_rows(
             competitions_by_id=competitions_by_id,
             results_by_item_id=results_by_item_id,
         )
-        artifact_rows.append(
-            archive_json_artifact(
-                r2_client=r2_client,
-                supabase_storage_client=supabase_storage_client,
-                artifact_id=f"daily_picks_view_{pick_date}",
-                owner_type="daily_picks",
-                owner_id=pick_date,
-                artifact_kind="daily_picks_view",
-                key=f"daily-picks/{pick_date}/view.json",
-                payload=view,
-                summary_payload={
-                    "pick_date": pick_date,
-                    "item_count": len(view["items"]),
-                    "version": 1,
-                },
-                metadata={"generated_at": generated_at},
-            )
+        tasks.append((pick_date, view))
+
+    def archive_task(pick_date: str, view: dict[str, Any]) -> dict[str, Any]:
+        return archive_json_artifact(
+            r2_client=r2_client,
+            supabase_storage_client=supabase_storage_client,
+            artifact_id=f"daily_picks_view_{pick_date}",
+            owner_type="daily_picks",
+            owner_id=pick_date,
+            artifact_kind="daily_picks_view",
+            key=f"daily-picks/{pick_date}/view.json",
+            payload=view,
+            summary_payload={
+                "pick_date": pick_date,
+                "item_count": len(view["items"]),
+                "version": 1,
+            },
+            metadata={"generated_at": generated_at},
         )
-    return artifact_rows
+
+    if max_workers <= 1 or len(tasks) <= 1:
+        return [archive_task(pick_date, view) for pick_date, view in tasks]
+
+    artifact_rows = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(archive_task, pick_date, view): pick_date
+            for pick_date, view in tasks
+        }
+        for future in as_completed(futures):
+            artifact_rows.append(future.result())
+    return sorted(artifact_rows, key=lambda row: str(row.get("owner_id") or ""))
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
