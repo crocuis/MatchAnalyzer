@@ -1069,6 +1069,54 @@ def test_daily_pick_expansion_diagnostics_explain_precision_gap():
         "best_case_hit_rate": 0.764,
         "target_reachable_by_filtering": False,
     }
+    assert diagnostics["weak_segment_frontier"] == []
+
+
+def test_daily_pick_expansion_diagnostics_rank_weak_segment_frontier():
+    rows = []
+    for index in range(268):
+        weak_segment = index < 10
+        hit = 0 if weak_segment and index >= 2 else 1
+        if not weak_segment and index >= 212:
+            hit = 0
+        rows.append(
+            {
+                "date": f"2026-04-{(index % 28) + 1:02d}",
+                "adjusted_hit": hit,
+                "prequential_hit": hit,
+                "pick": "HOME",
+                "prequential_quality_candidate": False,
+                "external_signal_source_summary": "clubelo+understat",
+                "checkpoint": "T_MINUS_24H",
+                "external_rating_available": 1,
+                "understat_xg_available": 1,
+                "football_data_match_stats_available": 1,
+                "competition_id": "premier-league",
+                "confidence": 0.72,
+                "signal_score": -5.0,
+                "source_agreement_ratio": 0.67,
+                "max_abs_divergence": 0.03,
+                "probability_favorite_probability": 0.7,
+                "probability_favorite_margin": 0.45 if weak_segment else 0.2,
+                "bookmaker_available": not weak_segment,
+                "rolling_ppg_delta": 1.5 if weak_segment else 0.0,
+                "rolling_venue_ppg_delta": 1.0 if weak_segment else 0.0,
+                "base_model_source": "trained_baseline_poisson_blend",
+            }
+        )
+
+    summary = summarize_raw_moneyline_backtest(rows)
+
+    frontier = summary["daily_pick_expansion_diagnostics"]["weak_segment_frontier"]
+    assert frontier[0]["segment"] == {
+        "bookmaker_available": False,
+    }
+    assert frontier[0]["sample_count"] == 10
+    assert frontier[0]["hit_count"] == 2
+    assert frontier[0]["miss_count"] == 8
+    assert frontier[0]["remaining_sample_count"] == 258
+    assert frontier[0]["remaining_hit_rate"] == 0.7829
+    assert frontier[0]["diagnostic_only"] is True
 
 
 def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
