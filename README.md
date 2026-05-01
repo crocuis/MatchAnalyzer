@@ -178,6 +178,14 @@ REAL_MARKET_DATE=2026-02-01 python3 -m batch.src.jobs.ingest_markets_job
 `ODDS_API_IO_INCLUDE_HISTORICAL`을 끄면 기존처럼 현재/미래 경기용 events + multi odds 경로를 사용한다.
 `ODDS_API_IO_HISTORICAL_ONLY=1`은 과거 시즌 백필에서 일일 schedule, Betman, Polymarket 호출을 생략해 로컬 실험 시간을 줄인다.
 Odds_API.io의 시간당 제한을 아끼고 Football-Data.co.uk bulk CSV만 사용하려면 `ODDS_API_IO_DISABLE=1`을 함께 지정한다.
+UEFA 대항전처럼 기본 bookmaker(`ODDS_API_IO_BOOKMAKERS`, 기본 `Bet365,Unibet`)가 비는 구간은 아래처럼 fallback bookmaker set을 명시해 추가로 시도할 수 있다. Odds_API.io historical odds는 bookmaker 목록이 필수라, fallback을 비워두면 잘못된 무필터 요청을 보내지 않고 empty odds로 집계한다.
+
+```bash
+export ODDS_API_IO_HISTORICAL_FALLBACK_BOOKMAKERS="SingBet,William Hill,Betway"
+MATCH_ANALYZER_LOCAL_DATASET_DIR=.tmp/prediction-dataset \
+  ODDS_API_IO_HISTORICAL_COMPETITIONS=champions-league,europa-league,conference-league \
+  python3 -m batch.src.jobs.backfill_odds_api_io_historical_markets_job
+```
 반복 백필에서는 `FOOTBALL_DATA_CACHE_DIR=.tmp/football-data-cache`를 지정해 리그 CSV를 로컬에 캐시한다.
 
 5대 리그의 시즌 전체 historical closing odds를 한 번에 채우려면 전용 배치를 사용한다. 이 배치는 `market_probabilities`와 `market_variants`만 upsert하며, Champions/Europa/Conference League처럼 Football-Data CSV가 없는 대회는 건드리지 않는다.

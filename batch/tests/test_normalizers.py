@@ -3649,7 +3649,7 @@ def test_historical_odds_cache_keys_include_bookmaker_filter(tmp_path, monkeypat
     assert [params.get("bookmakers") for params in calls] == ["Bet365", "Unibet"]
 
 
-def test_historical_odds_falls_back_to_unfiltered_when_selected_books_are_empty(
+def test_historical_odds_falls_back_to_alternate_books_when_selected_books_are_empty(
     tmp_path,
     monkeypatch,
 ):
@@ -3658,7 +3658,7 @@ def test_historical_odds_falls_back_to_unfiltered_when_selected_books_are_empty(
     def fake_fetch_json(api_key, path, params):
         del api_key, path
         calls.append(dict(params))
-        if params.get("bookmakers"):
+        if params.get("bookmakers") == "Bet365,Unibet":
             return {
                 "id": params["eventId"],
                 "bookmakers": {},
@@ -3683,6 +3683,7 @@ def test_historical_odds_falls_back_to_unfiltered_when_selected_books_are_empty(
         api_key="api-key",
         cache_dir=tmp_path,
         bookmakers="Bet365,Unibet",
+        fallback_bookmakers="SingBet,William Hill,Betway",
         max_requests=4,
     )
 
@@ -3690,7 +3691,100 @@ def test_historical_odds_falls_back_to_unfiltered_when_selected_books_are_empty(
 
     assert row is not None
     assert row["bookmakers"].keys() == {"fallback-book"}
-    assert [params.get("bookmakers") for params in calls] == ["Bet365,Unibet", None]
+    assert [params.get("bookmakers") for params in calls] == [
+        "Bet365,Unibet",
+        "SingBet,William Hill,Betway",
+    ]
+
+
+def test_historical_odds_skips_event_when_unfiltered_fallback_is_bad_request(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key, path
+        calls.append(dict(params))
+        if params.get("bookmakers") == "Bet365,Unibet":
+            return {
+                "id": params["eventId"],
+                "bookmakers": {},
+            }
+        raise HTTPError(
+            url="https://api.odds-api.io/v3/historical/odds",
+            code=400,
+            msg="bad request",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+    cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365,Unibet",
+        fallback_bookmakers="SingBet,William Hill,Betway",
+        max_requests=4,
+    )
+
+    row = cache.fetch_odds("event-1")
+
+    assert row is None
+    assert cache.bad_request_count == 1
+    assert cache.empty_odds_count == 0
+    assert [params.get("bookmakers") for params in calls] == [
+        "Bet365,Unibet",
+        "SingBet,William Hill,Betway",
+    ]
+
+
+def test_historical_odds_skips_forbidden_fallback_bookmaker_set(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key, path
+        calls.append(dict(params))
+        if params.get("bookmakers") == "Bet365,Unibet":
+            return {
+                "id": params["eventId"],
+                "bookmakers": {},
+            }
+        raise HTTPError(
+            url="https://api.odds-api.io/v3/historical/odds",
+            code=403,
+            msg="forbidden",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+    cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365,Unibet",
+        fallback_bookmakers="SingBet,William Hill,Betway",
+        max_requests=4,
+    )
+
+    row = cache.fetch_odds("event-1")
+
+    assert row is None
+    assert cache.forbidden_count == 1
+    assert cache.bad_request_count == 0
+    assert [params.get("bookmakers") for params in calls] == [
+        "Bet365,Unibet",
+        "SingBet,William Hill,Betway",
+    ]
 
 
 def test_build_odds_api_io_market_rows_skips_ambiguous_same_kickoff_matches():
