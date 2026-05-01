@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> None:
         latest_per_match=not args.all_snapshots,
         enable_pre_match_prior_repair=args.enable_pre_match_prior_repair,
     )
-    minimum_samples = tuple(args.minimum_samples or (100, 200, 500))
+    minimum_samples = tuple(args.minimum_samples or (100, 200, 250, 500))
     summary = summarize_raw_moneyline_backtest(
         raw_rows,
         minimum_samples=minimum_samples,
