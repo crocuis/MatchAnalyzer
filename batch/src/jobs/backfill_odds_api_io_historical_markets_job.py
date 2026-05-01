@@ -54,6 +54,10 @@ def parse_request_limit(value: str | None) -> int:
     return max(int(str(value)), 0)
 
 
+def parse_bool_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def variant_replacement_key(row: dict) -> tuple[str, str, float | None] | None:
     snapshot_id = row.get("snapshot_id")
     market_family = row.get("market_family")
@@ -90,6 +94,42 @@ def delete_replaced_variant_rows(client: SupabaseClient, variant_rows: list[dict
         and is_replaced_odds_api_variant(row, replacement_keys)
     ]
     return client.delete_rows("market_variants", "id", stale_ids) if stale_ids else 0
+
+
+def persist_historical_market_rows(
+    client: SupabaseClient | LocalDatasetClient,
+    market_rows: list[dict],
+    variant_rows: list[dict],
+    *,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    if dry_run:
+        return {
+            "deleted_legacy_variant_rows": 0,
+            "inserted_rows": 0,
+            "variant_inserted_rows": 0,
+        }
+
+    inserted = (
+        client.upsert_rows("market_probabilities", market_rows) if market_rows else 0
+    )
+    try:
+        deleted_legacy_variant_rows = delete_replaced_variant_rows(client, variant_rows)
+        variant_inserted = (
+            client.upsert_rows("market_variants", variant_rows) if variant_rows else 0
+        )
+    except ValueError as exc:
+        if is_optional_missing_table_error(exc, "market_variants"):
+            deleted_legacy_variant_rows = 0
+            variant_inserted = 0
+        else:
+            raise
+
+    return {
+        "deleted_legacy_variant_rows": deleted_legacy_variant_rows,
+        "inserted_rows": inserted,
+        "variant_inserted_rows": variant_inserted,
+    }
 
 
 def cache_key_part(value: str) -> str:
@@ -407,6 +447,7 @@ def main() -> None:
     competition_filter = parse_competition_filter(
         os.environ.get("ODDS_API_IO_HISTORICAL_COMPETITIONS")
     )
+    dry_run = parse_bool_env(os.environ.get("ODDS_API_IO_HISTORICAL_DRY_RUN"))
     cache = HistoricalOddsApiCache(
         api_key=api_key,
         cache_dir=os.environ.get("ODDS_API_IO_HISTORICAL_CACHE_DIR")
@@ -453,18 +494,12 @@ def main() -> None:
     market_rows = filter_pre_match_market_rows(market_rows, snapshot_rows)
     variant_rows = filter_pre_match_market_rows(variant_rows, snapshot_rows)
 
-    inserted = client.upsert_rows("market_probabilities", market_rows) if market_rows else 0
-    try:
-        deleted_legacy_variant_rows = delete_replaced_variant_rows(client, variant_rows)
-        variant_inserted = (
-            client.upsert_rows("market_variants", variant_rows) if variant_rows else 0
-        )
-    except ValueError as exc:
-        if is_optional_missing_table_error(exc, "market_variants"):
-            deleted_legacy_variant_rows = 0
-            variant_inserted = 0
-        else:
-            raise
+    persistence_result = persist_historical_market_rows(
+        client,
+        market_rows,
+        variant_rows,
+        dry_run=dry_run,
+    )
 
     matched_snapshot_ids = {
         str(row.get("snapshot_id"))
@@ -477,10 +512,9 @@ def main() -> None:
                 "snapshot_rows": len(snapshot_rows),
                 "odds_rows": len(odds_rows),
                 "market_rows": len(market_rows),
-            "variant_rows": len(variant_rows),
-            "deleted_legacy_variant_rows": deleted_legacy_variant_rows,
-            "inserted_rows": inserted,
-                "variant_inserted_rows": variant_inserted,
+                "variant_rows": len(variant_rows),
+                "dry_run": dry_run,
+                **persistence_result,
                 "request_count": cache.request_count,
                 "cache_hits": cache.cache_hits,
                 "fallback_bookmakers_configured": bool(cache.fallback_bookmakers),
