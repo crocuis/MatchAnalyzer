@@ -72,7 +72,9 @@ from batch.src.jobs.backfill_odds_api_io_historical_markets_job import (
     HistoricalOddsApiCache,
     delete_replaced_variant_rows,
     fetch_historical_odds_for_snapshots,
+    parse_bool_env as parse_odds_api_io_historical_bool_env,
     parse_competition_filter,
+    persist_historical_market_rows,
     select_backfill_snapshots as select_odds_api_io_historical_backfill_snapshots,
 )
 from batch.src.jobs.backfill_football_data_markets_job import (
@@ -3532,6 +3534,44 @@ def test_select_odds_api_io_historical_backfill_snapshots_targets_europe_only():
     )
 
     assert [row["id"] for row in rows] == ["ucl_snapshot"]
+
+
+def test_parse_odds_api_io_historical_bool_env_accepts_common_truthy_values():
+    assert parse_odds_api_io_historical_bool_env("1") is True
+    assert parse_odds_api_io_historical_bool_env(" true ") is True
+    assert parse_odds_api_io_historical_bool_env("ON") is True
+    assert parse_odds_api_io_historical_bool_env(None) is False
+    assert parse_odds_api_io_historical_bool_env("0") is False
+
+
+def test_persist_historical_market_rows_dry_run_skips_writes():
+    class FakeClient:
+        def __init__(self):
+            self.calls: list[tuple] = []
+
+        def upsert_rows(self, table, rows):
+            self.calls.append(("upsert", table, rows))
+            return len(rows)
+
+        def delete_rows(self, table, column, values):
+            self.calls.append(("delete", table, column, values))
+            return len(values)
+
+    client = FakeClient()
+
+    result = persist_historical_market_rows(
+        client,
+        [{"id": "market-1"}],
+        [{"id": "variant-1"}],
+        dry_run=True,
+    )
+
+    assert result == {
+        "deleted_legacy_variant_rows": 0,
+        "inserted_rows": 0,
+        "variant_inserted_rows": 0,
+    }
+    assert client.calls == []
 
 
 def test_fetch_historical_odds_for_snapshots_uses_cache_and_budget(tmp_path, monkeypatch):

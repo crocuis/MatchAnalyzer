@@ -184,8 +184,10 @@ UEFA 대항전처럼 기본 bookmaker(`ODDS_API_IO_BOOKMAKERS`, 기본 `Bet365,U
 export ODDS_API_IO_HISTORICAL_FALLBACK_BOOKMAKERS="SingBet,William Hill,Betway"
 MATCH_ANALYZER_LOCAL_DATASET_DIR=.tmp/prediction-dataset \
   ODDS_API_IO_HISTORICAL_COMPETITIONS=champions-league,europa-league,conference-league \
+  ODDS_API_IO_HISTORICAL_DRY_RUN=1 \
   python3 -m batch.src.jobs.backfill_odds_api_io_historical_markets_job
 ```
+`ODDS_API_IO_HISTORICAL_DRY_RUN=1`은 fallback bookmaker set의 coverage와 오류 카운터만 확인하고 `market_probabilities`/`market_variants`에는 쓰지 않는다. 실제 백필은 dry-run 결과를 확인한 뒤 이 값을 빼고 실행한다.
 반복 백필에서는 `FOOTBALL_DATA_CACHE_DIR=.tmp/football-data-cache`를 지정해 리그 CSV를 로컬에 캐시한다.
 
 5대 리그의 시즌 전체 historical closing odds를 한 번에 채우려면 전용 배치를 사용한다. 이 배치는 `market_probabilities`와 `market_variants`만 upsert하며, Champions/Europa/Conference League처럼 Football-Data CSV가 없는 대회는 건드리지 않는다.
