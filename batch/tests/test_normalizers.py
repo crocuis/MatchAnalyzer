@@ -5163,6 +5163,38 @@ def test_supabase_client_retries_without_unknown_schema_cache_column(monkeypatch
     assert "away_price" not in captured_payloads[1][0]
 
 
+def test_supabase_client_retries_transient_upsert_url_errors(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    attempts = 0
+
+    class FakeResponse:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b""
+
+    def fake_urlopen(request, timeout=30):
+        del request, timeout
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise URLError("transient ssl eof")
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    inserted = client.upsert_rows("daily_pick_items", [{"id": "item-1"}])
+
+    assert inserted == 1
+    assert attempts == 2
+
+
 def test_supabase_client_retries_through_multiple_schema_cache_column_misses(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
     captured_payloads: list[list[dict]] = []
