@@ -136,6 +136,11 @@ class HistoricalOddsApiCache:
         self.bad_request_count = 0
         self.forbidden_count = 0
         self.empty_odds_count = 0
+        self.bookmaker_attempt_counts: dict[str, int] = {}
+        self.bookmaker_success_counts: dict[str, int] = {}
+        self.bookmaker_empty_counts: dict[str, int] = {}
+        self.bookmaker_bad_request_counts: dict[str, int] = {}
+        self.bookmaker_forbidden_counts: dict[str, int] = {}
 
     def _read_cached(self, path: Path) -> object | None:
         if not path.exists():
@@ -214,42 +219,61 @@ class HistoricalOddsApiCache:
         return rows[0] if rows else None
 
     def fetch_odds(self, event_id: str) -> dict | None:
+        primary_key = bookmaker_cache_key_part(self.bookmakers)
+        self._increment_counter(self.bookmaker_attempt_counts, primary_key)
         try:
             payload = self._fetch_odds_payload(event_id, self.bookmakers)
         except HTTPError as exc:
-            if self._record_skippable_odds_error(exc):
+            if self._record_skippable_odds_error(exc, bookmaker_key=primary_key):
                 payload = None
             else:
                 raise
         normalized = self._normalize_odds_payload(payload)
         if normalized is not None:
+            self._increment_counter(self.bookmaker_success_counts, primary_key)
             return normalized
         if self.bookmakers and self.fallback_bookmakers:
+            fallback_key = bookmaker_cache_key_part(self.fallback_bookmakers)
+            self._increment_counter(self.bookmaker_attempt_counts, fallback_key)
             try:
                 fallback_payload = self._fetch_odds_payload(
                     event_id,
                     self.fallback_bookmakers,
                 )
             except HTTPError as exc:
-                if self._record_skippable_odds_error(exc):
+                if self._record_skippable_odds_error(exc, bookmaker_key=fallback_key):
                     return None
                 raise
             fallback_normalized = self._normalize_odds_payload(fallback_payload)
             if fallback_normalized is None:
                 self.empty_odds_count += 1
+                self._increment_counter(self.bookmaker_empty_counts, fallback_key)
+            else:
+                self._increment_counter(self.bookmaker_success_counts, fallback_key)
             return fallback_normalized
         if self.bookmakers:
             self.empty_odds_count += 1
+            self._increment_counter(self.bookmaker_empty_counts, primary_key)
         return None
 
-    def _record_skippable_odds_error(self, exc: HTTPError) -> bool:
+    def _record_skippable_odds_error(
+        self,
+        exc: HTTPError,
+        *,
+        bookmaker_key: str,
+    ) -> bool:
         if exc.code == 400:
             self.bad_request_count += 1
+            self._increment_counter(self.bookmaker_bad_request_counts, bookmaker_key)
             return True
         if exc.code == 403:
             self.forbidden_count += 1
+            self._increment_counter(self.bookmaker_forbidden_counts, bookmaker_key)
             return True
         return False
+
+    def _increment_counter(self, target: dict[str, int], key: str) -> None:
+        target[key] = target.get(key, 0) + 1
 
 
 def select_backfill_snapshots(
@@ -463,6 +487,11 @@ def main() -> None:
                 "bad_request_count": cache.bad_request_count,
                 "forbidden_count": cache.forbidden_count,
                 "empty_odds_count": cache.empty_odds_count,
+                "bookmaker_attempt_counts": cache.bookmaker_attempt_counts,
+                "bookmaker_success_counts": cache.bookmaker_success_counts,
+                "bookmaker_empty_counts": cache.bookmaker_empty_counts,
+                "bookmaker_bad_request_counts": cache.bookmaker_bad_request_counts,
+                "bookmaker_forbidden_counts": cache.bookmaker_forbidden_counts,
                 "stopped_early": cache.stopped_early,
                 "changed_match_ids": sorted(
                     {

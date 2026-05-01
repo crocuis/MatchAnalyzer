@@ -3691,6 +3691,12 @@ def test_historical_odds_falls_back_to_alternate_books_when_selected_books_are_e
 
     assert row is not None
     assert row["bookmakers"].keys() == {"fallback-book"}
+    assert cache.bookmaker_attempt_counts == {
+        "Bet365,Unibet": 1,
+        "Betway,SingBet,William_Hill": 1,
+    }
+    assert cache.bookmaker_success_counts == {"Betway,SingBet,William_Hill": 1}
+    assert cache.bookmaker_empty_counts == {}
     assert [params.get("bookmakers") for params in calls] == [
         "Bet365,Unibet",
         "SingBet,William Hill,Betway",
@@ -3736,6 +3742,13 @@ def test_historical_odds_skips_event_when_unfiltered_fallback_is_bad_request(
     assert row is None
     assert cache.bad_request_count == 1
     assert cache.empty_odds_count == 0
+    assert cache.bookmaker_attempt_counts == {
+        "Bet365,Unibet": 1,
+        "Betway,SingBet,William_Hill": 1,
+    }
+    assert cache.bookmaker_bad_request_counts == {
+        "Betway,SingBet,William_Hill": 1,
+    }
     assert [params.get("bookmakers") for params in calls] == [
         "Bet365,Unibet",
         "SingBet,William Hill,Betway",
@@ -3781,6 +3794,13 @@ def test_historical_odds_skips_forbidden_fallback_bookmaker_set(
     assert row is None
     assert cache.forbidden_count == 1
     assert cache.bad_request_count == 0
+    assert cache.bookmaker_attempt_counts == {
+        "Bet365,Unibet": 1,
+        "Betway,SingBet,William_Hill": 1,
+    }
+    assert cache.bookmaker_forbidden_counts == {
+        "Betway,SingBet,William_Hill": 1,
+    }
     assert [params.get("bookmakers") for params in calls] == [
         "Bet365,Unibet",
         "SingBet,William Hill,Betway",
