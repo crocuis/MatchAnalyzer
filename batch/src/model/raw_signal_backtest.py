@@ -139,6 +139,11 @@ def build_raw_moneyline_rows(
             if isinstance(payload.get("feature_context"), dict)
             else {}
         )
+        bookmaker_available = _market_source_available(
+            payload,
+            "bookmaker",
+            feature_context=feature_context,
+        )
         external_rating_available = _feature_flag_or_snapshot(
             feature_context,
             "external_rating_available",
@@ -195,6 +200,7 @@ def build_raw_moneyline_rows(
                 "prediction_market_available": bool(
                     payload.get("prediction_market_available")
                 ),
+                "bookmaker_available": bookmaker_available,
                 "base_model_source": str(payload.get("base_model_source") or ""),
                 "lineup_confirmed": int(feature_context.get("lineup_confirmed") or 0),
                 "internal_elo_delta": round(
@@ -329,6 +335,9 @@ def summarize_raw_moneyline_backtest(
             "checkpoint": dict(Counter(str(row.get("checkpoint") or "") for row in rows)),
             "prediction_market_available": dict(
                 Counter(bool(row.get("prediction_market_available")) for row in rows)
+            ),
+            "bookmaker_available": dict(
+                Counter(bool(row.get("bookmaker_available")) for row in rows)
             ),
             "external_rating_available": dict(
                 Counter(bool(row.get("external_rating_available")) for row in rows)
@@ -500,6 +509,14 @@ def _daily_pick_expansion_diagnostics(
             "maximum_abs_divergence": DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE,
         },
         "current_gate_segments": {
+            "by_bookmaker_available": _segment_summaries(
+                current_gate_rows,
+                lambda row: (
+                    "bookmaker_available"
+                    if row.get("bookmaker_available")
+                    else "bookmaker_missing"
+                ),
+            ),
             "by_pick": _segment_summaries(
                 current_gate_rows,
                 lambda row: str(row.get("pick") or "unknown"),
@@ -521,7 +538,53 @@ def _daily_pick_expansion_diagnostics(
                 _signal_score_segment,
             ),
         },
+        "target_feasibility": _daily_pick_target_feasibility(
+            current_gate_rows,
+            target_hit_rate=DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
+            minimum_sample_count=DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+        ),
         "hit_rate_loss_from_seed": round(seed_hit_rate - hit_rate, 4),
+    }
+
+
+def _daily_pick_target_feasibility(
+    rows: list[dict],
+    *,
+    target_hit_rate: float,
+    minimum_sample_count: int,
+) -> dict:
+    sample_count = len(rows)
+    hit_count = sum(int(row.get("prequential_hit") or 0) for row in rows)
+    miss_count = sample_count - hit_count
+    required_hits_at_current_sample = int((target_hit_rate * sample_count) + 0.999999)
+    removals_budget = max(sample_count - minimum_sample_count, 0)
+    best_case_removed_misses = min(miss_count, removals_budget)
+    best_case_sample_count = sample_count - best_case_removed_misses
+    best_case_hit_count = hit_count
+    best_case_hit_rate = (
+        best_case_hit_count / best_case_sample_count
+        if best_case_sample_count
+        else 0.0
+    )
+    target_reachable_by_filtering = (
+        best_case_sample_count >= minimum_sample_count
+        and best_case_hit_rate >= target_hit_rate
+    )
+    return {
+        "current_sample_count": sample_count,
+        "current_hit_count": hit_count,
+        "current_miss_count": miss_count,
+        "required_hits_at_current_sample": required_hits_at_current_sample,
+        "additional_hits_needed_at_current_sample": max(
+            required_hits_at_current_sample - hit_count,
+            0,
+        ),
+        "removals_budget_before_minimum_sample": removals_budget,
+        "best_case_removed_misses": best_case_removed_misses,
+        "best_case_sample_count": best_case_sample_count,
+        "best_case_hit_count": best_case_hit_count,
+        "best_case_hit_rate": round(best_case_hit_rate, 4),
+        "target_reachable_by_filtering": target_reachable_by_filtering,
     }
 
 
@@ -930,6 +993,31 @@ def _moneyline_probability_signals(payload: dict) -> dict:
         ),
         "probability_entropy": round(entropy, 4),
     }
+
+
+def _market_source_available(
+    payload: dict,
+    source_name: str,
+    *,
+    feature_context: dict,
+) -> bool:
+    context_key = f"{source_name}_available"
+    if context_key in feature_context:
+        return bool(_read_numeric(feature_context.get(context_key)))
+    source_metadata = payload.get("source_metadata")
+    market_sources = (
+        source_metadata.get("market_sources")
+        if isinstance(source_metadata, dict)
+        else {}
+    )
+    if not isinstance(market_sources, dict):
+        return False
+    source_payload = market_sources.get(source_name)
+    if not isinstance(source_payload, dict):
+        return False
+    if source_payload.get("available") is not None:
+        return bool(source_payload.get("available"))
+    return isinstance(source_payload.get("probabilities"), dict)
 
 
 def _read_preferred_probability_map(payload: dict) -> tuple[str, dict]:

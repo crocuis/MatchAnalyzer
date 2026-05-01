@@ -1050,9 +1050,25 @@ def test_daily_pick_expansion_diagnostics_explain_precision_gap():
         "hit_rate": 0.761,
         "wilson_lower_bound": 0.7045,
     }
+    assert diagnostics["current_gate_segments"]["by_bookmaker_available"][
+        "bookmaker_missing"
+    ]["sample_count"] == 251
     assert diagnostics["current_gate_segments"]["by_favorite_probability"][
         "favorite_probability>=0.65"
     ]["sample_count"] == 251
+    assert diagnostics["target_feasibility"] == {
+        "current_sample_count": 251,
+        "current_hit_count": 191,
+        "current_miss_count": 60,
+        "required_hits_at_current_sample": 201,
+        "additional_hits_needed_at_current_sample": 10,
+        "removals_budget_before_minimum_sample": 1,
+        "best_case_removed_misses": 1,
+        "best_case_sample_count": 250,
+        "best_case_hit_count": 191,
+        "best_case_hit_rate": 0.764,
+        "target_reachable_by_filtering": False,
+    }
 
 
 def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
