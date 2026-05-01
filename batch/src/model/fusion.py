@@ -621,10 +621,15 @@ def build_value_recommendation(
     market_probs: dict,
     prediction_market_available: bool,
     market_prices: dict | None = None,
+    market_available: bool | None = None,
+    market_source: str = "prediction_market",
     threshold: float = VALUE_RECOMMENDATION_EV_THRESHOLD,
     minimum_market_price: float = VALUE_RECOMMENDATION_MIN_MARKET_PRICE,
 ) -> dict | None:
-    if not prediction_market_available:
+    effective_market_available = (
+        prediction_market_available if market_available is None else market_available
+    )
+    if not effective_market_available:
         return None
     market_prices = market_prices or market_probs
 
@@ -665,5 +670,5 @@ def build_value_recommendation(
         "model_probability": round(base_probs[best_outcome], 4),
         "market_probability": round(market_probs[best_outcome], 4),
         "market_price": round(market_prices[best_outcome], 4),
-        "market_source": "prediction_market",
+        "market_source": market_source,
     }

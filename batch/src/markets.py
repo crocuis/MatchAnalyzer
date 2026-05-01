@@ -8,10 +8,10 @@ def market_source_priority(row: dict[str, Any]) -> int:
     source_name = str(row.get("source_name") or "").lower()
     source_type = str(row.get("source_type") or "").lower()
     if source_type == "bookmaker":
+        if "betman" in source_name:
+            return 50
         if "odds_api" in source_name:
             return 40
-        if "betman" in source_name:
-            return 35
         if "football_data" in source_name:
             return 30
         return 10

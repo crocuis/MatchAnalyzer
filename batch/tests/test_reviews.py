@@ -198,7 +198,7 @@ def test_build_source_metadata_marks_late_only_bookmaker_unavailable():
     assert metadata["market_sources"]["bookmaker"]["probabilities"] is None
 
 
-def test_index_market_rows_by_snapshot_prefers_odds_api_over_football_data():
+def test_index_market_rows_by_snapshot_prefers_betman_over_other_bookmakers():
     football_data_row = {
         "id": "snapshot-1_football_data_bookmaker",
         "snapshot_id": "snapshot-1",
@@ -215,11 +215,22 @@ def test_index_market_rows_by_snapshot_prefers_odds_api_over_football_data():
         "market_family": "moneyline_3way",
         "home_prob": 0.55,
     }
+    betman_row = {
+        "id": "snapshot-1_betman_bookmaker",
+        "snapshot_id": "snapshot-1",
+        "source_type": "bookmaker",
+        "source_name": "betman_moneyline_3way",
+        "market_family": "moneyline_3way",
+        "home_prob": 0.6,
+    }
 
-    for rows in ([football_data_row, odds_api_row], [odds_api_row, football_data_row]):
+    for rows in (
+        [football_data_row, odds_api_row, betman_row],
+        [betman_row, odds_api_row, football_data_row],
+    ):
         indexed = index_market_rows_by_snapshot(rows)
 
-        assert indexed["snapshot-1"]["bookmaker"]["moneyline_3way"]["home_prob"] == 0.55
+        assert indexed["snapshot-1"]["bookmaker"]["moneyline_3way"]["home_prob"] == 0.6
 
 
 def test_build_variant_markets_adds_recommendations_for_supported_half_lines():
@@ -3629,6 +3640,7 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
                         "id": "target_match_t_minus_24h_bookmaker",
                         "snapshot_id": "target_match_t_minus_24h",
                         "source_type": "bookmaker",
+                        "source_name": "betman",
                         "home_prob": 0.56,
                         "draw_prob": 0.24,
                         "away_prob": 0.20,
@@ -3703,12 +3715,13 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
     assert prediction["main_recommendation_pick"] == "HOME"
     assert prediction["value_recommendation_pick"] == "HOME"
     assert prediction["value_recommendation_recommended"] is True
-    assert prediction["value_recommendation_edge"] == 0.16
-    assert prediction["value_recommendation_expected_value"] == 0.2963
-    assert prediction["value_recommendation_market_price"] == 0.54
-    assert prediction["value_recommendation_market_probability"] == 0.54
-    assert prediction["value_recommendation_market_source"] == "prediction_market"
+    assert prediction["value_recommendation_edge"] == 0.14
+    assert prediction["value_recommendation_expected_value"] == 0.25
+    assert prediction["value_recommendation_market_price"] == 0.56
+    assert prediction["value_recommendation_market_probability"] == 0.56
+    assert prediction["value_recommendation_market_source"] == "betman"
     assert prediction["value_recommendation_model_probability"] == 0.7
+    assert explanation_payload["betman_market_available"] is True
     assert prediction["variant_markets_summary"] == []
     assert explanation_payload["raw_confidence_score"] >= explanation_payload["calibrated_confidence_score"]
     assert explanation_payload["source_agreement_ratio"] >= 0.5
