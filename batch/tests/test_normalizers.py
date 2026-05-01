@@ -71,8 +71,11 @@ from batch.src.jobs.backfill_match_history_snapshot_signals_job import (
 from batch.src.jobs.backfill_odds_api_io_historical_markets_job import (
     HistoricalOddsApiCache,
     delete_replaced_variant_rows,
+    extract_selected_bookmakers,
     fetch_historical_odds_for_snapshots,
+    filter_selected_bookmaker_sets,
     parse_bool_env as parse_odds_api_io_historical_bool_env,
+    parse_bookmaker_sets,
     parse_competition_filter,
     persist_historical_market_rows,
     select_backfill_snapshots as select_odds_api_io_historical_backfill_snapshots,
@@ -3544,6 +3547,44 @@ def test_parse_odds_api_io_historical_bool_env_accepts_common_truthy_values():
     assert parse_odds_api_io_historical_bool_env("0") is False
 
 
+def test_parse_bookmaker_sets_splits_probe_groups_and_dedupes_books():
+    assert parse_bookmaker_sets(
+        "SingBet,William Hill,Betway; Pinnacle,Betfair | Bet365, Bet365, Unibet"
+    ) == [
+        "SingBet,William Hill,Betway",
+        "Pinnacle,Betfair",
+        "Bet365,Unibet",
+    ]
+    assert parse_bookmaker_sets(None) == []
+
+
+def test_extract_selected_bookmakers_accepts_api_shapes():
+    assert extract_selected_bookmakers({"bookmakers": ["Bet365", " Unibet "]}) == {
+        "Bet365",
+        "Unibet",
+    }
+    assert extract_selected_bookmakers([{"name": "Pinnacle"}, {"name": ""}]) == {
+        "Pinnacle"
+    }
+
+
+def test_filter_selected_bookmaker_sets_skips_unselected_groups():
+    selected, skipped = filter_selected_bookmaker_sets(
+        [
+            "Bet365,Unibet",
+            "SingBet,William Hill",
+            "Bet365,Pinnacle",
+        ],
+        {"Bet365", "Unibet"},
+    )
+
+    assert selected == ["Bet365,Unibet"]
+    assert skipped == {
+        "SingBet,William_Hill": ["SingBet", "William Hill"],
+        "Bet365,Pinnacle": ["Pinnacle"],
+    }
+
+
 def test_persist_historical_market_rows_dry_run_skips_writes():
     class FakeClient:
         def __init__(self):
@@ -3741,6 +3782,99 @@ def test_historical_odds_falls_back_to_alternate_books_when_selected_books_are_e
         "Bet365,Unibet",
         "SingBet,William Hill,Betway",
     ]
+
+
+def test_historical_odds_tries_fallback_bookmaker_groups_until_one_has_odds(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key, path
+        calls.append(dict(params))
+        if params.get("bookmakers") == "Pinnacle,Betfair":
+            return {
+                "id": params["eventId"],
+                "bookmakers": {
+                    "Pinnacle": [
+                        {
+                            "name": "ML",
+                            "odds": [{"home": "2.00", "draw": "3.50", "away": "4.00"}],
+                        }
+                    ]
+                },
+            }
+        return {
+            "id": params["eventId"],
+            "bookmakers": {},
+        }
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+    cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365,Unibet",
+        fallback_bookmakers="SingBet,William Hill,Betway;Pinnacle,Betfair",
+        max_requests=4,
+    )
+
+    row = cache.fetch_odds("event-1")
+
+    assert row is not None
+    assert row["bookmakers"].keys() == {"Pinnacle"}
+    assert cache.bookmaker_attempt_counts == {
+        "Bet365,Unibet": 1,
+        "Betway,SingBet,William_Hill": 1,
+        "Betfair,Pinnacle": 1,
+    }
+    assert cache.bookmaker_empty_counts == {"Betway,SingBet,William_Hill": 1}
+    assert cache.bookmaker_success_counts == {"Betfair,Pinnacle": 1}
+    assert cache.empty_odds_count == 0
+    assert [params.get("bookmakers") for params in calls] == [
+        "Bet365,Unibet",
+        "SingBet,William Hill,Betway",
+        "Pinnacle,Betfair",
+    ]
+
+
+def test_historical_odds_skips_unselected_fallback_groups(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_fetch_json(api_key, path, params):
+        del api_key, path
+        calls.append(dict(params))
+        return {
+            "id": params["eventId"],
+            "bookmakers": {},
+        }
+
+    monkeypatch.setattr(
+        "batch.src.jobs.backfill_odds_api_io_historical_markets_job.fetch_odds_api_io_json",
+        fake_fetch_json,
+    )
+    cache = HistoricalOddsApiCache(
+        api_key="api-key",
+        cache_dir=tmp_path,
+        bookmakers="Bet365,Unibet",
+        fallback_bookmakers="SingBet,William Hill,Betway;Pinnacle,Betfair",
+        selected_bookmakers={"Bet365", "Unibet"},
+        max_requests=4,
+    )
+
+    row = cache.fetch_odds("event-1")
+
+    assert row is None
+    assert cache.request_count == 1
+    assert cache.bookmaker_attempt_counts == {"Bet365,Unibet": 1}
+    assert cache.unselected_fallback_bookmaker_groups == {
+        "Betway,SingBet,William_Hill": ["SingBet", "William Hill", "Betway"],
+        "Betfair,Pinnacle": ["Pinnacle", "Betfair"],
+    }
+    assert [params.get("bookmakers") for params in calls] == ["Bet365,Unibet"]
 
 
 def test_historical_odds_skips_event_when_unfiltered_fallback_is_bad_request(
