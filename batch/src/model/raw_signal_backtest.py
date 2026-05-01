@@ -31,7 +31,8 @@ DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = {
     "trained_baseline_poisson_blend",
 }
 DAILY_PICK_PRECISION_MIN_CONFIDENCE = 0.70
-DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE = -3.0
+DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE = -5.0
+DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT = 0.67
 DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE = 0.03
 CHECKPOINT_PRIORITY = {
     "T_MINUS_24H": 0,
@@ -401,8 +402,9 @@ def _daily_pick_reliability_summary(summary: dict) -> dict:
                 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND
             ),
             "minimum_signal_score": DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE,
+            "minimum_source_agreement_ratio": DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT,
             "eligibility_filter": (
-                "domestic_poisson_blend_signal_score_precision_gate"
+                "domestic_poisson_blend_signal_agreement_precision_gate"
             ),
         },
     }
@@ -663,6 +665,8 @@ def _is_daily_pick_candidate(row: dict) -> bool:
         and float(row.get("confidence") or 0.0)
         >= DAILY_PICK_PRECISION_MIN_CONFIDENCE
         and signal_score >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
+        and float(row.get("source_agreement_ratio") or 0.0)
+        >= DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
         and max_abs_divergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
     )
 

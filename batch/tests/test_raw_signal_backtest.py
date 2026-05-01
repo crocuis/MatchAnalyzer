@@ -342,6 +342,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
             "base_model_source": "trained_baseline_poisson_blend",
             "confidence": 0.70,
             "signal_score": -3.0,
+            "source_agreement_ratio": 0.67,
             "max_abs_divergence": 0.03,
         }
     )
@@ -364,6 +365,7 @@ def test_daily_pick_candidate_requires_pre_match_external_signal():
             "base_model_source": "trained_baseline_poisson_blend",
             "confidence": 0.7,
             "signal_score": 4.0,
+            "source_agreement_ratio": 0.67,
             "max_abs_divergence": 0.03,
         }
     )
@@ -378,8 +380,8 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
         "football_data_match_stats_available": 1,
         "base_model_source": "trained_baseline_poisson_blend",
         "confidence": 0.70,
-        "signal_score": -3.0,
-        "source_agreement_ratio": 0.0,
+        "signal_score": -5.0,
+        "source_agreement_ratio": 0.67,
         "max_abs_divergence": 0.03,
     }
 
@@ -422,7 +424,13 @@ def test_daily_pick_candidate_uses_domestic_poisson_blend_precision_gate():
     assert not _is_daily_pick_candidate(
         {
             **base_row,
-            "signal_score": -3.01,
+            "signal_score": -5.01,
+        }
+    )
+    assert not _is_daily_pick_candidate(
+        {
+            **base_row,
+            "source_agreement_ratio": 0.5,
         }
     )
 
@@ -855,8 +863,9 @@ def test_daily_pick_reliability_requires_sample_hit_rate_and_wilson_gates():
         "minimum_sample_count": 250,
         "target_hit_rate": 0.8,
         "minimum_wilson_lower_bound": 0.75,
-        "minimum_signal_score": -3.0,
-        "eligibility_filter": "domestic_poisson_blend_signal_score_precision_gate",
+        "minimum_signal_score": -5.0,
+        "minimum_source_agreement_ratio": 0.67,
+        "eligibility_filter": "domestic_poisson_blend_signal_agreement_precision_gate",
     }
 
 
@@ -942,7 +951,7 @@ def test_daily_pick_precision_candidates_validate_at_eighty_percent_target():
             "competition_id": "premier-league",
             "confidence": 0.7,
             "signal_score": -3.0,
-            "source_agreement_ratio": 0.0,
+            "source_agreement_ratio": 0.67,
             "max_abs_divergence": 0.03,
             "base_model_source": "trained_baseline_poisson_blend",
         }
