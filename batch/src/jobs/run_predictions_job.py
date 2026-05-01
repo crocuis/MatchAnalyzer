@@ -292,13 +292,19 @@ def select_real_prediction_inputs(
     target_match_ids: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     explicit_match_ids = target_match_ids or set()
+    exact_target_date_only = read_env_flag("REAL_PREDICTION_EXACT_DATE_ONLY")
     eligible_match_ids = (
         explicit_match_ids
         if explicit_match_ids
         else {
             row["id"]
             for row in match_rows
-            if target_date and str(row.get("kickoff_at") or "")[:10] <= target_date
+            if target_date
+            and (
+                str(row.get("kickoff_at") or "")[:10] == target_date
+                if exact_target_date_only
+                else str(row.get("kickoff_at") or "")[:10] <= target_date
+            )
         }
     )
     selected_snapshots = [

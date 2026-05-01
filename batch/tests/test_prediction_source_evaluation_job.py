@@ -285,6 +285,129 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
     assert len(state["stored_artifacts"]) == 4
 
 
+def test_evaluate_prediction_sources_job_omits_new_artifact_links_when_archive_is_disabled(
+    monkeypatch,
+    capsys,
+) -> None:
+    state = {
+        "prediction_source_evaluation_reports": [
+            {
+                "id": "latest",
+                "rollout_channel": "current",
+                "rollout_version": 11,
+                "history_row_id": "prediction_source_evaluation_report_versions_current_v11",
+                "comparison_payload": {},
+                "snapshots_evaluated": 1,
+                "rows_evaluated": 1,
+                "artifact_id": "existing-report-artifact",
+                "report_payload": {"overall": {}},
+            }
+        ],
+        "prediction_fusion_policies": [
+            {
+                "id": "latest",
+                "source_report_id": "latest",
+                "rollout_channel": "current",
+                "rollout_version": 11,
+                "history_row_id": "prediction_fusion_policy_versions_current_v11",
+                "comparison_payload": {},
+                "artifact_id": "existing-policy-artifact",
+                "policy_payload": {
+                    "policy_id": "latest",
+                    "policy_version": 11,
+                    "selection_order": ["overall"],
+                    "weights": {"overall": {}},
+                },
+            }
+        ],
+        "prediction_source_evaluation_report_versions": [],
+        "prediction_fusion_policy_versions": [],
+        "rollout_promotion_decisions": [],
+        "rollout_promotion_decision_versions": [],
+        "post_match_review_aggregations": [],
+        "match_snapshots": [],
+        "predictions": [],
+        "market_probabilities": [],
+        "matches": [],
+        "stored_artifacts": [
+            {"id": "existing-report-artifact"},
+            {"id": "existing-policy-artifact"},
+        ],
+    }
+
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            pass
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            artifact_ids = {row["id"] for row in state["stored_artifacts"]}
+            for row in rows:
+                artifact_id = row.get("artifact_id")
+                if artifact_id and artifact_id not in artifact_ids:
+                    raise AssertionError(
+                        f"{table_name} referenced missing artifact {artifact_id}"
+                    )
+            existing = {row["id"]: row for row in state.get(table_name, [])}
+            for row in rows:
+                existing[row["id"]] = row
+            state[table_name] = list(existing.values())
+            return len(rows)
+
+    monkeypatch.setenv("MATCH_ANALYZER_SKIP_SOURCE_EVALUATION_ARTIFACT_ARCHIVE", "1")
+    monkeypatch.setattr(evaluation_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(
+        evaluation_job,
+        "load_settings",
+        lambda: SimpleNamespace(
+            supabase_url="https://example.test",
+            supabase_key="key",
+        ),
+    )
+    monkeypatch.setattr(
+        evaluation_job,
+        "build_evaluation_report",
+        lambda **_kwargs: {
+            "snapshots_evaluated": 0,
+            "rows_evaluated": 0,
+            "overall": {},
+            "by_checkpoint": {},
+            "by_competition": {},
+            "by_market_segment": {},
+            "recommended_fusion_weights": {
+                "overall": {},
+                "by_checkpoint": {},
+                "by_market_segment": {},
+                "by_checkpoint_market_segment": {},
+                "by_competition": {},
+            },
+        },
+    )
+
+    evaluation_job.main()
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["persisted_artifact_rows"] == 0
+    latest_report = next(
+        row for row in state["prediction_source_evaluation_reports"] if row["id"] == "latest"
+    )
+    report_history = next(iter(state["prediction_source_evaluation_report_versions"]))
+    latest_policy = next(
+        row for row in state["prediction_fusion_policies"] if row["id"] == "latest"
+    )
+    policy_history = next(iter(state["prediction_fusion_policy_versions"]))
+    assert latest_report["artifact_id"] == "existing-report-artifact"
+    assert report_history["artifact_id"] is None
+    assert latest_policy["artifact_id"] == "existing-policy-artifact"
+    assert "artifact_id" not in policy_history
+    assert state["stored_artifacts"] == [
+        {"id": "existing-report-artifact"},
+        {"id": "existing-policy-artifact"},
+    ]
+
+
 def test_build_evaluation_report_uses_persisted_prediction_payload_when_market_rows_are_missing() -> None:
     report = evaluation_job.build_evaluation_report(
         snapshot_rows=[

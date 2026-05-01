@@ -2214,6 +2214,63 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch
     assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
 
 
+def test_select_real_prediction_inputs_can_limit_date_backfills_to_exact_day(
+    monkeypatch,
+):
+    snapshots, markets = run_predictions_job.select_real_prediction_inputs(
+        snapshot_rows=[
+            {"id": "snapshot-a", "match_id": "match-a"},
+            {"id": "snapshot-b", "match_id": "match-b"},
+        ],
+        market_rows=[
+            {
+                "id": "market-a",
+                "snapshot_id": "snapshot-a",
+                "source_type": "bookmaker",
+            },
+            {
+                "id": "market-b",
+                "snapshot_id": "snapshot-b",
+                "source_type": "bookmaker",
+            },
+        ],
+        match_rows=[
+            {"id": "match-a", "kickoff_at": "2026-04-20T18:00:00+00:00"},
+            {"id": "match-b", "kickoff_at": "2026-04-21T18:00:00+00:00"},
+        ],
+        target_date="2026-04-21",
+    )
+    assert [row["id"] for row in snapshots] == ["snapshot-a", "snapshot-b"]
+    assert [row["id"] for row in markets] == ["market-a", "market-b"]
+
+    monkeypatch.setenv("REAL_PREDICTION_EXACT_DATE_ONLY", "1")
+    snapshots, markets = run_predictions_job.select_real_prediction_inputs(
+        snapshot_rows=[
+            {"id": "snapshot-a", "match_id": "match-a"},
+            {"id": "snapshot-b", "match_id": "match-b"},
+        ],
+        market_rows=[
+            {
+                "id": "market-a",
+                "snapshot_id": "snapshot-a",
+                "source_type": "bookmaker",
+            },
+            {
+                "id": "market-b",
+                "snapshot_id": "snapshot-b",
+                "source_type": "bookmaker",
+            },
+        ],
+        match_rows=[
+            {"id": "match-a", "kickoff_at": "2026-04-20T18:00:00+00:00"},
+            {"id": "match-b", "kickoff_at": "2026-04-21T18:00:00+00:00"},
+        ],
+        target_date="2026-04-21",
+    )
+    assert [row["id"] for row in snapshots] == ["snapshot-b"]
+    assert [row["id"] for row in markets] == ["market-b"]
+
+
 def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upsert(
     monkeypatch,
 ):

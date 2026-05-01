@@ -9,7 +9,7 @@ def test_backfill_prediction_pipeline_job_runs_requested_stages_and_evaluation(
     monkeypatch,
     capsys,
 ):
-    calls: list[tuple[str, str | None]] = []
+    calls: list[tuple[str, str | None, str | None]] = []
 
     def fake_runner(stage: str, env_name: str):
         def run() -> None:
@@ -170,7 +170,7 @@ def test_backfill_prediction_pipeline_job_runs_fixture_season_stage_once_before_
     monkeypatch,
     capsys,
 ):
-    calls: list[tuple[str, str | None]] = []
+    calls: list[tuple[str, str | None, str | None]] = []
 
     def fake_fixture_season_backfill(season_year: str) -> dict:
         calls.append(("fixtures_season", season_year))
@@ -284,7 +284,13 @@ def test_backfill_prediction_pipeline_job_uses_local_dataset_for_match_dates(
     )
 
     def fake_predictions() -> None:
-        calls.append(("predictions", os.environ.get("REAL_PREDICTION_DATE")))
+        calls.append(
+            (
+                "predictions",
+                os.environ.get("REAL_PREDICTION_DATE"),
+                os.environ.get("REAL_PREDICTION_EXACT_DATE_ONLY"),
+            )
+        )
 
     class FailingClient:
         def __init__(self, *args, **kwargs) -> None:
@@ -308,9 +314,10 @@ def test_backfill_prediction_pipeline_job_uses_local_dataset_for_match_dates(
     assert payload["date_source"] == "matches"
     assert payload["date_count"] == 2
     assert calls == [
-        ("predictions", "2026-04-20"),
-        ("predictions", "2026-04-22"),
+        ("predictions", "2026-04-20", "1"),
+        ("predictions", "2026-04-22", "1"),
     ]
+    assert os.environ.get("REAL_PREDICTION_EXACT_DATE_ONLY") is None
 
 
 def test_backfill_prediction_pipeline_job_uses_explicit_dates_without_reading_matches(
