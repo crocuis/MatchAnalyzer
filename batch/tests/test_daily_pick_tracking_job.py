@@ -83,7 +83,7 @@ def test_sync_daily_picks_stores_ranked_cross_market_candidates() -> None:
 
 
 def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
-    _run, items = sync_daily_picks_for_date(
+    run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
             {
@@ -105,9 +105,9 @@ def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
                 "match_id": "match-1",
                 "snapshot_id": "snapshot-1",
                 "recommended_pick": "HOME",
-                "confidence_score": 0.72,
+                "confidence_score": 0.76,
                 "main_recommendation_pick": "HOME",
-                "main_recommendation_confidence": 0.72,
+                "main_recommendation_confidence": 0.76,
                 "main_recommendation_recommended": True,
                 "value_recommendation_pick": "HOME",
                 "value_recommendation_recommended": True,
@@ -121,15 +121,9 @@ def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
         ],
     )
 
-    assert len(items) == 1
-    assert items[0]["status"] == "held"
-    assert items[0]["validation_metadata"]["betman_market_available"] is False
-    assert items[0]["validation_metadata"]["value_recommendation_market_source"] == (
-        "odds_api_io_moneyline_3way"
-    )
-    assert items[0]["validation_metadata"]["confidence_reliability"] == (
-        "betman_market_missing"
-    )
+    assert items == []
+    assert run["metadata"]["candidate_count"] == 1
+    assert run["metadata"]["held_count"] == 0
 
 
 def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
@@ -155,9 +149,9 @@ def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
                 "match_id": "match-1",
                 "snapshot_id": "snapshot-1",
                 "recommended_pick": "HOME",
-                "confidence_score": 0.72,
+                "confidence_score": 0.76,
                 "main_recommendation_pick": "HOME",
-                "main_recommendation_confidence": 0.72,
+                "main_recommendation_confidence": 0.76,
                 "main_recommendation_recommended": True,
                 "value_recommendation_pick": "AWAY",
                 "value_recommendation_recommended": True,
@@ -184,6 +178,105 @@ def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
         "betman_moneyline_3way"
     )
     assert "betmanValue" in items[0]["reason_labels"]
+
+
+def test_sync_daily_picks_filters_fragile_betman_watchlist_candidates() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-weak",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T12:00:00Z",
+            },
+            {
+                "id": "match-stable",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            },
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-weak",
+                "match_id": "match-weak",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "snapshot-stable",
+                "match_id": "match-stable",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+        ],
+        predictions=[
+            {
+                "id": "prediction-weak",
+                "match_id": "match-weak",
+                "snapshot_id": "snapshot-weak",
+                "recommended_pick": "AWAY",
+                "confidence_score": 0.58,
+                "main_recommendation_pick": "AWAY",
+                "main_recommendation_confidence": 0.58,
+                "main_recommendation_recommended": True,
+                "main_recommendation_no_bet_reason": "insufficient_sample",
+                "value_recommendation_pick": "AWAY",
+                "value_recommendation_recommended": True,
+                "value_recommendation_expected_value": 4.5,
+                "value_recommendation_edge": 0.7,
+                "value_recommendation_market_price": 0.18,
+                "value_recommendation_model_probability": 0.52,
+                "value_recommendation_market_probability": 0.18,
+                "value_recommendation_market_source": "betman_moneyline_3way",
+                "summary_payload": {
+                    "betman_market_available": True,
+                    "high_confidence_eligible": False,
+                    "confidence_reliability": "below_high_confidence_threshold",
+                    "source_agreement_ratio": 0.67,
+                    "validation_metadata": {
+                        "sample_count": 120,
+                        "hit_rate": 0.72,
+                        "wilson_lower_bound": 0.63,
+                    },
+                },
+            },
+            {
+                "id": "prediction-stable",
+                "match_id": "match-stable",
+                "snapshot_id": "snapshot-stable",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "value_recommendation_pick": "HOME",
+                "value_recommendation_recommended": True,
+                "value_recommendation_expected_value": 0.18,
+                "value_recommendation_edge": 0.08,
+                "value_recommendation_market_price": 0.52,
+                "value_recommendation_model_probability": 0.6,
+                "value_recommendation_market_probability": 0.52,
+                "value_recommendation_market_source": "betman_moneyline_3way",
+                "summary_payload": {
+                    "betman_market_available": True,
+                    "base_model_source": "trained_baseline",
+                    "high_confidence_eligible": True,
+                    "confidence_reliability": "validated",
+                    "source_agreement_ratio": 0.67,
+                    "validation_metadata": {
+                        "sample_count": 250,
+                        "hit_rate": 0.8,
+                        "wilson_lower_bound": 0.75,
+                    },
+                },
+            },
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["match_id"] == "match-stable"
+    assert items[0]["status"] == "held"
+    assert items[0]["validation_metadata"]["confidence_reliability"] == (
+        "daily_pick_precision_gate_required"
+    )
 
 
 def test_sync_daily_picks_tracks_unvalidated_predictions_as_held() -> None:
