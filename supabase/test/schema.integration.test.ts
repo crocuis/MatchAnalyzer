@@ -352,6 +352,95 @@ describe("supabase schema integration", () => {
     expect(refreshedCache.rows).toEqual(refreshedCards.rows);
   });
 
+  it("refreshes match card projection cache with statement-level source triggers", async () => {
+    const db = await createDb();
+
+    const triggerDefinitions = await db.query<{ tgname: string; definition: string }>(
+      `select tgname, pg_get_triggerdef(oid) as definition
+       from pg_trigger
+       where tgname in (
+         'refresh_match_card_projection_cache_predictions_insert',
+         'refresh_match_card_projection_cache_predictions_update',
+         'refresh_match_card_projection_cache_predictions_delete'
+       )
+       order by tgname`,
+    );
+
+    expect(triggerDefinitions.rows).toHaveLength(3);
+    expect(triggerDefinitions.rows.every((row) => row.definition.includes("FOR EACH STATEMENT"))).toBe(
+      true,
+    );
+    expect(
+      triggerDefinitions.rows.some((row) => row.definition.includes("REFERENCING NEW TABLE")),
+    ).toBe(true);
+
+    await db.exec(`
+      insert into matches (id, competition_id, season, kickoff_at, home_team_id, away_team_id)
+      values ('match_002', 'epl', '2026-2027', '2026-08-16T15:00:00Z', 'arsenal', 'chelsea');
+
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values
+        ('snapshot_001', 'match_001', 'T_MINUS_24H', 'unknown', 'complete'),
+        ('snapshot_002', 'match_002', 'T_MINUS_24H', 'unknown', 'complete');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score
+      )
+      values
+        (
+          'prediction_001',
+          'snapshot_001',
+          'match_001',
+          'model_v1',
+          0.5,
+          0.25,
+          0.25,
+          'HOME',
+          0.75
+        ),
+        (
+          'prediction_002',
+          'snapshot_002',
+          'match_002',
+          'model_v1',
+          0.3,
+          0.4,
+          0.3,
+          'DRAW',
+          0.7
+        );
+    `);
+
+    const refreshedCards = await db.query<{ id: string; has_prediction: boolean }>(
+      `select id, has_prediction
+       from match_card_projection_cache
+       where id in ('match_001', 'match_002')
+       order by id`,
+    );
+
+    expect(refreshedCards.rows).toEqual([
+      {
+        id: "match_001",
+        has_prediction: true,
+      },
+      {
+        id: "match_002",
+        has_prediction: true,
+      },
+    ]);
+  });
+
   it("exposes dashboard league counts through the summary view", async () => {
     const db = await createDb();
 

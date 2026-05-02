@@ -316,6 +316,23 @@ def test_match_card_projection_cache_migration_materializes_dashboard_cards():
     assert "from public.match_card_projection_cache" in migration
 
 
+def test_match_card_projection_cache_statement_refresh_migration_batches_triggers():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260502161337_match_card_cache_statement_refresh.sql"
+        ).read_text()
+    )
+
+    assert "drop trigger if exists refresh_match_card_projection_cache_predictions on public.predictions" in migration
+    assert "create or replace function public.refresh_match_card_projection_cache_match_ids_insert_statement()" in migration
+    assert "from new_rows where match_id is not null" in migration
+    assert "from old_rows where match_id is not null union select match_id from new_rows where match_id is not null" in migration
+    assert "create trigger refresh_match_card_projection_cache_predictions_insert after insert on public.predictions referencing new table as new_rows for each statement" in migration
+    assert "create trigger refresh_match_card_projection_cache_predictions_update after update on public.predictions referencing old table as old_rows new table as new_rows for each statement" in migration
+    assert "create trigger refresh_match_card_projection_cache_match_snapshots_insert after insert on public.match_snapshots referencing new table as new_rows for each statement" in migration
+    assert "create trigger refresh_match_card_projection_cache_reviews_delete after delete on public.post_match_reviews referencing old table as old_rows for each statement" in migration
+
+
 def test_dashboard_league_summary_view_migration_creates_security_invoker_view():
     migration = normalize_sql(
         Path(
