@@ -9,6 +9,7 @@ from typing import Iterable
 from batch.src.jobs.run_daily_pick_tracking_job import (
     build_performance_summaries,
     build_daily_pick_run_id,
+    read_rows_by_values,
     settle_daily_pick_items,
     sync_daily_picks_for_date,
 )
@@ -157,7 +158,6 @@ def backfill_daily_pick_tracking(
         else 0
     )
 
-    all_items = client.read_rows("daily_pick_items")
     all_results = client.read_rows("daily_pick_results")
     summaries = build_performance_summaries(items=all_items, results=all_results)
     summary_rows = client.upsert_rows("daily_pick_performance_summary", summaries)
@@ -191,11 +191,13 @@ def replace_existing_daily_pick_items_for_runs(
     if not run_ids:
         return
     run_id_set = set(run_ids)
-    existing_items = [
-        row
-        for row in client.read_rows("daily_pick_items")
-        if str(row.get("run_id") or "") in run_id_set
-    ]
+    existing_items = read_rows_by_values(
+        client,
+        "daily_pick_items",
+        "run_id",
+        sorted(run_id_set),
+        columns=("id", "run_id"),
+    )
     existing_item_ids = [
         str(row.get("id"))
         for row in existing_items

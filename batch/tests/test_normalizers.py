@@ -5686,6 +5686,45 @@ def test_supabase_client_uses_default_projection_for_heavy_prediction_tables(mon
     assert "variant_markets_summary" in requested_urls[0]
 
 
+def test_supabase_client_reads_rows_by_values_with_filtered_projection(monkeypatch):
+    client = SupabaseClient("https://project.supabase.co", "service-key")
+    requested_urls: list[str] = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps([
+                {"id": "item-1", "run_id": "daily_pick_run_2026-04-24"}
+            ]).encode("utf-8")
+
+    def fake_urlopen(request, timeout=30):
+        del timeout
+        requested_urls.append(request.full_url)
+        return FakeResponse()
+
+    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+
+    rows = client.read_rows_by_values(
+        "daily_pick_items",
+        "run_id",
+        ["daily_pick_run_2026-04-24"],
+        columns=("id", "run_id"),
+    )
+
+    assert rows == [{"id": "item-1", "run_id": "daily_pick_run_2026-04-24"}]
+    assert len(requested_urls) == 1
+    assert "select=id%2Crun_id" in requested_urls[0]
+    assert "run_id=in.%28daily_pick_run_2026-04-24%29" in requested_urls[0]
+    assert "order=id.asc" in requested_urls[0]
+
+
 def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
     client = SupabaseClient("https://project.supabase.co", "service-key")
 
