@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from batch.src.jobs.run_daily_pick_tracking_job import (
+    DAILY_PICK_MATCH_COLUMNS,
+    DAILY_PICK_PREDICTION_COLUMNS,
+    DAILY_PICK_SNAPSHOT_COLUMNS,
     build_performance_summaries,
     build_daily_pick_run_id,
+    read_rows,
     read_rows_by_values,
     settle_daily_pick_items,
     sync_daily_picks_for_date,
@@ -83,14 +87,42 @@ def backfill_daily_pick_tracking(
     end_date: str | None,
     force_resync: bool,
 ) -> dict:
-    matches = client.read_rows("matches")
-    snapshots = client.read_rows("match_snapshots")
-    predictions = client.read_rows("predictions")
-    teams = client.read_rows("teams")
-    existing_runs = client.read_rows("daily_pick_runs")
+    matches = read_rows(client, "matches", columns=DAILY_PICK_MATCH_COLUMNS)
+    candidate_matches = [
+        row
+        for row in matches
+        if _match_in_backfill_date_range(
+            row,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    ]
+    candidate_match_ids = sorted(
+        {
+            str(row.get("id") or "")
+            for row in candidate_matches
+            if row.get("id") is not None
+        }
+    )
+    snapshots = read_rows_by_values(
+        client,
+        "match_snapshots",
+        "match_id",
+        candidate_match_ids,
+        columns=DAILY_PICK_SNAPSHOT_COLUMNS,
+    )
+    predictions = read_rows_by_values(
+        client,
+        "predictions",
+        "match_id",
+        candidate_match_ids,
+        columns=DAILY_PICK_PREDICTION_COLUMNS,
+    )
+    teams = read_rows(client, "teams")
+    existing_runs = read_rows(client, "daily_pick_runs", columns=("id", "status"))
 
     target_dates = select_daily_pick_backfill_dates(
-        matches=matches,
+        matches=candidate_matches,
         snapshots=snapshots,
         predictions=predictions,
         start_date=start_date,
@@ -132,8 +164,8 @@ def backfill_daily_pick_tracking(
         if synced_item_rows:
             client.upsert_rows("daily_pick_items", synced_item_rows)
 
-    all_items = client.read_rows("daily_pick_items")
-    existing_results = client.read_rows("daily_pick_results")
+    all_items = read_rows(client, "daily_pick_items")
+    existing_results = read_rows(client, "daily_pick_results")
     all_settlement_rows: list[dict] = []
     all_settled_runs: list[dict] = []
     for pick_date in synced_dates:
@@ -158,7 +190,7 @@ def backfill_daily_pick_tracking(
         else 0
     )
 
-    all_results = client.read_rows("daily_pick_results")
+    all_results = read_rows(client, "daily_pick_results")
     summaries = build_performance_summaries(items=all_items, results=all_results)
     summary_rows = client.upsert_rows("daily_pick_performance_summary", summaries)
     summary_all = next((row for row in summaries if row.get("id") == "all"), {})
@@ -182,6 +214,22 @@ def backfill_daily_pick_tracking(
             "wilson_lower_bound": summary_all.get("wilson_lower_bound"),
         },
     }
+
+
+def _match_in_backfill_date_range(
+    match: dict,
+    *,
+    start_date: str | None,
+    end_date: str | None,
+) -> bool:
+    pick_date = _date_prefix(match.get("kickoff_at"))
+    if not _valid_date(pick_date):
+        return False
+    if start_date and pick_date < start_date:
+        return False
+    if end_date and pick_date > end_date:
+        return False
+    return True
 
 
 def replace_existing_daily_pick_items_for_runs(
