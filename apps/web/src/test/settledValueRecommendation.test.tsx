@@ -175,6 +175,77 @@ describe("settled value recommendation handling", () => {
     expect(dialog.queryByText("+53424%")).toBeNull();
   });
 
+  it("keeps the modal betting state stable when detail data hydrates", () => {
+    const noBetMatch: MatchCardRow = {
+      id: "match-no-bet",
+      leagueId: "premier-league",
+      leagueLabel: "Premier League",
+      homeTeam: "Liverpool",
+      awayTeam: "Brentford",
+      kickoffAt: "2026-04-27T21:00:00Z",
+      status: "Prediction Ready",
+      recommendedPick: null,
+      confidence: null,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: false,
+        noBetReason: "low_confidence",
+      },
+      needsReview: false,
+    };
+    const hydratedPrediction: PredictionSummary = {
+      matchId: "match-no-bet",
+      checkpointLabel: "LINEUP_CONFIRMED",
+      homeWinProbability: 58,
+      drawProbability: 24,
+      awayWinProbability: 18,
+      recommendedPick: "HOME",
+      confidence: 0.58,
+      mainRecommendation: {
+        pick: "HOME",
+        confidence: 0.58,
+        recommended: true,
+        noBetReason: null,
+      },
+    };
+
+    const { rerender } = render(
+      <MatchDetailModal
+        match={noBetMatch}
+        isOpen
+        prediction={null}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    let dialog = within(
+      screen.getByRole("dialog", { name: "Liverpool vs Brentford" }),
+    );
+    expect(dialog.getByLabelText("Bet: No bet")).toBeInTheDocument();
+
+    rerender(
+      <MatchDetailModal
+        match={noBetMatch}
+        isOpen
+        prediction={hydratedPrediction}
+        checkpoints={[]}
+        review={null}
+        onClose={() => {}}
+        onOpenReport={() => {}}
+      />,
+    );
+
+    dialog = within(
+      screen.getByRole("dialog", { name: "Liverpool vs Brentford" }),
+    );
+    expect(dialog.getByLabelText("Bet: No bet")).toBeInTheDocument();
+    expect(dialog.queryByLabelText("Bet: Recommended")).not.toBeInTheDocument();
+  });
+
   it("renders modal content inside a dedicated scroll region below the header", () => {
     const { container } = render(
       <MatchDetailModal
