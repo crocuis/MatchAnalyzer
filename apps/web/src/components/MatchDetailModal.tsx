@@ -107,6 +107,11 @@ export default function MatchDetailModal({
     recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
     confidence: prediction?.confidence ?? match.confidence,
   });
+  const headerPresentation = resolvePredictionPresentation({
+    mainRecommendation: match.mainRecommendation ?? null,
+    recommendedPick: match.recommendedPick,
+    confidence: match.confidence,
+  });
   const missingSignals = Array.isArray(match.explanationPayload?.missingSignals)
     ? match.explanationPayload.missingSignals.filter(
         (signal): signal is string => typeof signal === "string",
@@ -121,12 +126,12 @@ export default function MatchDetailModal({
   const verdict = resolveVerdictState({
     finalResult: match.finalResult,
     kickoffAt: match.kickoffAt,
-    mainRecommendation: presentation.mainRecommendation,
-    recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
+    mainRecommendation: headerPresentation.mainRecommendation,
+    recommendedPick: match.recommendedPick,
   });
   const statusFlags = summarizeSignalBadges(
-    presentation.mainRecommendation,
-    prediction?.explanationPayload ?? match.explanationPayload,
+    headerPresentation.mainRecommendation,
+    match.explanationPayload,
     match.needsReview,
   );
   const hasPredictionSummary =
@@ -146,7 +151,7 @@ export default function MatchDetailModal({
       }
     : null;
   const toneClass =
-    presentation.betState === "recommended"
+    headerPresentation.betState === "recommended"
       ? "state-recommended"
       : isFinished
         ? "state-complete"
@@ -181,7 +186,7 @@ export default function MatchDetailModal({
               {formattedDate} • {t(`status.${match.status}`)}
             </span>
             <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-              {presentation.betState === "recommended" && (
+              {headerPresentation.betState === "recommended" && (
                 <span className="recommendedBadge">
                   {t("matchOutcome.bet.recommended")}
                 </span>
@@ -217,9 +222,9 @@ export default function MatchDetailModal({
           </div>
 
           <MatchOutcomeBoard
-            predictedOutcome={presentation.predictedOutcome}
+            predictedOutcome={headerPresentation.predictedOutcome}
             actualOutcome={actualOutcome}
-            betState={presentation.betState}
+            betState={headerPresentation.betState}
             verdict={verdict}
             statusFlags={statusFlags}
             compact
