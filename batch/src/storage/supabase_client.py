@@ -7,6 +7,7 @@ from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 REMOTE_READ_PAGE_SIZE = 1000
+REMOTE_FILTER_VALUE_BATCH_SIZE = 50
 REMOTE_UPSERT_BATCH_SIZE = 250
 REMOTE_TRANSIENT_RETRY_COUNT = 3
 
@@ -58,6 +59,12 @@ def validate_table_name(table: str) -> str:
     return table
 
 
+def validate_column_name(column: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column or ""):
+        raise ValueError("column name must be a simple SQL identifier")
+    return column
+
+
 class SupabaseClient:
     def __init__(self, base_url: str, service_key: str) -> None:
         self.base_url = base_url
@@ -107,8 +114,11 @@ class SupabaseClient:
         start: int,
         page_size: int,
         ordered: bool,
+        filters: dict[str, str] | None = None,
     ) -> list[dict]:
         params = {"select": ",".join(columns) if columns else "*"}
+        if filters:
+            params.update(filters)
         if ordered:
             params["order"] = "id.asc"
         request = Request(
@@ -130,6 +140,7 @@ class SupabaseClient:
         table_name: str,
         *,
         columns: tuple[str, ...] | None,
+        filters: dict[str, str] | None = None,
     ) -> list[dict]:
         rows: list[dict] = []
         start = 0
@@ -142,6 +153,7 @@ class SupabaseClient:
                     start=start,
                     page_size=REMOTE_READ_PAGE_SIZE,
                     ordered=True,
+                    filters=filters,
                 )
             except HTTPError as exc:
                 body = exc.read().decode("utf-8")
@@ -157,6 +169,7 @@ class SupabaseClient:
                         start=0,
                         page_size=REMOTE_READ_PAGE_SIZE,
                         ordered=False,
+                        filters=filters,
                     )
                     if len(fallback_page) >= REMOTE_READ_PAGE_SIZE:
                         raise ValueError(
@@ -303,5 +316,49 @@ class SupabaseClient:
                 {key: value for key, value in row.items() if key in column_set}
                 for row in rows
                 if isinstance(row, dict)
+            ]
+        return sorted(rows, key=lambda row: row.get("id", ""))
+
+    def read_rows_by_values(
+        self,
+        table: str,
+        column: str,
+        values: list[str],
+        columns: tuple[str, ...] | None = None,
+    ) -> list[dict]:
+        table_name = validate_table_name(table)
+        column_name = validate_column_name(column)
+        value_list = list(dict.fromkeys(str(value) for value in values if value))
+        if not value_list:
+            return []
+
+        if not self._use_file_backend():
+            read_columns = columns or REMOTE_READ_DEFAULT_COLUMNS.get(table_name)
+            rows: list[dict] = []
+            for index in range(0, len(value_list), REMOTE_FILTER_VALUE_BATCH_SIZE):
+                batch = value_list[index : index + REMOTE_FILTER_VALUE_BATCH_SIZE]
+                rows.extend(
+                    self._read_rows_remote(
+                        table_name,
+                        columns=read_columns,
+                        filters={column_name: f"in.({','.join(batch)})"},
+                    )
+                )
+            return rows
+
+        base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
+        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        if not target.exists():
+            return []
+        value_set = set(value_list)
+        rows = [
+            row for row in json.loads(target.read_text())
+            if isinstance(row, dict) and str(row.get(column_name) or "") in value_set
+        ]
+        if columns:
+            column_set = set(columns)
+            rows = [
+                {key: value for key, value in row.items() if key in column_set}
+                for row in rows
             ]
         return sorted(rows, key=lambda row: row.get("id", ""))

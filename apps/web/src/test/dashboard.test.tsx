@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import DailyPicksTeaser from "../components/DailyPicksTeaser";
@@ -1436,6 +1437,38 @@ describe("dashboard redesign", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not refetch daily picks with stale filters on reopen", async () => {
+    render(<App />);
+
+    const fetchMock = vi.mocked(fetch);
+    const dailyPicksUrls = () =>
+      fetchMock.mock.calls
+        .map(([url]) => url)
+        .filter((url): url is string => typeof url === "string" && url.startsWith("/api/daily-picks"));
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.click(within(dailyPicksDialog).getByRole("button", { name: /handicap/i }));
+    fireEvent.click(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /daily picks/i })).not.toBeInTheDocument();
+    });
+
+    const callsBeforeReopen = dailyPicksUrls().length;
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    await screen.findByRole("dialog", { name: /daily picks/i });
+
+    await waitFor(() => {
+      expect(dailyPicksUrls().slice(callsBeforeReopen).length).toBeGreaterThan(0);
+    });
+    const reopenCalls = dailyPicksUrls().slice(callsBeforeReopen);
+
+    expect(reopenCalls).not.toContainEqual(expect.stringContaining("marketFamily=spreads"));
+    expect(reopenCalls).not.toContainEqual(expect.stringContaining("includeHeld=true"));
+  });
+
   it("does not fetch evaluation reports when opening the match detail modal", async () => {
     render(<App />);
 
@@ -1503,6 +1536,27 @@ describe("dashboard redesign", () => {
           String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
         ),
       ).toHaveLength(recentRequestCount);
+    });
+  });
+
+  it("does not start duplicate match page requests when tab effects are replayed", async () => {
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+
+    await screen.findByRole("tab", { name: "Upcoming Matches" });
+    const fetchMock = vi.mocked(fetch);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+        ),
+      ).toHaveLength(1);
     });
   });
 

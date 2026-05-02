@@ -214,7 +214,11 @@ export default function MatchTable({
             role="tab"
             aria-selected={activeView === view}
             className={`matchViewTab ${activeView === view ? "matchViewTab-active" : ""}`}
-            onClick={() => onSelectView?.(view)}
+            onClick={() => {
+              if (activeView !== view) {
+                onSelectView?.(view);
+              }
+            }}
           >
             {view === "upcoming"
               ? t("matchTable.upcomingMatches")

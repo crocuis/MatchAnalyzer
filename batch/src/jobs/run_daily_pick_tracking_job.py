@@ -977,6 +977,30 @@ def read_rows(client: SupabaseClient, table_name: str) -> list[dict]:
     return client.read_rows(table_name)
 
 
+def read_rows_by_values(
+    client: SupabaseClient,
+    table_name: str,
+    column: str,
+    values: list[str],
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
+    if not values:
+        return []
+    reader = getattr(client, "read_rows_by_values", None)
+    if callable(reader):
+        return reader(table_name, column, values, columns=columns)
+    value_set = set(values)
+    try:
+        rows = client.read_rows(table_name, columns=columns)
+    except TypeError:
+        rows = client.read_rows(table_name)
+    return [
+        row
+        for row in rows
+        if str(row.get(column) or "") in value_set
+    ]
+
+
 def run_job(
     *,
     sync_date: str | None,
@@ -1032,9 +1056,8 @@ def run_job(
         if settled_runs:
             client.upsert_rows("daily_pick_runs", settled_runs)
 
-        all_items = read_rows(client, "daily_pick_items")
         all_results = read_rows(client, "daily_pick_results")
-        summaries = build_performance_summaries(items=all_items, results=all_results)
+        summaries = build_performance_summaries(items=items, results=all_results)
         client.upsert_rows("daily_pick_performance_summary", summaries)
         result["settled_results"] = len(settlement_rows)
         result["summary_rows"] = len(summaries)
@@ -1043,11 +1066,13 @@ def run_job(
 
 
 def replace_existing_daily_pick_items(client: SupabaseClient, run_id: str) -> None:
-    existing_items = [
-        row
-        for row in read_rows(client, "daily_pick_items")
-        if str(row.get("run_id") or "") == run_id
-    ]
+    existing_items = read_rows_by_values(
+        client,
+        "daily_pick_items",
+        "run_id",
+        [run_id],
+        columns=("id", "run_id"),
+    )
     existing_item_ids = [
         str(row.get("id"))
         for row in existing_items

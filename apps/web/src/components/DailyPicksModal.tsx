@@ -69,13 +69,13 @@ export default function DailyPicksModal({
   useBodyScrollLock(isOpen && isActive);
 
   useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
     setMarketFamily("all");
     setLeagueId(initialLeagueId);
     setIncludeHeld(false);
+    if (!isOpen) {
+      setPayload(null);
+      setStatus("loading");
+    }
   }, [initialLeagueId, isOpen]);
 
   useEffect(() => {
