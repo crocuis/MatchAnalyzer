@@ -287,6 +287,16 @@ def test_dashboard_performance_index_migration_adds_lookup_indexes():
     assert "create index if not exists post_match_reviews_match_created_idx on post_match_reviews (match_id, created_at desc)" in migration
 
 
+def test_daily_pick_run_id_index_migration_adds_delete_lookup_index():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605020001_daily_pick_items_run_id_index.sql"
+        ).read_text()
+    )
+
+    assert "create index if not exists daily_pick_items_run_id_idx on public.daily_pick_items using btree (run_id)" in migration
+
+
 def test_dashboard_league_summary_view_migration_creates_security_invoker_view():
     migration = normalize_sql(
         Path(
