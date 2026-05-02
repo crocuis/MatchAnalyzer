@@ -1436,6 +1436,38 @@ describe("dashboard redesign", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not refetch daily picks with stale filters on reopen", async () => {
+    render(<App />);
+
+    const fetchMock = vi.mocked(fetch);
+    const dailyPicksUrls = () =>
+      fetchMock.mock.calls
+        .map(([url]) => url)
+        .filter((url): url is string => typeof url === "string" && url.startsWith("/api/daily-picks"));
+
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    fireEvent.click(within(dailyPicksDialog).getByRole("button", { name: /handicap/i }));
+    fireEvent.click(within(dailyPicksDialog).getByRole("checkbox", { name: /show held/i }));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: /daily picks/i })).not.toBeInTheDocument();
+    });
+
+    const callsBeforeReopen = dailyPicksUrls().length;
+    fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
+    await screen.findByRole("dialog", { name: /daily picks/i });
+
+    await waitFor(() => {
+      expect(dailyPicksUrls().slice(callsBeforeReopen).length).toBeGreaterThan(0);
+    });
+    const reopenCalls = dailyPicksUrls().slice(callsBeforeReopen);
+
+    expect(reopenCalls).not.toContainEqual(expect.stringContaining("marketFamily=spreads"));
+    expect(reopenCalls).not.toContainEqual(expect.stringContaining("includeHeld=true"));
+  });
+
   it("does not fetch evaluation reports when opening the match detail modal", async () => {
     render(<App />);
 
