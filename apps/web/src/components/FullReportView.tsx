@@ -141,67 +141,79 @@ export default function FullReportView({
                 : "reportHero-neutral"
           }`}
         >
-          <div className="reportHeroMeta">
-            <span className="reportEyebrow">{t("report.eyebrow")}</span>
-            <span className="reportDate">{formattedDate}</span>
-            <div style={{ display: "flex", gap: "8px", marginTop: "16px", justifyContent: "center" }}>
-              {presentation.betState === "recommended" && (
-                <span className="recommendedBadge">
-                  {t("matchOutcome.bet.recommended")}
-                </span>
-              )}
-              {!isFinished && Boolean(match.valueRecommendation?.recommended) && (
-                <span className="valueBadge">
-                  {t("matchCard.valuePick")}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="reportScoreboard">
-            <div className="reportTeam">
-              <TeamLogo
-                className="reportTeamLogo"
-                teamName={match.homeTeam}
-                logoUrl={match.homeTeamLogoUrl}
-              />
-              <h1 className="reportTeamName">{match.homeTeam}</h1>
+          <div className="reportHeroInner">
+            <div className="reportHeroHeader">
+              <div className="reportHeroMeta">
+                <span className="reportEyebrow">{t("report.eyebrow")}</span>
+                <span className="reportDate">{formattedDate}</span>
+              </div>
+              <div className="reportHeroBadges">
+                {presentation.betState === "recommended" && (
+                  <span className="recommendedBadge">
+                    {t("matchOutcome.bet.recommended")}
+                  </span>
+                )}
+                {!isFinished && Boolean(match.valueRecommendation?.recommended) && (
+                  <span className="valueBadge">
+                    {t("matchCard.valuePick")}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="reportVs">
-              {hasFinalScore ? (
-                <div className="reportFinalScore">
-                  <strong>{match.homeScore}</strong>
-                  <span>-</span>
-                  <strong>{match.awayScore}</strong>
+            <div className="reportScoreboard">
+              <div className="reportTeam">
+                <div className="reportTeamLogoContainer">
+                  <TeamLogo
+                    className="reportTeamLogo"
+                    teamName={match.homeTeam}
+                    logoUrl={match.homeTeamLogoUrl}
+                  />
                 </div>
-              ) : (
-                "VS"
-              )}
+                <h1 className="reportTeamName">{match.homeTeam}</h1>
+              </div>
+
+              <div className="reportVs">
+                {hasFinalScore ? (
+                  <div className="reportFinalScore">
+                    <span className="scoreValue">{match.homeScore}</span>
+                    <span className="scoreDivider">-</span>
+                    <span className="scoreValue">{match.awayScore}</span>
+                  </div>
+                ) : (
+                  <div className="vsBadge">VS</div>
+                )}
+              </div>
+
+              <div className="reportTeam">
+                <div className="reportTeamLogoContainer">
+                  <TeamLogo
+                    className="reportTeamLogo"
+                    teamName={match.awayTeam}
+                    logoUrl={match.awayTeamLogoUrl}
+                  />
+                </div>
+                <h1 className="reportTeamName">{match.awayTeam}</h1>
+              </div>
             </div>
 
-            <div className="reportTeam">
-              <TeamLogo
-                className="reportTeamLogo"
-                teamName={match.awayTeam}
-                logoUrl={match.awayTeamLogoUrl}
-              />
-              <h1 className="reportTeamName">{match.awayTeam}</h1>
+            <div className="reportHeroFooter">
+              <div className="reportStatusGroup">
+                <span className="statusBadge">{t(`status.${match.status}`)}</span>
+                <span className="leagueLabel">{t(`leagues.${match.leagueId}`)}</span>
+              </div>
             </div>
           </div>
 
-          <div className="reportStatusStrip">
-            <span className="statusBadge">{t(`status.${match.status}`)}</span>
-            <span className="leagueLabel">{t(`leagues.${match.leagueId}`)}</span>
+          <div className="reportOutcomeSection">
+            <MatchOutcomeBoard
+              predictedOutcome={predictedOutcomeCode}
+              actualOutcome={actualOutcomeCode}
+              betState={betState}
+              verdict={verdictState}
+              statusFlags={statusFlags}
+            />
           </div>
-
-          <MatchOutcomeBoard
-            predictedOutcome={predictedOutcomeCode}
-            actualOutcome={actualOutcomeCode}
-            betState={betState}
-            verdict={verdictState}
-            statusFlags={statusFlags}
-          />
         </header>
 
         <div className="reportGrid">
