@@ -1,4 +1,6 @@
 from batch.src.jobs.run_daily_pick_tracking_job import (
+    DAILY_PICK_PREDICTION_COLUMNS,
+    DAILY_PICK_SNAPSHOT_COLUMNS,
     build_performance_summaries,
     run_job,
     settle_daily_pick_items,
@@ -1707,6 +1709,130 @@ def test_run_job_can_force_resync_settled_daily_pick_runs() -> None:
     assert state["daily_pick_results"] == []
 
 
+def test_run_job_filters_prediction_reads_to_sync_date_matches() -> None:
+    state = {
+        "daily_pick_runs": [],
+        "daily_pick_items": [],
+        "daily_pick_results": [],
+        "matches": [
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            },
+            {
+                "id": "match-other",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T19:00:00Z",
+            },
+        ],
+        "match_snapshots": [
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "snapshot-other",
+                "match_id": "match-other",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+        ],
+        "predictions": [
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            },
+            {
+                "id": "prediction-other",
+                "match_id": "match-other",
+                "snapshot_id": "snapshot-other",
+            },
+        ],
+    }
+    filtered_reads: list[tuple[str, str, list[str], tuple[str, ...] | None]] = []
+
+    class FakeClient:
+        def read_rows(
+            self,
+            table_name: str,
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            if table_name in {"match_snapshots", "predictions"}:
+                raise AssertionError(f"{table_name} should be filtered by match_id")
+            column_set = set(columns or ())
+            return [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if not column_set or key in column_set
+                }
+                for row in state.get(table_name, [])
+            ]
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            filtered_reads.append((table_name, column, values, columns))
+            value_set = set(values)
+            column_set = set(columns or ())
+            return [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if not column_set or key in column_set
+                }
+                for row in state.get(table_name, [])
+                if str(row.get(column) or "") in value_set
+            ]
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+        def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
+            value_set = set(values)
+            state[table_name] = [
+                row for row in state.get(table_name, []) if str(row.get(column) or "") not in value_set
+            ]
+            return len(values)
+
+    result = run_job(
+        sync_date="2026-04-24",
+        settle_date=None,
+        client=FakeClient(),
+        force_resync=True,
+    )
+
+    assert result["synced_items"] == 1
+    assert (
+        "match_snapshots",
+        "match_id",
+        ["match-1"],
+        DAILY_PICK_SNAPSHOT_COLUMNS,
+    ) in filtered_reads
+    assert (
+        "predictions",
+        "match_id",
+        ["match-1"],
+        DAILY_PICK_PREDICTION_COLUMNS,
+    ) in filtered_reads
+
+
 def test_select_daily_pick_backfill_dates_uses_prediction_backed_match_dates() -> None:
     dates = select_daily_pick_backfill_dates(
         matches=[
@@ -1911,3 +2037,128 @@ def test_backfill_daily_pick_tracking_recomputes_season_summary() -> None:
     assert result["summary_all"]["hit_count"] == 1
     assert result["summary_all"]["miss_count"] == 1
     assert result["summary_all"]["hit_rate"] == 0.5
+
+
+def test_backfill_daily_pick_tracking_filters_prediction_reads_to_date_range() -> None:
+    state = {
+        "matches": [
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+                "final_result": "HOME",
+            },
+            {
+                "id": "match-other",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-25T19:00:00Z",
+                "final_result": "AWAY",
+            },
+        ],
+        "match_snapshots": [
+            {"id": "snapshot-1", "match_id": "match-1", "checkpoint_type": "T_MINUS_24H"},
+            {
+                "id": "snapshot-other",
+                "match_id": "match-other",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+        ],
+        "predictions": [
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.72,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.72,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            },
+            {
+                "id": "prediction-other",
+                "match_id": "match-other",
+                "snapshot_id": "snapshot-other",
+            },
+        ],
+        "teams": [],
+        "daily_pick_runs": [],
+        "daily_pick_items": [],
+        "daily_pick_results": [],
+        "daily_pick_performance_summary": [],
+    }
+    filtered_reads: list[tuple[str, str, list[str], tuple[str, ...] | None]] = []
+
+    class FakeClient:
+        def read_rows(
+            self,
+            table_name: str,
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            if table_name in {"match_snapshots", "predictions"}:
+                raise AssertionError(f"{table_name} should be filtered by match_id")
+            column_set = set(columns or ())
+            return [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if not column_set or key in column_set
+                }
+                for row in state.get(table_name, [])
+            ]
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            filtered_reads.append((table_name, column, values, columns))
+            value_set = set(values)
+            column_set = set(columns or ())
+            return [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if not column_set or key in column_set
+                }
+                for row in state.get(table_name, [])
+                if str(row.get(column) or "") in value_set
+            ]
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+        def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
+            value_set = set(values)
+            state[table_name] = [
+                row for row in state.get(table_name, []) if str(row.get(column) or "") not in value_set
+            ]
+            return len(values)
+
+    result = backfill_daily_pick_tracking(
+        client=FakeClient(),
+        start_date="2026-04-24",
+        end_date="2026-04-24",
+        force_resync=True,
+    )
+
+    assert result["target_dates"] == 1
+    assert result["synced_dates"] == 1
+    assert (
+        "match_snapshots",
+        "match_id",
+        ["match-1"],
+        DAILY_PICK_SNAPSHOT_COLUMNS,
+    ) in filtered_reads
+    assert (
+        "predictions",
+        "match_id",
+        ["match-1"],
+        DAILY_PICK_PREDICTION_COLUMNS,
+    ) in filtered_reads

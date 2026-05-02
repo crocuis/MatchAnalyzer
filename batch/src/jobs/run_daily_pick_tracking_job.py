@@ -51,6 +51,44 @@ DAILY_PICK_PRE_MATCH_CHECKPOINTS = {
     "T_MINUS_1H",
     "LINEUP_CONFIRMED",
 }
+DAILY_PICK_MATCH_COLUMNS = (
+    "id",
+    "competition_id",
+    "kickoff_at",
+    "home_team_id",
+    "away_team_id",
+    "final_result",
+    "home_score",
+    "away_score",
+)
+DAILY_PICK_SNAPSHOT_COLUMNS = (
+    "id",
+    "match_id",
+    "checkpoint_type",
+)
+DAILY_PICK_PREDICTION_COLUMNS = (
+    "id",
+    "snapshot_id",
+    "match_id",
+    "created_at",
+    "model_version_id",
+    "recommended_pick",
+    "confidence_score",
+    "summary_payload",
+    "main_recommendation_pick",
+    "main_recommendation_confidence",
+    "main_recommendation_recommended",
+    "main_recommendation_no_bet_reason",
+    "value_recommendation_pick",
+    "value_recommendation_recommended",
+    "value_recommendation_edge",
+    "value_recommendation_expected_value",
+    "value_recommendation_market_price",
+    "value_recommendation_model_probability",
+    "value_recommendation_market_probability",
+    "value_recommendation_market_source",
+    "variant_markets_summary",
+)
 
 
 def build_daily_pick_run_id(pick_date: str) -> str:
@@ -973,8 +1011,15 @@ def _first_present(row: dict, *keys: str) -> object:
     return None
 
 
-def read_rows(client: SupabaseClient, table_name: str) -> list[dict]:
-    return client.read_rows(table_name)
+def read_rows(
+    client: SupabaseClient,
+    table_name: str,
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
+    try:
+        return client.read_rows(table_name, columns=columns)
+    except TypeError:
+        return client.read_rows(table_name)
 
 
 def read_rows_by_values(
@@ -1024,9 +1069,29 @@ def run_job(
         if existing_run and existing_run.get("status") == "settled" and not force_resync:
             result["sync_skipped"] = "settled_run_exists"
         else:
-            matches = read_rows(client, "matches")
-            snapshots = read_rows(client, "match_snapshots")
-            predictions = read_rows(client, "predictions")
+            matches = read_rows(client, "matches", columns=DAILY_PICK_MATCH_COLUMNS)
+            sync_match_ids = sorted(
+                {
+                    str(row.get("id") or "")
+                    for row in matches
+                    if str(row.get("kickoff_at") or "")[:10] == sync_date
+                    and row.get("id") is not None
+                }
+            )
+            snapshots = read_rows_by_values(
+                client,
+                "match_snapshots",
+                "match_id",
+                sync_match_ids,
+                columns=DAILY_PICK_SNAPSHOT_COLUMNS,
+            )
+            predictions = read_rows_by_values(
+                client,
+                "predictions",
+                "match_id",
+                sync_match_ids,
+                columns=DAILY_PICK_PREDICTION_COLUMNS,
+            )
             run, items = sync_daily_picks_for_date(
                 pick_date=sync_date,
                 matches=matches,
