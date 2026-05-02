@@ -229,12 +229,17 @@ describe("supabase schema integration", () => {
          and indexname in (
            'matches_competition_kickoff_idx',
            'predictions_match_created_idx',
-           'prediction_feature_snapshots_match_id_idx'
+           'prediction_feature_snapshots_match_id_idx',
+           'daily_pick_items_run_id_idx'
          )
        order by tablename, indexname`,
     );
 
     expect(indexes.rows).toEqual([
+      {
+        tablename: "daily_pick_items",
+        indexname: "daily_pick_items_run_id_idx",
+      },
       {
         tablename: "matches",
         indexname: "matches_competition_kickoff_idx",
