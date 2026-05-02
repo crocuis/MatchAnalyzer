@@ -181,10 +181,9 @@ export default function DailyPicksModal({
         aria-hidden={isActive ? undefined : true}
         aria-modal={isActive ? "true" : undefined}
         aria-labelledby="daily-picks-heading"
-        className="detailModal state-recommended"
+        className="detailModal dailyPicksModal state-recommended"
         ref={dialogRef}
         role="dialog"
-        style={{ width: "min(900px, 95%)" }}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="modalHeader">
@@ -200,30 +199,32 @@ export default function DailyPicksModal({
           <div className="dailyPicksHero">
             <div className="dailyPicksHeroMain">
               <h1 id="daily-picks-heading">{t("dailyPicks.title")}</h1>
-              <p>{t("dailyPicks.subtitle")}</p>
+              <p className="dailyPicksSubtitle">{t("dailyPicks.subtitle")}</p>
             </div>
             {payload ? (
-              <div className="dailyPicksTargetGrid">
-                <div className="dailyPicksTargetStat">
-                  <small>{t("dailyPicks.summary.recommendations")}</small>
-                  <strong>{t("dailyPicks.summary.count", { count: recommendationCount })}</strong>
-                </div>
-                {shouldShowHeldMetric ? (
-                  <div className="dailyPicksTargetStat">
-                    <small>{t("dailyPicks.summary.heldCandidates")}</small>
-                    <strong>{t("dailyPicks.summary.count", { count: hiddenHeldCount })}</strong>
+              <div className="dailyPicksStatsContainer">
+                <div className="dailyPicksTargetGrid">
+                  <div className="dailyPicksTargetStat dailyPicksTargetStat-primary">
+                    <small>{t("dailyPicks.summary.recommendations")}</small>
+                    <strong>{t("dailyPicks.summary.count", { count: recommendationCount })}</strong>
                   </div>
-                ) : null}
-                <div className="dailyPicksTargetStat">
-                  <small>{t("dailyPicks.validation.cumulativeHitRate")}</small>
-                  <strong>{formatPercent(payload.validation?.hitRate ?? null)}</strong>
-                </div>
-                <div className="dailyPicksTargetStat">
-                  <small>{t("dailyPicks.validation.sampleCount")}</small>
-                  <strong>{t("dailyPicks.validation.sampleValue", {
-                    count: payload.validation?.sampleCount ?? 0,
-                    defaultValue: `${payload.validation?.sampleCount ?? 0}`,
-                  })}</strong>
+                  {shouldShowHeldMetric ? (
+                    <div className="dailyPicksTargetStat">
+                      <small>{t("dailyPicks.summary.heldCandidates")}</small>
+                      <strong>{t("dailyPicks.summary.count", { count: hiddenHeldCount })}</strong>
+                    </div>
+                  ) : null}
+                  <div className="dailyPicksTargetStat dailyPicksTargetStat-success">
+                    <small>{t("dailyPicks.validation.cumulativeHitRate")}</small>
+                    <strong>{formatPercent(payload.validation?.hitRate ?? null)}</strong>
+                  </div>
+                  <div className="dailyPicksTargetStat">
+                    <small>{t("dailyPicks.validation.sampleCount")}</small>
+                    <strong>{t("dailyPicks.validation.sampleValue", {
+                      count: payload.validation?.sampleCount ?? 0,
+                      defaultValue: `${payload.validation?.sampleCount ?? 0}`,
+                    })}</strong>
+                  </div>
                 </div>
               </div>
             ) : null}

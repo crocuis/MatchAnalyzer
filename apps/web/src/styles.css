@@ -256,8 +256,8 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 .dailyPicksHero {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  margin-bottom: 32px;
+  gap: 16px;
+  margin-bottom: 20px;
 }
 
 .dailyPicksHeroMain {
@@ -265,91 +265,106 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 
 .dailyPicksHero h1 {
-  margin: 0 0 12px;
+  margin: 0 0 4px;
   font-family: var(--font-display);
-  font-size: 2.5rem;
+  font-size: 2rem;
   font-weight: 800;
-  letter-spacing: -0.04em;
   color: var(--text-primary);
   line-height: 1.1;
+  letter-spacing: -0.04em;
 }
 
-.dailyPicksHero p {
+.dailyPicksSubtitle {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   max-width: 600px;
-  line-height: 1.6;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.dailyPicksStatsContainer {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 1px;
+  border-radius: 20px;
 }
 
 .dailyPicksTargetGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 19px;
+  overflow: hidden;
 }
 
 .dailyPicksTargetStat {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 20px;
-  background: #f8fafc;
-  border: 1px solid var(--border-subtle);
-  border-radius: 20px;
+  gap: 4px;
+  padding: 12px 16px;
+  background: white;
   transition: all 0.2s ease;
 }
 
 .dailyPicksTargetStat:hover {
-  background: white;
-  border-color: var(--accent-secondary);
-  box-shadow: var(--shadow-sm);
+  background: #f8fafc;
 }
 
 .dailyPicksTargetStat small {
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: 0.6rem;
+  font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
 }
 
 .dailyPicksTargetStat strong {
   font-family: var(--font-display);
-  font-size: 1.5rem;
+  font-size: 1.15rem;
   font-weight: 800;
   color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.dailyPicksTargetStat-primary strong {
+  color: var(--accent-primary);
+}
+
+.dailyPicksTargetStat-success strong {
+  color: var(--accent-success);
 }
 
 .dailyPicksFiltersContainer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
-  padding: 24px 0;
-  border-top: 1px solid var(--border-subtle);
+  gap: 12px;
+  padding: 16px 0 0;
+  border-top: 1px solid rgba(0,0,0,0.06);
 }
 
 .dailyPicksSegmentedControl {
   display: flex;
-  gap: 4px;
-  padding: 5px;
+  gap: 2px;
+  padding: 4px;
   background: #f1f5f9;
-  border-radius: 14px;
+  border-radius: 12px;
 }
 
 .dailyPicksSegment {
-  padding: 8px 18px;
-  border-radius: 10px;
-  font-size: 0.9rem;
+  padding: 6px 14px;
+  border-radius: 9px;
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-secondary);
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dailyPicksSegment-active {
   background: white;
-  color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
+  color: var(--accent-primary);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
 .dailyPicksFilterActions {
@@ -360,18 +375,18 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 .dailyPicksSelectWrapper {
   position: relative;
-  min-width: 180px;
+  min-width: 140px;
 }
 
 .dailyPicksSelect {
   width: 100%;
-  height: 42px;
-  padding: 0 40px 0 16px;
+  height: 36px;
+  padding: 0 32px 0 12px;
   border: 1px solid var(--border-subtle);
-  border-radius: 12px;
+  border-radius: 10px;
   background: white;
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
   appearance: none;
@@ -380,15 +395,16 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 .dailyPicksSelect:hover {
   border-color: var(--accent-secondary);
+  background: #fcfcfd;
 }
 
 .selectChevron {
   position: absolute;
-  right: 12px;
+  right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   color: var(--text-muted);
   pointer-events: none;
 }
@@ -396,9 +412,8 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 .dailyPicksToggle {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   cursor: pointer;
-  user-select: none;
 }
 
 .dailyPicksToggle input {
@@ -410,24 +425,24 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 .toggleSlider {
   position: relative;
-  width: 44px;
-  height: 24px;
+  width: 38px;
+  height: 20px;
   background: #e2e8f0;
-  border-radius: 24px;
+  border-radius: 20px;
   transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .toggleSlider::before {
   content: "";
   position: absolute;
-  height: 18px;
-  width: 18px;
+  height: 14px;
+  width: 14px;
   left: 3px;
   bottom: 3px;
   background: white;
   border-radius: 50%;
   transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
 .dailyPicksToggle input:checked + .toggleSlider {
@@ -435,159 +450,203 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 
 .dailyPicksToggle input:checked + .toggleSlider::before {
-  transform: translateX(20px);
+  transform: translateX(18px);
 }
 
 .toggleLabel {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-secondary);
 }
 
+/* Daily Pick Card Compact Redesign */
+.dailyPicksList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 4px;
+}
+
 .dailyPickCard {
+  position: relative;
+  border-radius: 20px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255,255,255,1) 0%, rgba(241,245,249,0.5) 100%);
+  transition: all 0.4s cubic-bezier(0.2, 1, 0.3, 1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  height: 100%;
+  animation: cardFadeIn 0.5s cubic-bezier(0.2, 1, 0.3, 1) both;
+}
+
+.dailyPickCardInner {
+  background: white;
+  border-radius: 19px;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 0;
-  background: white;
-  border: 1px solid var(--border-subtle);
-  border-radius: 24px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--shadow-sm);
   overflow: hidden;
   position: relative;
 }
 
 .dailyPickCard:hover {
   transform: translateY(-4px);
-  box-shadow: var(--shadow-card);
-  border-color: var(--accent-secondary);
+  box-shadow: 0 12px 20px -5px rgba(0, 0, 0, 0.08), 0 6px 6px -5px rgba(0, 0, 0, 0.04);
 }
 
 .dailyPickCardHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  background: #f8fafc;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 16px;
+  background: rgba(248, 250, 252, 0.5);
+  border-bottom: 1px solid rgba(0,0,0,0.03);
 }
 
 .dailyPickLeague {
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
 .dailyPickStatus {
-  font-size: 0.75rem;
+  font-size: 0.6rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 4px 10px;
-  border-radius: 20px;
+  padding: 3px 8px;
+  border-radius: 99px;
   background: white;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid rgba(0,0,0,0.05);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 }
 
-.dailyPickCard-recommended { border-color: rgba(79, 70, 229, 0.2); }
-.dailyPickCard-recommended::after {
-  content: ""; position: absolute; top: 0; right: 0; width: 150px; height: 150px;
-  background: radial-gradient(circle at top right, rgba(79, 70, 229, 0.06), transparent 70%);
-  pointer-events: none;
+.dailyPickCard-recommended {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.12) 0%, rgba(129, 140, 248, 0.04) 100%);
+}
+.dailyPickCard-recommended .dailyPickStatus {
+  color: var(--accent-primary);
+  border-color: rgba(79, 70, 229, 0.1);
+  background: rgba(79, 70, 229, 0.05);
 }
 
-.dailyPickCard-hit { border-color: rgba(16, 185, 129, 0.2); }
-.dailyPickCard-hit::after {
-  content: ""; position: absolute; top: 0; right: 0; width: 150px; height: 150px;
-  background: radial-gradient(circle at top right, rgba(16, 185, 129, 0.06), transparent 70%);
-  pointer-events: none;
+.dailyPickCard-hit {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(16, 185, 129, 0.04) 100%);
+}
+.dailyPickCard-hit .dailyPickStatus {
+  color: var(--accent-success);
+  border-color: rgba(16, 185, 129, 0.1);
+  background: rgba(16, 185, 129, 0.05);
 }
 
-.dailyPickCard-miss { border-color: rgba(244, 63, 94, 0.2); }
-.dailyPickCard-miss::after {
-  content: ""; position: absolute; top: 0; right: 0; width: 150px; height: 150px;
-  background: radial-gradient(circle at top right, rgba(244, 63, 94, 0.06), transparent 70%);
-  pointer-events: none;
+.dailyPickCard-miss {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.12) 0%, rgba(244, 63, 94, 0.04) 100%);
 }
-
-.dailyPickCard-held { background: #f8fafc; opacity: 0.8; }
-
-.dailyPickCard-recommended .dailyPickStatus { color: var(--accent-primary); border-color: rgba(79, 70, 229, 0.2); background: rgba(79, 70, 229, 0.05); }
-.dailyPickCard-hit .dailyPickStatus { color: var(--accent-success); border-color: rgba(16, 185, 129, 0.2); background: rgba(16, 185, 129, 0.05); }
-.dailyPickCard-miss .dailyPickStatus { color: var(--accent-danger); border-color: rgba(244, 63, 94, 0.2); background: rgba(244, 63, 94, 0.05); }
+.dailyPickCard-miss .dailyPickStatus {
+  color: var(--accent-danger);
+  border-color: rgba(244, 63, 94, 0.1);
+  background: rgba(244, 63, 94, 0.05);
+}
 
 .dailyPickCardButton {
-  padding: 24px 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   text-align: left;
   width: 100%;
+  background: transparent;
 }
 
 .dailyPickTeams {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
 }
 
 .dailyPickTeam {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-.dailyPickTeam:last-child {
-  flex-direction: row-reverse;
-  text-align: right;
+.dailyPickTeamLogo {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.04);
 }
 
 .dailyPickMatchName {
   font-family: var(--font-display);
-  font-size: 1.15rem;
-  font-weight: 800;
+  font-size: 0.95rem;
+  font-weight: 700;
   color: var(--text-primary);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+.dailyPickVsContainer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px;
+}
+
+.dailyPickVsContainer::after {
+  content: "";
+  height: 1px;
+  flex-grow: 1;
+  background: linear-gradient(90deg, rgba(0,0,0,0.05) 0%, transparent 100%);
 }
 
 .dailyPickVs {
-  font-size: 0.75rem;
+  font-size: 0.6rem;
   font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.dailyPickMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .dailyPickKickoff {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-secondary);
+  background: #f1f5f9;
+  padding: 3px 8px;
+  border-radius: 7px;
 }
 
 .dailyPickDecision {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  background: white;
-  border-top: 1px dashed var(--border-subtle);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  margin-top: auto;
+  border-top: 1px solid rgba(0,0,0,0.04);
 }
 
 .dailyPickDecisionMain {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .dailyPickFamily {
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: 0.6rem;
+  font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -595,14 +654,15 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 .dailyPickSelection {
   font-family: var(--font-display);
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   font-weight: 800;
-  color: var(--text-primary);
+  color: var(--accent-primary);
+  line-height: 1.2;
 }
 
 .dailyPickMetrics {
   display: flex;
-  gap: 16px;
+  gap: 12px;
 }
 
 .dailyPickMetricItem {
@@ -613,35 +673,58 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 }
 
 .dailyPickMetricItem small {
-  font-size: 0.65rem;
-  font-weight: 700;
+  font-size: 0.55rem;
+  font-weight: 800;
   color: var(--text-muted);
   text-transform: uppercase;
 }
 
+.dailyPickMetricValueGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .dailyPickMetricItem strong {
   font-family: var(--font-display);
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 800;
   color: var(--text-primary);
 }
 
-.dailyPickReason {
-  padding: 16px 20px;
-  margin: 0;
+.highConfidenceDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--accent-success);
+  box-shadow: 0 0 6px var(--accent-success);
+}
+
+.dailyPickReasonContainer {
+  padding: 10px 16px;
   background: #fff1f2;
-  color: var(--accent-danger);
-  font-size: 0.85rem;
-  font-weight: 600;
   border-top: 1px solid rgba(244, 63, 94, 0.1);
 }
 
-.dailyPicksList {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  gap: 20px;
-  padding: 8px 0;
+.dailyPickReason {
+  margin: 0;
+  color: var(--accent-danger);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.4;
 }
+
+@keyframes cardFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dailyPicksList > *:nth-child(1) { animation-delay: 0.05s; }
+.dailyPicksList > *:nth-child(2) { animation-delay: 0.1s; }
+.dailyPicksList > *:nth-child(3) { animation-delay: 0.15s; }
+.dailyPicksList > *:nth-child(4) { animation-delay: 0.2s; }
+.dailyPicksList > *:nth-child(5) { animation-delay: 0.25s; }
+.dailyPicksList > *:nth-child(6) { animation-delay: 0.3s; }
 
 .text-success { color: var(--accent-success); }
 
@@ -804,6 +887,17 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 .detailModal .modalHeader {
   background: var(--bg-surface) !important;
   border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+.dailyPicksModal {
+  width: min(1120px, calc(100vw - 32px));
+  max-height: min(920px, calc(100vh - 48px));
+}
+.dailyPicksModal .modalHeader {
+  padding: 24px 32px 18px;
+}
+.dailyPicksModal .modalBody {
+  padding: 20px 32px 28px;
+  gap: 18px;
 }
 
 /* Match Card 2:1 Layout */
@@ -1181,49 +1275,44 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 /* Prediction Card Styles */
 .predictionSummary {
   padding: 24px;
-  border-radius: 28px;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  background: rgba(255, 255, 255, 0.92);
+  border-radius: 24px;
+  border: 1px solid rgba(0,0,0,0.04);
+  background: white;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
+  box-shadow: var(--shadow-sm);
 }
+
 .predictionSummary-recommended {
   background:
-    radial-gradient(circle at top right, rgba(79, 70, 229, 0.08), transparent 42%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 255, 0.96));
-  border-color: rgba(99, 102, 241, 0.18);
+    radial-gradient(circle at top right, rgba(79, 70, 229, 0.05), transparent 40%),
+    linear-gradient(135deg, #ffffff, #f8faff);
+  border-color: rgba(79, 70, 229, 0.1);
 }
+
 .predictionSummary-no_bet {
   background:
-    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 42%),
-    linear-gradient(135deg, rgba(255, 251, 235, 0.98), rgba(255, 255, 255, 0.96));
-  border-color: rgba(245, 158, 11, 0.18);
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 40%),
+    linear-gradient(135deg, #ffffff, #fffcf5);
+  border-color: rgba(245, 158, 11, 0.1);
 }
 
 .predictionHero {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
-  padding-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid rgba(0,0,0,0.04);
 }
-.predictionHero-lg {
-  padding-bottom: 24px;
-}
-.predictionPick, .predictionConfidence {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0; /* Allow shrinking to prevent overflow */
-}
+
 .predictionPickValue-lg {
   font-family: var(--font-display);
-  font-size: 1.8rem;
+  font-size: 1.5rem;
   font-weight: 800;
   color: var(--text-primary);
-  line-height: 1.1;
-  word-break: break-word; /* Wrap long text */
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 .predictionNoBetReason {
@@ -1786,80 +1875,258 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   display: flex; align-items: center; justify-content: center; gap: 10px;
 }
 
-/* Full Report Page Styles */
-.reportPage { min-height: 100vh; padding: 40px 24px 100px; animation: fadeIn 0.5s ease-out; }
-.reportLayout { max-width: 1200px; margin: 0 auto; border-radius: 40px; }
+/* Full Report Page Redesign */
+.reportPage {
+  min-height: 100vh;
+  padding: 40px 24px 100px;
+  animation: fadeIn 0.5s ease-out;
+}
 
-/* Theme support for Full Report */
-.reportPage.state-recommended { background-color: #f8faff; }
-.reportPage.state-no-bet { background-color: #f1f5f9; }
-.reportPage.state-complete { background-color: #fcfcfd; }
-
-.reportLayout.state-recommended .reportSection { border-left: 2px solid rgba(79, 70, 229, 0.1); padding-left: 24px; margin-left: -26px; }
+.reportLayout {
+  max-width: 1120px;
+  margin: 0 auto;
+}
 
 .reportHero {
-  border: 1px solid var(--border-subtle); border-radius: 40px;
-  padding: 60px 40px; margin-bottom: 40px; text-align: center;
-  box-shadow: var(--shadow-card); position: relative; overflow: hidden;
-}
-.reportHero-bet {
-  background: radial-gradient(circle at top right, rgba(79, 70, 229, 0.08), transparent 42%),
-              linear-gradient(135deg, #ffffff, #f8faff);
-  border-color: rgba(79, 70, 229, 0.18);
-}
-.reportHero-noBet {
-  background: linear-gradient(135deg, #ffffff, #f1f5f9);
-  border-color: #e2e8f0;
-}
-.reportHero-neutral {
-  background: #fcfcfd;
-}
-.reportHero::before {
-  content: ""; position: absolute; inset: 0;
-  background: radial-gradient(circle at top right, rgba(79, 70, 229, 0.03), transparent 40%);
-}
-.reportHero-noBet::before {
-  background: radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 40%);
+  border-radius: 40px;
+  margin-bottom: 32px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  border: 1px solid rgba(0,0,0,0.04);
 }
 
-.reportHeroMeta { display: flex; flex-direction: column; gap: 12px; margin-bottom: 40px; align-items: center; }
-.reportEyebrow { font-size: 14px; font-weight: 800; color: var(--accent-primary); text-transform: uppercase; letter-spacing: 0.15em; }
-.reportDate { color: var(--text-muted); font-weight: 600; font-size: 1.1rem; }
+.reportHeroInner {
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  background: white;
+  position: relative;
+}
+
+.reportHero-bet .reportHeroInner {
+  background: radial-gradient(circle at top right, rgba(79, 70, 229, 0.1), transparent 50%),
+              linear-gradient(135deg, #ffffff, #f8faff);
+}
+
+.reportHero-noBet .reportHeroInner {
+  background: radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 50%),
+              linear-gradient(135deg, #ffffff, #f1f5f9);
+}
+
+.reportHeroHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.reportHeroMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reportEyebrow {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+
+.reportDate {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.reportHeroBadges {
+  display: flex;
+  gap: 8px;
+}
 
 .reportScoreboard {
-  display: flex; align-items: center; justify-content: center; gap: 60px; margin-bottom: 40px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 40px;
+  max-width: 800px;
+  margin: 0 auto;
 }
-.reportTeam { display: flex; flex-direction: column; align-items: center; gap: 20px; flex: 1; }
+
+.reportTeam {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.reportTeamLogoContainer {
+  width: 90px;
+  height: 90px;
+  background: white;
+  border-radius: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 20px -5px rgba(0,0,0,0.06);
+  border: 1px solid rgba(0,0,0,0.03);
+  transition: transform 0.3s ease;
+}
+
+.reportTeam:hover .reportTeamLogoContainer {
+  transform: translateY(-4px) scale(1.05);
+}
+
 .reportTeamLogo {
-  width: 100px; height: 100px; border-radius: 32px; background: #f8fafc;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 40px; font-weight: 800; color: var(--accent-primary);
-  border: 1px solid rgba(0,0,0,0.05); box-shadow: var(--shadow-lg);
+  width: 60px;
+  height: 60px;
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--accent-primary);
 }
-.reportTeamLogo img { width: 70%; height: 70%; object-fit: contain; }
-.reportTeamName { font-family: var(--font-display); font-size: 2.4rem; font-weight: 800; margin: 0; line-height: 1.1; letter-spacing: -0.04em; }
 
-.reportVs { font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; color: var(--text-muted); opacity: 0.3; font-style: italic; }
+.reportTeamName {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 800;
+  margin: 0;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.reportVs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.vsBadge {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 900;
+  color: var(--text-muted);
+  opacity: 0.2;
+  font-style: italic;
+}
+
 .reportFinalScore {
-  display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display);
-  font-size: 2.4rem; font-weight: 800; color: var(--text-primary); opacity: 1; font-style: normal;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.reportStatusStrip { display: flex; justify-content: center; gap: 16px; align-items: center; }
-.leagueLabel { font-weight: 700; color: var(--text-secondary); font-size: 1rem; }
+.scoreValue {
+  font-family: var(--font-display);
+  font-size: 2.8rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+}
 
-.reportGrid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 40px; }
-.reportSection { display: flex; flex-direction: column; gap: 16px; margin-bottom: 40px; }
+.scoreDivider {
+  font-size: 1.5rem;
+  color: var(--text-muted);
+  font-weight: 800;
+  opacity: 0.5;
+}
+
+.reportHeroFooter {
+  display: flex;
+  justify-content: center;
+}
+
+.reportStatusGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  padding: 6px 16px;
+  border-radius: 99px;
+  border: 1px solid rgba(0,0,0,0.03);
+}
+
+.leagueLabel {
+  font-weight: 700;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.reportOutcomeSection {
+  background: #f8fafc;
+  padding: 32px 40px;
+  border-top: 1px solid rgba(0,0,0,0.03);
+}
+
+.reportGrid {
+  display: grid;
+  grid-template-columns: 1.25fr 0.75fr;
+  gap: 32px;
+}
+
+.reportSection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
 .comparisonGrid {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
 }
+
 .comparisonItem {
-  padding: 16px; border-radius: 18px; background: white; border: 1px solid var(--border-subtle);
+  padding: 20px;
+  border-radius: 20px;
+  background: white;
+  border: 1px solid rgba(0,0,0,0.04);
   box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.comparisonItemWide { grid-column: 1 / -1; }
+
+.comparisonItem:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card);
+  border-color: var(--accent-secondary);
+}
+
 .comparisonItem strong {
-  display: block; font-family: var(--font-display); font-size: 1.1rem; color: var(--text-primary);
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.reportNav {
+  max-width: 1120px;
+  margin: 0 auto 24px;
+}
+
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: white;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.05);
+  color: var(--text-secondary);
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.backBtn:hover {
+  background: #f8fafc;
+  color: var(--text-primary);
+  transform: translateX(-4px);
 }
 .predictionSummary {
   padding: 20px 22px;
@@ -2036,7 +2303,11 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   .dailyPicksHero {
     flex-direction: column;
     align-items: flex-start;
-    gap: 24px;
+    gap: 16px;
+  }
+
+  .dailyPicksHero h1 {
+    font-size: 1.75rem;
   }
 
   .dailyPicksTargetGrid {
@@ -2071,7 +2342,7 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
   .dailyPickMetrics {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 12px;
   }
 
