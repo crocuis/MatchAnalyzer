@@ -135,6 +135,11 @@ describe("supabase schema integration", () => {
        from information_schema.views
        where table_name = 'match_cards'`,
     );
+    const matchCardProjectionCacheTables = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.tables
+       where table_name = 'match_card_projection_cache'`,
+    );
     const artifactTables = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.tables
@@ -211,6 +216,7 @@ describe("supabase schema integration", () => {
     expect(leaguePredictionSummaryViews.rows[0]?.count).toBe(1);
     expect(dashboardMatchCardViews.rows[0]?.count).toBe(1);
     expect(matchCardViews.rows[0]?.count).toBe(1);
+    expect(matchCardProjectionCacheTables.rows[0]?.count).toBe(1);
     expect(artifactTables.rows[0]?.count).toBe(1);
     expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
     expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
@@ -228,6 +234,9 @@ describe("supabase schema integration", () => {
        where schemaname = 'public'
          and indexname in (
            'matches_competition_kickoff_idx',
+           'match_card_projection_cache_league_sort_idx',
+           'match_card_projection_cache_pkey',
+           'match_card_projection_cache_sort_idx',
            'predictions_match_created_idx',
            'prediction_feature_snapshots_match_id_idx',
            'daily_pick_items_run_id_idx'
@@ -239,6 +248,18 @@ describe("supabase schema integration", () => {
       {
         tablename: "daily_pick_items",
         indexname: "daily_pick_items_run_id_idx",
+      },
+      {
+        tablename: "match_card_projection_cache",
+        indexname: "match_card_projection_cache_league_sort_idx",
+      },
+      {
+        tablename: "match_card_projection_cache",
+        indexname: "match_card_projection_cache_pkey",
+      },
+      {
+        tablename: "match_card_projection_cache",
+        indexname: "match_card_projection_cache_sort_idx",
       },
       {
         tablename: "matches",
@@ -262,6 +283,73 @@ describe("supabase schema integration", () => {
     );
 
     expect(redundantIndexes.rows[0]?.count).toBe(0);
+  });
+
+  it("refreshes match card projection cache after source writes", async () => {
+    const db = await createDb();
+
+    const seededCache = await db.query<{ id: string; has_prediction: boolean }>(
+      `select id, has_prediction
+       from match_card_projection_cache
+       where id = 'match_001'`,
+    );
+
+    expect(seededCache.rows).toEqual([
+      {
+        id: "match_001",
+        has_prediction: false,
+      },
+    ]);
+
+    await db.exec(`
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values ('snapshot_001', 'match_001', 'T_MINUS_24H', 'unknown', 'complete');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score
+      )
+      values (
+        'prediction_001',
+        'snapshot_001',
+        'match_001',
+        'model_v1',
+        0.5,
+        0.25,
+        0.25,
+        'HOME',
+        0.75
+      );
+    `);
+
+    const refreshedCards = await db.query<{ id: string; has_prediction: boolean }>(
+      `select id, has_prediction
+       from match_cards
+       where id = 'match_001'`,
+    );
+    const refreshedCache = await db.query<{ id: string; has_prediction: boolean }>(
+      `select id, has_prediction
+       from match_card_projection_cache
+       where id = 'match_001'`,
+    );
+
+    expect(refreshedCards.rows).toEqual([
+      {
+        id: "match_001",
+        has_prediction: true,
+      },
+    ]);
+    expect(refreshedCache.rows).toEqual(refreshedCards.rows);
   });
 
   it("exposes dashboard league counts through the summary view", async () => {

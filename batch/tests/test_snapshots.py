@@ -297,6 +297,25 @@ def test_daily_pick_run_id_index_migration_adds_delete_lookup_index():
     assert "create index if not exists daily_pick_items_run_id_idx on public.daily_pick_items using btree (run_id)" in migration
 
 
+def test_match_card_projection_cache_migration_materializes_dashboard_cards():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260502153033_match_card_projection_cache.sql"
+        ).read_text()
+    )
+
+    assert "create table if not exists public.match_card_projection_cache" in migration
+    assert "alter table public.match_card_projection_cache enable row level security" in migration
+    assert "create index if not exists match_card_projection_cache_league_sort_idx on public.match_card_projection_cache using btree (league_id, sort_bucket, sort_epoch, id)" in migration
+    assert "create or replace function public.refresh_match_card_projection_cache( target_match_ids text[] default null )" in migration
+    assert "where target_match_ids is null or matches.id = any(target_match_ids)" in migration
+    assert "create trigger refresh_match_card_projection_cache_predictions after insert or update or delete on public.predictions for each row" in migration
+    assert "create trigger refresh_match_card_projection_cache_predictions_truncate after truncate on public.predictions for each statement" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+    assert "create or replace view match_cards with (security_invoker = true) as select" in migration
+    assert "from public.match_card_projection_cache" in migration
+
+
 def test_dashboard_league_summary_view_migration_creates_security_invoker_view():
     migration = normalize_sql(
         Path(
