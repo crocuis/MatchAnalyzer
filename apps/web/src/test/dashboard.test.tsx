@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import DailyPicksTeaser from "../components/DailyPicksTeaser";
@@ -1535,6 +1536,27 @@ describe("dashboard redesign", () => {
           String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
         ),
       ).toHaveLength(recentRequestCount);
+    });
+  });
+
+  it("does not start duplicate match page requests when tab effects are replayed", async () => {
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+
+    await screen.findByRole("tab", { name: "Upcoming Matches" });
+    const fetchMock = vi.mocked(fetch);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).includes("/api/matches?leagueId=premier-league&view=recent"),
+        ),
+      ).toHaveLength(1);
     });
   });
 

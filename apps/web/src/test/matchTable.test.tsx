@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MatchTable from "../components/MatchTable";
 import i18n from "../i18n/config";
@@ -34,6 +34,31 @@ beforeEach(async () => {
 });
 
 describe("MatchTable", () => {
+  it("ignores clicks on the already selected match view tab", () => {
+    const onSelectView = vi.fn();
+
+    render(
+      <MatchTable
+        matches={[]}
+        currentLeagueId={null}
+        predictionSummary={null}
+        totalMatches={0}
+        panelId="league-matches-panel"
+        selectedMatchId={null}
+        onOpen={() => {}}
+        onLoadMore={() => {}}
+        activeView="upcoming"
+        onSelectView={onSelectView}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Upcoming Matches" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Recent Results" }));
+
+    expect(onSelectView).toHaveBeenCalledTimes(1);
+    expect(onSelectView).toHaveBeenCalledWith("recent");
+  });
+
   it("anchors the upcoming preview window to the first upcoming fixture", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-04-24T00:00:00Z"));
     const matches: MatchCardRow[] = [

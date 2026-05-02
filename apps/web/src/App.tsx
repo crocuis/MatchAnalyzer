@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ClientValidationPanel } from "./components/ClientValidationPanel";
@@ -202,6 +202,7 @@ export default function App() {
   const [reviewAggregationHistoryView, setReviewAggregationHistoryView] = useState<ReviewAggregationHistoryResponse | null>(null);
   const [promotionDecisionReport, setPromotionDecisionReport] = useState<RolloutPromotionDecisionReport | null>(null);
   const [evaluationLoaded, setEvaluationLoaded] = useState(false);
+  const loadingMatchPageKeysRef = useRef<Set<string>>(new Set());
   const isClientValidationEnabled = false;
 
   useEffect(() => {
@@ -303,6 +304,11 @@ export default function App() {
     }
     const leagueId = selectedLeagueId;
     const view = activeMatchView;
+    const pageKey = getPageKey(leagueId, view);
+    if (loadingMatchPageKeysRef.current.has(pageKey)) {
+      return;
+    }
+    loadingMatchPageKeysRef.current.add(pageKey);
 
     let isMounted = true;
     setMatchesStatus((current) => (current === "ready" ? "ready" : "loading"));
@@ -338,6 +344,8 @@ export default function App() {
           return;
         }
         setMatchesStatus("error");
+      } finally {
+        loadingMatchPageKeysRef.current.delete(pageKey);
       }
     }
 
@@ -444,6 +452,9 @@ export default function App() {
   }
 
   function handleSelectMatchView(view: MatchListViewKind) {
+    if (view === activeMatchView) {
+      return;
+    }
     setActiveMatchView(view);
     setSelectedMatchId(null);
     setIsModalOpen(false);
