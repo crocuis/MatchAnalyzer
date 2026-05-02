@@ -1743,10 +1743,32 @@ def test_replace_existing_daily_pick_items_for_runs_deletes_in_bulk() -> None:
         ],
     }
     delete_calls: list[tuple[str, str, list[str]]] = []
+    filtered_reads: list[tuple[str, str, list[str], tuple[str, ...] | None]] = []
 
     class FakeClient:
         def read_rows(self, table_name: str) -> list[dict]:
+            if table_name == "daily_pick_items":
+                raise AssertionError("daily_pick_items should be filtered by run_id")
             return list(state.get(table_name, []))
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            filtered_reads.append((table_name, column, values, columns))
+            value_set = set(values)
+            return [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if columns is None or key in set(columns)
+                }
+                for row in state.get(table_name, [])
+                if str(row.get(column) or "") in value_set
+            ]
 
         def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
             delete_calls.append((table_name, column, values))
@@ -1763,6 +1785,14 @@ def test_replace_existing_daily_pick_items_for_runs_deletes_in_bulk() -> None:
         ["daily_pick_run_2026-04-24", "daily_pick_run_2026-04-25"],
     )
 
+    assert filtered_reads == [
+        (
+            "daily_pick_items",
+            "run_id",
+            ["daily_pick_run_2026-04-24", "daily_pick_run_2026-04-25"],
+            ("id", "run_id"),
+        ),
+    ]
     assert delete_calls == [
         ("daily_pick_results", "pick_item_id", ["item-1", "item-2"]),
         (
