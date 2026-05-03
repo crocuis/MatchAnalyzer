@@ -1475,6 +1475,79 @@ describe("prediction API", () => {
     expect(view.heldItems).toEqual([]);
   });
 
+  it("keeps computed daily picks available when summary artifact hydration fails", async () => {
+    setDailyPicksClock();
+    const baseDbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.78,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.78,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: {},
+          explanation_artifact_id: "artifact-prediction-1",
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: "transient artifact manifest lookup failed" },
+      }),
+    };
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "stored_artifacts"
+          ? artifactQuery
+          : baseFrom(tableName)
+      )),
+    };
+
+    const view = await loadDailyPicksView(
+      dbClient as never,
+      { date: "2026-04-24", includeHeld: true },
+      { MATCH_ANALYZER_ARTIFACT_BASE_URL: "https://artifacts.example" },
+    );
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        matchId: "match-1",
+        status: "held",
+        noBetReason: "confidence_reliability_missing",
+      }),
+    ]);
+  });
+
   it("fails closed when daily pick validation metadata is missing", async () => {
     setDailyPicksClock();
     const dbClient = buildTableDbClient({

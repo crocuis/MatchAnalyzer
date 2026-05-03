@@ -468,11 +468,16 @@ async function hydrateDailyPickPredictionSummaries(
       summary_payload?: unknown;
     }
   >;
-  const hydratedRows = await hydratePredictionSummaryPayloadsFromArtifacts(
-    dbClient,
-    bindings,
-    rowsForHydration,
-  );
+  let hydratedRows: typeof rowsForHydration;
+  try {
+    hydratedRows = await hydratePredictionSummaryPayloadsFromArtifacts(
+      dbClient,
+      bindings,
+      rowsForHydration,
+    );
+  } catch {
+    return predictions;
+  }
   const hydratedById = new Map(
     hydratedRows.flatMap((row) => {
       const id = readString(row.id);
