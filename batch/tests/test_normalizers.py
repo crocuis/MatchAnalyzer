@@ -47,6 +47,7 @@ from batch.src.jobs.ingest_markets_job import (
     attach_team_translation_aliases,
     build_betman_ingest_diagnostics,
     build_market_coverage_summary,
+    build_snapshot_signal_update_rows,
     collect_changed_market_match_ids,
     filter_pre_match_market_rows,
     filter_existing_team_translation_rows,
@@ -3520,6 +3521,40 @@ def test_merge_snapshot_signal_updates_preserves_required_snapshot_fields():
             "captured_at": "2026-04-10T18:00:00+00:00",
             "checkpoint_type": "T_MINUS_24H",
             "home_shots_for_last_5": 11.2,
+            "football_data_signal_source_summary": "football_data_match_stats",
+        }
+    ]
+
+
+def test_build_snapshot_signal_update_rows_preserves_required_snapshot_fields():
+    rows = build_snapshot_signal_update_rows(
+        snapshot_rows=[
+            {
+                "id": "snapshot_001",
+                "match_id": "match_001",
+                "captured_at": "2026-04-10T18:00:00+00:00",
+                "checkpoint_type": "LINEUP_CONFIRMED",
+                "kickoff_at": "2026-04-10T19:00:00+00:00",
+                "home_team_name": "Chelsea",
+                "home_shots_for_last_5": None,
+            }
+        ],
+        updates=[
+            {
+                "id": "snapshot_001",
+                "home_shots_for_last_5": 10.6,
+                "football_data_signal_source_summary": "football_data_match_stats",
+            }
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "snapshot_001",
+            "match_id": "match_001",
+            "captured_at": "2026-04-10T18:00:00+00:00",
+            "checkpoint_type": "LINEUP_CONFIRMED",
+            "home_shots_for_last_5": 10.6,
             "football_data_signal_source_summary": "football_data_match_stats",
         }
     ]
