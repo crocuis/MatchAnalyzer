@@ -265,7 +265,6 @@ type MatchCardProjectionRow = {
   value_recommendation_model_probability: number | null;
   value_recommendation_market_probability: number | null;
   value_recommendation_market_source: string | null;
-  variant_markets_summary: unknown;
   has_prediction: boolean;
   needs_review: boolean;
 };
@@ -295,6 +294,11 @@ type MatchCardPredictionSummaryRow = {
   main_recommendation_pick: string | null;
   has_prediction: boolean;
 };
+
+const MATCH_LIST_PREDICTION_SELECTOR_SELECT =
+  "id, match_id, snapshot_id, recommended_pick, confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, created_at";
+const MATCH_LIST_PREDICTION_ROW_SELECT =
+  "id, match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, created_at";
 
 function resolveSettledOutcome(args: {
   finalResult: string | null | undefined;
@@ -607,7 +611,7 @@ export async function loadDashboardMatchCardsPageView(
   const cardsQuery: any = dbClient
     .from("match_cards")
     .select(
-      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, has_prediction, needs_review",
+      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, has_prediction, needs_review",
     );
   const scopedCardsQuery =
     typeof cardsQuery.eq === "function"
@@ -675,11 +679,7 @@ export async function loadDashboardMatchCardsPageView(
           },
         )
       : null;
-    const variantMarkets = row.has_prediction
-      ? normalizeVariantMarketsFromSummary(
-        { variantMarketsSummary: row.variant_markets_summary },
-      )
-      : [];
+    const variantMarkets: VariantMarket[] = [];
     return {
       id: row.id,
       leagueId: row.league_id,
@@ -856,6 +856,131 @@ function buildReviewMap(
   return reviewByPredictionId;
 }
 
+function buildPredictionCandidatesByMatchId(
+  rows: Array<Record<string, any>>,
+) {
+  const predictionCandidatesByMatchId = new Map<string, PredictionCandidate[]>();
+  for (const row of rows) {
+    const current = predictionCandidatesByMatchId.get(row.match_id) ?? [];
+    current.push({
+      predictionId: row.id ?? null,
+      snapshotId: row.snapshot_id,
+      recommendedPick: row.recommended_pick,
+      confidence: Number(row.confidence_score ?? 0),
+      createdAt: row.created_at ?? null,
+      summaryPayload: normalizeSummaryPayload(row.summary_payload),
+      mainRecommendationPick: row.main_recommendation_pick ?? null,
+      mainRecommendationConfidence:
+        row.main_recommendation_confidence == null
+          ? null
+          : Number(row.main_recommendation_confidence),
+      mainRecommendationRecommended:
+        typeof row.main_recommendation_recommended === "boolean"
+          ? row.main_recommendation_recommended
+          : row.main_recommendation_recommended ?? null,
+      mainRecommendationNoBetReason: row.main_recommendation_no_bet_reason ?? null,
+      valueRecommendationPick: row.value_recommendation_pick ?? null,
+      valueRecommendationRecommended:
+        typeof row.value_recommendation_recommended === "boolean"
+          ? row.value_recommendation_recommended
+          : row.value_recommendation_recommended ?? null,
+      valueRecommendationEdge:
+        row.value_recommendation_edge == null
+          ? null
+          : Number(row.value_recommendation_edge),
+      valueRecommendationExpectedValue:
+        row.value_recommendation_expected_value == null
+          ? null
+          : Number(row.value_recommendation_expected_value),
+      valueRecommendationMarketPrice:
+        row.value_recommendation_market_price == null
+          ? null
+          : Number(row.value_recommendation_market_price),
+      valueRecommendationModelProbability:
+        row.value_recommendation_model_probability == null
+          ? null
+          : Number(row.value_recommendation_model_probability),
+      valueRecommendationMarketProbability:
+        row.value_recommendation_market_probability == null
+          ? null
+          : Number(row.value_recommendation_market_probability),
+      valueRecommendationMarketSource: row.value_recommendation_market_source ?? null,
+      variantMarketsSummary: row.variant_markets_summary ?? null,
+    });
+    predictionCandidatesByMatchId.set(row.match_id, current);
+  }
+
+  return predictionCandidatesByMatchId;
+}
+
+function hasMatchListPredictionPayloadColumns(row: Record<string, any>) {
+  return (
+    "summary_payload" in row ||
+    "explanation_payload" in row ||
+    "value_recommendation_pick" in row ||
+    "variant_markets_summary" in row
+  );
+}
+
+function buildPredictionListSummaries(
+  predictionCandidatesByMatchId: Map<string, PredictionCandidate[]>,
+  snapshotsById: Map<string, { checkpointType: string }>,
+) {
+  const predictionByMatchId = new Map<string, PredictionListSummary | null>();
+  for (const [matchId, predictions] of predictionCandidatesByMatchId.entries()) {
+    const representative = pickRepresentativePrediction(predictions, snapshotsById);
+    const marketEnriched = pickMarketEnrichedPrediction(predictions);
+    predictionByMatchId.set(
+      matchId,
+      representative
+        ? {
+            predictionId: representative.predictionId,
+            mainRecommendation: normalizeMainRecommendationFromSummary(
+              {
+                summaryPayload: representative.summaryPayload,
+                mainRecommendationPick: representative.mainRecommendationPick,
+                mainRecommendationConfidence:
+                  representative.mainRecommendationConfidence,
+                mainRecommendationRecommended:
+                  representative.mainRecommendationRecommended,
+                mainRecommendationNoBetReason:
+                  representative.mainRecommendationNoBetReason,
+              },
+              representative.recommendedPick,
+              representative.confidence,
+            ),
+            valueRecommendation: normalizeValueRecommendationFromSummary(
+              {
+                valueRecommendationPick: marketEnriched?.valueRecommendationPick ?? null,
+                valueRecommendationRecommended:
+                  marketEnriched?.valueRecommendationRecommended ?? null,
+                valueRecommendationEdge: marketEnriched?.valueRecommendationEdge ?? null,
+                valueRecommendationExpectedValue:
+                  marketEnriched?.valueRecommendationExpectedValue ?? null,
+                valueRecommendationMarketPrice:
+                  marketEnriched?.valueRecommendationMarketPrice ?? null,
+                valueRecommendationModelProbability:
+                  marketEnriched?.valueRecommendationModelProbability ?? null,
+                valueRecommendationMarketProbability:
+                  marketEnriched?.valueRecommendationMarketProbability ?? null,
+                valueRecommendationMarketSource:
+                  marketEnriched?.valueRecommendationMarketSource ?? null,
+              },
+            ),
+            variantMarkets: normalizeVariantMarketsFromSummary(
+              {
+                variantMarketsSummary:
+                  marketEnriched?.variantMarketsSummary ?? representative.variantMarketsSummary,
+              },
+            ),
+          }
+        : null,
+    );
+  }
+
+  return predictionByMatchId;
+}
+
 async function loadSelectedLeaguePageView(
   dbClient: ApiDbClient,
   leagueId: string,
@@ -929,7 +1054,7 @@ async function loadSelectedLeaguePageView(
   const [
     { data: reviewRows, error: reviewsError },
     teamById,
-    { data: predictionRows, error: predictionsError },
+    { data: predictionSelectorRows, error: predictionsError },
     { data: snapshotRows, error: snapshotsError },
   ] = await Promise.all([
     pagedMatchIds.length > 0
@@ -942,9 +1067,7 @@ async function loadSelectedLeaguePageView(
     loadTeamLabels(dbClient, pagedTeamIds, options.locale),
     dbClient
       .from("predictions")
-      .select(
-        "id, match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, created_at",
-      )
+      .select(MATCH_LIST_PREDICTION_SELECTOR_SELECT)
       .in("match_id", matchIds)
       .order("created_at", { ascending: false }),
     dbClient
@@ -957,6 +1080,34 @@ async function loadSelectedLeaguePageView(
     throw new Error("related match queries failed");
   }
 
+  const selectorPredictionRows =
+    (predictionSelectorRows ?? []) as Array<Record<string, any>>;
+  const pagedMatchIdSet = new Set(pagedMatchIds);
+  const pagedSelectorPredictionRows = selectorPredictionRows.filter((row) =>
+    pagedMatchIdSet.has(row.match_id),
+  );
+  const shouldFetchPagedPredictionRows =
+    pagedSelectorPredictionRows.length > 0 &&
+    pagedSelectorPredictionRows.some(
+      (row) => !hasMatchListPredictionPayloadColumns(row),
+    );
+  const { data: pagedPredictionRows, error: pagedPredictionsError } =
+    shouldFetchPagedPredictionRows
+      ? await (() => {
+          const pagedPredictionQuery = dbClient
+            .from("predictions")
+            .select(MATCH_LIST_PREDICTION_ROW_SELECT)
+            .in("match_id", pagedMatchIds);
+          return typeof pagedPredictionQuery.order === "function"
+            ? pagedPredictionQuery.order("created_at", { ascending: false })
+            : pagedPredictionQuery;
+        })()
+      : { data: pagedSelectorPredictionRows, error: null };
+
+  if (pagedPredictionsError) {
+    throw new Error("related match queries failed");
+  }
+
   const reviewByPredictionId = buildReviewMap(
     (reviewRows ?? []) as Array<{ prediction_id: string | null; cause_tags: unknown }>,
   );
@@ -966,111 +1117,21 @@ async function loadSelectedLeaguePageView(
       { checkpointType: row.checkpoint_type },
     ]),
   );
-  const predictionCandidatesByMatchId = new Map<string, PredictionCandidate[]>();
-  for (const row of (predictionRows ?? []) as Array<Record<string, any>>) {
-    const current = predictionCandidatesByMatchId.get(row.match_id) ?? [];
-    current.push({
-      predictionId: row.id ?? null,
-      snapshotId: row.snapshot_id,
-      recommendedPick: row.recommended_pick,
-      confidence: Number(row.confidence_score ?? 0),
-      createdAt: row.created_at ?? null,
-      summaryPayload: normalizeSummaryPayload(row.summary_payload),
-      mainRecommendationPick: row.main_recommendation_pick ?? null,
-      mainRecommendationConfidence:
-        row.main_recommendation_confidence == null
-          ? null
-          : Number(row.main_recommendation_confidence),
-      mainRecommendationRecommended:
-        typeof row.main_recommendation_recommended === "boolean"
-          ? row.main_recommendation_recommended
-          : row.main_recommendation_recommended ?? null,
-      mainRecommendationNoBetReason: row.main_recommendation_no_bet_reason ?? null,
-      valueRecommendationPick: row.value_recommendation_pick ?? null,
-      valueRecommendationRecommended:
-        typeof row.value_recommendation_recommended === "boolean"
-          ? row.value_recommendation_recommended
-          : row.value_recommendation_recommended ?? null,
-      valueRecommendationEdge:
-        row.value_recommendation_edge == null
-          ? null
-          : Number(row.value_recommendation_edge),
-      valueRecommendationExpectedValue:
-        row.value_recommendation_expected_value == null
-          ? null
-          : Number(row.value_recommendation_expected_value),
-      valueRecommendationMarketPrice:
-        row.value_recommendation_market_price == null
-          ? null
-          : Number(row.value_recommendation_market_price),
-      valueRecommendationModelProbability:
-        row.value_recommendation_model_probability == null
-          ? null
-          : Number(row.value_recommendation_model_probability),
-      valueRecommendationMarketProbability:
-        row.value_recommendation_market_probability == null
-          ? null
-          : Number(row.value_recommendation_market_probability),
-      valueRecommendationMarketSource: row.value_recommendation_market_source ?? null,
-      variantMarketsSummary: row.variant_markets_summary ?? null,
-    });
-    predictionCandidatesByMatchId.set(row.match_id, current);
-  }
-  const predictionByMatchId = new Map<string, PredictionListSummary | null>();
-  for (const [matchId, predictions] of predictionCandidatesByMatchId.entries()) {
-    const representative = pickRepresentativePrediction(predictions, snapshotsById);
-    const marketEnriched = pickMarketEnrichedPrediction(predictions);
-    predictionByMatchId.set(
-      matchId,
-      representative
-        ? {
-            predictionId: representative.predictionId,
-            mainRecommendation: normalizeMainRecommendationFromSummary(
-              {
-                summaryPayload: representative.summaryPayload,
-                mainRecommendationPick: representative.mainRecommendationPick,
-                mainRecommendationConfidence:
-                  representative.mainRecommendationConfidence,
-                mainRecommendationRecommended:
-                  representative.mainRecommendationRecommended,
-                mainRecommendationNoBetReason:
-                  representative.mainRecommendationNoBetReason,
-              },
-              representative.recommendedPick,
-              representative.confidence,
-            ),
-            valueRecommendation: normalizeValueRecommendationFromSummary(
-              {
-                valueRecommendationPick: marketEnriched?.valueRecommendationPick ?? null,
-                valueRecommendationRecommended:
-                  marketEnriched?.valueRecommendationRecommended ?? null,
-                valueRecommendationEdge: marketEnriched?.valueRecommendationEdge ?? null,
-                valueRecommendationExpectedValue:
-                  marketEnriched?.valueRecommendationExpectedValue ?? null,
-                valueRecommendationMarketPrice:
-                  marketEnriched?.valueRecommendationMarketPrice ?? null,
-                valueRecommendationModelProbability:
-                  marketEnriched?.valueRecommendationModelProbability ?? null,
-                valueRecommendationMarketProbability:
-                  marketEnriched?.valueRecommendationMarketProbability ?? null,
-                valueRecommendationMarketSource:
-                  marketEnriched?.valueRecommendationMarketSource ?? null,
-              },
-            ),
-            variantMarkets: normalizeVariantMarketsFromSummary(
-              {
-                variantMarketsSummary:
-                  marketEnriched?.variantMarketsSummary ?? representative.variantMarketsSummary,
-              },
-            ),
-          }
-        : null,
-    );
-  }
+  const predictionByMatchId = buildPredictionListSummaries(
+    buildPredictionCandidatesByMatchId(selectorPredictionRows),
+    snapshotsById,
+  );
+  const pagedPredictionByMatchId = buildPredictionListSummaries(
+    buildPredictionCandidatesByMatchId(
+      (pagedPredictionRows ?? []) as Array<Record<string, any>>,
+    ),
+    snapshotsById,
+  );
   const predictionSummary = buildPredictionSummary(matchesData, predictionByMatchId);
 
   const items = pagedMatches.map((match) => {
-    const prediction = predictionByMatchId.get(match.id);
+    const prediction =
+      pagedPredictionByMatchId.get(match.id) ?? predictionByMatchId.get(match.id);
     const review = prediction?.predictionId
       ? reviewByPredictionId.get(prediction.predictionId)
       : undefined;
