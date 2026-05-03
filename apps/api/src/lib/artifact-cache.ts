@@ -6,7 +6,7 @@ import type { ApiDbClient } from "./db-client";
 
 export type { MatchArtifactManifest };
 
-type StoredArtifactRow = {
+export type StoredArtifactRow = {
   id: string;
   owner_type: string;
   owner_id: string;
@@ -71,6 +71,32 @@ export async function loadLatestStoredArtifact(
     .eq("artifact_kind", artifactKind)
     .order("created_at", { ascending: false })
     .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingArtifactStoreError(error.message)) {
+      return null;
+    }
+    throw new Error(`artifact manifest query failed: ${error.message}`);
+  }
+
+  return (data as StoredArtifactRow | null) ?? null;
+}
+
+export async function loadStoredArtifactById(
+  dbClient: ApiDbClient,
+  artifactId: string | null | undefined,
+): Promise<StoredArtifactRow | null> {
+  if (!artifactId) {
+    return null;
+  }
+
+  const { data, error } = await dbClient
+    .from("stored_artifacts")
+    .select(
+      "id, owner_type, owner_id, artifact_kind, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256, created_at",
+    )
+    .eq("id", artifactId)
     .maybeSingle();
 
   if (error) {
