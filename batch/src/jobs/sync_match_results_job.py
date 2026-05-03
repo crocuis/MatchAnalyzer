@@ -10,8 +10,8 @@ from batch.src.ingest.fetch_fixtures import (
     fetch_daily_schedule,
     filter_supported_events,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 DEFAULT_RESULT_SYNC_DELAY_HOURS = 2
 DEFAULT_RESULT_SYNC_LOOKBACK_HOURS = 48
@@ -152,7 +152,7 @@ def sync_match_results(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     result = sync_match_results(
         client,
         now=resolve_now(),

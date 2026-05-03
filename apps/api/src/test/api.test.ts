@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "../index";
-import * as supabaseModule from "../lib/supabase";
+import * as dbClientModule from "../lib/db-client";
 import { loadDailyPicksView } from "../routes/daily-picks";
 import {
   loadDashboardMatchCardsPageView,
@@ -23,11 +23,11 @@ import {
 } from "../routes/reviews";
 
 type FakeTables = Record<string, Record<string, unknown>[]>;
-type MockSupabaseClient = {
+type MockDbClient = {
   from: ReturnType<typeof vi.fn>;
 };
 
-function buildTableSupabase(tables: FakeTables) {
+function buildTableDbClient(tables: FakeTables) {
   return {
     from(tableName: string) {
       const allRows = [...(tables[tableName] ?? [])];
@@ -91,7 +91,7 @@ function buildTableSupabase(tables: FakeTables) {
         },
       };
     },
-  } as never;
+  } as { from: (tableName: string) => any };
 }
 
 function setDailyPicksClock(now = new Date("2026-04-24T03:00:00Z")) {
@@ -181,10 +181,10 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi.fn(() => artifactQuery),
     };
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(artifactPayload)),
@@ -198,10 +198,10 @@ describe("prediction API", () => {
       "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
     );
     expect(await response.json()).toEqual(artifactPayload);
-    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(dbClient.from).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to Supabase prediction assembly when a match artifact is missing", async () => {
+  it("falls back to database prediction assembly when a match artifact is missing", async () => {
     const artifactQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
@@ -263,7 +263,7 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi
         .fn()
         .mockReturnValueOnce(artifactQuery)
@@ -271,7 +271,7 @@ describe("prediction API", () => {
         .mockReturnValueOnce(snapshotsQuery)
         .mockReturnValueOnce(matchQuery),
     };
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
 
     const response = await app.request("/predictions/match-123");
 
@@ -320,10 +320,10 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi.fn(() => artifactQuery),
     };
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(artifactPayload)),
@@ -337,10 +337,10 @@ describe("prediction API", () => {
       "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
     );
     expect(await response.json()).toEqual(artifactPayload);
-    expect(supabase.from).toHaveBeenCalledTimes(1);
+    expect(dbClient.from).toHaveBeenCalledTimes(1);
   });
 
-  it("returns an empty review aggregation payload when no supabase client is configured", async () => {
+  it("returns an empty review aggregation payload when no database client is configured", async () => {
     const response = await app.request("/reviews/aggregation/latest");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -348,7 +348,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty prediction source evaluation payload when no supabase client is configured", async () => {
+  it("returns an empty prediction source evaluation payload when no database client is configured", async () => {
     const response = await app.request("/predictions/source-evaluation/latest");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -356,7 +356,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty model registry payload when no supabase client is configured", async () => {
+  it("returns an empty model registry payload when no database client is configured", async () => {
     const response = await app.request("/predictions/model-registry/latest");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -364,7 +364,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty fusion policy payload when no supabase client is configured", async () => {
+  it("returns an empty fusion policy payload when no database client is configured", async () => {
     const response = await app.request("/predictions/fusion-policy/latest");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -372,7 +372,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty source evaluation history payload when no supabase client is configured", async () => {
+  it("returns an empty source evaluation history payload when no database client is configured", async () => {
     const response = await app.request("/predictions/source-evaluation/history");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -384,7 +384,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty fusion policy history payload when no supabase client is configured", async () => {
+  it("returns an empty fusion policy history payload when no database client is configured", async () => {
     const response = await app.request("/predictions/fusion-policy/history");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -396,7 +396,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty review aggregation history payload when no supabase client is configured", async () => {
+  it("returns an empty review aggregation history payload when no database client is configured", async () => {
     const response = await app.request("/reviews/aggregation/history");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -408,7 +408,7 @@ describe("prediction API", () => {
     });
   });
 
-  it("returns an empty rollout promotion decision payload when no supabase client is configured", async () => {
+  it("returns an empty rollout promotion decision payload when no database client is configured", async () => {
     const response = await app.request("/rollouts/promotion/latest");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -473,7 +473,7 @@ describe("prediction API", () => {
     expect(await response.json()).toEqual({ error: "forbidden" });
   });
 
-  it("returns an empty daily picks payload when no supabase client is configured", async () => {
+  it("returns an empty daily picks payload when no database client is configured", async () => {
     setDailyPicksClock();
     const response = await app.request("/daily-picks");
 
@@ -756,9 +756,9 @@ describe("prediction API", () => {
         { id: "result-5", pick_item_id: "historical-5", result_status: "pending" },
       ],
     };
-    const supabase = buildTableSupabase(tables);
+    const dbClient = buildTableDbClient(tables);
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       includeHeld: false,
     });
@@ -795,7 +795,7 @@ describe("prediction API", () => {
       held: 8,
     });
 
-    const heldView = await loadDailyPicksView(supabase, {
+    const heldView = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       marketFamily: "spreads",
       includeHeld: true,
@@ -815,7 +815,7 @@ describe("prediction API", () => {
 
   it("uses settled daily pick results when performance summary is unavailable", async () => {
     setDailyPicksClock();
-    const baseSupabase = buildTableSupabase({
+    const baseDbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -864,7 +864,7 @@ describe("prediction API", () => {
         { id: "result-4", pick_item_id: "historical-4", result_status: "pending" },
       ],
     });
-    const baseFrom = baseSupabase.from.bind(baseSupabase);
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
     const missingSummaryQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
@@ -873,7 +873,7 @@ describe("prediction API", () => {
         error: { message: 'relation "daily_pick_performance_summary" does not exist' },
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi.fn((tableName: string) => (
         tableName === "daily_pick_performance_summary"
           ? missingSummaryQuery
@@ -881,7 +881,7 @@ describe("prediction API", () => {
       )),
     };
 
-    const view = await loadDailyPicksView(supabase as never, {
+    const view = await loadDailyPicksView(dbClient as never, {
       date: "2026-04-24",
     });
 
@@ -897,7 +897,7 @@ describe("prediction API", () => {
 
   it("filters daily picks by market family and includeHeld at the route level", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -965,7 +965,7 @@ describe("prediction API", () => {
         { id: "result-2", pick_item_id: "historical-2", result_status: "hit" },
       ],
     });
-    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient);
 
     const response = await app.request(
       "/daily-picks?date=2026-04-24&marketFamily=spreads&includeHeld=true",
@@ -1034,7 +1034,7 @@ describe("prediction API", () => {
 
   it("holds recommended daily moneyline picks when validation reliability is not eligible", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1100,7 +1100,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       includeHeld: true,
     });
@@ -1142,7 +1142,7 @@ describe("prediction API", () => {
 
   it("fails closed when daily pick validation metadata is missing", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1179,7 +1179,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       includeHeld: true,
     });
@@ -1200,7 +1200,7 @@ describe("prediction API", () => {
 
   it("promotes recommended variant markets into daily picks when summary carries recommendation fields", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1282,7 +1282,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       includeHeld: true,
     });
@@ -1320,7 +1320,7 @@ describe("prediction API", () => {
 
   it("orders recommended daily picks by comparable value score across market families", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1402,7 +1402,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       includeHeld: true,
     });
@@ -1427,7 +1427,7 @@ describe("prediction API", () => {
   it("caps default daily picks at the ten strongest recommendations", async () => {
     setDailyPicksClock();
     const matchIndexes = Array.from({ length: 11 }, (_value, index) => index);
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: matchIndexes.map((index) => ({
         id: `match-${index}`,
         competition_id: "premier-league",
@@ -1462,7 +1462,7 @@ describe("prediction API", () => {
       })),
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
     });
 
@@ -1483,7 +1483,7 @@ describe("prediction API", () => {
 
   it("does not graft opposite-side value recommendation metadata onto the moneyline pick", async () => {
     setDailyPicksClock(new Date("2026-04-25T12:00:00Z"));
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1530,7 +1530,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-26",
       includeHeld: true,
     });
@@ -1548,7 +1548,7 @@ describe("prediction API", () => {
 
   it("localizes team labels in daily picks when locale-specific translations exist", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1613,7 +1613,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
       locale: "ko",
     });
@@ -1629,7 +1629,7 @@ describe("prediction API", () => {
     vi.setSystemTime(new Date("2026-04-24T20:30:00Z"));
 
     try {
-      const supabase = buildTableSupabase({
+      const dbClient = buildTableDbClient({
         matches: [
           {
             id: "match-ended",
@@ -1711,7 +1711,7 @@ describe("prediction API", () => {
         ],
       });
 
-      const view = await loadDailyPicksView(supabase, {
+      const view = await loadDailyPicksView(dbClient, {
         date: "2026-04-24",
       });
 
@@ -1729,7 +1729,7 @@ describe("prediction API", () => {
 
   it("ignores predictions whose snapshot points at a different match", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1766,7 +1766,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
     });
 
@@ -1781,7 +1781,7 @@ describe("prediction API", () => {
 
   it("ignores an impossible date filter instead of crashing", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1817,7 +1817,7 @@ describe("prediction API", () => {
         },
       ],
     });
-    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient);
 
     const response = await app.request(
       "/daily-picks?date=2026-99-99",
@@ -1840,7 +1840,7 @@ describe("prediction API", () => {
 
   it("prefers the latest enriched prediction row when multiple checkpoints exist", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1911,7 +1911,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
     });
 
@@ -1927,7 +1927,7 @@ describe("prediction API", () => {
 
   it("does not graft older enrichment onto a newer representative row", async () => {
     setDailyPicksClock();
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -1995,7 +1995,7 @@ describe("prediction API", () => {
       ],
     });
 
-    const view = await loadDailyPicksView(supabase, {
+    const view = await loadDailyPicksView(dbClient, {
       date: "2026-04-24",
     });
 
@@ -2046,7 +2046,7 @@ describe("prediction API", () => {
     );
   });
 
-  it("serves repeated matches requests from cache without querying Supabase", async () => {
+  it("serves repeated matches requests from cache without querying the database", async () => {
     const cacheRows = new Map<string, Response>();
     vi.stubGlobal("caches", {
       default: {
@@ -2058,7 +2058,7 @@ describe("prediction API", () => {
         }),
       },
     });
-    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
 
     const firstResponse = await app.request("/matches?limit=1", {
       headers: { host: "localhost" },
@@ -2073,7 +2073,7 @@ describe("prediction API", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("serves repeated daily picks requests from cache without querying Supabase", async () => {
+  it("serves repeated daily picks requests from cache without querying the database", async () => {
     setDailyPicksClock();
     const cacheRows = new Map<string, Response>();
     vi.stubGlobal("caches", {
@@ -2086,7 +2086,7 @@ describe("prediction API", () => {
         }),
       },
     });
-    const spy = vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(null);
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
 
     const firstResponse = await app.request("/daily-picks?date=2026-04-24", {
       headers: { host: "localhost" },
@@ -2101,7 +2101,7 @@ describe("prediction API", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("serves daily picks from a date artifact before rebuilding from Supabase tables", async () => {
+  it("serves daily picks from a date artifact before rebuilding from database tables", async () => {
     const artifactPayload = {
       generatedAt: "2026-04-24T03:00:00Z",
       date: "2026-04-24",
@@ -2230,14 +2230,14 @@ describe("prediction API", () => {
         error: null,
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi.fn((tableName: string) => (
         tableName === "daily_pick_performance_summary"
           ? performanceSummaryQuery
           : artifactQuery
       )),
     };
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json(artifactPayload)),
@@ -2270,11 +2270,11 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(supabase.from).toHaveBeenCalledTimes(2);
+    expect(dbClient.from).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to persisted daily pick tracking rows when the date artifact is unavailable", async () => {
-    const supabase = buildTableSupabase({
+    const dbClient = buildTableDbClient({
       daily_pick_items: [
         {
           id: "daily_pick_item_1",
@@ -2375,7 +2375,7 @@ describe("prediction API", () => {
         { id: "league-1", name: "Premier League" },
       ],
     });
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient);
 
     const response = await app.request("/daily-picks?date=2026-04-24");
     const heldResponse = await app.request(
@@ -2446,7 +2446,7 @@ describe("prediction API", () => {
   });
 
   it("keeps global settled validation when tracked rows need performance fallback", async () => {
-    const baseSupabase = buildTableSupabase({
+    const baseDbClient = buildTableDbClient({
       stored_artifacts: [],
       daily_pick_items: [
         {
@@ -2501,7 +2501,7 @@ describe("prediction API", () => {
         { id: "league-1", name: "Premier League" },
       ],
     });
-    const baseFrom = baseSupabase.from.bind(baseSupabase);
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
     const missingSummaryQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
@@ -2510,14 +2510,14 @@ describe("prediction API", () => {
         error: { message: 'relation "daily_pick_performance_summary" does not exist' },
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi.fn((tableName: string) => (
         tableName === "daily_pick_performance_summary"
           ? missingSummaryQuery
           : baseFrom(tableName)
       )),
     };
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
 
     const response = await app.request("/daily-picks?date=2026-04-24");
 
@@ -2538,7 +2538,7 @@ describe("prediction API", () => {
 
   it("falls back to computed daily picks when tracking tables are unavailable", async () => {
     setDailyPicksClock();
-    const baseSupabase = buildTableSupabase({
+    const baseDbClient = buildTableDbClient({
       matches: [
         {
           id: "match-1",
@@ -2582,7 +2582,7 @@ describe("prediction API", () => {
         },
       ],
     });
-    const baseFrom = baseSupabase.from.bind(baseSupabase);
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
     const missingTrackingQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
@@ -2591,14 +2591,14 @@ describe("prediction API", () => {
         error: { message: 'relation "daily_pick_items" does not exist' },
       }),
     };
-    const supabase: MockSupabaseClient = {
+    const dbClient: MockDbClient = {
       from: vi.fn((tableName: string) => (
         tableName === "daily_pick_items"
           ? missingTrackingQuery
           : baseFrom(tableName)
       )),
     };
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue(supabase as never);
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
 
     const response = await app.request("/daily-picks?date=2026-04-24");
 
@@ -2627,14 +2627,14 @@ describe("prediction API", () => {
       maybeSingle: vi.fn(async () => ({ data: null, error: null })),
       in: vi.fn(async () => ({ data: [], error: null })),
     };
-    const supabase = {
+    const dbClient = {
       from: vi.fn(() => query),
     } as never;
 
-    await loadLatestPredictionFusionPolicyView(supabase);
-    await loadLatestPredictionModelRegistryView(supabase);
-    await loadLatestReviewAggregationView(supabase);
-    await loadLatestRolloutPromotionDecisionView(supabase);
+    await loadLatestPredictionFusionPolicyView(dbClient);
+    await loadLatestPredictionModelRegistryView(dbClient);
+    await loadLatestReviewAggregationView(dbClient);
+    await loadLatestRolloutPromotionDecisionView(dbClient);
 
     expect(selectedColumns).not.toContain("*");
     expect(selectedColumns).toContain("id, source_report_id, policy_payload, created_at");
@@ -2659,13 +2659,13 @@ describe("prediction API", () => {
       order: vi.fn(async () => ({ data: [], error: null })),
       maybeSingle: vi.fn(async () => ({ data: null, error: null })),
     };
-    const supabase = {
+    const dbClient = {
       from: vi.fn(() => emptyQuery),
     } as never;
 
-    await loadPredictionView(supabase, "match-123");
-    await loadMatchItems(supabase);
-    await loadDailyPicksView(supabase, { date: "2026-04-24" });
+    await loadPredictionView(dbClient, "match-123");
+    await loadMatchItems(dbClient);
+    await loadDailyPicksView(dbClient, { date: "2026-04-24" });
 
     expect(selectedColumns.join("\n")).not.toContain("explanation_payload");
   });
@@ -2682,11 +2682,11 @@ describe("prediction API", () => {
       limit: vi.fn(() => reviewQuery),
       maybeSingle: vi.fn(async () => ({ data: null, error: null })),
     };
-    const supabase = {
+    const dbClient = {
       from: vi.fn(() => reviewQuery),
     } as never;
 
-    await loadReviewView(supabase, "match-123");
+    await loadReviewView(dbClient, "match-123");
 
     expect(selectedColumns.join("\n")).not.toContain("market_comparison_summary");
   });
@@ -2700,20 +2700,20 @@ describe("prediction API", () => {
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } }),
     };
-    const supabase = {
+    const dbClient = {
       from: vi.fn(() => failingQuery),
     } as never;
 
-    await expect(loadMatchItems(supabase)).rejects.toThrow();
-    await expect(loadLatestPredictionFusionPolicyView(supabase)).rejects.toThrow();
-    await expect(loadPredictionFusionPolicyHistoryView(supabase)).rejects.toThrow();
-    await expect(loadPredictionView(supabase, "match-123")).rejects.toThrow();
-    await expect(loadLatestPredictionModelRegistryView(supabase)).rejects.toThrow();
-    await expect(loadLatestReviewAggregationView(supabase)).rejects.toThrow();
-    await expect(loadPredictionSourceEvaluationHistoryView(supabase)).rejects.toThrow();
-    await expect(loadReviewAggregationHistoryView(supabase)).rejects.toThrow();
-    await expect(loadLatestRolloutPromotionDecisionView(supabase)).rejects.toThrow();
-    await expect(loadReviewView(supabase, "match-123")).rejects.toThrow();
+    await expect(loadMatchItems(dbClient)).rejects.toThrow();
+    await expect(loadLatestPredictionFusionPolicyView(dbClient)).rejects.toThrow();
+    await expect(loadPredictionFusionPolicyHistoryView(dbClient)).rejects.toThrow();
+    await expect(loadPredictionView(dbClient, "match-123")).rejects.toThrow();
+    await expect(loadLatestPredictionModelRegistryView(dbClient)).rejects.toThrow();
+    await expect(loadLatestReviewAggregationView(dbClient)).rejects.toThrow();
+    await expect(loadPredictionSourceEvaluationHistoryView(dbClient)).rejects.toThrow();
+    await expect(loadReviewAggregationHistoryView(dbClient)).rejects.toThrow();
+    await expect(loadLatestRolloutPromotionDecisionView(dbClient)).rejects.toThrow();
+    await expect(loadReviewView(dbClient, "match-123")).rejects.toThrow();
   });
 
   it("pages matches by league with a next cursor and league summaries", async () => {
@@ -3333,7 +3333,7 @@ describe("prediction API", () => {
 
   it("serves localized match cards from the projection view without querying predictions", async () => {
     const tableCalls: string[] = [];
-    vi.spyOn(supabaseModule, "getSupabaseClient").mockReturnValue({
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue({
       from(tableName: string) {
         tableCalls.push(tableName);
         if (tableName === "predictions") {
@@ -4331,13 +4331,13 @@ describe("prediction API", () => {
         };
       },
     });
-    const supabase = {
+    const dbClient = {
       from(tableName: string) {
         return buildQuery(tableName);
       },
     } as never;
 
-    await loadDailyPicksView(supabase, { date: "2026-04-24" });
+    await loadDailyPicksView(dbClient, { date: "2026-04-24" });
 
     expect(selectedColumns.get("teams")).toEqual(["id, name, crest_url"]);
     expect(selectedColumns.get("teams")?.[0]).not.toContain("logo_url");

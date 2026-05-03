@@ -8,16 +8,18 @@ import boto3
 
 from batch.src.model.raw_signal_backtest import (
     build_raw_moneyline_rows,
+    summarize_daily_pick_holdout,
+    summarize_daily_pick_holdout_scan,
     summarize_raw_moneyline_backtest,
 )
 from batch.src.jobs.backfill_external_prediction_signals_job import (
     build_external_signal_snapshot_updates,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.rollout_state import read_optional_rows
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -55,6 +57,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--holdout-start-date",
+        help=(
+            "When provided, add an out-of-time daily-pick holdout summary using "
+            "rows before this YYYY-MM-DD date as training history and rows on or "
+            "after it as holdout."
+        ),
+    )
+    parser.add_argument(
+        "--holdout-scan",
+        action="store_true",
+        help=(
+            "Add compact monthly daily-pick holdout scan rows so viable "
+            "out-of-time validation windows can be compared without rerunning "
+            "the job for each date."
+        ),
+    )
+    parser.add_argument(
         "--clubelo-date-stride-days",
         type=int,
         default=7,
@@ -70,7 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     matches = read_optional_rows(client, "matches")
     snapshots = read_optional_rows(client, "match_snapshots")
@@ -139,10 +158,33 @@ def main(argv: list[str] | None = None) -> None:
         raw_rows,
         minimum_samples=minimum_samples,
     )
+    daily_pick_holdout = (
+        summarize_daily_pick_holdout(
+            raw_rows,
+            holdout_start_date=args.holdout_start_date,
+        )
+        if args.holdout_start_date
+        else None
+    )
+    daily_pick_holdout_scan = (
+        summarize_daily_pick_holdout_scan(raw_rows)
+        if args.holdout_scan
+        else None
+    )
     print(
         json.dumps(
             {
                 **summary,
+                **(
+                    {"daily_pick_holdout": daily_pick_holdout}
+                    if daily_pick_holdout is not None
+                    else {}
+                ),
+                **(
+                    {"daily_pick_holdout_scan": daily_pick_holdout_scan}
+                    if daily_pick_holdout_scan is not None
+                    else {}
+                ),
                 "payload_source": payload_source,
                 "raw_rows": len(raw_rows),
                 "artifact_payloads_loaded": artifact_payloads_loaded,

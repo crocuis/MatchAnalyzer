@@ -40,14 +40,14 @@ def test_build_prediction_dataset_client_prefers_local_dir(tmp_path):
 
 
 def test_export_local_prediction_dataset_writes_table_files(monkeypatch, tmp_path, capsys):
-    class FakeSupabaseClient:
+    class FakeDbClient:
         def __init__(self, _url, _key):
             pass
 
         def read_rows(self, table_name: str):
             return [{"id": f"{table_name}-1"}]
 
-    monkeypatch.setattr(export_job, "SupabaseClient", FakeSupabaseClient)
+    monkeypatch.setattr(export_job, "DbClient", FakeDbClient)
     monkeypatch.setattr(
         export_job,
         "load_settings",

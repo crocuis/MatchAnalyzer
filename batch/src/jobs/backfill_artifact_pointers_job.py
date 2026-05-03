@@ -1,13 +1,13 @@
 import json
 
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.artifact_store import (
     archive_json_artifact,
     build_supabase_storage_artifact_client,
 )
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import read_optional_rows
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def _archive_prediction_rows(
@@ -166,7 +166,7 @@ def _archive_report_rows(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     r2_client = R2Client(
         getattr(settings, "r2_bucket", "workflow-artifacts"),
         access_key_id=getattr(settings, "r2_access_key_id", None),

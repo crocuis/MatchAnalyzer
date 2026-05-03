@@ -5,7 +5,7 @@ from batch.src.rollout.lane_state import (
     build_lane_state_payload,
     build_latest_lane_state_row,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.rollout_state import (
     build_history_row_id,
     next_rollout_version,
@@ -15,7 +15,7 @@ from batch.src.storage.rollout_state import (
     stamp_rollout_row,
     utc_now_iso,
 )
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 CURRENT_CHANNEL = "current"
@@ -160,10 +160,7 @@ def main() -> None:
         "rollout_ramp_sequence",
         DEFAULT_ROLLOUT_RAMP_SEQUENCE,
     )
-    client = SupabaseClient(
-        settings.supabase_url,
-        settings.supabase_service_role_key,
-    )
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
 
     decision_payload = _decision_payload(client)
     if not decision_payload:

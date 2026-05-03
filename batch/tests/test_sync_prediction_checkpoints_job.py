@@ -436,7 +436,7 @@ def test_main_prints_prediction_checkpoint_sync_result(monkeypatch, capsys):
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(sync_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(sync_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         sync_job,
         "sync_prediction_checkpoints",

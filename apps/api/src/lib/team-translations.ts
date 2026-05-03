@@ -1,4 +1,4 @@
-import type { ApiSupabaseClient } from "./supabase";
+import type { ApiDbClient } from "./db-client";
 
 type TeamTranslationRow = {
   team_id: string;
@@ -56,7 +56,7 @@ function compareStableRows(
 }
 
 export async function loadPreferredTeamTranslations(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   teamIds: string[],
   locale: string | null | undefined,
 ): Promise<Map<string, string>> {
@@ -68,7 +68,7 @@ export async function loadPreferredTeamTranslations(
   const localeCandidates =
     normalizedLocale === "en" ? ["en"] : [normalizedLocale, "en"];
 
-  const result = await supabase
+  const result = await dbClient
     .from("team_translations")
     .select("team_id, locale, display_name, source_name, is_primary")
     .in("team_id", teamIds);

@@ -8,8 +8,8 @@ from batch.src.ingest.fetch_team_translations import (
     filter_missing_primary_translations,
     load_curated_translation_map,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 DEFAULT_LOCALE = "ko"
@@ -32,7 +32,7 @@ def main() -> None:
     limit_raw = os.environ.get("TEAM_TRANSLATIONS_LIMIT")
 
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
 
     teams = client.read_rows("teams")
     existing_rows = client.read_rows("team_translations")

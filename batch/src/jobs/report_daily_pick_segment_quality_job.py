@@ -14,9 +14,9 @@ from batch.src.model.confidence_validation import (
     wilson_lower_bound,
 )
 from batch.src.model.evaluate_walk_forward import confidence_bucket_label
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.rollout_state import read_optional_rows
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 DEFAULT_MIN_SAMPLE_COUNT = 250
@@ -389,7 +389,7 @@ def read_final_result(match: dict | None) -> str | None:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_role_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     items = read_optional_rows(client, "daily_pick_items")
     results = read_optional_rows(client, "daily_pick_results")
     matches = read_optional_rows(client, "matches")

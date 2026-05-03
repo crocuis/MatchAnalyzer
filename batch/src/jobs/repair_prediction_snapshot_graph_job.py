@@ -2,13 +2,13 @@ import json
 import os
 
 from batch.src.model.prediction_graph_integrity import plan_missing_snapshot_repairs
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     predictions = client.read_rows("predictions")
     matches = client.read_rows("matches")
     snapshot_rows = client.read_rows("match_snapshots")

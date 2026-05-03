@@ -65,7 +65,23 @@ def validate_column_name(column: str) -> str:
     return column
 
 
-class SupabaseClient:
+def quote_identifier(identifier: str) -> str:
+    return '"' + validate_column_name(identifier).replace('"', '""') + '"'
+
+
+def normalize_postgres_value(value):
+    if isinstance(value, (dict, list)):
+        try:
+            from psycopg.types.json import Jsonb
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "psycopg is required for PostgreSQL storage. Install batch/requirements.txt."
+            ) from exc
+        return Jsonb(value)
+    return value
+
+
+class DbClient:
     def __init__(self, base_url: str, service_key: str) -> None:
         self.base_url = base_url
         self.service_key = service_key
@@ -82,7 +98,60 @@ class SupabaseClient:
 
     def _use_file_backend(self) -> bool:
         hostname = urlparse(self.base_url).hostname or ""
-        return hostname.endswith("placeholder.supabase.local") or hostname == "example.supabase.co"
+        return (
+            hostname.endswith("placeholder.db.local")
+            or hostname.endswith("placeholder.supabase.local")
+            or hostname == "example.supabase.co"
+        )
+
+    def _use_postgres_backend(self) -> bool:
+        return self.base_url.startswith(("postgres://", "postgresql://"))
+
+    def _connect_postgres(self):
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "psycopg is required for PostgreSQL storage. Install batch/requirements.txt."
+            ) from exc
+        return psycopg.connect(self.base_url, row_factory=dict_row)
+
+    def _postgres_select_columns(self, table_name: str, columns: tuple[str, ...] | None) -> str:
+        selected_columns = columns or REMOTE_READ_DEFAULT_COLUMNS.get(table_name)
+        if not selected_columns:
+            return "*"
+        return ", ".join(quote_identifier(column) for column in selected_columns)
+
+    def _read_rows_postgres(
+        self,
+        table_name: str,
+        *,
+        columns: tuple[str, ...] | None,
+        filters: dict[str, list[str]] | None = None,
+    ) -> list[dict]:
+        select_columns = self._postgres_select_columns(table_name, columns)
+        where_clause = ""
+        params: list[object] = []
+        if filters:
+            parts = []
+            for column, values in filters.items():
+                column_name = validate_column_name(column)
+                parts.append(f"{quote_identifier(column_name)} = any(%s)")
+                params.append(values)
+            where_clause = " where " + " and ".join(parts)
+
+        base_sql = f"select {select_columns} from {quote_identifier(table_name)}{where_clause}"
+        with self._connect_postgres() as conn:
+            with conn.cursor() as cursor:
+                try:
+                    cursor.execute(f"{base_sql} order by {quote_identifier('id')} asc", params)
+                except Exception as exc:
+                    if "id" not in str(exc):
+                        raise
+                    conn.rollback()
+                    cursor.execute(base_sql, params)
+                return [dict(row) for row in cursor.fetchall()]
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -104,7 +173,7 @@ class SupabaseClient:
                     raise
         if last_error is not None:
             raise last_error
-        raise RuntimeError("unreachable Supabase retry state")
+        raise RuntimeError("unreachable database retry state")
 
     def _read_remote_rows_page(
         self,
@@ -132,7 +201,7 @@ class SupabaseClient:
         )
         with self._urlopen_with_transient_retry(request, timeout=30) as response:
             if response.status >= 400:
-                raise ValueError(f"Supabase read failed with status {response.status}")
+                raise ValueError(f"Database read failed with status {response.status}")
             return json.loads(response.read().decode("utf-8"))
 
     def _read_rows_remote(
@@ -173,11 +242,11 @@ class SupabaseClient:
                     )
                     if len(fallback_page) >= REMOTE_READ_PAGE_SIZE:
                         raise ValueError(
-                            "Supabase read requires pagination, but table/view lacks an id column for stable ordering"
+                            "Database read requires pagination, but table/view lacks an id column for stable ordering"
                         ) from exc
                     return fallback_page
                 raise ValueError(
-                    f"Supabase read failed for table={table_name}: status={exc.code}, body={body}"
+                    f"Database read failed for table={table_name}: status={exc.code}, body={body}"
                 ) from exc
 
             rows.extend(page)
@@ -207,6 +276,36 @@ class SupabaseClient:
         table_name = validate_table_name(table)
         if not rows:
             return 0
+        if self._use_postgres_backend():
+            normalized_rows = self._normalize_bulk_upsert_rows(rows)
+            columns = sorted({key for row in normalized_rows for key in row})
+            if "id" not in columns:
+                raise ValueError("PostgreSQL upsert requires an id column")
+            column_sql = ", ".join(quote_identifier(column) for column in columns)
+            placeholders = ", ".join(["%s"] * len(columns))
+            update_columns = [column for column in columns if column != "id"]
+            conflict_action = (
+                "do update set "
+                + ", ".join(
+                    f"{quote_identifier(column)} = excluded.{quote_identifier(column)}"
+                    for column in update_columns
+                )
+                if update_columns
+                else "do nothing"
+            )
+            sql = (
+                f"insert into {quote_identifier(table_name)} ({column_sql}) "
+                f"values ({placeholders}) on conflict ({quote_identifier('id')}) {conflict_action}"
+            )
+            values = [
+                [normalize_postgres_value(row.get(column)) for column in columns]
+                for row in normalized_rows
+            ]
+            with self._connect_postgres() as conn:
+                with conn.cursor() as cursor:
+                    cursor.executemany(sql, values)
+                conn.commit()
+            return len(rows)
         if not self._use_file_backend():
             if len(rows) > REMOTE_UPSERT_BATCH_SIZE:
                 return sum(
@@ -228,7 +327,7 @@ class SupabaseClient:
                 with self._urlopen_with_transient_retry(request, timeout=30) as response:
                     if response.status >= 400:
                         raise ValueError(
-                            f"Supabase upsert failed with status {response.status}"
+                            f"Database upsert failed with status {response.status}"
                         )
                     return len(rows)
             except HTTPError as exc:
@@ -241,11 +340,11 @@ class SupabaseClient:
                 if retry_result is not None:
                     return retry_result
                 raise ValueError(
-                    f"Supabase upsert failed for table={table_name}: status={exc.code}, body={body}"
+                    f"Database upsert failed for table={table_name}: status={exc.code}, body={body}"
                 ) from exc
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
-        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        target = Path(".tmp") / "db-client" / base_url_hash / f"{table_name}.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         existing_rows = json.loads(target.read_text()) if target.exists() else []
         merged_rows = {
@@ -264,6 +363,24 @@ class SupabaseClient:
         table_name = validate_table_name(table)
         if not values:
             return 0
+        column_name = validate_column_name(column)
+
+        if self._use_postgres_backend():
+            deleted = 0
+            with self._connect_postgres() as conn:
+                with conn.cursor() as cursor:
+                    for index in range(0, len(values), batch_size):
+                        batch = values[index : index + batch_size]
+                        cursor.execute(
+                            (
+                                f"delete from {quote_identifier(table_name)} "
+                                f"where {quote_identifier(column_name)} = any(%s)"
+                            ),
+                            (batch,),
+                        )
+                        deleted += cursor.rowcount
+                conn.commit()
+            return deleted
 
         if not self._use_file_backend():
             deleted = 0
@@ -282,13 +399,13 @@ class SupabaseClient:
                 with self._urlopen_with_transient_retry(request, timeout=30) as response:
                     if response.status >= 400:
                         raise ValueError(
-                            f"Supabase delete failed for table={table_name}"
+                            f"Database delete failed for table={table_name}"
                         )
                 deleted += len(batch)
             return deleted
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
-        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        target = Path(".tmp") / "db-client" / base_url_hash / f"{table_name}.json"
         if not target.exists():
             return 0
         value_set = set(values)
@@ -301,12 +418,15 @@ class SupabaseClient:
 
     def read_rows(self, table: str, columns: tuple[str, ...] | None = None) -> list[dict]:
         table_name = validate_table_name(table)
+        if self._use_postgres_backend():
+            return self._read_rows_postgres(table_name, columns=columns)
+
         if not self._use_file_backend():
             columns = columns or REMOTE_READ_DEFAULT_COLUMNS.get(table_name)
             return self._read_rows_remote(table_name, columns=columns)
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
-        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        target = Path(".tmp") / "db-client" / base_url_hash / f"{table_name}.json"
         if not target.exists():
             return []
         rows = json.loads(target.read_text())
@@ -332,6 +452,13 @@ class SupabaseClient:
         if not value_list:
             return []
 
+        if self._use_postgres_backend():
+            return self._read_rows_postgres(
+                table_name,
+                columns=columns,
+                filters={column_name: value_list},
+            )
+
         if not self._use_file_backend():
             read_columns = columns or REMOTE_READ_DEFAULT_COLUMNS.get(table_name)
             rows: list[dict] = []
@@ -347,7 +474,7 @@ class SupabaseClient:
             return rows
 
         base_url_hash = sha256(self.base_url.encode("utf-8")).hexdigest()[:12]
-        target = Path(".tmp") / "supabase" / base_url_hash / f"{table_name}.json"
+        target = Path(".tmp") / "db-client" / base_url_hash / f"{table_name}.json"
         if not target.exists():
             return []
         value_set = set(value_list)

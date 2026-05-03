@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 import type { AppBindings } from "../env";
 import { ensureOperationalReportsAccess } from "../lib/operational-auth";
-import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import { getDbClient, type ApiDbClient } from "../lib/db-client";
 
 const rollouts = new Hono<AppBindings>();
 
@@ -115,9 +115,9 @@ function normalizePromotionDecisionReport(
 }
 
 export async function loadLatestRolloutPromotionDecisionView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("rollout_promotion_decisions")
     .select(ROLLOUT_PROMOTION_DECISION_SELECT)
     .order("created_at", { ascending: false })
@@ -141,13 +141,13 @@ rollouts.get("/promotion/latest", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
-  if (!supabase) {
+  const dbClient = getDbClient(c.env);
+  if (!dbClient) {
     return c.json({ report: null });
   }
 
   try {
-    return c.json(await loadLatestRolloutPromotionDecisionView(supabase));
+    return c.json(await loadLatestRolloutPromotionDecisionView(dbClient));
   } catch {
     return c.json({ report: null }, 500);
   }

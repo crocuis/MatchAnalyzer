@@ -1810,7 +1810,7 @@ def test_run_post_match_review_job_skips_when_no_completed_predictions_exist(
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_post_match_review_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_post_match_review_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_REVIEW_DATE", "2026-04-18")
 
     run_post_match_review_job.main()
@@ -1830,7 +1830,7 @@ def test_backfill_post_match_reviews_job_accumulates_date_range_results(monkeypa
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(backfill_post_match_reviews_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(backfill_post_match_reviews_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         backfill_post_match_reviews_job,
         "run_review_job",
@@ -1947,7 +1947,7 @@ def test_run_post_match_review_job_persists_latest_review_aggregation(monkeypatc
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_post_match_review_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_post_match_review_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_REVIEW_DATE", "2026-04-12")
 
     run_post_match_review_job.main()
@@ -2091,7 +2091,7 @@ def test_run_predictions_job_surfaces_divergence_features_and_market_availabilit
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -2184,7 +2184,7 @@ def test_run_predictions_job_generates_all_available_checkpoints_in_real_mode(
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -2255,7 +2255,7 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_MATCH_IDS", "match_b")
 
     run_predictions_job.main()
@@ -2370,7 +2370,7 @@ def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upse
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "sync_daily_pick_tracking_for_prediction_dates",
@@ -2444,7 +2444,7 @@ def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -2522,7 +2522,7 @@ def test_run_predictions_job_persists_model_version_selection_metadata(monkeypat
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -2653,7 +2653,7 @@ def test_run_predictions_job_applies_latest_persisted_fusion_policy(monkeypatch)
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -2781,7 +2781,7 @@ def test_run_predictions_job_fail_closes_poisson_in_persisted_policy(monkeypatch
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -2946,7 +2946,7 @@ def test_run_predictions_job_falls_back_to_derived_weights_when_latest_policy_is
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -3378,7 +3378,7 @@ def test_run_predictions_job_applies_historical_current_fused_selector_to_live_p
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -3718,7 +3718,7 @@ def test_run_predictions_job_persists_trained_baseline_probabilities(monkeypatch
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "train_baseline_model",
@@ -3863,7 +3863,7 @@ def test_run_predictions_job_calibrates_selector_confidence_against_selected_pro
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -4015,7 +4015,7 @@ def test_run_predictions_job_surfaces_variant_markets_when_present(monkeypatch):
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -4171,7 +4171,7 @@ def test_run_predictions_job_preserves_existing_market_enrichment_when_rerun_lac
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -4300,7 +4300,7 @@ def test_run_predictions_job_uses_persisted_snapshot_signals_without_history_rec
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -4465,7 +4465,7 @@ def test_run_predictions_job_recomputes_stale_snapshot_signals_after_intervening
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -4600,7 +4600,7 @@ def test_run_predictions_job_marks_absence_coverage_unavailable_for_non_premier_
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "predict_base_probabilities",
@@ -4862,7 +4862,7 @@ def test_run_predictions_job_marks_centroid_fallback_and_applies_penalty(monkeyp
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         run_predictions_job,
         "train_baseline_model",
@@ -4920,7 +4920,7 @@ def test_run_predictions_job_uses_standard_confidence_gate_for_bookmaker_fallbac
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -4976,7 +4976,7 @@ def test_run_predictions_job_boosts_draw_for_balanced_bookmaker_fallback(monkeyp
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -5033,7 +5033,7 @@ def test_run_predictions_job_applies_stronger_draw_boost_for_tight_balanced_mark
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -5093,7 +5093,7 @@ def test_run_predictions_job_skips_strong_draw_boost_when_away_signals_are_align
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -5156,7 +5156,7 @@ def test_run_predictions_job_shifts_strong_home_fallback_toward_draw_when_xg_dis
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -5227,7 +5227,7 @@ def test_run_predictions_job_shifts_unsupported_home_favorite_toward_draw_when_x
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-19")
 
     run_predictions_job.main()
@@ -5301,7 +5301,7 @@ def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_withou
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-19")
 
     run_predictions_job.main()
@@ -5351,7 +5351,7 @@ def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(run_predictions_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
     monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
 
     run_predictions_job.main()
@@ -6042,7 +6042,7 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(repair_prediction_match_graph_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(repair_prediction_match_graph_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         repair_prediction_match_graph_job,
         "load_sports_skills_football",
@@ -6088,7 +6088,7 @@ def test_backfill_prediction_recalibration_job_updates_changed_rows(
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(backfill_prediction_recalibration_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(backfill_prediction_recalibration_job, "DbClient", FakeClient)
 
     backfill_prediction_recalibration_job.main()
 
@@ -6157,7 +6157,7 @@ def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
         "load_settings",
         lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
     )
-    monkeypatch.setattr(repair_prediction_snapshot_graph_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(repair_prediction_snapshot_graph_job, "DbClient", FakeClient)
     monkeypatch.setenv("REPAIR_APPLY", "1")
 
     repair_prediction_snapshot_graph_job.main()

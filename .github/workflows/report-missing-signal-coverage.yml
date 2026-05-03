@@ -19,8 +19,7 @@ jobs:
       group: report-missing-signal-coverage
       cancel-in-progress: true
     env:
-      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -32,8 +31,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: batch/requirements.txt
       - run: |
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$DATABASE_URL"
           test -n "$R2_BUCKET"
       - name: Resolve target date
         shell: bash

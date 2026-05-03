@@ -2,7 +2,7 @@ import type { MatchArtifactManifest } from "@match-analyzer/contracts";
 
 import type { AppBindings } from "../env";
 import { getEnv } from "../env";
-import type { ApiSupabaseClient } from "./supabase";
+import type { ApiDbClient } from "./db-client";
 
 export type { MatchArtifactManifest };
 
@@ -50,7 +50,7 @@ function buildArtifactUrl(
 }
 
 export async function loadLatestStoredArtifact(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   {
     ownerType,
     ownerId,
@@ -61,7 +61,7 @@ export async function loadLatestStoredArtifact(
     artifactKind: string;
   },
 ): Promise<StoredArtifactRow | null> {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("stored_artifacts")
     .select(
       "id, owner_type, owner_id, artifact_kind, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256, created_at",
@@ -108,7 +108,7 @@ export async function loadStoredArtifactJson(
 }
 
 export async function loadMatchArtifactJson(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   bindings: AppBindings["Bindings"],
   {
     matchId,
@@ -118,7 +118,7 @@ export async function loadMatchArtifactJson(
     artifactKind: "prediction_view" | "review_view";
   },
 ) {
-  const row = await loadLatestStoredArtifact(supabase, {
+  const row = await loadLatestStoredArtifact(dbClient, {
     ownerType: "match",
     ownerId: matchId,
     artifactKind,

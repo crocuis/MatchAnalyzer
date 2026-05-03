@@ -17,9 +17,9 @@ from batch.src.jobs.ingest_fixtures_job import (
     dedupe_rows,
     prepare_sync_asset_rows,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.r2_client import R2Client
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 SUPPORTED_COMPETITION_IDS = (
@@ -74,7 +74,7 @@ def main() -> None:
     )
 
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
 
     all_events: list[dict] = []
     archive_payload: dict[str, list[dict]] = {}

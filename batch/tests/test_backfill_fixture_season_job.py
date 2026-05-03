@@ -113,7 +113,7 @@ def test_backfill_fixture_season_job_collects_supported_competitions(
             r2_s3_endpoint=None,
         ),
     )
-    monkeypatch.setattr(season_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(season_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         season_job,
         "load_sports_skills_football",
@@ -216,7 +216,7 @@ def test_backfill_fixture_season_job_includes_conference_league_by_default(
             r2_s3_endpoint=None,
         ),
     )
-    monkeypatch.setattr(season_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(season_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         season_job,
         "load_sports_skills_football",
@@ -304,7 +304,7 @@ def test_backfill_fixture_season_job_can_include_lineup_context(
             r2_s3_endpoint=None,
         ),
     )
-    monkeypatch.setattr(season_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(season_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         season_job,
         "load_sports_skills_football",

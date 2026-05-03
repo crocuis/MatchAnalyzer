@@ -9,8 +9,8 @@ from batch.src.ingest.fetch_fixtures import (
     fetch_daily_schedule,
     load_sports_skills_football,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 TEAM_LOGO_SEARCH_ALIASES = {
     "Fiorentina": ("ACF Fiorentina",),
@@ -199,7 +199,7 @@ def backfill_assets(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     teams = client.read_rows("teams")
     competitions = client.read_rows("competitions")
     matches = client.read_rows("matches")

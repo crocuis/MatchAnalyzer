@@ -28,9 +28,9 @@ from batch.src.jobs.sample_data import (
     SAMPLE_RAW_FIXTURE,
     SAMPLE_SNAPSHOT_ROWS,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.r2_client import R2Client
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def dedupe_rows(rows: list[dict]) -> list[dict]:
@@ -331,7 +331,7 @@ def build_optional_bsd_context(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     use_real_schedule = os.environ.get("REAL_FIXTURE_DATE")
 
     if use_real_schedule:

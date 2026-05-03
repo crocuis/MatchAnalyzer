@@ -9,8 +9,8 @@ from batch.src.ingest.fetch_fixtures import (
     is_supported_competition_id,
     is_supported_international_competition_id,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 @dataclass
@@ -25,7 +25,7 @@ class CleanupPlan:
     team_updates: list[dict]
 
 
-def build_cleanup_plan(client: SupabaseClient) -> CleanupPlan:
+def build_cleanup_plan(client: DbClient) -> CleanupPlan:
     competitions = client.read_rows("competitions")
     matches = client.read_rows("matches")
     snapshots = client.read_rows("match_snapshots")
@@ -126,14 +126,14 @@ def build_cleanup_plan(client: SupabaseClient) -> CleanupPlan:
 
 
 def delete_in_batches(
-    client: SupabaseClient,
+    client: DbClient,
     table: str,
     column: str,
     values: list[str],
     batch_size: int = 20,
 ) -> int:
     if client._use_file_backend():
-        raise ValueError("cleanup delete requires remote supabase backend")
+        raise ValueError("cleanup delete requires remote database backend")
     if not values:
         return 0
 
@@ -159,7 +159,7 @@ def delete_in_batches(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     plan = build_cleanup_plan(client)
     apply = os.environ.get("CLEANUP_APPLY") == "1"
 

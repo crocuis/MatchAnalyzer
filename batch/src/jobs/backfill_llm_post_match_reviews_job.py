@@ -10,7 +10,7 @@ from batch.src.jobs.run_post_match_review_job import (
     read_env_flag,
 )
 from batch.src.llm.advisory import NvidiaChatClient, request_post_match_review_advisory
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.artifact_store import (
     archive_json_artifact,
     build_supabase_storage_artifact_client,
@@ -24,7 +24,7 @@ from batch.src.storage.rollout_state import (
     stamp_rollout_row,
     utc_now_iso,
 )
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 DEFAULT_BACKFILL_LIMIT = 100
@@ -189,7 +189,7 @@ def build_review_row_for_upsert(row: dict) -> dict:
 
 def persist_review_batch(
     *,
-    client: SupabaseClient,
+    client: DbClient,
     rows: list[dict],
     artifact_rows: list[dict],
     archive_artifacts: bool,
@@ -215,7 +215,7 @@ def persist_review_batch(
 
 def persist_review_aggregation(
     *,
-    client: SupabaseClient,
+    client: DbClient,
     r2_client: R2Client,
     supabase_storage_client,
     reviews: list[dict],
@@ -339,7 +339,7 @@ def persist_review_aggregation(
 
 
 def run_llm_review_backfill(
-    client: SupabaseClient,
+    client: DbClient,
     r2_client: R2Client,
     *,
     supabase_storage_client=None,
@@ -486,7 +486,7 @@ def main() -> None:
         raise ValueError(
             "LLM review backfill requires LLM_REVIEW_ADVISORY_ENABLED=1 and an API key"
         )
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     r2_client = R2Client(
         getattr(settings, "r2_bucket", "workflow-artifacts"),
         access_key_id=getattr(settings, "r2_access_key_id", None),

@@ -206,7 +206,7 @@ def test_main_live_mode_prints_filtered_json_payload(monkeypatch, capsys) -> Non
             supabase_key="key",
         ),
     )
-    monkeypatch.setattr(coverage_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(coverage_job, "DbClient", FakeClient)
 
     coverage_job.main(["--target-date", "2026-04-20"])
 
@@ -269,7 +269,7 @@ def test_main_live_mode_prints_zero_count_payload_for_empty_target_date(
             supabase_key="key",
         ),
     )
-    monkeypatch.setattr(coverage_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(coverage_job, "DbClient", FakeClient)
 
     coverage_job.main(["--target-date", "2026-04-21"])
 

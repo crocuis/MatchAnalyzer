@@ -18,7 +18,7 @@ import {
   API_SHORT_CACHE_CONTROL,
   cachedResponse,
 } from "../lib/edge-cache";
-import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import { getDbClient, type ApiDbClient } from "../lib/db-client";
 
 const predictions = new Hono<AppBindings>();
 
@@ -322,14 +322,14 @@ function extractPredictionSourceEvaluationPayload(
 }
 
 async function loadArtifactById(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   artifactId: string | null | undefined,
 ) {
   if (!artifactId) {
     return null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("stored_artifacts")
     .select(
       "id, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256",
@@ -582,10 +582,10 @@ function isMissingRelationError(message: string | undefined) {
 }
 
 async function fetchLatestPredictionSourceEvaluationRow(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   tableName: string,
 ) {
-  const orderedQuery = supabase
+  const orderedQuery = dbClient
     .from(tableName)
     .select(PREDICTION_SOURCE_EVALUATION_SELECT);
   const orderedResult = await orderedQuery
@@ -597,7 +597,7 @@ async function fetchLatestPredictionSourceEvaluationRow(
     orderedResult.error?.message?.includes("created_at") ||
     orderedResult.error?.message?.includes("column")
   ) {
-    return supabase
+    return dbClient
       .from(tableName)
       .select(PREDICTION_SOURCE_EVALUATION_SELECT)
       .limit(1)
@@ -608,11 +608,11 @@ async function fetchLatestPredictionSourceEvaluationRow(
 }
 
 async function fetchPredictionSourceEvaluationRows(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   tableName: string,
   limitCount: number,
 ) {
-  const orderedQuery = supabase
+  const orderedQuery = dbClient
     .from(tableName)
     .select(PREDICTION_SOURCE_EVALUATION_SELECT);
   const orderedResult = await orderedQuery
@@ -623,7 +623,7 @@ async function fetchPredictionSourceEvaluationRows(
     orderedResult.error?.message?.includes("created_at") ||
     orderedResult.error?.message?.includes("column")
   ) {
-    return supabase
+    return dbClient
       .from(tableName)
       .select(PREDICTION_SOURCE_EVALUATION_SELECT)
       .limit(limitCount);
@@ -633,11 +633,11 @@ async function fetchPredictionSourceEvaluationRows(
 }
 
 export async function loadLatestPredictionSourceEvaluationView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ) {
   for (const tableName of predictionSourceEvaluationTables) {
     const { data, error } = await fetchLatestPredictionSourceEvaluationRow(
-      supabase,
+      dbClient,
       tableName,
     );
 
@@ -660,12 +660,12 @@ export async function loadLatestPredictionSourceEvaluationView(
 }
 
 export async function loadPredictionSourceEvaluationHistoryView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<PredictionSourceEvaluationHistoryView> {
-  const laneSummaries = await loadRolloutLaneSummaries(supabase);
+  const laneSummaries = await loadRolloutLaneSummaries(dbClient);
   for (const tableName of predictionSourceEvaluationTables) {
     const { data, error } = await fetchPredictionSourceEvaluationRows(
-      supabase,
+      dbClient,
       tableName,
       6,
     );
@@ -721,9 +721,9 @@ export async function loadPredictionSourceEvaluationHistoryView(
 }
 
 export async function loadLatestPredictionModelRegistryView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("model_versions")
     .select(PREDICTION_MODEL_REGISTRY_SELECT)
     .order("created_at", { ascending: false })
@@ -743,9 +743,9 @@ export async function loadLatestPredictionModelRegistryView(
 }
 
 export async function loadLatestPredictionFusionPolicyView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("prediction_fusion_policies")
     .select(PREDICTION_FUSION_POLICY_SELECT)
     .order("created_at", { ascending: false })
@@ -765,10 +765,10 @@ export async function loadLatestPredictionFusionPolicyView(
 }
 
 export async function loadPredictionFusionPolicyHistoryView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<PredictionFusionPolicyHistoryView> {
-  const laneSummaries = await loadRolloutLaneSummaries(supabase);
-  const { data, error } = await supabase
+  const laneSummaries = await loadRolloutLaneSummaries(dbClient);
+  const { data, error } = await dbClient
     .from("prediction_fusion_policies")
     .select(PREDICTION_FUSION_POLICY_SELECT)
     .order("created_at", { ascending: false })
@@ -865,7 +865,7 @@ function pickMarketEnrichedPrediction(
 }
 
 export async function loadPredictionView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   matchId: string,
 ) {
   const [
@@ -873,18 +873,18 @@ export async function loadPredictionView(
     { data: snapshotRows, error: snapshotsError },
     { data: matchRow, error: matchError },
   ] = await Promise.all([
-    supabase
+    dbClient
       .from("predictions")
       .select(
         "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, created_at",
       )
       .eq("match_id", matchId)
       .order("created_at", { ascending: false }),
-    supabase
+    dbClient
       .from("match_snapshots")
       .select("id, checkpoint_type, captured_at, lineup_status, snapshot_quality")
       .eq("match_id", matchId),
-    supabase
+    dbClient
       .from("matches")
       .select("kickoff_at, final_result, home_score, away_score")
       .eq("id", matchId)
@@ -895,13 +895,24 @@ export async function loadPredictionView(
     throw new Error("prediction queries failed");
   }
 
-  const snapshotsById = new Map((snapshotRows ?? []).map((row) => [row.id, row]));
-  const sortedPredictions = [...(predictionRows ?? [])].sort((left, right) =>
+  const snapshotsById = new Map<string, { checkpoint_type?: string }>(
+    ((snapshotRows ?? []) as Array<{ id: string; checkpoint_type?: string }>).map((row) => [
+      row.id,
+      row,
+    ]),
+  );
+  const sortedPredictions = [
+    ...((predictionRows ?? []) as Array<
+      Record<string, any> & { snapshot_id: string; created_at: string | null }
+    >),
+  ].sort((left, right) =>
     comparePredictionRows(left, right, snapshotsById),
   );
 
   const latestPrediction = sortedPredictions[0] ?? null;
-  const marketEnrichedPrediction = pickMarketEnrichedPrediction(sortedPredictions);
+  const marketEnrichedPrediction = pickMarketEnrichedPrediction(
+    sortedPredictions as any,
+  );
   const settledOutcome = resolveSettledOutcome({
     finalResult: matchRow?.final_result ?? null,
     kickoffAt: matchRow?.kickoff_at ?? null,
@@ -909,9 +920,9 @@ export async function loadPredictionView(
     awayScore: readNumber(matchRow?.away_score),
   });
   const artifact = latestPrediction
-    ? await loadArtifactById(supabase, latestPrediction.explanation_artifact_id)
+    ? await loadArtifactById(dbClient, latestPrediction.explanation_artifact_id)
     : null;
-  const checkpoints = (snapshotRows ?? [])
+  const checkpoints = ((snapshotRows ?? []) as Array<Record<string, any>>)
     .sort(
       (left, right) =>
         (checkpointOrder[left.checkpoint_type] ?? 0) -
@@ -1052,16 +1063,16 @@ predictions.get("/source-evaluation/latest", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       report: null,
     });
   }
 
   try {
-    return c.json(await loadLatestPredictionSourceEvaluationView(supabase));
+    return c.json(await loadLatestPredictionSourceEvaluationView(dbClient));
   } catch {
     return c.json(
       {
@@ -1077,9 +1088,9 @@ predictions.get("/source-evaluation/history", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       latest: null,
       previous: null,
@@ -1090,7 +1101,7 @@ predictions.get("/source-evaluation/history", async (c) => {
   }
 
   try {
-    return c.json(await loadPredictionSourceEvaluationHistoryView(supabase));
+    return c.json(await loadPredictionSourceEvaluationHistoryView(dbClient));
   } catch {
     return c.json(
       {
@@ -1110,16 +1121,16 @@ predictions.get("/model-registry/latest", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       report: null,
     });
   }
 
   try {
-    return c.json(await loadLatestPredictionModelRegistryView(supabase));
+    return c.json(await loadLatestPredictionModelRegistryView(dbClient));
   } catch {
     return c.json(
       {
@@ -1135,16 +1146,16 @@ predictions.get("/fusion-policy/latest", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       report: null,
     });
   }
 
   try {
-    return c.json(await loadLatestPredictionFusionPolicyView(supabase));
+    return c.json(await loadLatestPredictionFusionPolicyView(dbClient));
   } catch {
     return c.json(
       {
@@ -1160,9 +1171,9 @@ predictions.get("/fusion-policy/history", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       latest: null,
       previous: null,
@@ -1173,7 +1184,7 @@ predictions.get("/fusion-policy/history", async (c) => {
   }
 
   try {
-    return c.json(await loadPredictionFusionPolicyHistoryView(supabase));
+    return c.json(await loadPredictionFusionPolicyHistoryView(dbClient));
   } catch {
     return c.json(
       {
@@ -1190,9 +1201,9 @@ predictions.get("/fusion-policy/history", async (c) => {
 
 predictions.get("/:matchId", async (c) => {
   const matchId = c.req.param("matchId");
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       matchId,
       prediction: null,
@@ -1201,7 +1212,7 @@ predictions.get("/:matchId", async (c) => {
   }
   try {
     return cachedResponse(c, async () => {
-      const artifactPayload = await loadMatchArtifactJson(supabase, c.env, {
+      const artifactPayload = await loadMatchArtifactJson(dbClient, c.env, {
         matchId,
         artifactKind: "prediction_view",
       });
@@ -1212,7 +1223,7 @@ predictions.get("/:matchId", async (c) => {
         });
       }
 
-      return c.json(await loadPredictionView(supabase, matchId), 200, {
+      return c.json(await loadPredictionView(dbClient, matchId), 200, {
         "cache-control": API_SHORT_CACHE_CONTROL,
         "x-match-analyzer-artifact": "fallback",
       });

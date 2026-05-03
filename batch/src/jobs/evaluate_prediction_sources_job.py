@@ -28,7 +28,7 @@ from batch.src.rollout.promotion_policy import (
     build_rollout_promotion_comparison,
     build_rollout_promotion_decision,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.artifact_store import (
     archive_json_artifact,
     build_supabase_storage_artifact_client,
@@ -44,7 +44,7 @@ from batch.src.storage.rollout_state import (
     stamp_rollout_row,
     utc_now_iso,
 )
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 OUTCOME_KEYS = ("home", "draw", "away")
@@ -490,7 +490,7 @@ def main() -> None:
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     persist_external_artifacts = should_archive_source_evaluation_artifacts(
         local_dataset_dir

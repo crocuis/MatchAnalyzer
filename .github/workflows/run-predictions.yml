@@ -38,8 +38,7 @@ jobs:
       group: run-predictions
       cancel-in-progress: true
     env:
-      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       R2_BUCKET: workflow-artifacts
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -58,8 +57,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: batch/requirements.txt
       - run: |
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$DATABASE_URL"
           test -n "$R2_BUCKET"
       - name: Resolve target date
         shell: bash

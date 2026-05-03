@@ -21,10 +21,10 @@ from batch.src.jobs.ingest_markets_job import (
     parse_iso_datetime,
     read_optional_rows,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 DEFAULT_ODDS_API_IO_HISTORICAL_COMPETITIONS = (
     "champions-league",
@@ -142,7 +142,7 @@ def is_replaced_odds_api_variant(existing_row: dict, replacement_keys: set[tuple
     return key in replacement_keys
 
 
-def delete_replaced_variant_rows(client: SupabaseClient, variant_rows: list[dict]) -> int:
+def delete_replaced_variant_rows(client: DbClient, variant_rows: list[dict]) -> int:
     replacement_keys = {
         key for row in variant_rows if (key := variant_replacement_key(row)) is not None
     }
@@ -161,7 +161,7 @@ def delete_replaced_variant_rows(client: SupabaseClient, variant_rows: list[dict
 
 
 def persist_historical_market_rows(
-    client: SupabaseClient | LocalDatasetClient,
+    client: DbClient | LocalDatasetClient,
     market_rows: list[dict],
     variant_rows: list[dict],
     *,
@@ -519,7 +519,7 @@ def main() -> None:
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     start_date = parse_date_bound(os.environ.get("ODDS_API_IO_HISTORICAL_START_DATE"))
     end_date = parse_date_bound(os.environ.get("ODDS_API_IO_HISTORICAL_END_DATE"))

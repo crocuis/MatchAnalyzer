@@ -112,7 +112,7 @@ def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_
             return len(rows)
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(artifact_backfill_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(artifact_backfill_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         artifact_backfill_job,
         "load_settings",
