@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 
 import batch.src.jobs.backfill_artifact_pointers_job as artifact_backfill_job
@@ -8,6 +9,13 @@ from batch.src.jobs.export_match_artifacts_job import (
     build_review_view,
 )
 from batch.src.storage.artifact_store import archive_json_artifact
+from batch.src.storage.json_payload import make_json_safe
+
+
+def test_make_json_safe_converts_postgres_decimal_values():
+    payload = make_json_safe({"score": Decimal("1.25"), "nested": [Decimal("0.5")]})
+
+    assert payload == {"score": 1.25, "nested": [0.5]}
 
 
 def test_archive_json_artifact_can_use_supabase_storage_for_cached_egress():
@@ -38,6 +46,28 @@ def test_archive_json_artifact_can_use_supabase_storage_for_cached_egress():
     assert row["storage_uri"].startswith(
         "https://example.supabase.co/storage/v1/object/public/public-artifacts/"
     )
+
+
+def test_archive_json_artifact_normalizes_decimal_payloads():
+    class FakeSupabaseStorage:
+        bucket = "public-artifacts"
+
+        def archive_json(self, key: str, payload: dict) -> str:
+            assert payload == {"lineup": {"home_score": 1.25}}
+            return "https://example.supabase.co/storage/v1/object/public/public-artifacts/a.json"
+
+    row = archive_json_artifact(
+        r2_client=None,
+        supabase_storage_client=FakeSupabaseStorage(),
+        artifact_id="artifact_001",
+        owner_type="prediction",
+        owner_id="prediction_001",
+        artifact_kind="prediction_explanation",
+        key="predictions/match_001/prediction_001.json",
+        payload={"lineup": {"home_score": Decimal("1.25")}},
+    )
+
+    assert row["size_bytes"] > 0
 
 
 def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_path, capsys):

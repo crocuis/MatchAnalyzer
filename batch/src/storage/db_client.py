@@ -6,6 +6,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from batch.src.storage.json_payload import make_json_safe
+
 REMOTE_READ_PAGE_SIZE = 1000
 REMOTE_FILTER_VALUE_BATCH_SIZE = 50
 REMOTE_UPSERT_BATCH_SIZE = 250
@@ -77,7 +79,7 @@ def normalize_postgres_value(value):
             raise RuntimeError(
                 "psycopg is required for PostgreSQL storage. Install batch/requirements.txt."
             ) from exc
-        return Jsonb(value)
+        return Jsonb(make_json_safe(value))
     return value
 
 

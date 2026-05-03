@@ -3,6 +3,8 @@ from pathlib import Path, PurePosixPath
 
 import boto3
 
+from batch.src.storage.json_payload import make_json_safe
+
 
 def validate_archive_key(key: str) -> PurePosixPath:
     archive_key = PurePosixPath(key)
@@ -32,6 +34,7 @@ class R2Client:
     def archive_json(self, key: str, payload: dict) -> str:
         archive_key = validate_archive_key(key)
         archive_uri = f"r2://{self.bucket}/{archive_key.as_posix()}"
+        payload = make_json_safe(payload)
 
         if self._use_remote_backend():
             client = boto3.client(

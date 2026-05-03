@@ -79,6 +79,7 @@ from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.db_client import DbClient
+from batch.src.storage.json_payload import make_json_safe
 
 
 BOOKMAKER_FALLBACK_DRAW_MIN_PROBABILITY = 0.30
@@ -425,9 +426,9 @@ def market_probabilities_from_row(row: dict | None) -> dict | None:
     if not all(key in row for key in ("home_prob", "draw_prob", "away_prob")):
         return None
     return {
-        "home": row["home_prob"],
-        "draw": row["draw_prob"],
-        "away": row["away_prob"],
+        "home": float(row["home_prob"]),
+        "draw": float(row["draw_prob"]),
+        "away": float(row["away_prob"]),
     }
 
 
@@ -437,10 +438,29 @@ def market_prices_from_row(row: dict | None, fallback_probs: dict) -> dict | Non
     if not all(key in fallback_probs for key in ("home", "draw", "away")):
         return None
     return {
-        "home": row.get("home_price", fallback_probs["home"]),
-        "draw": row.get("draw_price", fallback_probs["draw"]),
-        "away": row.get("away_price", fallback_probs["away"]),
+        "home": float(row.get("home_price", fallback_probs["home"])),
+        "draw": float(row.get("draw_price", fallback_probs["draw"])),
+        "away": float(row.get("away_price", fallback_probs["away"])),
     }
+
+
+def prediction_market_probabilities(
+    prediction_market: dict | None,
+    fallback_probs: dict,
+) -> dict[str, float]:
+    return market_probabilities_from_row(prediction_market) or {
+        "home": float(fallback_probs["home"]),
+        "draw": float(fallback_probs["draw"]),
+        "away": float(fallback_probs["away"]),
+    }
+
+
+def prediction_market_prices_from_row(
+    prediction_market: dict | None,
+    fallback_probs: dict,
+) -> dict[str, float]:
+    market_probs = prediction_market_probabilities(prediction_market, fallback_probs)
+    return market_prices_from_row(prediction_market, market_probs) or market_probs
 
 
 def select_betman_moneyline_market_row(
@@ -498,9 +518,9 @@ def build_market_probabilities(
     if not bookmaker:
         return {}, prediction_market
     return {
-        "home": bookmaker["home_prob"],
-        "draw": bookmaker["draw_prob"],
-        "away": bookmaker["away_prob"],
+        "home": float(bookmaker["home_prob"]),
+        "draw": float(bookmaker["draw_prob"]),
+        "away": float(bookmaker["away_prob"]),
     }, prediction_market
 
 
@@ -1070,17 +1090,10 @@ def build_historical_source_performance_summary(
             baseline_model_cache=baseline_model_cache,
         )
         poisson_probs = read_probability_map(_model_selection.get("poisson_probs"))
-        prediction_market_probs = {
-            "home": prediction_market["home_prob"]
-            if prediction_market
-            else book_probs["home"],
-            "draw": prediction_market["draw_prob"]
-            if prediction_market
-            else book_probs["draw"],
-            "away": prediction_market["away_prob"]
-            if prediction_market
-            else book_probs["away"],
-        }
+        prediction_market_probs = prediction_market_probabilities(
+            prediction_market,
+            book_probs,
+        )
         prediction_market_available = bool(feature_context["prediction_market_available"])
         available_variants = build_available_source_variants(
             bookmaker_available=bookmaker_available,
@@ -1192,19 +1205,14 @@ def build_market_signal_input(
     book_probs: dict,
     prediction_market: dict | None,
 ) -> dict:
+    market_probs = prediction_market_probabilities(prediction_market, book_probs)
     return {
         "book_home_prob": book_probs["home"],
         "book_draw_prob": book_probs["draw"],
         "book_away_prob": book_probs["away"],
-        "market_home_prob": prediction_market["home_prob"]
-        if prediction_market
-        else book_probs["home"],
-        "market_draw_prob": prediction_market["draw_prob"]
-        if prediction_market
-        else book_probs["draw"],
-        "market_away_prob": prediction_market["away_prob"]
-        if prediction_market
-        else book_probs["away"],
+        "market_home_prob": market_probs["home"],
+        "market_draw_prob": market_probs["draw"],
+        "market_away_prob": market_probs["away"],
         "prediction_market_available": prediction_market is not None,
     }
 
@@ -1815,17 +1823,10 @@ def build_confidence_bucket_summary(
             baseline_model_cache=baseline_model_cache,
         )
         poisson_probs = read_probability_map(_model_selection.get("poisson_probs"))
-        prediction_market_probs = {
-            "home": prediction_market["home_prob"]
-            if prediction_market
-            else book_probs["home"],
-            "draw": prediction_market["draw_prob"]
-            if prediction_market
-            else book_probs["draw"],
-            "away": prediction_market["away_prob"]
-            if prediction_market
-            else book_probs["away"],
-        }
+        prediction_market_probs = prediction_market_probabilities(
+            prediction_market,
+            book_probs,
+        )
         scoring_context = {
             **feature_context,
             "baseline_model_trained": base_model_source == "trained_baseline",
@@ -2686,28 +2687,14 @@ def main() -> None:
             baseline_model_cache=baseline_model_cache,
         )
         poisson_probs = read_probability_map(model_selection.get("poisson_probs"))
-        prediction_market_probs = {
-            "home": prediction_market["home_prob"]
-            if prediction_market
-            else book_probs["home"],
-            "draw": prediction_market["draw_prob"]
-            if prediction_market
-            else book_probs["draw"],
-            "away": prediction_market["away_prob"]
-            if prediction_market
-            else book_probs["away"],
-        }
-        prediction_market_prices = {
-            "home": prediction_market.get("home_price", prediction_market_probs["home"])
-            if prediction_market
-            else book_probs["home"],
-            "draw": prediction_market.get("draw_price", prediction_market_probs["draw"])
-            if prediction_market
-            else book_probs["draw"],
-            "away": prediction_market.get("away_price", prediction_market_probs["away"])
-            if prediction_market
-            else book_probs["away"],
-        }
+        prediction_market_probs = prediction_market_probabilities(
+            prediction_market,
+            book_probs,
+        )
+        prediction_market_prices = prediction_market_prices_from_row(
+            prediction_market,
+            book_probs,
+        )
         executable_market_row = select_betman_moneyline_market_row(
             market_by_snapshot,
             snapshot_id=signal_snapshot["id"],
@@ -3171,6 +3158,7 @@ def main() -> None:
             explanation_payload["deployment_gate"] = main_recommendation["deployment_gate"]
         if llm_advisory is not None:
             explanation_payload["llm_advisory"] = llm_advisory
+        explanation_payload = make_json_safe(explanation_payload)
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
         artifact_id = f"prediction_artifact_{prediction_id}"
@@ -3311,7 +3299,7 @@ def main() -> None:
         payload,
         use_real_prediction_targets=use_real_prediction_targets,
     )
-    print(json.dumps(result_payload, sort_keys=True))
+    print(json.dumps(make_json_safe(result_payload), sort_keys=True))
 
 
 if __name__ == "__main__":

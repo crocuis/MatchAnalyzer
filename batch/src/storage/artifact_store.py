@@ -2,6 +2,7 @@ import json
 from hashlib import sha256
 
 from batch.src.settings import Settings
+from batch.src.storage.json_payload import make_json_safe
 from batch.src.storage.r2_client import R2Client, validate_archive_key
 from batch.src.storage.supabase_storage_client import SupabaseStorageClient
 
@@ -38,6 +39,7 @@ def archive_json_artifact(
     metadata: dict | None = None,
 ) -> dict:
     archive_key = validate_archive_key(key).as_posix()
+    payload = make_json_safe(payload)
     encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
     if supabase_storage_client:
         storage_uri = supabase_storage_client.archive_json(archive_key, payload)

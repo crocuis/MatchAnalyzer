@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+from batch.src.storage.json_payload import make_json_safe
 from batch.src.storage.r2_client import validate_archive_key
 
 
@@ -46,6 +47,7 @@ class SupabaseStorageClient:
 
     def archive_json(self, key: str, payload: dict) -> str:
         archive_key = validate_archive_key(key).as_posix()
+        payload = make_json_safe(payload)
         encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
 
         if self._use_file_backend():
