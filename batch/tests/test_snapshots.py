@@ -135,6 +135,17 @@ def test_market_probability_family_backfill_migration_repairs_existing_tables():
     assert "add column if not exists market_family text not null default 'moneyline_3way'" in migration
 
 
+def test_market_probability_raw_payload_migration_repairs_restored_tables():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260503090043_add_market_probabilities_raw_payload.sql"
+        ).read_text()
+    )
+
+    assert "alter table public.market_probabilities" in migration
+    assert "add column if not exists raw_payload jsonb not null default '{}'::jsonb" in migration
+
+
 def test_bsd_event_signal_migration_adds_snapshot_xg_columns():
     migration = normalize_sql(
         Path(
