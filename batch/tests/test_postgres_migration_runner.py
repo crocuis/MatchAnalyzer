@@ -50,3 +50,28 @@ def test_rejects_unknown_migration_baseline_version() -> None:
 
     with pytest.raises(ValueError, match="Unknown migration baseline version"):
         runner.migrations_through_baseline(migrations, "99999999999999_missing")
+
+
+def test_accepts_postgres_database_url_with_password() -> None:
+    runner = load_runner()
+
+    assert (
+        runner.validate_database_url(
+            "postgresql://user:pa%23ss@example.neon.tech/neondb?sslmode=require"
+        )
+        == "postgresql://user:pa%23ss@example.neon.tech/neondb?sslmode=require"
+    )
+
+
+def test_rejects_postgres_database_url_without_password() -> None:
+    runner = load_runner()
+
+    with pytest.raises(RuntimeError, match="must include a Postgres password"):
+        runner.validate_database_url("postgresql://user@example.neon.tech/neondb")
+
+
+def test_rejects_postgres_database_url_without_user() -> None:
+    runner = load_runner()
+
+    with pytest.raises(RuntimeError, match="must include a Postgres user"):
+        runner.validate_database_url("postgresql://example.neon.tech/neondb")

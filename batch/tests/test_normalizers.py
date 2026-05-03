@@ -2559,6 +2559,49 @@ def test_load_settings_reads_required_environment_variables(monkeypatch):
     assert settings.bsd_api_key == "bsd-key"
 
 
+def test_load_settings_keeps_supabase_url_for_storage_when_database_url_is_set(monkeypatch):
+    monkeypatch.setitem(load_settings.__globals__, "load_env_file", lambda path: {})
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@example.neon.tech/neondb")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "service-key")
+    monkeypatch.setenv("SUPABASE_ARTIFACT_BUCKET", "artifacts")
+    monkeypatch.setenv("R2_BUCKET", "raw-payloads")
+
+    settings = load_settings()
+
+    assert settings.database_url == "postgresql://user:password@example.neon.tech/neondb"
+    assert settings.db_url == "postgresql://user:password@example.neon.tech/neondb"
+    assert settings.supabase_url == "https://example.supabase.co"
+    assert settings.supabase_key == "service-key"
+    assert settings.supabase_artifact_bucket == "artifacts"
+
+
+def test_load_settings_requires_supabase_key_when_storage_bucket_is_set(monkeypatch):
+    monkeypatch.setitem(load_settings.__globals__, "load_env_file", lambda path: {})
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@example.neon.tech/neondb")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ARTIFACT_BUCKET", "artifacts")
+    monkeypatch.setenv("R2_BUCKET", "raw-payloads")
+
+    with pytest.raises(KeyError, match="SUPABASE_SERVICE_ROLE_KEY"):
+        load_settings()
+
+
+def test_load_settings_requires_supabase_url_when_storage_bucket_is_set(monkeypatch):
+    monkeypatch.setitem(load_settings.__globals__, "load_env_file", lambda path: {})
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:password@example.neon.tech/neondb")
+    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "service-key")
+    monkeypatch.setenv("SUPABASE_ARTIFACT_BUCKET", "artifacts")
+    monkeypatch.setenv("R2_BUCKET", "raw-payloads")
+
+    with pytest.raises(KeyError, match="SUPABASE_URL"):
+        load_settings()
+
+
 def test_load_settings_parses_rollout_ramp_sequence(monkeypatch):
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)

@@ -167,6 +167,8 @@ def load_settings() -> Settings:
     database_url = process_database_url or (
         None if os.environ.get("SUPABASE_URL") else file_database_url
     )
+    supabase_url = env("SUPABASE_URL")
+    supabase_artifact_bucket = env("SUPABASE_ARTIFACT_BUCKET")
 
     supabase_key = env_prefer_process(
         "SUPABASE_SERVICE_ROLE_KEY",
@@ -176,6 +178,13 @@ def load_settings() -> Settings:
     if not supabase_key and not database_url:
         raise KeyError(
             "DATABASE_URL or SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY or SUPABASE_PUBLISHABLE_KEY"
+        )
+    if supabase_artifact_bucket and not supabase_url:
+        raise KeyError("SUPABASE_URL is required when SUPABASE_ARTIFACT_BUCKET is set")
+    if supabase_artifact_bucket and not supabase_key:
+        raise KeyError(
+            "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY or SUPABASE_PUBLISHABLE_KEY "
+            "is required when SUPABASE_ARTIFACT_BUCKET is set"
         )
 
     rollout_ramp_raw = env("ROLLOUT_RAMP_SEQUENCE")
@@ -197,8 +206,8 @@ def load_settings() -> Settings:
         rollout_ramp_sequence = parsed_sequence
 
     return Settings(
-        supabase_url=database_url
-        or env("SUPABASE_URL")
+        supabase_url=supabase_url
+        or database_url
         or (_ for _ in ()).throw(KeyError("DATABASE_URL or SUPABASE_URL")),
         supabase_key=supabase_key or "",
         database_url=database_url,
@@ -207,7 +216,7 @@ def load_settings() -> Settings:
         r2_access_key_id=env("R2_ACCESS_KEY_ID"),
         r2_secret_access_key=env("R2_SECRET_ACCESS_KEY"),
         r2_s3_endpoint=env("R2_S3_ENDPOINT"),
-        supabase_artifact_bucket=env("SUPABASE_ARTIFACT_BUCKET"),
+        supabase_artifact_bucket=supabase_artifact_bucket,
         supabase_artifact_cache_control_seconds=int(
             env("SUPABASE_ARTIFACT_CACHE_CONTROL_SECONDS") or "86400"
         ),
