@@ -103,10 +103,33 @@ export default function MatchDetailModal({
     return null;
   }
 
+  const dailyPickContext = match.dailyPickContext ?? null;
+  const dailyPickMoneylineRecommendation =
+    dailyPickContext?.marketFamily === "moneyline"
+      ? {
+          pick: dailyPickContext.selectionLabel,
+          confidence: dailyPickContext.confidence,
+          recommended: dailyPickContext.status === "recommended",
+          noBetReason:
+            dailyPickContext.status === "recommended" ? null : dailyPickContext.noBetReason,
+        }
+      : null;
+  const dailyPickRecommendedPick = dailyPickMoneylineRecommendation?.recommended
+    ? dailyPickMoneylineRecommendation.pick
+    : null;
+  const displayPrediction =
+    prediction && dailyPickMoneylineRecommendation
+      ? {
+          ...prediction,
+          confidence: dailyPickMoneylineRecommendation.confidence,
+          mainRecommendation: dailyPickMoneylineRecommendation,
+          recommendedPick: dailyPickRecommendedPick,
+        }
+      : prediction;
   const presentation = resolvePredictionPresentation({
-    mainRecommendation: prediction?.mainRecommendation ?? match.mainRecommendation ?? null,
-    recommendedPick: prediction?.recommendedPick ?? match.recommendedPick,
-    confidence: prediction?.confidence ?? match.confidence,
+    mainRecommendation: displayPrediction?.mainRecommendation ?? match.mainRecommendation ?? null,
+    recommendedPick: displayPrediction?.recommendedPick ?? match.recommendedPick,
+    confidence: displayPrediction?.confidence ?? match.confidence,
   });
   const headerPresentation = resolvePredictionPresentation({
     mainRecommendation: match.mainRecommendation ?? null,
@@ -145,10 +168,10 @@ export default function MatchDetailModal({
     ) === "preserved";
   const isFinished =
     match.status === "Needs Review" || match.status === "Review Ready" || !!match.finalResult;
-  const visiblePrediction = prediction
+  const visiblePrediction = displayPrediction
     ? {
-        ...prediction,
-        valueRecommendation: isFinished ? null : prediction.valueRecommendation ?? null,
+        ...displayPrediction,
+        valueRecommendation: isFinished ? null : displayPrediction.valueRecommendation ?? null,
       }
     : null;
   const toneClass =

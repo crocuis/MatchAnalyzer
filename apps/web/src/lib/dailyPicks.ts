@@ -25,13 +25,20 @@ export function buildMatchFromDailyPick(
   fallbackMatches: MatchCardRow[] = [],
 ): MatchCardRow {
   const enrichedItem = enrichDailyPickWithMatchLogos(item, fallbackMatches);
-  const heldMoneylineRecommendation =
-    enrichedItem.marketFamily === "moneyline" && enrichedItem.status === "held"
+  const dailyPickContext = {
+    marketFamily: enrichedItem.marketFamily,
+    selectionLabel: enrichedItem.selectionLabel,
+    confidence: enrichedItem.confidence,
+    status: enrichedItem.status,
+    noBetReason: enrichedItem.noBetReason,
+  };
+  const moneylineRecommendation =
+    enrichedItem.marketFamily === "moneyline"
       ? {
           pick: enrichedItem.selectionLabel,
           confidence: enrichedItem.confidence,
-          recommended: false,
-          noBetReason: enrichedItem.noBetReason,
+          recommended: enrichedItem.status === "recommended",
+          noBetReason: enrichedItem.status === "recommended" ? null : enrichedItem.noBetReason,
         }
       : null;
 
@@ -45,12 +52,10 @@ export function buildMatchFromDailyPick(
     awayTeamLogoUrl: enrichedItem.awayTeamLogoUrl,
     kickoffAt: enrichedItem.kickoffAt,
     status: "Prediction Ready",
-    recommendedPick:
-      enrichedItem.marketFamily === "moneyline" && enrichedItem.status !== "held"
-        ? enrichedItem.selectionLabel
-        : null,
+    recommendedPick: moneylineRecommendation?.recommended ? enrichedItem.selectionLabel : null,
     confidence: enrichedItem.confidence,
-    mainRecommendation: heldMoneylineRecommendation,
+    mainRecommendation: moneylineRecommendation,
+    dailyPickContext,
     noBetReason: enrichedItem.noBetReason,
     needsReview: false,
   };

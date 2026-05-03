@@ -257,6 +257,8 @@ type MatchCardProjectionRow = {
   main_recommendation_confidence: number | null;
   main_recommendation_recommended: boolean | null;
   main_recommendation_no_bet_reason: string | null;
+  confidence_reliability?: string | null;
+  high_confidence_eligible?: boolean | null;
   value_recommendation_pick: string | null;
   value_recommendation_recommended: boolean | null;
   value_recommendation_edge: number | null;
@@ -281,6 +283,8 @@ type DashboardPredictionSummaryRow = {
   main_recommendation_confidence: number | null;
   main_recommendation_recommended: boolean | null;
   main_recommendation_no_bet_reason: string | null;
+  confidence_reliability?: string | null;
+  high_confidence_eligible?: boolean | null;
   has_prediction: boolean;
 };
 
@@ -348,7 +352,7 @@ function normalizeDashboardMainRecommendation(
     return null;
   }
 
-  return normalizeMainRecommendationFromSummary(
+  const mainRecommendation = normalizeMainRecommendationFromSummary(
     {
       summaryPayload: null,
       mainRecommendationPick: row.main_recommendation_pick,
@@ -359,6 +363,26 @@ function normalizeDashboardMainRecommendation(
     row.representative_recommended_pick ?? "UNKNOWN",
     Number(row.representative_confidence_score ?? 0),
   );
+
+  const hasReliabilityGate =
+    Object.prototype.hasOwnProperty.call(row, "high_confidence_eligible")
+    || Object.prototype.hasOwnProperty.call(row, "confidence_reliability");
+  if (
+    hasReliabilityGate
+    && mainRecommendation.recommended
+    && row.high_confidence_eligible !== true
+  ) {
+    return {
+      ...mainRecommendation,
+      recommended: false,
+      noBetReason:
+        row.confidence_reliability
+        ?? mainRecommendation.noBetReason
+        ?? "confidence_reliability_missing",
+    };
+  }
+
+  return mainRecommendation;
 }
 
 function hasPredictedOutcome(
@@ -611,7 +635,7 @@ export async function loadDashboardMatchCardsPageView(
   const cardsQuery: any = dbClient
     .from("match_cards")
     .select(
-      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, has_prediction, needs_review",
+      "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, confidence_reliability, high_confidence_eligible, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, has_prediction, needs_review",
     );
   const scopedCardsQuery =
     typeof cardsQuery.eq === "function"
