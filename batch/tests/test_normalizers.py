@@ -2536,6 +2536,9 @@ def test_build_lineup_context_by_match_uses_competition_aware_missing_players(
 
 
 def test_load_settings_reads_required_environment_variables(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("NEON_DATABASE_URL", raising=False)
+    monkeypatch.delenv("NEON_DEVELOPMENT_DATABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
