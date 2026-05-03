@@ -510,6 +510,173 @@ describe("prediction API", () => {
     expect(artifactIds).not.toContain("artifact-old");
   });
 
+  it("selects prediction detail representatives before loading wide payload columns", async () => {
+    const selectedPredictionColumns: string[] = [];
+    const detailPredictionIds: unknown[][] = [];
+    const selectorRows = [
+      {
+        id: "prediction-latest",
+        match_id: "match-123",
+        snapshot_id: "snapshot-lineup",
+        created_at: "2026-04-27T12:00:00Z",
+      },
+      {
+        id: "prediction-market",
+        match_id: "match-123",
+        snapshot_id: "snapshot-6h",
+        value_recommendation_pick: "AWAY",
+        value_recommendation_recommended: true,
+        value_recommendation_edge: 0.1,
+        value_recommendation_expected_value: 0.3125,
+        value_recommendation_market_price: 0.24,
+        value_recommendation_model_probability: 0.42,
+        value_recommendation_market_probability: 0.32,
+        value_recommendation_market_source: "prediction_market",
+        created_at: "2026-04-27T11:00:00Z",
+      },
+      {
+        id: "prediction-24h",
+        match_id: "match-123",
+        snapshot_id: "snapshot-24h",
+        created_at: "2026-04-27T10:00:00Z",
+      },
+    ];
+    const detailRows = [
+      {
+        id: "prediction-latest",
+        match_id: "match-123",
+        snapshot_id: "snapshot-lineup",
+        home_prob: 0.32,
+        draw_prob: 0.28,
+        away_prob: 0.4,
+        recommended_pick: "AWAY",
+        confidence_score: 0.61,
+        summary_payload: { source_agreement_ratio: 1 },
+        main_recommendation_pick: "AWAY",
+        main_recommendation_confidence: 0.61,
+        main_recommendation_recommended: true,
+        variant_markets_summary: [],
+        explanation_artifact_id: null,
+        created_at: "2026-04-27T12:00:00Z",
+      },
+      {
+        id: "prediction-24h",
+        match_id: "match-123",
+        snapshot_id: "snapshot-24h",
+        home_prob: 0.36,
+        draw_prob: 0.31,
+        away_prob: 0.33,
+        recommended_pick: "HOME",
+        confidence_score: 0.54,
+        summary_payload: { source_agreement_ratio: 0.5 },
+        variant_markets_summary: [],
+        explanation_artifact_id: null,
+        created_at: "2026-04-27T10:00:00Z",
+      },
+      {
+        id: "prediction-market",
+        match_id: "match-123",
+        snapshot_id: "snapshot-6h",
+        home_prob: 0.4,
+        draw_prob: 0.3,
+        away_prob: 0.3,
+        recommended_pick: "HOME",
+        confidence_score: 0.52,
+        summary_payload: { source_agreement_ratio: 0.67 },
+        value_recommendation_pick: "AWAY",
+        value_recommendation_recommended: true,
+        value_recommendation_edge: 0.1,
+        value_recommendation_expected_value: 0.3125,
+        value_recommendation_market_price: 0.24,
+        value_recommendation_model_probability: 0.42,
+        value_recommendation_market_probability: 0.32,
+        value_recommendation_market_source: "prediction_market",
+        variant_markets_summary: [],
+        explanation_artifact_id: null,
+        created_at: "2026-04-27T11:00:00Z",
+      },
+    ];
+    const selectorQuery = {
+      select: vi.fn((columns: string) => {
+        selectedPredictionColumns.push(columns);
+        return selectorQuery;
+      }),
+      eq: vi.fn(() => selectorQuery),
+      order: vi.fn().mockResolvedValue({ data: selectorRows, error: null }),
+    };
+    const detailQuery = {
+      select: vi.fn((columns: string) => {
+        selectedPredictionColumns.push(columns);
+        return detailQuery;
+      }),
+      in: vi.fn((column: string, values: unknown[]) => {
+        expect(column).toBe("id");
+        detailPredictionIds.push(values);
+        return Promise.resolve({
+          data: detailRows.filter((row) => values.includes(row.id)),
+          error: null,
+        });
+      }),
+    };
+    const snapshotsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "snapshot-24h",
+            checkpoint_type: "T_MINUS_24H",
+            captured_at: "2026-04-27T10:00:00Z",
+            lineup_status: "unknown",
+            snapshot_quality: "complete",
+          },
+          {
+            id: "snapshot-lineup",
+            checkpoint_type: "LINEUP_CONFIRMED",
+            captured_at: "2026-04-27T12:00:00Z",
+            lineup_status: "confirmed",
+            snapshot_quality: "complete",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        error: null,
+      }),
+    };
+    let predictionQueryCount = 0;
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => {
+        if (tableName === "predictions") {
+          predictionQueryCount += 1;
+          return predictionQueryCount === 1 ? selectorQuery : detailQuery;
+        }
+        if (tableName === "match_snapshots") return snapshotsQuery;
+        if (tableName === "matches") return matchQuery;
+        throw new Error(`unexpected table ${tableName}`);
+      }),
+    };
+
+    await loadPredictionView(dbClient as never, "match-123");
+
+    expect(selectedPredictionColumns[0]).not.toContain("summary_payload");
+    expect(selectedPredictionColumns[0]).not.toContain("variant_markets_summary");
+    expect(selectedPredictionColumns[1]).toContain("summary_payload");
+    expect(selectedPredictionColumns[1]).toContain("variant_markets_summary");
+    expect(detailPredictionIds).toEqual([
+      ["prediction-latest", "prediction-24h", "prediction-market"],
+    ]);
+  });
+
   it("returns an empty review payload for a match", async () => {
     const response = await app.request("/reviews/match-123");
     expect(response.status).toBe(200);
@@ -1120,6 +1287,91 @@ describe("prediction API", () => {
     });
     expect(view.validation.hitRate).not.toBe(0.99);
     expect(view.validation.sampleCount).not.toBe(999);
+  });
+
+  it("uses a database aggregate for settled daily pick performance when available", async () => {
+    setDailyPicksClock();
+    const baseDbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: validatedDailyPickSummary(),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+      daily_pick_results: [
+        { id: "result-1", pick_item_id: "historical-1", result_status: "hit" },
+        { id: "result-2", pick_item_id: "historical-2", result_status: "miss" },
+      ],
+    });
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const tableCalls: string[] = [];
+    const missingSummaryQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'relation "daily_pick_performance_summary" does not exist' },
+      }),
+    };
+    const aggregateQuery = vi.fn().mockResolvedValue({
+      data: [{ hit_count: 2, miss_count: 1 }],
+      error: null,
+    });
+    const dbClient: MockDbClient & {
+      query: ReturnType<typeof vi.fn>;
+    } = {
+      from: vi.fn((tableName: string) => {
+        tableCalls.push(tableName);
+        return tableName === "daily_pick_performance_summary"
+          ? missingSummaryQuery
+          : baseFrom(tableName);
+      }),
+      query: aggregateQuery,
+    };
+
+    const view = await loadDailyPicksView(dbClient as never, {
+      date: "2026-04-24",
+    });
+
+    expect(view.validation).toMatchObject({
+      hitRate: 0.6667,
+      sampleCount: 3,
+      confidenceReliability: "settled_daily_picks",
+      modelScope: "daily_pick_settled_runtime",
+    });
+    expect(aggregateQuery).toHaveBeenCalledWith(
+      expect.stringContaining("count(*) filter"),
+      [],
+    );
+    expect(tableCalls).not.toContain("daily_pick_results");
   });
 
   it("filters daily picks by market family and includeHeld at the route level", async () => {
@@ -3883,6 +4135,102 @@ describe("prediction API", () => {
     expect(tableCalls).not.toContain("predictions");
   });
 
+  it("does not load variant market blobs for projection match cards", async () => {
+    const cardSelects: string[] = [];
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 1,
+            review_count: 0,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn((columns: string) => {
+        cardSelects.push(columns);
+        return cardsQuery;
+      }),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            home_team: "Liverpool",
+            home_team_logo_url: null,
+            away_team: "Brentford",
+            away_team_logo_url: null,
+            kickoff_at: "2026-04-27T21:00:00Z",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+            representative_recommended_pick: "HOME",
+            representative_confidence_score: 0.58,
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.58,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            value_recommendation_pick: null,
+            value_recommendation_recommended: null,
+            value_recommendation_edge: null,
+            value_recommendation_expected_value: null,
+            value_recommendation_market_price: null,
+            value_recommendation_model_probability: null,
+            value_recommendation_market_probability: null,
+            value_recommendation_market_source: null,
+            has_prediction: true,
+            needs_review: false,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const summaryCardsQuery = {
+      select: vi.fn((columns: string) => {
+        cardSelects.push(columns);
+        return summaryCardsQuery;
+      }),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            kickoff_at: "2026-04-27T21:00:00Z",
+            final_result: null,
+            home_score: null,
+            away_score: null,
+            representative_recommended_pick: "HOME",
+            main_recommendation_pick: "HOME",
+            has_prediction: true,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+    });
+
+    expect(page.items[0]?.variantMarkets).toEqual([]);
+    expect(cardSelects[0]).not.toContain("variant_markets_summary");
+  });
+
   it("uses a league-scoped query when the caller already knows the selected league", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
@@ -4858,6 +5206,181 @@ describe("prediction API", () => {
     expect(selectedColumns.get("predictions")?.[1]).toContain("variant_markets_summary");
   });
 
+  it("loads wide match list prediction payloads only for the current page", async () => {
+    const selectedColumns = new Map<string, string[]>();
+    const predictionMatchIdFilters: unknown[][] = [];
+    const predictionOrders: Array<{ column: string; ascending: boolean }> = [];
+    const rowsByTable: FakeTables = {
+      matches: [
+        {
+          id: "match-2",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-27T21:00:00Z",
+          home_team_id: "arsenal",
+          away_team_id: "spurs",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-27T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea", crest_url: null },
+        { id: "man-city", name: "Manchester City", crest_url: null },
+        { id: "arsenal", name: "Arsenal", crest_url: null },
+        { id: "spurs", name: "Tottenham", crest_url: null },
+      ],
+      competitions: [{ id: "premier-league", name: "Premier League" }],
+      match_snapshots: [
+        {
+          id: "snapshot-lineup-1",
+          match_id: "match-1",
+          checkpoint_type: "LINEUP_CONFIRMED",
+        },
+        {
+          id: "snapshot-lineup-2",
+          match_id: "match-2",
+          checkpoint_type: "LINEUP_CONFIRMED",
+        },
+      ],
+      predictions: [
+        {
+          id: "prediction-2",
+          match_id: "match-2",
+          snapshot_id: "snapshot-lineup-2",
+          recommended_pick: "HOME",
+          confidence_score: 0.61,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.61,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: { oversized: "not-needed-for-off-page-card" },
+          variant_markets_summary: [{ unused: true }],
+          created_at: "2026-04-27T13:00:00Z",
+        },
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-lineup-1",
+          recommended_pick: "AWAY",
+          confidence_score: 0.78,
+          main_recommendation_pick: "AWAY",
+          main_recommendation_confidence: 0.78,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: { source_agreement_ratio: 1 },
+          variant_markets_summary: [],
+          created_at: "2026-04-27T12:00:00Z",
+        },
+      ],
+      post_match_reviews: [],
+    };
+    const rememberSelect = (tableName: string, columns: string) => {
+      selectedColumns.set(tableName, [
+        ...(selectedColumns.get(tableName) ?? []),
+        columns,
+      ]);
+    };
+    const buildQuery = (tableName: string, rows = rowsByTable[tableName] ?? []) => ({
+      select(columns: string) {
+        rememberSelect(tableName, columns);
+        const selectedRows = tableName === "predictions"
+          ? rows.map((row) => {
+              const projected: Record<string, unknown> = {};
+              for (const column of columns.split(",").map((value) => value.trim())) {
+                if (column in row) {
+                  projected[column] = row[column];
+                }
+              }
+              return projected;
+            })
+          : rows;
+        const query = {
+          eq: (column: string, value: unknown) =>
+            buildQuery(
+              tableName,
+              selectedRows.filter((row) => row[column] === value),
+            ).select(columns),
+          in: (column: string, values: unknown[]) => {
+            if (tableName === "predictions" && column === "match_id") {
+              predictionMatchIdFilters.push(values);
+            }
+            return buildQuery(
+              tableName,
+              selectedRows.filter((row) => values.includes(row[column])),
+            ).select(columns);
+          },
+          order: (column: string, options?: { ascending?: boolean }) => {
+            if (tableName === "predictions") {
+              predictionOrders.push({
+                column,
+                ascending: options?.ascending ?? true,
+              });
+            }
+            const ascending = options?.ascending ?? true;
+            const sortedRows = [...selectedRows].sort((left, right) => {
+              const leftValue = left[column];
+              const rightValue = right[column];
+              if (leftValue === rightValue) return 0;
+              if (leftValue == null) return 1;
+              if (rightValue == null) return -1;
+              return leftValue < rightValue
+                ? (ascending ? -1 : 1)
+                : (ascending ? 1 : -1);
+            });
+            return buildQuery(tableName, sortedRows).select(columns);
+          },
+          limit: async (count: number) => ({
+            data: selectedRows.slice(0, count),
+            error: null,
+          }),
+          then: (resolve: (value: { data: Record<string, unknown>[]; error: null }) => void) =>
+            resolve({ data: selectedRows, error: null }),
+        };
+        return query;
+      },
+    });
+    const dbClient = {
+      from(tableName: string) {
+        return buildQuery(tableName);
+      },
+    } as never;
+
+    const items = await loadMatchItems(dbClient, {
+      leagueId: "premier-league",
+      limit: 1,
+    });
+
+    expect(items.map((item) => item.id)).toEqual(["match-1"]);
+    const predictionSelects = selectedColumns.get("predictions") ?? [];
+    expect(predictionSelects[0]).not.toContain("summary_payload");
+    expect(predictionSelects[0]).not.toContain(
+      "variant_markets_summary",
+    );
+    expect(predictionSelects.some((columns) => columns.includes("summary_payload")))
+      .toBe(true);
+    expect(
+      predictionSelects.some((columns) => columns.includes("variant_markets_summary")),
+    ).toBe(true);
+    expect(predictionMatchIdFilters).toEqual([
+      ["match-2", "match-1"],
+      ["match-1"],
+    ]);
+    expect(predictionOrders).toEqual([
+      { column: "created_at", ascending: false },
+      { column: "created_at", ascending: false },
+    ]);
+  });
+
   it("localizes match card team labels when team translations exist for the requested locale", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
@@ -5315,8 +5838,8 @@ describe("prediction API", () => {
     expect(predictions.select).toHaveBeenCalledWith(
       expect.stringContaining("main_recommendation_pick"),
     );
-    expect(predictions.select).toHaveBeenCalledWith(
-      expect.stringContaining("summary_payload"),
+    expect(predictions.select.mock.calls[0]?.[0]).not.toContain(
+      "summary_payload",
     );
   });
 

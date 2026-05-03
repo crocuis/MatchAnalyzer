@@ -311,6 +311,34 @@ function buildPerformanceSummaryFromRow(
   };
 }
 
+function readCount(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+  return 0;
+}
+
+function buildRuntimePerformanceSummaryFromCounts(
+  hitCount: number,
+  missCount: number,
+): DailyPicksValidationSummary {
+  const sampleCount = hitCount + missCount;
+  const hitRate = sampleCount > 0 ? Number((hitCount / sampleCount).toFixed(4)) : null;
+  return {
+    hitRate,
+    sampleCount,
+    wilsonLowerBound: calculateWilsonLowerBound(hitCount, sampleCount),
+    confidenceReliability:
+      sampleCount > 0 && hitRate !== null
+        ? "settled_daily_picks"
+        : null,
+    modelScope: sampleCount > 0 ? "daily_pick_settled_runtime" : null,
+  };
+}
+
 async function readDailyPickPerformanceSummary(
   dbClient: ApiDbClient,
 ): Promise<DailyPicksValidationSummary | null> {
@@ -327,10 +355,46 @@ async function readDailyPickPerformanceSummary(
   }
 }
 
+async function readSettledDailyPickPerformanceAggregate(
+  dbClient: ApiDbClient,
+): Promise<DailyPicksValidationSummary | null> {
+  if (typeof dbClient.query !== "function") {
+    return null;
+  }
+
+  const result = await dbClient.query(
+    [
+      "select",
+      "count(*) filter (where result_status = 'hit') as hit_count,",
+      "count(*) filter (where result_status = 'miss') as miss_count",
+      "from public.daily_pick_results",
+    ].join(" "),
+    [],
+  );
+  if (result.error) {
+    return null;
+  }
+
+  const row = Array.isArray(result.data) ? result.data[0] : null;
+  if (!row) {
+    return null;
+  }
+
+  return buildRuntimePerformanceSummaryFromCounts(
+    readCount(row.hit_count),
+    readCount(row.miss_count),
+  );
+}
+
 async function readSettledDailyPickPerformanceSummary(
   dbClient: ApiDbClient,
 ): Promise<DailyPicksValidationSummary | null> {
   try {
+    const aggregateSummary =
+      await readSettledDailyPickPerformanceAggregate(dbClient);
+    if (aggregateSummary) {
+      return aggregateSummary;
+    }
     const resultRows = await readRows(dbClient, "daily_pick_results");
     return buildRuntimePerformanceSummary(resultRows);
   } catch {
@@ -1258,18 +1322,7 @@ function buildRuntimePerformanceSummary(
 ): DailyPicksValidationSummary {
   const hitCount = resultRows.filter((row) => readString(row.result_status) === "hit").length;
   const missCount = resultRows.filter((row) => readString(row.result_status) === "miss").length;
-  const sampleCount = hitCount + missCount;
-  const hitRate = sampleCount > 0 ? Number((hitCount / sampleCount).toFixed(4)) : null;
-  return {
-    hitRate,
-    sampleCount,
-    wilsonLowerBound: calculateWilsonLowerBound(hitCount, sampleCount),
-    confidenceReliability:
-      sampleCount > 0 && hitRate !== null
-        ? "settled_daily_picks"
-        : null,
-    modelScope: sampleCount > 0 ? "daily_pick_settled_runtime" : null,
-  };
+  return buildRuntimePerformanceSummaryFromCounts(hitCount, missCount);
 }
 
 function buildTrackedDailyPickItem({

@@ -194,6 +194,15 @@ class PostgresClient {
   from(tableName: string): ApiQueryBuilder {
     return new PostgresQueryBuilder(this.sql, tableName);
   }
+
+  async query(text: string, params: unknown[] = []): Promise<ApiDbResult> {
+    try {
+      const data = await this.sql.query(text, params);
+      return { data: data as Record<string, unknown>[], error: null };
+    } catch (error) {
+      return { data: null, error: normalizeError(error) };
+    }
+  }
 }
 
 export const getDbClient = (

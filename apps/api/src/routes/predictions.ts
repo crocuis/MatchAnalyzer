@@ -110,6 +110,13 @@ type PredictionFusionPolicyHistoryView = {
 };
 
 type PredictionValidationMetadata = Record<string, unknown>;
+type PredictionDetailRow = Record<string, any> & {
+  id: string;
+  snapshot_id: string;
+  created_at: string | null;
+  explanation_artifact_id?: string | null;
+  summary_payload?: unknown;
+};
 
 const predictionSourceEvaluationTables = [
   "prediction_source_evaluation_reports",
@@ -123,6 +130,10 @@ const PREDICTION_MODEL_REGISTRY_SELECT =
   "id, model_family, training_window, feature_version, calibration_version, selection_metadata, training_metadata, created_at";
 const PREDICTION_FUSION_POLICY_SELECT =
   "id, source_report_id, policy_payload, created_at";
+const PREDICTION_DETAIL_SELECTOR_SELECT =
+  "id, match_id, snapshot_id, created_at, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source";
+const PREDICTION_DETAIL_ROW_SELECT =
+  "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, created_at";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -889,21 +900,52 @@ function pickPredictionRowsForSummaryHydration<
   return [...selected.values()];
 }
 
+function hasPredictionDetailColumns(row: Record<string, any>) {
+  return (
+    "home_prob" in row ||
+    "recommended_pick" in row ||
+    "summary_payload" in row ||
+    "explanation_artifact_id" in row
+  );
+}
+
+function collectPredictionDetailRows<
+  TPrediction extends { id: string; snapshot_id: string },
+>(
+  sortedPredictions: TPrediction[],
+  snapshots: Array<{ id: string }>,
+) {
+  const selected = new Map<string, TPrediction>();
+  const addPrediction = (prediction: TPrediction | null | undefined) => {
+    if (prediction) {
+      selected.set(prediction.id, prediction);
+    }
+  };
+
+  for (const prediction of pickPredictionRowsForSummaryHydration(
+    sortedPredictions,
+    snapshots,
+  )) {
+    addPrediction(prediction);
+  }
+  addPrediction(pickMarketEnrichedPrediction(sortedPredictions as any) as any);
+
+  return [...selected.values()];
+}
+
 export async function loadPredictionView(
   dbClient: ApiDbClient,
   matchId: string,
   bindings: AppBindings["Bindings"] = {},
 ) {
   const [
-    { data: predictionRows, error: predictionsError },
+    { data: predictionSelectorRows, error: predictionsError },
     { data: snapshotRows, error: snapshotsError },
     { data: matchRow, error: matchError },
   ] = await Promise.all([
     dbClient
       .from("predictions")
-      .select(
-        "id, match_id, snapshot_id, home_prob, draw_prob, away_prob, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id, created_at",
-      )
+      .select(PREDICTION_DETAIL_SELECTOR_SELECT)
       .eq("match_id", matchId)
       .order("created_at", { ascending: false }),
     dbClient
@@ -927,17 +969,42 @@ export async function loadPredictionView(
       row,
     ]),
   );
-  const predictionRowsForView = ((predictionRows ?? []) as Array<
-    Record<string, any> & { id: string; snapshot_id: string; created_at: string | null }
-  >).sort((left, right) => comparePredictionRows(left, right, snapshotsById));
+  const predictionSelectorRowsForView = ((predictionSelectorRows ?? []) as PredictionDetailRow[])
+    .sort((left, right) => comparePredictionRows(left, right, snapshotsById));
+  const selectedPredictionRows = collectPredictionDetailRows(
+    predictionSelectorRowsForView,
+    (snapshotRows ?? []) as Array<{ id: string }>,
+  );
+  const selectedPredictionIds = selectedPredictionRows.map((prediction) => prediction.id);
+  const shouldFetchSelectedPredictionRows =
+    selectedPredictionIds.length > 0 &&
+    selectedPredictionRows.some((prediction) => !hasPredictionDetailColumns(prediction));
+  const { data: selectedPredictionDetailRows, error: selectedPredictionsError } =
+    shouldFetchSelectedPredictionRows
+      ? await dbClient
+          .from("predictions")
+          .select(PREDICTION_DETAIL_ROW_SELECT)
+          .in("id", selectedPredictionIds)
+      : { data: selectedPredictionRows, error: null };
+
+  if (selectedPredictionsError) {
+    throw new Error("prediction queries failed");
+  }
+
+  const selectedPredictionRowsById = new Map(
+    ((selectedPredictionDetailRows ?? []) as PredictionDetailRow[]).map((prediction) => [
+      prediction.id,
+      prediction,
+    ]),
+  );
+  const predictionRowsForView = selectedPredictionIds
+    .map((predictionId) => selectedPredictionRowsById.get(predictionId))
+    .filter((prediction): prediction is PredictionDetailRow => Boolean(prediction));
   const hydratedPredictionRows =
     await hydratePredictionSummaryPayloadsFromArtifacts(
       dbClient,
       bindings,
-      pickPredictionRowsForSummaryHydration(
-        predictionRowsForView,
-        (snapshotRows ?? []) as Array<{ id: string }>,
-      ),
+      predictionRowsForView,
     );
   const hydratedPredictionsById = new Map(
     hydratedPredictionRows.map((prediction) => [prediction.id, prediction]),
