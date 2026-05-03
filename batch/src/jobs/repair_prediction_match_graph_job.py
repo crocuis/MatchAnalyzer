@@ -4,7 +4,10 @@ import os
 import signal
 
 from batch.src.ingest.fetch_fixtures import load_sports_skills_football
-from batch.src.model.prediction_graph_integrity import plan_missing_match_repairs
+from batch.src.model.prediction_graph_integrity import (
+    hydrate_feature_snapshot_rows_from_predictions,
+    plan_missing_match_repairs,
+)
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.db_client import DbClient
 
@@ -52,6 +55,7 @@ def main() -> None:
     timeout_seconds = event_timeout_seconds()
 
     matches = client.read_rows("matches")
+    predictions = client.read_rows("predictions")
     feature_snapshot_rows = client.read_rows("prediction_feature_snapshots")
     if match_ids:
         feature_snapshot_rows = [
@@ -59,6 +63,10 @@ def main() -> None:
             for row in feature_snapshot_rows
             if str(row.get("match_id") or "") in match_ids
         ]
+    feature_snapshot_rows = hydrate_feature_snapshot_rows_from_predictions(
+        feature_snapshot_rows=feature_snapshot_rows,
+        predictions=predictions,
+    )
     competitions, teams, repaired_matches, repaired_snapshots, summary = (
         plan_missing_match_repairs(
             matches=matches,

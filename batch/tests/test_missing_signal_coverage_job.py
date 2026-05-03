@@ -150,24 +150,13 @@ def test_main_live_mode_prints_filtered_json_payload(monkeypatch, capsys) -> Non
         "prediction_feature_snapshots": [
             {
                 "id": "prediction-001",
+                "prediction_id": "prediction-001",
                 "match_id": "match-001",
                 "checkpoint_type": "T_MINUS_24H",
-                "feature_metadata": {
-                    "snapshot_quality": "partial",
-                    "lineup_status": "unknown",
-                    "missing_signal_reasons": [
-                        {
-                            "reason_key": "form_context_missing",
-                            "fields": ["home_points_last_5"],
-                            "sync_action": (
-                                "Persist recent five-match points during fixture snapshot sync."
-                            ),
-                        }
-                    ],
-                },
             },
             {
                 "id": "prediction-002",
+                "prediction_id": "prediction-002",
                 "match_id": "match-002",
                 "checkpoint_type": "T_MINUS_6H",
                 "feature_metadata": {
@@ -188,6 +177,26 @@ def test_main_live_mode_prints_filtered_json_payload(monkeypatch, capsys) -> Non
                 "competition_id": "ucl",
                 "kickoff_at": "2026-04-21T19:00:00+00:00",
             },
+        ],
+        "predictions": [
+            {
+                "id": "prediction-001",
+                "summary_payload": {
+                    "feature_metadata": {
+                        "snapshot_quality": "partial",
+                        "lineup_status": "unknown",
+                        "missing_signal_reasons": [
+                            {
+                                "reason_key": "form_context_missing",
+                                "fields": ["home_points_last_5"],
+                                "sync_action": (
+                                    "Persist recent five-match points during fixture snapshot sync."
+                                ),
+                            }
+                        ],
+                    },
+                },
+            }
         ],
     }
 
@@ -216,6 +225,8 @@ def test_main_live_mode_prints_filtered_json_payload(monkeypatch, capsys) -> Non
     assert payload["target_date"] == "2026-04-20"
     assert payload["generated_at"] is not None
     assert payload["total_feature_snapshots"] == 1
+    assert payload["snapshots_with_missing_signals"] == 1
+    assert payload["reason_summary"]["form_context_missing"]["snapshot_count"] == 1
     assert payload["competition_summary"]["epl"]["snapshot_count"] == 1
     assert "ucl" not in payload["competition_summary"]
 
@@ -252,6 +263,7 @@ def test_main_live_mode_prints_zero_count_payload_for_empty_target_date(
                 "kickoff_at": "2026-04-20T19:00:00+00:00",
             }
         ],
+        "predictions": [],
     }
 
     class FakeClient:
