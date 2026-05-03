@@ -24,6 +24,10 @@ import {
 
 const dailyPicks = new Hono<AppBindings>();
 const DAILY_PICKS_ARTIFACT_KIND = "daily_picks_view";
+const DAILY_PICK_PREDICTION_SELECTOR_SELECT =
+  "id, match_id, snapshot_id, created_at";
+const DAILY_PICK_PREDICTION_DETAIL_SELECT =
+  "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id";
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
@@ -132,8 +136,7 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
   teams: "id, name, crest_url",
   competitions: "id, name",
   match_snapshots: "id, match_id, checkpoint_type",
-  predictions:
-    "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id",
+  predictions: DAILY_PICK_PREDICTION_DETAIL_SELECT,
   daily_pick_runs: "id, pick_date, generated_at, status",
   daily_pick_items:
     "id, run_id, pick_date, match_id, prediction_id, market_family, selection_label, line_value, market_price, model_probability, market_probability, expected_value, edge, confidence, score, status, validation_metadata, reason_labels, created_at",
@@ -244,6 +247,26 @@ async function readRowsByIds(
   const result = await dbClient
     .from(tableName)
     .select(DAILY_PICK_SELECTS[tableName] ?? columnName)
+    .in(columnName, ids);
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+  return Array.isArray(result.data) ? (result.data as unknown as DailyPickRow[]) : [];
+}
+
+async function readRowsByIdsWithSelect(
+  dbClient: ApiDbClient,
+  tableName: string,
+  ids: string[],
+  columnName: string,
+  columns: string,
+): Promise<DailyPickRow[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+  const result = await dbClient
+    .from(tableName)
+    .select(columns)
     .in(columnName, ids);
   if (result.error) {
     throw new Error(result.error.message);
@@ -520,10 +543,16 @@ export async function loadDailyPicksView(
     return id ? [id] : [];
   }))];
 
-  const [teams, competitions, predictions, performanceSummary] = await Promise.all([
+  const [teams, competitions, predictionSelectorRows, performanceSummary] = await Promise.all([
     readRowsByIds(dbClient, "teams", teamIds),
     readRowsByIds(dbClient, "competitions", competitionIds),
-    readRowsByIds(dbClient, "predictions", matchIds, "match_id"),
+    readRowsByIdsWithSelect(
+      dbClient,
+      "predictions",
+      matchIds,
+      "match_id",
+      DAILY_PICK_PREDICTION_SELECTOR_SELECT,
+    ),
     readDailyPickRuntimePerformanceSummary(dbClient),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
@@ -531,15 +560,27 @@ export async function loadDailyPicksView(
     teamIds,
     normalizedOptions.locale,
   );
-  const snapshotIds = [...new Set(predictions.flatMap((row) => {
+  const snapshotIds = [...new Set(predictionSelectorRows.flatMap((row) => {
     const id = readString(row.snapshot_id);
     return id ? [id] : [];
   }))];
   const snapshots = await readRowsByIds(dbClient, "match_snapshots", snapshotIds);
+  const representativePredictionIds = pickPredictionRowsForSummaryHydration(
+    predictionSelectorRows,
+    snapshots,
+  ).flatMap((row) => {
+    const id = readString(row.id);
+    return id ? [id] : [];
+  });
+  const predictionRows = await readRowsByIds(
+    dbClient,
+    "predictions",
+    representativePredictionIds,
+  );
   const hydratedPredictions = await hydrateDailyPickPredictionSummaries(
     dbClient,
     bindings,
-    predictions,
+    predictionRows,
     snapshots,
   );
 

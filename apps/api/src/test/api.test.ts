@@ -4754,6 +4754,110 @@ describe("prediction API", () => {
     vi.useRealTimers();
   });
 
+  it("selects daily pick prediction representatives before loading wide payload columns", async () => {
+    setDailyPicksClock();
+    const selectedColumns = new Map<string, string[]>();
+    const rowsByTable: FakeTables = {
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+          final_result: null,
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea", crest_url: null },
+        { id: "man-city", name: "Manchester City", crest_url: null },
+      ],
+      competitions: [{ id: "premier-league", name: "Premier League" }],
+      match_snapshots: [
+        { id: "snapshot-old", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+        {
+          id: "snapshot-lineup",
+          match_id: "match-1",
+          checkpoint_type: "LINEUP_CONFIRMED",
+        },
+      ],
+      predictions: [
+        {
+          id: "prediction-old",
+          match_id: "match-1",
+          snapshot_id: "snapshot-old",
+          recommended_pick: "HOME",
+          confidence_score: 0.6,
+          summary_payload: { oversized: "unused" },
+          variant_markets_summary: [{ unused: true }],
+          created_at: "2026-04-24T08:00:00Z",
+        },
+        {
+          id: "prediction-lineup",
+          match_id: "match-1",
+          snapshot_id: "snapshot-lineup",
+          recommended_pick: "AWAY",
+          confidence_score: 0.78,
+          main_recommendation_pick: "AWAY",
+          main_recommendation_confidence: 0.78,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: validatedDailyPickSummary(),
+          variant_markets_summary: [],
+          created_at: "2026-04-24T09:00:00Z",
+        },
+      ],
+    };
+    const rememberSelect = (tableName: string, columns: string) => {
+      selectedColumns.set(tableName, [
+        ...(selectedColumns.get(tableName) ?? []),
+        columns,
+      ]);
+    };
+    const buildQuery = (tableName: string, rows = rowsByTable[tableName] ?? []) => ({
+      select(columns: string) {
+        rememberSelect(tableName, columns);
+        return {
+          eq: (column: string, value: unknown) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => row[column] === value),
+            ).select(columns),
+          gte: (column: string, value: string) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => String(row[column] ?? "") >= value),
+            ).select(columns),
+          lt: (column: string, value: string) =>
+            buildQuery(
+              tableName,
+              rows.filter((row) => String(row[column] ?? "") < value),
+            ).select(columns),
+          in: async (column: string, values: unknown[]) => ({
+            data: rows.filter((row) => values.includes(row[column])),
+            error: null,
+          }),
+          order: async () => ({ data: rows, error: null }),
+        };
+      },
+    });
+    const dbClient = {
+      from(tableName: string) {
+        return buildQuery(tableName);
+      },
+    } as never;
+
+    const view = await loadDailyPicksView(dbClient, { date: "2026-04-24" });
+
+    expect(view.items[0]?.predictionId).toBe("prediction-lineup");
+    expect(selectedColumns.get("predictions")?.[0]).toBe(
+      "id, match_id, snapshot_id, created_at",
+    );
+    expect(selectedColumns.get("predictions")?.[0]).not.toContain("summary_payload");
+    expect(selectedColumns.get("predictions")?.[1]).toContain("summary_payload");
+    expect(selectedColumns.get("predictions")?.[1]).toContain("variant_markets_summary");
+  });
+
   it("localizes match card team labels when team translations exist for the requested locale", async () => {
     const matchesQuery = {
       select: vi.fn().mockReturnThis(),
