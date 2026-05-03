@@ -479,6 +479,34 @@ def promote_market_snapshots(
     return promoted
 
 
+def build_snapshot_signal_update_rows(
+    *,
+    snapshot_rows: list[dict],
+    updates: list[dict],
+) -> list[dict]:
+    snapshots_by_id = {
+        str(row.get("id") or ""): row
+        for row in snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    rows: list[dict] = []
+    for update in updates:
+        snapshot = snapshots_by_id.get(str(update.get("id") or ""))
+        if snapshot is None:
+            continue
+        rows.append(
+            {
+                **{
+                    key: value
+                    for key, value in snapshot.items()
+                    if key in MATCH_SNAPSHOT_PERSISTED_FIELDS
+                },
+                **update,
+            }
+        )
+    return rows
+
+
 def read_optional_rows(client: DbClient, table_name: str) -> list[dict]:
     try:
         return client.read_rows(table_name)
@@ -934,9 +962,13 @@ def main() -> None:
                 market_rows=[],
                 variant_rows=[],
             )
+            snapshot_signal_update_rows = build_snapshot_signal_update_rows(
+                snapshot_rows=snapshot_rows,
+                updates=football_data_snapshot_signal_updates,
+            )
             updated_snapshot_signals = (
-                client.upsert_rows("match_snapshots", football_data_snapshot_signal_updates)
-                if football_data_snapshot_signal_updates
+                client.upsert_rows("match_snapshots", snapshot_signal_update_rows)
+                if snapshot_signal_update_rows
                 else 0
             )
             print(
@@ -1029,9 +1061,13 @@ def main() -> None:
     )
     if promoted_snapshots:
         client.upsert_rows("match_snapshots", promoted_snapshots)
+    snapshot_signal_update_rows = build_snapshot_signal_update_rows(
+        snapshot_rows=snapshot_rows,
+        updates=football_data_snapshot_signal_updates,
+    )
     updated_snapshot_signals = (
-        client.upsert_rows("match_snapshots", football_data_snapshot_signal_updates)
-        if football_data_snapshot_signal_updates
+        client.upsert_rows("match_snapshots", snapshot_signal_update_rows)
+        if snapshot_signal_update_rows
         else 0
     )
     inserted = client.upsert_rows("market_probabilities", payload)
