@@ -673,7 +673,10 @@ def _market_text_equivalents(value: str) -> set[str]:
     return values
 
 
-def parse_utc_minute(value: str) -> datetime:
+def parse_utc_minute(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).replace(second=0, microsecond=0)
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
         timezone.utc
     ).replace(second=0, microsecond=0)
