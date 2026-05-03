@@ -2362,7 +2362,7 @@ describe("prediction API", () => {
         {
           id: "match-1",
           competition_id: "league-1",
-          kickoff_at: "2026-04-24T12:00:00Z",
+          kickoff_at: new Date("2026-04-24T12:00:00Z"),
           home_team_id: "team-home",
           away_team_id: "team-away",
         },
@@ -2390,6 +2390,7 @@ describe("prediction API", () => {
       coverage: Record<string, number>;
       items: Array<{
         matchId: string;
+        kickoffAt: string;
         status: string;
         confidenceReliability: string | null;
       }>;
@@ -2420,6 +2421,7 @@ describe("prediction API", () => {
     expect(body.items).toEqual([
       expect.objectContaining({
         matchId: "match-1",
+        kickoffAt: "2026-04-24T12:00:00.000Z",
         status: "recommended",
         confidenceReliability: "validated",
       }),
