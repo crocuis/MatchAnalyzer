@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 import type { DailyPickItem } from "../lib/api";
+import { formatDateTime } from "../lib/dateTime";
 import TeamLogo from "./TeamLogo";
 
 type DailyPickCardProps = {
@@ -26,7 +27,7 @@ export default function DailyPickCard({ item, onOpenMatch }: DailyPickCardProps)
     defaultValue: item.status,
   });
 
-  const formattedDate = new Date(item.kickoffAt).toLocaleString(i18n.language, {
+  const formattedDate = formatDateTime(item.kickoffAt, i18n.language, {
     month: "short",
     day: "numeric",
     weekday: "short",

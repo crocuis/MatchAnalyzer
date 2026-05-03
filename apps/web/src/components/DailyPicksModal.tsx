@@ -11,6 +11,7 @@ import {
   type MatchCardRow,
 } from "../lib/api";
 import { enrichDailyPickWithMatchLogos } from "../lib/dailyPicks";
+import { formatDateTime } from "../lib/dateTime";
 import { useBodyScrollLock } from "../lib/useBodyScrollLock";
 import DailyPickCard from "./DailyPickCard";
 
@@ -165,7 +166,7 @@ export default function DailyPicksModal({
     : 0;
   const shouldShowHeldMetric = hiddenHeldCount > 0;
   const generatedAtLabel = payload?.generatedAt
-    ? new Date(payload.generatedAt).toLocaleString(undefined, {
+    ? formatDateTime(payload.generatedAt, i18n.language, {
         month: "short",
         day: "numeric",
         hour: "2-digit",
