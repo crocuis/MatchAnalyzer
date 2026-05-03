@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from decimal import Decimal
 from pathlib import Path
 from typing import get_args, get_type_hints
 
@@ -514,6 +515,27 @@ def test_build_feature_vector_includes_rest_and_market_gap():
     assert round(features["elo_delta"], 2) == 0.65
     assert round(features["xg_proxy_delta"], 2) == 0.72
     assert round(features["fixture_congestion_delta"], 2) == 1.0
+
+
+def test_build_feature_vector_accepts_postgres_decimal_values():
+    snapshot = {
+        "form_delta": Decimal("5"),
+        "rest_delta": Decimal("3"),
+        "book_home_prob": Decimal("0.51"),
+        "book_draw_prob": Decimal("0.27"),
+        "book_away_prob": Decimal("0.22"),
+        "market_home_prob": Decimal("0.46"),
+        "market_draw_prob": Decimal("0.25"),
+        "market_away_prob": Decimal("0.29"),
+        "prediction_market_available": True,
+    }
+
+    features = build_feature_vector(snapshot)
+
+    assert features["form_delta"] == 5.0
+    assert features["rest_delta"] == 3.0
+    assert round(features["market_gap_home"], 2) == 0.05
+    assert round(features["book_market_entropy_gap"], 3) != 0.0
 
 
 def test_build_feature_vector_prefers_explicit_strength_and_schedule_fields():

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from decimal import Decimal
 import json
 from types import SimpleNamespace
 
@@ -197,6 +198,59 @@ def test_build_market_probabilities_falls_back_to_on_time_bookmaker_row():
 
     assert book_probs == {"home": 0.47, "draw": 0.29, "away": 0.24}
     assert prediction_market is None
+
+
+def test_build_market_probabilities_converts_postgres_decimal_values():
+    market_by_snapshot = index_market_rows_by_snapshot(
+        [
+            {
+                "id": "match_t_minus_24h_bookmaker",
+                "snapshot_id": "match_t_minus_24h",
+                "source_type": "bookmaker",
+                "source_name": "odds_api_io_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": Decimal("0.47"),
+                "draw_prob": Decimal("0.29"),
+                "away_prob": Decimal("0.24"),
+                "observed_at": "2026-04-22T18:00:00+00:00",
+            },
+        ]
+    )
+
+    book_probs, prediction_market = run_predictions_job.build_market_probabilities(
+        "match_t_minus_24h",
+        market_by_snapshot,
+        kickoff_at="2026-04-22T19:00:00+00:00",
+    )
+
+    assert book_probs == {"home": 0.47, "draw": 0.29, "away": 0.24}
+    assert all(isinstance(value, float) for value in book_probs.values())
+    assert prediction_market is None
+
+
+def test_prediction_market_probabilities_convert_postgres_decimal_values():
+    prediction_market = {
+        "home_prob": Decimal("0.42"),
+        "draw_prob": Decimal("0.31"),
+        "away_prob": Decimal("0.27"),
+        "home_price": Decimal("0.43"),
+        "draw_price": Decimal("0.32"),
+        "away_price": Decimal("0.28"),
+    }
+
+    probabilities = run_predictions_job.prediction_market_probabilities(
+        prediction_market,
+        {"home": 0.5, "draw": 0.25, "away": 0.25},
+    )
+    prices = run_predictions_job.prediction_market_prices_from_row(
+        prediction_market,
+        probabilities,
+    )
+
+    assert probabilities == {"home": 0.42, "draw": 0.31, "away": 0.27}
+    assert prices == {"home": 0.43, "draw": 0.32, "away": 0.28}
+    assert all(isinstance(value, float) for value in probabilities.values())
+    assert all(isinstance(value, float) for value in prices.values())
 
 
 def test_build_source_metadata_marks_late_only_bookmaker_unavailable():

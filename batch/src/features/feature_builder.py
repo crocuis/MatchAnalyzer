@@ -243,24 +243,26 @@ def build_feature_vector(snapshot: dict) -> dict:
         raise ValueError("market probabilities are required to build market-gap features")
 
     if "form_delta" in snapshot:
-        form_delta = snapshot["form_delta"]
+        form_delta = float(snapshot["form_delta"])
     else:
-        form_delta = snapshot["home_points_last_5"] - snapshot["away_points_last_5"]
+        form_delta = float(snapshot["home_points_last_5"]) - float(
+            snapshot["away_points_last_5"]
+        )
 
     if "rest_delta" in snapshot:
-        rest_delta = snapshot["rest_delta"]
+        rest_delta = float(snapshot["rest_delta"])
     else:
-        rest_delta = snapshot["home_rest_days"] - snapshot["away_rest_days"]
+        rest_delta = float(snapshot["home_rest_days"]) - float(snapshot["away_rest_days"])
 
     book_probs = {
-        "home": snapshot["book_home_prob"],
-        "draw": snapshot["book_draw_prob"],
-        "away": snapshot["book_away_prob"],
+        "home": float(snapshot["book_home_prob"]),
+        "draw": float(snapshot["book_draw_prob"]),
+        "away": float(snapshot["book_away_prob"]),
     }
     market_probs = {
-        "home": snapshot["market_home_prob"],
-        "draw": snapshot["market_draw_prob"],
-        "away": snapshot["market_away_prob"],
+        "home": float(snapshot["market_home_prob"]),
+        "draw": float(snapshot["market_draw_prob"]),
+        "away": float(snapshot["market_away_prob"]),
     }
     gaps = {
         outcome: book_probs[outcome] - market_probs[outcome]
