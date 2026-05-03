@@ -605,5 +605,4 @@ def build_prediction_feature_snapshot_row(
         "checkpoint_type": snapshot["checkpoint_type"],
         "feature_context": feature_context,
         "feature_metadata": feature_metadata,
-        "source_metadata": source_metadata,
     }
