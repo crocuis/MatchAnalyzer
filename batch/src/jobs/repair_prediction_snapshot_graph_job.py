@@ -7,12 +7,22 @@ from batch.src.model.prediction_graph_integrity import (
 )
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.db_client import DbClient
+from batch.src.storage.prediction_payload_hydration import (
+    hydrate_prediction_summary_payloads_from_artifacts,
+)
+from batch.src.storage.rollout_state import read_optional_rows
 
 
 def main() -> None:
     settings = load_settings()
     client = DbClient(settings_db_url(settings), settings_db_key(settings))
     predictions = client.read_rows("predictions")
+    stored_artifacts = read_optional_rows(client, "stored_artifacts")
+    predictions, _artifact_payloads = hydrate_prediction_summary_payloads_from_artifacts(
+        settings=settings,
+        predictions=predictions,
+        stored_artifacts=stored_artifacts,
+    )
     matches = client.read_rows("matches")
     snapshot_rows = client.read_rows("match_snapshots")
     feature_snapshot_rows = hydrate_feature_snapshot_rows_from_predictions(

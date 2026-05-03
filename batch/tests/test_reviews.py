@@ -6072,9 +6072,28 @@ def test_plan_missing_match_repairs_rebuilds_orphan_match_graph() -> None:
 
 def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
     monkeypatch,
+    tmp_path,
     capsys,
 ):
+    monkeypatch.chdir(tmp_path)
     state: dict[str, list[dict]] = {}
+    R2Client("workflow-artifacts").archive_json(
+        "predictions/746952/746952_t_minus_24h_model_v1.json",
+        {
+            "feature_context": {
+                "home_lineup_score": 0.0,
+                "away_lineup_score": 0.0,
+                "lineup_strength_delta": 0.0,
+                "lineup_source_summary": "none",
+                "snapshot_quality_complete": 0,
+                "lineup_confirmed": 0,
+            },
+            "feature_metadata": {
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+            },
+        },
+    )
     feature_snapshot_rows = [
         {
             "id": "746952_t_minus_24h_model_v1",
@@ -6089,20 +6108,17 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
     prediction_rows = [
         {
             "id": "746952_t_minus_24h_model_v1",
-            "summary_payload": {
-                "feature_context": {
-                    "home_lineup_score": 0.0,
-                    "away_lineup_score": 0.0,
-                    "lineup_strength_delta": 0.0,
-                    "lineup_source_summary": "none",
-                    "snapshot_quality_complete": 0,
-                    "lineup_confirmed": 0,
-                },
-                "feature_metadata": {
-                    "lineup_status": "unknown",
-                    "snapshot_quality": "partial",
-                },
-            },
+            "summary_payload": {},
+            "explanation_artifact_id": "prediction_artifact_746952_t_minus_24h_model_v1",
+        }
+    ]
+    stored_artifact_rows = [
+        {
+            "id": "prediction_artifact_746952_t_minus_24h_model_v1",
+            "owner_type": "prediction",
+            "owner_id": "746952_t_minus_24h_model_v1",
+            "artifact_kind": "prediction_explanation",
+            "object_key": "predictions/746952/746952_t_minus_24h_model_v1.json",
         }
     ]
     event_summary = {
@@ -6135,6 +6151,7 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
                 "matches": [],
                 "prediction_feature_snapshots": feature_snapshot_rows,
                 "predictions": prediction_rows,
+                "stored_artifacts": stored_artifact_rows,
             }
 
         def read_rows(self, table_name: str) -> list[dict]:
@@ -6147,7 +6164,14 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
     monkeypatch.setattr(
         repair_prediction_match_graph_job,
         "load_settings",
-        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+        lambda: SimpleNamespace(
+            supabase_url="https://example.test",
+            supabase_key="key",
+            r2_bucket="workflow-artifacts",
+            r2_access_key_id=None,
+            r2_secret_access_key=None,
+            r2_s3_endpoint=None,
+        ),
     )
     monkeypatch.setattr(repair_prediction_match_graph_job, "DbClient", FakeClient)
     monkeypatch.setattr(
@@ -6222,10 +6246,22 @@ def test_backfill_prediction_recalibration_job_updates_changed_rows(
 
 def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
     monkeypatch,
+    tmp_path,
     capsys,
 ):
+    monkeypatch.chdir(tmp_path)
     state: dict[str, list[dict]] = {}
     predictions, matches, _snapshot_rows = build_recalibration_fixture_rows()
+    R2Client("workflow-artifacts").archive_json(
+        f"predictions/{predictions[0]['match_id']}/{predictions[0]['id']}.json",
+        {
+            "feature_context": predictions[0]["explanation_payload"]["feature_context"],
+            "feature_metadata": {
+                "lineup_status": "unknown",
+                "snapshot_quality": "partial",
+            },
+        },
+    )
     feature_snapshot_rows = [
         {
             "id": predictions[0]["id"],
@@ -6239,14 +6275,22 @@ def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
     ]
     prediction_rows = [
         {
-            **predictions[0],
-            "summary_payload": {
-                "feature_context": predictions[0]["explanation_payload"]["feature_context"],
-                "feature_metadata": {
-                    "lineup_status": "unknown",
-                    "snapshot_quality": "partial",
-                },
+            **{
+                key: value
+                for key, value in predictions[0].items()
+                if key != "explanation_payload"
             },
+            "summary_payload": {},
+            "explanation_artifact_id": f"prediction_artifact_{predictions[0]['id']}",
+        }
+    ]
+    stored_artifact_rows = [
+        {
+            "id": f"prediction_artifact_{predictions[0]['id']}",
+            "owner_type": "prediction",
+            "owner_id": predictions[0]["id"],
+            "artifact_kind": "prediction_explanation",
+            "object_key": f"predictions/{predictions[0]['match_id']}/{predictions[0]['id']}.json",
         }
     ]
 
@@ -6257,6 +6301,7 @@ def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
                 "matches": [matches[0]],
                 "match_snapshots": [],
                 "prediction_feature_snapshots": feature_snapshot_rows,
+                "stored_artifacts": stored_artifact_rows,
             }
 
         def read_rows(self, table_name: str) -> list[dict]:
@@ -6269,7 +6314,14 @@ def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
     monkeypatch.setattr(
         repair_prediction_snapshot_graph_job,
         "load_settings",
-        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+        lambda: SimpleNamespace(
+            supabase_url="https://example.test",
+            supabase_key="key",
+            r2_bucket="workflow-artifacts",
+            r2_access_key_id=None,
+            r2_secret_access_key=None,
+            r2_s3_endpoint=None,
+        ),
     )
     monkeypatch.setattr(repair_prediction_snapshot_graph_job, "DbClient", FakeClient)
     monkeypatch.setenv("REPAIR_APPLY", "1")

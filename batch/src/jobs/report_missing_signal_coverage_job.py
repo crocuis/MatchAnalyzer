@@ -9,6 +9,10 @@ from batch.src.model.prediction_graph_integrity import (
 )
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.db_client import DbClient
+from batch.src.storage.prediction_payload_hydration import (
+    hydrate_prediction_summary_payloads_from_artifacts,
+)
+from batch.src.storage.rollout_state import read_optional_rows
 
 
 def build_sample_feature_snapshot_rows() -> list[dict]:
@@ -292,17 +296,34 @@ def filter_feature_snapshot_rows_by_target_date(
 def load_live_rows(*, target_date: str | None) -> tuple[list[dict], list[dict]]:
     settings = load_settings()
     client = DbClient(settings_db_url(settings), settings_db_key(settings))
-    predictions = client.read_rows("predictions")
-    feature_snapshot_rows = hydrate_feature_snapshot_rows_from_predictions(
-        feature_snapshot_rows=client.read_rows("prediction_feature_snapshots"),
-        predictions=predictions,
-    )
+    feature_snapshot_rows = client.read_rows("prediction_feature_snapshots")
     match_rows = client.read_rows("matches")
-    return filter_feature_snapshot_rows_by_target_date(
+    feature_snapshot_rows, match_rows = filter_feature_snapshot_rows_by_target_date(
         feature_snapshot_rows=feature_snapshot_rows,
         match_rows=match_rows,
         target_date=target_date,
     )
+    target_prediction_ids = {
+        str(row.get("prediction_id") or row.get("id") or "")
+        for row in feature_snapshot_rows
+        if row.get("prediction_id") or row.get("id")
+    }
+    predictions = [
+        row
+        for row in client.read_rows("predictions")
+        if not target_prediction_ids or str(row.get("id") or "") in target_prediction_ids
+    ]
+    stored_artifacts = read_optional_rows(client, "stored_artifacts")
+    predictions, _artifact_payloads = hydrate_prediction_summary_payloads_from_artifacts(
+        settings=settings,
+        predictions=predictions,
+        stored_artifacts=stored_artifacts,
+    )
+    feature_snapshot_rows = hydrate_feature_snapshot_rows_from_predictions(
+        feature_snapshot_rows=feature_snapshot_rows,
+        predictions=predictions,
+    )
+    return feature_snapshot_rows, match_rows
 
 
 def main(argv: list[str] | None = None) -> None:

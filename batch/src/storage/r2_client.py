@@ -1,5 +1,6 @@
 import json
 from pathlib import Path, PurePosixPath
+from threading import Lock
 
 import boto3
 
@@ -25,11 +26,26 @@ class R2Client:
         self.access_key_id = access_key_id
         self.secret_access_key = secret_access_key
         self.s3_endpoint = s3_endpoint
+        self._s3_client = None
+        self._s3_client_lock = Lock()
 
     def _use_remote_backend(self) -> bool:
         return bool(
             self.access_key_id and self.secret_access_key and self.s3_endpoint
         )
+
+    def _remote_client(self):
+        if self._s3_client is None:
+            with self._s3_client_lock:
+                if self._s3_client is None:
+                    self._s3_client = boto3.client(
+                        "s3",
+                        endpoint_url=self.s3_endpoint,
+                        aws_access_key_id=self.access_key_id,
+                        aws_secret_access_key=self.secret_access_key,
+                        region_name="auto",
+                    )
+        return self._s3_client
 
     def archive_json(self, key: str, payload: dict) -> str:
         archive_key = validate_archive_key(key)
@@ -37,14 +53,7 @@ class R2Client:
         payload = make_json_safe(payload)
 
         if self._use_remote_backend():
-            client = boto3.client(
-                "s3",
-                endpoint_url=self.s3_endpoint,
-                aws_access_key_id=self.access_key_id,
-                aws_secret_access_key=self.secret_access_key,
-                region_name="auto",
-            )
-            client.put_object(
+            self._remote_client().put_object(
                 Bucket=self.bucket,
                 Key=archive_key.as_posix(),
                 Body=json.dumps(payload, sort_keys=True).encode("utf-8"),
@@ -56,3 +65,23 @@ class R2Client:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(payload, sort_keys=True))
         return archive_uri
+
+    def load_json(self, key: str) -> dict | None:
+        archive_key = validate_archive_key(key)
+        try:
+            if self._use_remote_backend():
+                body = self._remote_client().get_object(
+                    Bucket=self.bucket,
+                    Key=archive_key.as_posix(),
+                )["Body"].read()
+            else:
+                body = (
+                    Path(".tmp")
+                    / "r2"
+                    / self.bucket
+                    / Path(*archive_key.parts)
+                ).read_bytes()
+            payload = json.loads(body)
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
