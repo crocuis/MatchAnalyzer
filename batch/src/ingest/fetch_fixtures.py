@@ -1690,11 +1690,17 @@ def build_lineup_context_by_match(events: list[dict[str, Any]]) -> dict[str, dic
     }
 
 
-def _parse_kickoff(value: str) -> datetime:
+def _parse_kickoff(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value:
+        raise TypeError("kickoff_at must be a datetime or ISO datetime string")
     return datetime.fromisoformat(value)
 
 
 def _parse_optional_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
     if not isinstance(value, str) or not value:
         return None
     return datetime.fromisoformat(value)
@@ -1747,7 +1753,7 @@ def _build_elo_by_team(historical_matches: list[dict[str, Any]], target_kickoff:
             and match.get("kickoff_at")
             and _parse_kickoff(match["kickoff_at"]) < target_kickoff
         ],
-        key=lambda match: match["kickoff_at"],
+        key=lambda match: _parse_kickoff(match["kickoff_at"]),
     )
     for match in eligible_matches:
         home_team_id = match["home_team_id"]
@@ -1790,7 +1796,7 @@ def _build_team_history_metrics(
             and team_id in {match.get("home_team_id"), match.get("away_team_id")}
             and _parse_kickoff(match["kickoff_at"]) < target_kickoff
         ],
-        key=lambda match: match["kickoff_at"],
+        key=lambda match: _parse_kickoff(match["kickoff_at"]),
         reverse=True,
     )
     recent_matches = eligible_matches[:5]
