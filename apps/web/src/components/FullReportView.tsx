@@ -13,6 +13,7 @@ import type {
   ReviewAggregationHistoryResponse,
   TimelineCheckpoint,
 } from "../lib/api";
+import { formatDateTime } from "../lib/dateTime";
 import CheckpointTimeline from "./CheckpointTimeline";
 import MatchOutcomeBoard from "./MatchOutcomeBoard";
 import PostMatchReviewCard from "./PostMatchReviewCard";
@@ -59,7 +60,7 @@ export default function FullReportView({
 }: FullReportViewProps) {
   const { t, i18n } = useTranslation();
 
-  const formattedDate = new Date(match.kickoffAt).toLocaleString(i18n.language, {
+  const formattedDate = formatDateTime(match.kickoffAt, i18n.language, {
     year: "numeric",
     month: "long",
     day: "numeric",

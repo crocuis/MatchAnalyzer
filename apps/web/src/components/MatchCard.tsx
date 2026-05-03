@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { MatchCardRow } from "../lib/api";
+import { formatDateTime } from "../lib/dateTime";
 import {
   resolveMarketEnrichmentStatus,
   resolvePredictionPresentation,
@@ -20,7 +21,7 @@ export default function MatchCard({
 }: MatchCardProps) {
   const { t, i18n } = useTranslation();
 
-  const formattedDate = new Date(match.kickoffAt).toLocaleString(i18n.language, {
+  const formattedDate = formatDateTime(match.kickoffAt, i18n.language, {
     year: "numeric",
     month: "long",
     day: "numeric",

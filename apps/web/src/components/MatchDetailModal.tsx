@@ -7,6 +7,7 @@ import type {
   PredictionSummary,
   TimelineCheckpoint,
 } from "../lib/api";
+import { formatDateTime } from "../lib/dateTime";
 import CheckpointTimeline from "./CheckpointTimeline";
 import MatchOutcomeBoard from "./MatchOutcomeBoard";
 import PredictionCard from "./PredictionCard";
@@ -44,7 +45,7 @@ export default function MatchDetailModal({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const formattedDate = match
-    ? new Date(match.kickoffAt).toLocaleString(i18n.language, {
+    ? formatDateTime(match.kickoffAt, i18n.language, {
         month: "short",
         day: "numeric",
         hour: "2-digit",
