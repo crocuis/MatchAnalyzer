@@ -865,6 +865,30 @@ function pickMarketEnrichedPrediction(
   );
 }
 
+function pickPredictionRowsForSummaryHydration<
+  TPrediction extends { id: string; snapshot_id: string },
+>(
+  sortedPredictions: TPrediction[],
+  snapshots: Array<{ id: string }>,
+) {
+  const selected = new Map<string, TPrediction>();
+  const addPrediction = (prediction: TPrediction | null | undefined) => {
+    if (prediction) {
+      selected.set(prediction.id, prediction);
+    }
+  };
+
+  addPrediction(sortedPredictions[0]);
+
+  for (const snapshot of snapshots) {
+    addPrediction(
+      sortedPredictions.find((prediction) => prediction.snapshot_id === snapshot.id),
+    );
+  }
+
+  return [...selected.values()];
+}
+
 export async function loadPredictionView(
   dbClient: ApiDbClient,
   matchId: string,
@@ -903,18 +927,24 @@ export async function loadPredictionView(
       row,
     ]),
   );
-  const predictionRowsForView = [
-    ...((predictionRows ?? []) as Array<
-      Record<string, any> & { snapshot_id: string; created_at: string | null }
-    >),
-  ];
-  const sortedPredictions = (
+  const predictionRowsForView = ((predictionRows ?? []) as Array<
+    Record<string, any> & { id: string; snapshot_id: string; created_at: string | null }
+  >).sort((left, right) => comparePredictionRows(left, right, snapshotsById));
+  const hydratedPredictionRows =
     await hydratePredictionSummaryPayloadsFromArtifacts(
       dbClient,
       bindings,
-      predictionRowsForView,
-    )
-  ).sort((left, right) => comparePredictionRows(left, right, snapshotsById));
+      pickPredictionRowsForSummaryHydration(
+        predictionRowsForView,
+        (snapshotRows ?? []) as Array<{ id: string }>,
+      ),
+    );
+  const hydratedPredictionsById = new Map(
+    hydratedPredictionRows.map((prediction) => [prediction.id, prediction]),
+  );
+  const sortedPredictions = predictionRowsForView.map(
+    (prediction) => hydratedPredictionsById.get(prediction.id) ?? prediction,
+  );
 
   const latestPrediction = sortedPredictions[0] ?? null;
   const marketEnrichedPrediction = pickMarketEnrichedPrediction(
