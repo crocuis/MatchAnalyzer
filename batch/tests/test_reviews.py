@@ -2514,7 +2514,8 @@ def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):
     assert feature_snapshot["checkpoint_type"] == "T_MINUS_24H"
     assert feature_snapshot["feature_context"] == prediction["summary_payload"]["feature_context"]
     assert feature_snapshot["feature_metadata"] == prediction["summary_payload"]["feature_metadata"]
-    assert feature_snapshot["source_metadata"] == prediction["summary_payload"]["source_metadata"]
+    assert "source_metadata" not in feature_snapshot
+    assert "source_metadata" in prediction["summary_payload"]
     assert prediction["summary_payload"]["feature_context"]["prediction_market_available"] is True
 
 
