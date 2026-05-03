@@ -1302,6 +1302,7 @@ describe("dashboard redesign", () => {
     const matchDetailDialog = screen.getByRole("dialog", { name: "Inter vs Bayern Munich" });
     expect(within(matchDetailDialog).getByAltText("Inter crest")).toBeInTheDocument();
     expect(within(matchDetailDialog).getByAltText("Bayern Munich crest")).toBeInTheDocument();
+    expect(await within(matchDetailDialog).findByText("71%")).toBeInTheDocument();
   });
 
   it("keeps the daily picks modal open when closing a detail opened from it", async () => {

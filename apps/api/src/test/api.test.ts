@@ -6281,6 +6281,72 @@ describe("prediction API", () => {
     expect(page.items[0]?.noBetReason).toBe("low_confidence");
   });
 
+  it("holds dashboard recommendation badges behind the daily pick reliability gate", async () => {
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            match_count: 1,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "match-1",
+            league_id: "premier-league",
+            league_label: "Premier League",
+            home_team: "Liverpool",
+            away_team: "Brentford",
+            kickoff_at: "2026-04-27T21:00:00Z",
+            representative_recommended_pick: "HOME",
+            representative_confidence_score: 0.68,
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.68,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            confidence_reliability: "insufficient_sample",
+            high_confidence_eligible: false,
+            has_prediction: true,
+            needs_review: false,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
+
+    const page = await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+    });
+
+    expect(page.items[0]?.mainRecommendation).toEqual({
+      pick: "HOME",
+      confidence: 0.68,
+      recommended: false,
+      noBetReason: "insufficient_sample",
+    });
+    expect(page.items[0]?.noBetReason).toBe("insufficient_sample");
+  });
+
   it("prefers the most recent prediction in the detail view when rows share a checkpoint", async () => {
     const predictionsQuery = {
       select: vi.fn().mockReturnThis(),

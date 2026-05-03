@@ -30,6 +30,7 @@ export interface MatchCardRow extends MatchRow {
   mainRecommendation?: MainRecommendation | null;
   valueRecommendation?: ValueRecommendation | null;
   variantMarkets?: VariantMarket[];
+  dailyPickContext?: DailyPickContext | null;
   noBetReason?: string | null;
   explanationPayload?: PredictionExplanationPayload;
   needsReview: boolean;
@@ -389,6 +390,14 @@ export interface LeaguePredictionSummary {
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
 export type DailyPickStatus = "recommended" | "held" | "pending" | "hit" | "miss" | "void";
+
+export interface DailyPickContext {
+  marketFamily: DailyPickMarketFamily;
+  selectionLabel: string;
+  confidence: number | null;
+  status: DailyPickStatus;
+  noBetReason: string | null;
+}
 
 export interface DailyPickItem {
   id: string;
