@@ -31,6 +31,7 @@ jobs:
     env:
       DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      MATCH_ANALYZER_MIGRATION_BASELINE_VERSION: ${{ vars.MATCH_ANALYZER_MIGRATION_BASELINE_VERSION }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_PAGES_PROJECT_NAME: ${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
@@ -70,11 +71,12 @@ jobs:
       - name: Smoke check Neon database
         run: |
           python3 - <<'PY'
-          from batch.src.settings import load_settings, settings_db_url
+          import os
+
           from batch.src.storage.db_client import DbClient
 
-          settings = load_settings()
-          client = DbClient(settings_db_url(settings), "")
+          database_url = os.environ["DATABASE_URL"]
+          client = DbClient(database_url, "")
           rows = client.read_rows("matches", ("id",))
           if not rows:
               raise SystemExit("Neon DATABASE_URL is reachable, but public.matches is empty")

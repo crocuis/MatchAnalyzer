@@ -2,6 +2,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = REPO_ROOT / "scripts" / "apply_postgres_migrations.py"
@@ -28,12 +30,23 @@ def test_discovers_ordered_supabase_sql_migrations() -> None:
     assert migrations == sorted(migrations, key=lambda migration: migration.filename)
 
 
-def test_baseline_anchor_relations_cover_current_runtime_schema() -> None:
+def test_selects_only_migrations_through_known_baseline_version() -> None:
     runner = load_runner()
+    migrations = runner.discover_migrations(REPO_ROOT / "supabase" / "migrations")
 
-    assert runner.BASELINE_ANCHOR_RELATIONS == (
-        "public.matches",
-        "public.predictions",
-        "public.match_card_projection_cache",
-        "public.daily_pick_items",
+    baseline = runner.migrations_through_baseline(
+        migrations,
+        "202604260002_daily_pick_performance",
     )
+
+    assert baseline[0].filename == "202604180001_initial_schema.sql"
+    assert baseline[-1].filename == "202604260002_daily_pick_performance.sql"
+    assert len(baseline) < len(migrations)
+
+
+def test_rejects_unknown_migration_baseline_version() -> None:
+    runner = load_runner()
+    migrations = runner.discover_migrations(REPO_ROOT / "supabase" / "migrations")
+
+    with pytest.raises(ValueError, match="Unknown migration baseline version"):
+        runner.migrations_through_baseline(migrations, "99999999999999_missing")

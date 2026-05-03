@@ -49,6 +49,8 @@
 
    `deploy-production`은 Supabase CLI 대신 `scripts/apply_postgres_migrations.py`를 실행한다.
    이 스크립트는 `supabase/migrations/*.sql`을 Postgres에 파일명 순서대로 적용하고 `public.match_analyzer_schema_migrations`에 적용 이력을 기록한다.
+   이미 복원된 DB에 ledger가 없으면 자동으로 모든 migration을 적용 완료 처리하지 않는다.
+   복원본의 마지막 적용 migration을 확인한 경우에만 `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION` variable을 설정해 그 version까지 baseline 처리한다.
    `DATABASE_URL`을 Cloudflare Worker secret으로 주입하기 전에 migration과 Neon DB smoke check를 수행하고, 배포 후 API endpoint smoke check를 수행한다.
 
 9. Cloudflare R2를 실제로 연결할 경우 아래 값을 추가한다.

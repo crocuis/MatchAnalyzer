@@ -189,8 +189,10 @@ def test_deploy_production_workflow_waits_for_main_ci_and_runs_ordered_deploy_st
     assert "npm install" in workflow
     assert "npm ci" not in workflow
     assert "Apply Postgres migrations" in workflow
+    assert "MATCH_ANALYZER_MIGRATION_BASELINE_VERSION" in workflow
     assert "python3 scripts/apply_postgres_migrations.py" in workflow
     assert "Smoke check Neon database" in workflow
+    assert "load_settings()" not in workflow
     assert "wrangler secret put DATABASE_URL" in workflow
     assert "supabase db push" not in workflow
     assert "npm run deploy:api" in workflow

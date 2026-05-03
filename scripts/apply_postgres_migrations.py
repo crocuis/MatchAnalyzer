@@ -11,12 +11,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MIGRATIONS_DIR = REPO_ROOT / "supabase" / "migrations"
 LEDGER_TABLE = "public.match_analyzer_schema_migrations"
-BASELINE_ANCHOR_RELATIONS = (
-    "public.matches",
-    "public.predictions",
-    "public.match_card_projection_cache",
-    "public.daily_pick_items",
-)
 
 
 @dataclass(frozen=True)
@@ -77,10 +71,6 @@ def has_existing_schema(cursor) -> bool:
     return relation_exists(cursor, "public.matches")
 
 
-def baseline_schema_is_complete(cursor) -> bool:
-    return all(relation_exists(cursor, relation) for relation in BASELINE_ANCHOR_RELATIONS)
-
-
 def validate_checksums(applied: dict[str, str], migrations: list[Migration]) -> None:
     known = {migration.version: migration for migration in migrations}
     for version, applied_checksum in applied.items():
@@ -94,14 +84,30 @@ def validate_checksums(applied: dict[str, str], migrations: list[Migration]) -> 
             )
 
 
-def baseline_existing_schema(cursor, migrations: list[Migration]) -> None:
+def migrations_through_baseline(
+    migrations: list[Migration],
+    baseline_version: str,
+) -> list[Migration]:
+    selected = [migration for migration in migrations if migration.version <= baseline_version]
+    if not selected or selected[-1].version != baseline_version:
+        raise ValueError(f"Unknown migration baseline version: {baseline_version}")
+    return selected
+
+
+def record_known_baseline_migrations(
+    cursor,
+    known_baseline_migrations: list[Migration],
+) -> None:
     cursor.executemany(
         """
         insert into public.match_analyzer_schema_migrations (version, filename, checksum)
         values (%s, %s, %s)
         on conflict (version) do nothing
         """,
-        [(migration.version, migration.filename, migration.checksum) for migration in migrations],
+        [
+            (migration.version, migration.filename, migration.checksum)
+            for migration in known_baseline_migrations
+        ],
     )
 
 
@@ -120,7 +126,12 @@ def apply_migration(conn, migration: Migration) -> None:
             )
 
 
-def run(database_url: str, migrations_dir: Path, dry_run: bool) -> int:
+def run(
+    database_url: str,
+    migrations_dir: Path,
+    dry_run: bool,
+    baseline_version: str | None = None,
+) -> int:
     try:
         import psycopg
     except ModuleNotFoundError as exc:
@@ -136,19 +147,25 @@ def run(database_url: str, migrations_dir: Path, dry_run: bool) -> int:
             validate_checksums(applied, migrations)
 
             if not applied and has_existing_schema(cursor):
-                if not baseline_schema_is_complete(cursor):
+                if not baseline_version:
                     raise RuntimeError(
-                        "Existing schema detected but baseline anchors are incomplete. "
-                        "Refusing to replay non-idempotent initial migrations."
+                        "Existing schema detected without a migration ledger. "
+                        "Set MATCH_ANALYZER_MIGRATION_BASELINE_VERSION to the known latest "
+                        "migration included in the restored database, or create the ledger manually."
                     )
+                baseline_migrations = migrations_through_baseline(migrations, baseline_version)
                 if dry_run:
                     print(
-                        f"Would baseline {len(migrations)} migrations for existing Postgres schema."
+                        f"Would baseline {len(baseline_migrations)} migrations through "
+                        f"{baseline_version} for existing Postgres schema."
                     )
-                    return 0
-                baseline_existing_schema(cursor, migrations)
-                print(f"Baselined {len(migrations)} migrations for existing Postgres schema.")
-                return 0
+                else:
+                    record_known_baseline_migrations(cursor, baseline_migrations)
+                    print(
+                        f"Baselined {len(baseline_migrations)} migrations through "
+                        f"{baseline_version} for existing Postgres schema."
+                    )
+                applied = read_applied_migrations(cursor)
 
         pending = [migration for migration in migrations if migration.version not in applied]
         if dry_run:
@@ -176,6 +193,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Print pending migration actions without changing the database.",
     )
+    parser.add_argument(
+        "--baseline-version",
+        default=os.environ.get("MATCH_ANALYZER_MIGRATION_BASELINE_VERSION", ""),
+        help=(
+            "Known latest migration already present in an existing restored database. "
+            "Only migrations through this version are marked as applied before newer SQL runs."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -184,7 +209,12 @@ def main(argv: list[str] | None = None) -> int:
     database_url = os.environ.get("DATABASE_URL") or os.environ.get("NEON_DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL or NEON_DATABASE_URL is required.")
-    return run(database_url, Path(args.migrations_dir), args.dry_run)
+    return run(
+        database_url,
+        Path(args.migrations_dir),
+        args.dry_run,
+        baseline_version=args.baseline_version or None,
+    )
 
 
 if __name__ == "__main__":

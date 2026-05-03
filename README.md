@@ -257,7 +257,8 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 
 운영 배포는 GitHub secret `DATABASE_URL`을 Neon/Postgres 연결 문자열로 사용한다.
 `deploy-production`은 `scripts/apply_postgres_migrations.py`로 `supabase/migrations/*.sql`을 파일명 순서대로 적용한 뒤 Neon smoke check를 수행하고, Cloudflare Worker secret에 `DATABASE_URL`을 주입한다.
-이미 Supabase dump/restore로 현재 스키마가 반영된 DB는 runtime anchor table이 모두 존재할 때 migration ledger를 baseline으로 채택하고, 이후 새 migration부터 적용한다.
+이미 Supabase dump/restore로 스키마가 반영된 DB는 ledger가 없으면 자동 baseline 처리하지 않는다.
+복원본에 포함된 마지막 migration을 확인한 뒤 production variable `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION`에 그 version을 설정하면, runner가 해당 version까지만 ledger에 표시하고 이후 migration은 실제로 적용한다.
 
 필수 production secret:
 
@@ -271,6 +272,7 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 
 - `OPERATIONAL_REPORTS_API_KEY`
 - `MATCH_ANALYZER_ARTIFACT_BASE_URL`
+- `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION`
 
 ## 테스트
 

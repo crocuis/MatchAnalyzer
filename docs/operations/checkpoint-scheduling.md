@@ -21,6 +21,7 @@
 
 현재 GitHub Actions 자동화는 Neon/Postgres `DATABASE_URL`을 기준으로 실행한다.
 스키마 변경은 `deploy-production`에서 `scripts/apply_postgres_migrations.py`를 통해 `supabase/migrations/*.sql`을 ledger 기반으로 적용한 뒤 배치와 API 배포를 진행한다.
+ledger가 없는 기존 복원 DB는 명시적인 `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION` 없이 자동 baseline 처리하지 않는다.
 
 # Polymarket 운영 메모
 
