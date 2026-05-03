@@ -112,6 +112,10 @@ def parse_market_checkpoint_types(value: str | None) -> tuple[str, ...]:
 
 
 def parse_iso_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
     raw_value = str(value or "").strip()
     if not raw_value:
         return None
@@ -155,9 +159,9 @@ def select_real_market_snapshots(
         if str(snapshot.get("checkpoint_type") or "") not in allowed_checkpoints:
             continue
         match = matches_by_id.get(snapshot["match_id"])
-        if not match or not match.get("kickoff_at", "").startswith(target_date):
+        kickoff_at = parse_iso_datetime(match.get("kickoff_at") if match else None)
+        if not match or kickoff_at is None or kickoff_at.date().isoformat() != target_date:
             continue
-        kickoff_at = parse_iso_datetime(match.get("kickoff_at"))
         captured_at = parse_iso_datetime(snapshot.get("captured_at"))
         if kickoff_at is not None and captured_at is not None and captured_at > kickoff_at:
             continue
