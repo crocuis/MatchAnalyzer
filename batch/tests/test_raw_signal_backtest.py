@@ -1,6 +1,8 @@
 from batch.src.model.raw_signal_backtest import (
     _is_daily_pick_candidate,
     build_raw_moneyline_rows,
+    summarize_daily_pick_holdout,
+    summarize_daily_pick_holdout_scan,
     summarize_raw_moneyline_backtest,
 )
 
@@ -1119,6 +1121,82 @@ def test_daily_pick_expansion_diagnostics_rank_weak_segment_frontier():
     assert frontier[0]["diagnostic_only"] is True
 
 
+def test_daily_pick_expansion_diagnostics_recommends_multi_segment_pruning():
+    rows = []
+    for index in range(269):
+        weak_bookmaker = index < 10
+        weak_competition = 10 <= index < 19
+        hit = 1
+        if weak_bookmaker:
+            hit = 1 if index < 2 else 0
+        elif weak_competition:
+            hit = 1 if index < 13 else 0
+        elif index >= 219:
+            hit = 0
+        rows.append(
+            {
+                "date": f"2026-04-{(index % 28) + 1:02d}",
+                "adjusted_hit": hit,
+                "prequential_hit": hit,
+                "pick": "HOME",
+                "prequential_quality_candidate": False,
+                "external_signal_source_summary": "clubelo+understat",
+                "checkpoint": "T_MINUS_24H",
+                "external_rating_available": 1,
+                "understat_xg_available": 1,
+                "football_data_match_stats_available": 1,
+                "competition_id": (
+                    "champions-league" if weak_competition else "premier-league"
+                ),
+                "confidence": 0.72,
+                "signal_score": -5.0,
+                "source_agreement_ratio": 0.67,
+                "max_abs_divergence": 0.03,
+                "probability_favorite_probability": 0.7,
+                "probability_favorite_margin": (
+                    0.45 if weak_bookmaker else 0.6 if weak_competition else 0.2
+                ),
+                "bookmaker_available": not weak_bookmaker,
+                "rolling_ppg_delta": 1.5 if weak_bookmaker else 0.0,
+                "rolling_venue_ppg_delta": 1.0 if weak_bookmaker else 0.0,
+                "base_model_source": "trained_baseline_poisson_blend",
+            }
+        )
+
+    summary = summarize_raw_moneyline_backtest(rows)
+
+    recommendation = summary["daily_pick_expansion_diagnostics"][
+        "pruning_recommendation"
+    ]
+    assert recommendation["target_reached"] is True
+    assert recommendation["removed_sample_count"] == 19
+    assert recommendation["removed_miss_count"] == 14
+    assert recommendation["final_summary"] == {
+        "evaluated_bets": 250,
+        "evaluated_days": 28,
+        "hit_count": 200,
+        "live_betting_hit_rate": 0.8,
+        "wilson_lower_bound": 0.746,
+        "coverage": 0.9294,
+    }
+    assert recommendation["removed_segments"] == [
+        {
+            "segment": {"bookmaker_available": False},
+            "sample_count": 10,
+            "hit_count": 2,
+            "miss_count": 8,
+            "hit_rate": 0.2,
+        },
+        {
+            "segment": {"competition_id": "champions-league"},
+            "sample_count": 9,
+            "hit_count": 3,
+            "miss_count": 6,
+            "hit_rate": 0.3333,
+        },
+    ]
+
+
 def test_daily_pick_reliability_holds_when_hit_rate_is_weak():
     rows = [
         {
@@ -1184,3 +1262,372 @@ def test_summarize_raw_moneyline_backtest_can_select_strong_home_form():
 
     assert summary["best_by_minimum_sample"]["10"]["live_betting_hit_rate"] == 0.8
     assert summary["best_by_minimum_sample"]["10"]["threshold"]["rolling_form"] == "strong_home"
+
+
+def test_summarize_daily_pick_holdout_flags_current_fit_risk_when_holdout_drops():
+    rows = [
+        {
+            "date": f"2026-04-{(index % 30) + 1:02d}",
+            "prequential_hit": 1 if index < 240 else 0,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(300)
+    ]
+    rows.extend(
+        {
+            "date": f"2026-05-{(index % 10) + 1:02d}",
+            "prequential_hit": 1 if index < 55 else 0,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(100)
+    )
+
+    summary = summarize_daily_pick_holdout(
+        rows,
+        holdout_start_date="2026-05-01",
+    )
+
+    assert summary["training"]["evaluated_bets"] == 300
+    assert summary["training"]["live_betting_hit_rate"] == 0.8
+    assert summary["holdout"]["evaluated_bets"] == 100
+    assert summary["holdout"]["live_betting_hit_rate"] == 0.55
+    assert summary["hit_rate_delta"] == -0.25
+    assert summary["current_data_fit_risk"] == "elevated"
+
+
+def test_summarize_daily_pick_holdout_reports_pruning_validation_readiness_gaps():
+    rows = [
+        {
+            "date": f"2026-03-{(index % 30) + 1:02d}",
+            "prequential_hit": 1 if index < 191 else 0,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(247)
+    ]
+    rows.extend(
+        {
+            "date": f"2026-04-{(index % 10) + 1:02d}",
+            "prequential_hit": 1 if index < 13 else 0,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(22)
+    )
+
+    summary = summarize_daily_pick_holdout(
+        rows,
+        holdout_start_date="2026-04-01",
+    )
+
+    validation = summary["pruning_validation"]
+    assert validation["validation_status"] == "insufficient_training_and_holdout"
+    assert validation["sample_readiness"] == {
+        "training_sample_count": 247,
+        "minimum_training_sample_count": 250,
+        "training_sample_shortfall": 3,
+        "holdout_sample_count": 22,
+        "minimum_holdout_sample_count": 50,
+        "holdout_sample_shortfall": 28,
+        "ready_for_pruning_validation": False,
+    }
+
+
+def test_summarize_daily_pick_holdout_validates_training_pruning_on_holdout():
+    rows = []
+    for index in range(269):
+        weak_bookmaker = index < 10
+        weak_competition = 10 <= index < 19
+        hit = 1
+        if weak_bookmaker:
+            hit = 1 if index < 2 else 0
+        elif weak_competition:
+            hit = 1 if index < 13 else 0
+        elif index >= 219:
+            hit = 0
+        rows.append(
+            {
+                "date": f"2026-04-{(index % 28) + 1:02d}",
+                "prequential_hit": hit,
+                "pick": "HOME",
+                "checkpoint": "T_MINUS_24H",
+                "external_rating_available": 1,
+                "understat_xg_available": 1,
+                "football_data_match_stats_available": 1,
+                "competition_id": (
+                    "champions-league" if weak_competition else "premier-league"
+                ),
+                "confidence": 0.72,
+                "signal_score": -5.0,
+                "source_agreement_ratio": 0.67,
+                "max_abs_divergence": 0.03,
+                "probability_favorite_probability": 0.7,
+                "probability_favorite_margin": (
+                    0.45 if weak_bookmaker else 0.6 if weak_competition else 0.2
+                ),
+                "bookmaker_available": not weak_bookmaker,
+                "rolling_ppg_delta": 1.5 if weak_bookmaker else 0.0,
+                "rolling_venue_ppg_delta": 1.0 if weak_bookmaker else 0.0,
+                "base_model_source": "trained_baseline_poisson_blend",
+            }
+        )
+    for index in range(100):
+        weak_bookmaker = index < 10
+        weak_competition = 10 <= index < 20
+        hit = 1
+        if weak_bookmaker:
+            hit = 1 if index < 2 else 0
+        elif weak_competition:
+            hit = 1 if index < 13 else 0
+        elif index >= 84:
+            hit = 0
+        rows.append(
+            {
+                "date": f"2026-05-{(index % 10) + 1:02d}",
+                "prequential_hit": hit,
+                "pick": "HOME",
+                "checkpoint": "T_MINUS_24H",
+                "external_rating_available": 1,
+                "understat_xg_available": 1,
+                "football_data_match_stats_available": 1,
+                "competition_id": (
+                    "champions-league" if weak_competition else "premier-league"
+                ),
+                "confidence": 0.72,
+                "signal_score": -5.0,
+                "source_agreement_ratio": 0.67,
+                "max_abs_divergence": 0.03,
+                "probability_favorite_probability": 0.7,
+                "probability_favorite_margin": (
+                    0.45 if weak_bookmaker else 0.6 if weak_competition else 0.2
+                ),
+                "bookmaker_available": not weak_bookmaker,
+                "rolling_ppg_delta": 1.5 if weak_bookmaker else 0.0,
+                "rolling_venue_ppg_delta": 1.0 if weak_bookmaker else 0.0,
+                "base_model_source": "trained_baseline_poisson_blend",
+            }
+        )
+
+    summary = summarize_daily_pick_holdout(
+        rows,
+        holdout_start_date="2026-05-01",
+    )
+
+    validation = summary["pruning_validation"]
+    assert validation["diagnostic_only"] is True
+    assert validation["validation_status"] == "improves_holdout"
+    assert validation["training_pruning"]["target_reached"] is True
+    assert validation["training_after_pruning"]["live_betting_hit_rate"] == 0.8
+    assert validation["holdout"]["live_betting_hit_rate"] == 0.69
+    assert validation["holdout_after_pruning"]["evaluated_bets"] == 80
+    assert validation["holdout_after_pruning"]["hit_count"] == 64
+    assert validation["holdout_after_pruning"]["live_betting_hit_rate"] == 0.8
+    assert validation["holdout_hit_rate_lift"] == 0.11
+    assert validation["holdout_removed_sample_count"] == 20
+
+
+def test_summarize_daily_pick_holdout_scan_compacts_monthly_candidates():
+    rows = [
+        {
+            "date": f"2026-01-{(index % 28) + 1:02d}",
+            "prequential_hit": 1,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(260)
+    ]
+    rows.extend(
+        {
+            "date": f"2026-02-{(index % 20) + 1:02d}",
+            "prequential_hit": 1 if index < 40 else 0,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(60)
+    )
+    rows.extend(
+        {
+            "date": f"2026-03-{(index % 10) + 1:02d}",
+            "prequential_hit": 1,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+        for index in range(10)
+    )
+
+    scan = summarize_daily_pick_holdout_scan(rows)
+
+    assert scan["candidate_count"] == 2
+    assert scan["ready_candidate_count"] == 1
+    assert scan["best_ready"]["holdout_start_date"] == "2026-02-01"
+    assert scan["next_live_candidate"]["holdout_start_date"] == "2026-03-01"
+    assert scan["next_live_candidate"]["holdout_sample_shortfall"] == 40
+    assert scan["fixed_window_blockers"] == []
+    assert scan["next_action"] == {
+        "action": "review_ready_window",
+        "holdout_start_date": "2026-02-01",
+    }
+    assert scan["candidates"] == [
+        {
+            "holdout_start_date": "2026-02-01",
+            "training_sample_count": 260,
+            "training_hit_rate": 1.0,
+            "holdout_sample_count": 70,
+            "holdout_hit_rate": 0.7143,
+            "hit_rate_delta": -0.2857,
+            "current_data_fit_risk": "elevated",
+            "pruning_validation_status": "no_training_pruning_segments",
+            "ready_for_pruning_validation": True,
+            "training_sample_shortfall": 0,
+            "holdout_sample_shortfall": 0,
+            "total_sample_shortfall": 0,
+            "training_pruning_target_reached": True,
+            "training_pruning_removed_sample_count": 0,
+            "holdout_hit_rate_lift": 0.0,
+            "holdout_removed_sample_count": 0,
+        },
+        {
+            "holdout_start_date": "2026-03-01",
+            "training_sample_count": 320,
+            "training_hit_rate": 0.9375,
+            "holdout_sample_count": 10,
+            "holdout_hit_rate": 1.0,
+            "hit_rate_delta": 0.0625,
+            "current_data_fit_risk": "insufficient_holdout",
+            "pruning_validation_status": "insufficient_holdout",
+            "ready_for_pruning_validation": False,
+            "training_sample_shortfall": 0,
+            "holdout_sample_shortfall": 40,
+            "total_sample_shortfall": 40,
+            "training_pruning_target_reached": True,
+            "training_pruning_removed_sample_count": 0,
+            "holdout_hit_rate_lift": 0.0,
+            "holdout_removed_sample_count": 0,
+        },
+    ]
+
+
+def test_summarize_daily_pick_holdout_scan_reports_closest_candidate_when_none_ready():
+    def row(date: str, hit: int) -> dict:
+        return {
+            "date": date,
+            "prequential_hit": hit,
+            "checkpoint": "T_MINUS_24H",
+            "external_rating_available": 1,
+            "understat_xg_available": 0,
+            "football_data_match_stats_available": 0,
+            "competition_id": "premier-league",
+            "confidence": 0.75,
+            "signal_score": 6.0,
+            "source_agreement_ratio": 1.0,
+            "max_abs_divergence": 0.0,
+            "base_model_source": "trained_baseline",
+        }
+
+    rows = [
+        row(f"2026-01-{(index % 28) + 1:02d}", 1 if index < 170 else 0)
+        for index in range(217)
+    ]
+    rows.extend(
+        row(f"2026-02-{(index % 20) + 1:02d}", 1 if index < 21 else 0)
+        for index in range(30)
+    )
+    rows.extend(
+        row(f"2026-03-{(index % 20) + 1:02d}", 1 if index < 13 else 0)
+        for index in range(22)
+    )
+    rows.extend(
+        row("2026-04-01", 0)
+        for _index in range(1)
+    )
+
+    scan = summarize_daily_pick_holdout_scan(rows)
+
+    assert scan["ready_candidate_count"] == 0
+    assert scan["best_ready"] is None
+    assert scan["closest_to_ready"]["holdout_start_date"] == "2026-03-01"
+    assert scan["closest_to_ready"]["training_sample_shortfall"] == 3
+    assert scan["closest_to_ready"]["holdout_sample_shortfall"] == 27
+    assert scan["closest_to_ready"]["total_sample_shortfall"] == 30
+    assert scan["next_live_candidate"]["holdout_start_date"] == "2026-04-01"
+    assert scan["next_live_candidate"]["training_sample_shortfall"] == 0
+    assert scan["next_live_candidate"]["holdout_sample_shortfall"] == 49
+    assert scan["fixed_window_blockers"] == [
+        {
+            "holdout_start_date": "2026-03-01",
+            "training_sample_shortfall": 3,
+            "holdout_sample_shortfall": 27,
+            "total_sample_shortfall": 30,
+            "resolution": "backfill_or_shift_training_window",
+        },
+        {
+            "holdout_start_date": "2026-02-01",
+            "training_sample_shortfall": 33,
+            "holdout_sample_shortfall": 0,
+            "total_sample_shortfall": 33,
+            "resolution": "backfill_or_shift_training_window",
+        },
+    ]
+    assert scan["next_action"] == {
+        "action": "wait_for_live_holdout_samples",
+        "holdout_start_date": "2026-04-01",
+        "holdout_sample_shortfall": 49,
+    }

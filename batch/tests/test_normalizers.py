@@ -102,7 +102,7 @@ from batch.src.jobs.run_predictions_job import (
 from batch.src.jobs.cleanup_out_of_scope_job import build_cleanup_plan
 from batch.src.settings import load_settings
 from batch.src.storage.r2_client import R2Client
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def test_normalize_team_name_collapses_aliases():
@@ -2536,6 +2536,9 @@ def test_build_lineup_context_by_match_uses_competition_aware_missing_players(
 
 
 def test_load_settings_reads_required_environment_variables(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("NEON_DATABASE_URL", raising=False)
+    monkeypatch.delenv("NEON_DEVELOPMENT_DATABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
@@ -5343,24 +5346,24 @@ def test_r2_client_rejects_path_traversal(tmp_path, monkeypatch):
         client.archive_json("../escape.json", {"match": "match_001"})
 
 
-def test_supabase_client_persists_rows_locally(tmp_path, monkeypatch):
+def test_db_client_persists_rows_locally(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    client = SupabaseClient("https://example.supabase.co", "service-key")
+    client = DbClient("https://example.supabase.co", "service-key")
 
     inserted = client.upsert_rows("matches", [{"id": "match_001"}])
 
     assert inserted == 1
-    stored_files = list(Path(".tmp/supabase").rglob("matches.json"))
+    stored_files = list(Path(".tmp/db-client").rglob("matches.json"))
     assert len(stored_files) == 1
     assert json.loads(stored_files[0].read_text()) == [{"id": "match_001"}]
 
 
-def test_supabase_client_preserves_existing_local_fields_when_row_omits_them(
+def test_db_client_preserves_existing_local_fields_when_row_omits_them(
     tmp_path,
     monkeypatch,
 ):
     monkeypatch.chdir(tmp_path)
-    client = SupabaseClient("https://example.supabase.co", "service-key")
+    client = DbClient("https://example.supabase.co", "service-key")
 
     client.upsert_rows(
         "teams",
@@ -5382,7 +5385,7 @@ def test_supabase_client_preserves_existing_local_fields_when_row_omits_them(
         ],
     )
 
-    stored_files = list(Path(".tmp/supabase").rglob("teams.json"))
+    stored_files = list(Path(".tmp/db-client").rglob("teams.json"))
     assert len(stored_files) == 1
     assert json.loads(stored_files[0].read_text()) == [
         {
@@ -5393,16 +5396,16 @@ def test_supabase_client_preserves_existing_local_fields_when_row_omits_them(
     ]
 
 
-def test_supabase_client_rejects_invalid_table_name(tmp_path, monkeypatch):
+def test_db_client_rejects_invalid_table_name(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    client = SupabaseClient("https://example.supabase.co", "service-key")
+    client = DbClient("https://example.supabase.co", "service-key")
 
     with pytest.raises(ValueError, match="single relative identifier"):
         client.upsert_rows("../matches", [{"id": "match_001"}])
 
 
-def test_supabase_client_retries_without_unknown_schema_cache_column(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_retries_without_unknown_schema_cache_column(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     captured_payloads: list[list[dict]] = []
 
     class FakeResponse:
@@ -5433,7 +5436,7 @@ def test_supabase_client_retries_without_unknown_schema_cache_column(monkeypatch
             )
         return FakeResponse()
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     inserted = client.upsert_rows(
         "market_probabilities",
@@ -5452,8 +5455,8 @@ def test_supabase_client_retries_without_unknown_schema_cache_column(monkeypatch
     assert "away_price" not in captured_payloads[1][0]
 
 
-def test_supabase_client_retries_transient_upsert_url_errors(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_retries_transient_upsert_url_errors(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     attempts = 0
 
     class FakeResponse:
@@ -5476,7 +5479,7 @@ def test_supabase_client_retries_transient_upsert_url_errors(monkeypatch):
             raise URLError("transient ssl eof")
         return FakeResponse()
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     inserted = client.upsert_rows("daily_pick_items", [{"id": "item-1"}])
 
@@ -5484,8 +5487,8 @@ def test_supabase_client_retries_transient_upsert_url_errors(monkeypatch):
     assert attempts == 2
 
 
-def test_supabase_client_retries_through_multiple_schema_cache_column_misses(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_retries_through_multiple_schema_cache_column_misses(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     captured_payloads: list[list[dict]] = []
     missing_columns = ["market_family", "home_price", "draw_price", "away_price"]
 
@@ -5523,7 +5526,7 @@ def test_supabase_client_retries_through_multiple_schema_cache_column_misses(mon
             )
         return FakeResponse()
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     inserted = client.upsert_rows(
         "market_probabilities",
@@ -5552,8 +5555,8 @@ def test_supabase_client_retries_through_multiple_schema_cache_column_misses(mon
     assert "away_price" not in captured_payloads[4][0]
 
 
-def test_supabase_client_normalizes_sparse_bulk_upsert_rows(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_normalizes_sparse_bulk_upsert_rows(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     captured_payloads: list[list[dict]] = []
 
     class FakeResponse:
@@ -5574,7 +5577,7 @@ def test_supabase_client_normalizes_sparse_bulk_upsert_rows(monkeypatch):
         captured_payloads.append(json.loads(request.data.decode("utf-8")))
         return FakeResponse()
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     inserted = client.upsert_rows(
         "teams",
@@ -5616,8 +5619,8 @@ def test_supabase_client_normalizes_sparse_bulk_upsert_rows(monkeypatch):
     ]
 
 
-def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_reads_remote_rows_across_pages(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     requests: list[tuple[str, str | None]] = []
 
     class FakeResponse:
@@ -5643,7 +5646,7 @@ def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
             return FakeResponse([{"id": "match_1000"}, {"id": "match_1001"}])
         raise AssertionError(f"unexpected range: {request.headers.get('Range')}")
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     rows = client.read_rows("matches")
 
@@ -5654,8 +5657,8 @@ def test_supabase_client_reads_remote_rows_across_pages(monkeypatch):
     ]
 
 
-def test_supabase_client_uses_default_projection_for_heavy_prediction_tables(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_uses_default_projection_for_heavy_prediction_tables(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     requested_urls: list[str] = []
 
     class FakeResponse:
@@ -5675,7 +5678,7 @@ def test_supabase_client_uses_default_projection_for_heavy_prediction_tables(mon
         requested_urls.append(request.full_url)
         return FakeResponse()
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     rows = client.read_rows("predictions")
 
@@ -5686,8 +5689,8 @@ def test_supabase_client_uses_default_projection_for_heavy_prediction_tables(mon
     assert "variant_markets_summary" in requested_urls[0]
 
 
-def test_supabase_client_reads_rows_by_values_with_filtered_projection(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_reads_rows_by_values_with_filtered_projection(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
     requested_urls: list[str] = []
 
     class FakeResponse:
@@ -5709,7 +5712,7 @@ def test_supabase_client_reads_rows_by_values_with_filtered_projection(monkeypat
         requested_urls.append(request.full_url)
         return FakeResponse()
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     rows = client.read_rows_by_values(
         "daily_pick_items",
@@ -5725,8 +5728,8 @@ def test_supabase_client_reads_rows_by_values_with_filtered_projection(monkeypat
     assert "order=id.asc" in requested_urls[0]
 
 
-def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
-    client = SupabaseClient("https://project.supabase.co", "service-key")
+def test_db_client_reads_unordered_view_without_id(monkeypatch):
+    client = DbClient("https://project.supabase.co", "service-key")
 
     class FakeResponse:
         def __init__(self, payload: list[dict], status: int = 200) -> None:
@@ -5756,7 +5759,7 @@ def test_supabase_client_reads_unordered_view_without_id(monkeypatch):
             )
         return FakeResponse([{"league_id": "bundesliga", "match_count": 25}])
 
-    monkeypatch.setattr("batch.src.storage.supabase_client.urlopen", fake_urlopen)
+    monkeypatch.setattr("batch.src.storage.db_client.urlopen", fake_urlopen)
 
     rows = client.read_rows("dashboard_league_summaries")
 
@@ -5932,7 +5935,7 @@ def test_ingest_markets_job_skips_optional_market_variants_table(monkeypatch, ca
             return len(rows)
 
     monkeypatch.delenv("REAL_MARKET_DATE", raising=False)
-    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.DbClient", FakeClient)
     monkeypatch.setattr(
         "batch.src.jobs.ingest_markets_job.load_settings",
         lambda: type(
@@ -6007,7 +6010,7 @@ def test_ingest_markets_job_deletes_withdrawn_rows_and_reports_changed_matches(
             return len(values)
 
     monkeypatch.delenv("REAL_MARKET_DATE", raising=False)
-    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.DbClient", FakeClient)
     monkeypatch.setattr(
         "batch.src.jobs.ingest_markets_job.load_settings",
         lambda: type(
@@ -6076,7 +6079,7 @@ def test_ingest_markets_job_reports_noop_when_real_market_payload_is_empty(
             return len(rows)
 
     monkeypatch.setenv("REAL_MARKET_DATE", "2026-04-12")
-    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.SupabaseClient", FakeClient)
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.DbClient", FakeClient)
     monkeypatch.setattr(
         "batch.src.jobs.ingest_markets_job.load_settings",
         lambda: type(

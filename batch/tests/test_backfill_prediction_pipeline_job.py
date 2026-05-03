@@ -243,7 +243,7 @@ def test_backfill_prediction_pipeline_job_uses_match_dates_for_non_fixture_stage
             {"supabase_url": "https://example.test", "supabase_key": "key"},
         )(),
     )
-    monkeypatch.setattr(pipeline_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(pipeline_job, "DbClient", FakeClient)
     monkeypatch.setitem(
         pipeline_job.PIPELINE_STAGE_CONFIG,
         "markets",
@@ -300,7 +300,7 @@ def test_backfill_prediction_pipeline_job_uses_local_dataset_for_match_dates(
     monkeypatch.setenv("PIPELINE_BACKFILL_START", "2026-04-19")
     monkeypatch.setenv("PIPELINE_BACKFILL_END", "2026-04-22")
     monkeypatch.setenv("PIPELINE_BACKFILL_STAGES", "predictions")
-    monkeypatch.setattr(pipeline_job, "SupabaseClient", FailingClient)
+    monkeypatch.setattr(pipeline_job, "DbClient", FailingClient)
     monkeypatch.setitem(
         pipeline_job.PIPELINE_STAGE_CONFIG,
         "predictions",
@@ -346,7 +346,7 @@ def test_backfill_prediction_pipeline_job_uses_explicit_dates_without_reading_ma
             {"supabase_url": "https://example.test", "supabase_key": "key"},
         )(),
     )
-    monkeypatch.setattr(pipeline_job, "SupabaseClient", BrokenClient)
+    monkeypatch.setattr(pipeline_job, "DbClient", BrokenClient)
     monkeypatch.setitem(
         pipeline_job.PIPELINE_STAGE_CONFIG,
         "predictions",
@@ -489,7 +489,7 @@ def test_backfill_prediction_pipeline_job_reuses_prediction_table_reads_and_upda
             calls.append((table_name, rows[0]["id"] if rows else None))
             return len(rows)
 
-    cached_client_class = pipeline_job.build_cached_supabase_client_class(FakeBaseClient)
+    cached_client_class = pipeline_job.build_cached_db_client_class(FakeBaseClient)
     first_client = cached_client_class("https://example.test", "key")
     second_client = cached_client_class("https://example.test", "key")
 
@@ -554,7 +554,7 @@ def test_backfill_prediction_pipeline_job_cache_preserves_existing_fields_on_spa
         def upsert_rows(self, _table_name: str, rows: list[dict]) -> int:
             return len(rows)
 
-    cached_client_class = pipeline_job.build_cached_supabase_client_class(FakeBaseClient)
+    cached_client_class = pipeline_job.build_cached_db_client_class(FakeBaseClient)
     first_client = cached_client_class("https://example.test", "key")
     second_client = cached_client_class("https://example.test", "key")
 

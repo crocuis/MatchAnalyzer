@@ -21,6 +21,8 @@ DEFAULT_BACKTEST_MINIMUM_SAMPLES = (100, 200, 250, 500)
 DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT = 250
 DEFAULT_DAILY_PICK_TARGET_HIT_RATE = 0.80
 DEFAULT_DAILY_PICK_MIN_WILSON_LOWER_BOUND = 0.75
+DEFAULT_DAILY_PICK_HOLDOUT_MIN_SAMPLE_COUNT = 50
+DEFAULT_DAILY_PICK_HOLDOUT_MAX_HIT_RATE_DROP = 0.10
 DAILY_PICK_PRECISION_LEAGUES = {
     "bundesliga",
     "champions-league",
@@ -355,6 +357,263 @@ def summarize_raw_moneyline_backtest(
     }
 
 
+def summarize_daily_pick_holdout(
+    rows: list[dict],
+    *,
+    holdout_start_date: str,
+    hit_field: str = "prequential_hit",
+    minimum_holdout_sample_count: int = DEFAULT_DAILY_PICK_HOLDOUT_MIN_SAMPLE_COUNT,
+    maximum_hit_rate_drop: float = DEFAULT_DAILY_PICK_HOLDOUT_MAX_HIT_RATE_DROP,
+) -> dict:
+    training_rows = [
+        row for row in rows if str(row.get("date") or "") < holdout_start_date
+    ]
+    holdout_rows = [
+        row for row in rows if str(row.get("date") or "") >= holdout_start_date
+    ]
+    training_candidates = [
+        row for row in training_rows if _is_daily_pick_candidate(row)
+    ]
+    holdout_candidates = [
+        row for row in holdout_rows if _is_daily_pick_candidate(row)
+    ]
+    training_summary = _summarize_rows(
+        training_candidates,
+        hit_field=hit_field,
+        total_count=len(training_rows),
+    )
+    holdout_summary = _summarize_rows(
+        holdout_candidates,
+        hit_field=hit_field,
+        total_count=len(holdout_rows),
+    )
+    hit_rate_delta = round(
+        float(holdout_summary["live_betting_hit_rate"])
+        - float(training_summary["live_betting_hit_rate"]),
+        4,
+    )
+    holdout_sample_count = int(holdout_summary["evaluated_bets"])
+    if holdout_sample_count < minimum_holdout_sample_count:
+        current_data_fit_risk = "insufficient_holdout"
+    elif hit_rate_delta <= -abs(maximum_hit_rate_drop):
+        current_data_fit_risk = "elevated"
+    else:
+        current_data_fit_risk = "not_elevated"
+    return {
+        "holdout_start_date": holdout_start_date,
+        "training": training_summary,
+        "holdout": holdout_summary,
+        "pruning_validation": _daily_pick_holdout_pruning_validation(
+            training_candidates,
+            holdout_candidates,
+            training_total_count=len(training_rows),
+            holdout_total_count=len(holdout_rows),
+            minimum_holdout_sample_count=minimum_holdout_sample_count,
+        ),
+        "hit_rate_delta": hit_rate_delta,
+        "current_data_fit_risk": current_data_fit_risk,
+        "minimum_holdout_sample_count": minimum_holdout_sample_count,
+        "maximum_hit_rate_drop": maximum_hit_rate_drop,
+    }
+
+
+def summarize_daily_pick_holdout_scan(
+    rows: list[dict],
+    *,
+    holdout_start_dates: list[str] | None = None,
+    maximum_candidates: int = 12,
+) -> dict:
+    start_dates = holdout_start_dates or _daily_pick_holdout_scan_start_dates(rows)
+    candidates = [
+        _compact_daily_pick_holdout_scan_entry(
+            summarize_daily_pick_holdout(
+                rows,
+                holdout_start_date=start_date,
+            )
+        )
+        for start_date in start_dates[:maximum_candidates]
+    ]
+    ready_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate["ready_for_pruning_validation"]
+    ]
+    best_ready = (
+        max(
+            ready_candidates,
+            key=lambda candidate: (
+                float(candidate["holdout_hit_rate"]),
+                float(candidate["holdout_hit_rate_lift"]),
+                int(candidate["holdout_sample_count"]),
+            ),
+        )
+        if ready_candidates
+        else None
+    )
+    closest_to_ready = (
+        min(
+            candidates,
+            key=lambda candidate: (
+                int(candidate["total_sample_shortfall"]),
+                int(candidate["holdout_sample_shortfall"]),
+                -int(candidate["training_sample_count"]),
+            ),
+        )
+        if candidates
+        else None
+    )
+    next_live_candidate = _daily_pick_holdout_scan_next_live_candidate(candidates)
+    fixed_window_blockers = _daily_pick_holdout_scan_fixed_window_blockers(
+        candidates
+    )
+    next_action = _daily_pick_holdout_scan_next_action(
+        best_ready=best_ready,
+        next_live_candidate=next_live_candidate,
+        closest_to_ready=closest_to_ready,
+    )
+    return {
+        "candidate_count": len(candidates),
+        "ready_candidate_count": len(ready_candidates),
+        "best_ready": best_ready,
+        "closest_to_ready": closest_to_ready,
+        "next_live_candidate": next_live_candidate,
+        "fixed_window_blockers": fixed_window_blockers,
+        "next_action": next_action,
+        "candidates": candidates,
+    }
+
+
+def _daily_pick_holdout_scan_fixed_window_blockers(
+    candidates: list[dict],
+) -> list[dict]:
+    blockers = [
+        {
+            "holdout_start_date": candidate["holdout_start_date"],
+            "training_sample_shortfall": int(candidate["training_sample_shortfall"]),
+            "holdout_sample_shortfall": int(candidate["holdout_sample_shortfall"]),
+            "total_sample_shortfall": int(candidate["total_sample_shortfall"]),
+            "resolution": "backfill_or_shift_training_window",
+        }
+        for candidate in candidates
+        if int(candidate["training_sample_shortfall"]) > 0
+    ]
+    return sorted(
+        blockers,
+        key=lambda blocker: (
+            int(blocker["total_sample_shortfall"]),
+            int(blocker["training_sample_shortfall"]),
+            str(blocker["holdout_start_date"]),
+        ),
+    )
+
+
+def _daily_pick_holdout_scan_next_live_candidate(
+    candidates: list[dict],
+) -> dict | None:
+    live_candidates = [
+        candidate
+        for candidate in candidates
+        if int(candidate["training_sample_shortfall"]) == 0
+        and int(candidate["holdout_sample_shortfall"]) > 0
+    ]
+    if not live_candidates:
+        return None
+    return min(
+        live_candidates,
+        key=lambda candidate: (
+            int(candidate["holdout_sample_shortfall"]),
+            -int(candidate["training_sample_count"]),
+        ),
+    )
+
+
+def _daily_pick_holdout_scan_next_action(
+    *,
+    best_ready: dict | None,
+    next_live_candidate: dict | None,
+    closest_to_ready: dict | None,
+) -> dict:
+    if best_ready is not None:
+        return {
+            "action": "review_ready_window",
+            "holdout_start_date": best_ready["holdout_start_date"],
+        }
+    if next_live_candidate is not None:
+        return {
+            "action": "wait_for_live_holdout_samples",
+            "holdout_start_date": next_live_candidate["holdout_start_date"],
+            "holdout_sample_shortfall": next_live_candidate[
+                "holdout_sample_shortfall"
+            ],
+        }
+    if closest_to_ready is not None:
+        return {
+            "action": "backfill_or_shift_training_window",
+            "holdout_start_date": closest_to_ready["holdout_start_date"],
+            "training_sample_shortfall": closest_to_ready[
+                "training_sample_shortfall"
+            ],
+            "holdout_sample_shortfall": closest_to_ready["holdout_sample_shortfall"],
+        }
+    return {"action": "collect_daily_pick_candidates"}
+
+
+def _daily_pick_holdout_scan_start_dates(rows: list[dict]) -> list[str]:
+    candidate_months = sorted(
+        {
+            f"{date[:7]}-01"
+            for row in rows
+            if _is_daily_pick_candidate(row)
+            for date in [str(row.get("date") or "")]
+            if len(date) >= 7
+        }
+    )
+    return candidate_months[1:]
+
+
+def _compact_daily_pick_holdout_scan_entry(summary: dict) -> dict:
+    pruning_validation = dict(summary.get("pruning_validation") or {})
+    sample_readiness = dict(pruning_validation.get("sample_readiness") or {})
+    training_pruning = dict(pruning_validation.get("training_pruning") or {})
+    training = dict(summary.get("training") or {})
+    holdout = dict(summary.get("holdout") or {})
+    training_sample_shortfall = int(
+        sample_readiness.get("training_sample_shortfall") or 0
+    )
+    holdout_sample_shortfall = int(
+        sample_readiness.get("holdout_sample_shortfall") or 0
+    )
+    return {
+        "holdout_start_date": summary.get("holdout_start_date"),
+        "training_sample_count": int(training.get("evaluated_bets") or 0),
+        "training_hit_rate": float(training.get("live_betting_hit_rate") or 0.0),
+        "holdout_sample_count": int(holdout.get("evaluated_bets") or 0),
+        "holdout_hit_rate": float(holdout.get("live_betting_hit_rate") or 0.0),
+        "hit_rate_delta": float(summary.get("hit_rate_delta") or 0.0),
+        "current_data_fit_risk": summary.get("current_data_fit_risk"),
+        "pruning_validation_status": pruning_validation.get("validation_status"),
+        "ready_for_pruning_validation": bool(
+            sample_readiness.get("ready_for_pruning_validation")
+        ),
+        "training_sample_shortfall": training_sample_shortfall,
+        "holdout_sample_shortfall": holdout_sample_shortfall,
+        "total_sample_shortfall": training_sample_shortfall
+        + holdout_sample_shortfall,
+        "training_pruning_target_reached": bool(
+            training_pruning.get("target_reached")
+        ),
+        "training_pruning_removed_sample_count": int(
+            training_pruning.get("removed_sample_count") or 0
+        ),
+        "holdout_hit_rate_lift": float(
+            pruning_validation.get("holdout_hit_rate_lift") or 0.0
+        ),
+        "holdout_removed_sample_count": int(
+            pruning_validation.get("holdout_removed_sample_count") or 0
+        ),
+    }
+
+
 def _overall_prequential_target_summary(
     all_prequential: dict,
     *,
@@ -548,6 +807,12 @@ def _daily_pick_expansion_diagnostics(
             target_hit_rate=DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
             minimum_sample_count=DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
         ),
+        "pruning_recommendation": _daily_pick_pruning_recommendation(
+            current_gate_rows,
+            target_hit_rate=DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
+            minimum_sample_count=DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+            total_count=len(rows),
+        ),
         "hit_rate_loss_from_seed": round(seed_hit_rate - hit_rate, 4),
     }
 
@@ -667,6 +932,296 @@ def _daily_pick_weak_segment_frontier(
         ),
         reverse=True,
     )[:maximum_candidates]
+
+
+def _daily_pick_pruning_recommendation(
+    rows: list[dict],
+    *,
+    target_hit_rate: float,
+    minimum_sample_count: int,
+    total_count: int,
+    minimum_segment_sample: int = 5,
+    maximum_steps: int = 5,
+) -> dict:
+    remaining_rows = list(enumerate(rows))
+    removed_segments = []
+    for _step in range(maximum_steps):
+        removable_budget = len(remaining_rows) - minimum_sample_count
+        if removable_budget <= 0:
+            break
+        candidates = _daily_pick_pruning_candidates(
+            remaining_rows,
+            removable_budget=removable_budget,
+            minimum_segment_sample=minimum_segment_sample,
+        )
+        if not candidates:
+            break
+        selected = max(
+            candidates,
+            key=lambda item: (
+                float(item["remaining_hit_rate"]),
+                int(item["miss_count"]),
+                -int(item["sample_count"]),
+            ),
+        )
+        removed_segments.append(
+            {
+                "segment": selected["segment"],
+                "sample_count": selected["sample_count"],
+                "hit_count": selected["hit_count"],
+                "miss_count": selected["miss_count"],
+                "hit_rate": selected["hit_rate"],
+            }
+        )
+        selected_indexes = set(selected["row_indexes"])
+        remaining_rows = [
+            (index, row)
+            for index, row in remaining_rows
+            if index not in selected_indexes
+        ]
+        if float(selected["remaining_hit_rate"]) >= target_hit_rate:
+            break
+
+    final_rows = [row for _index, row in remaining_rows]
+    final_summary = _summarize_rows(
+        final_rows,
+        hit_field="prequential_hit",
+        total_count=total_count,
+    )
+    current_summary = _summarize_rows(
+        rows,
+        hit_field="prequential_hit",
+        total_count=total_count,
+    )
+    return {
+        "diagnostic_only": True,
+        "target_hit_rate": target_hit_rate,
+        "minimum_sample_count": minimum_sample_count,
+        "target_reached": (
+            int(final_summary["evaluated_bets"]) >= minimum_sample_count
+            and float(final_summary["live_betting_hit_rate"]) >= target_hit_rate
+        ),
+        "current_summary": current_summary,
+        "final_summary": final_summary,
+        "removed_segments": removed_segments,
+        "removed_sample_count": sum(
+            int(segment["sample_count"]) for segment in removed_segments
+        ),
+        "removed_hit_count": sum(
+            int(segment["hit_count"]) for segment in removed_segments
+        ),
+        "removed_miss_count": sum(
+            int(segment["miss_count"]) for segment in removed_segments
+        ),
+    }
+
+
+def _daily_pick_holdout_pruning_validation(
+    training_rows: list[dict],
+    holdout_rows: list[dict],
+    *,
+    training_total_count: int,
+    holdout_total_count: int,
+    minimum_holdout_sample_count: int,
+) -> dict:
+    training_pruning = _daily_pick_pruning_recommendation(
+        training_rows,
+        target_hit_rate=DEFAULT_DAILY_PICK_TARGET_HIT_RATE,
+        minimum_sample_count=DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+        total_count=training_total_count,
+    )
+    removed_segments = list(training_pruning.get("removed_segments") or [])
+    training_after_pruning_rows = _remove_pruning_segments(
+        training_rows,
+        removed_segments,
+    )
+    holdout_after_pruning_rows = _remove_pruning_segments(
+        holdout_rows,
+        removed_segments,
+    )
+    training_summary = _summarize_rows(
+        training_rows,
+        hit_field="prequential_hit",
+        total_count=training_total_count,
+    )
+    holdout_summary = _summarize_rows(
+        holdout_rows,
+        hit_field="prequential_hit",
+        total_count=holdout_total_count,
+    )
+    training_after_pruning = _summarize_rows(
+        training_after_pruning_rows,
+        hit_field="prequential_hit",
+        total_count=training_total_count,
+    )
+    holdout_after_pruning = _summarize_rows(
+        holdout_after_pruning_rows,
+        hit_field="prequential_hit",
+        total_count=holdout_total_count,
+    )
+    holdout_hit_rate_lift = round(
+        float(holdout_after_pruning["live_betting_hit_rate"])
+        - float(holdout_summary["live_betting_hit_rate"]),
+        4,
+    )
+    sample_readiness = _daily_pick_pruning_validation_sample_readiness(
+        training_sample_count=int(training_summary["evaluated_bets"]),
+        holdout_sample_count=int(holdout_summary["evaluated_bets"]),
+        minimum_holdout_sample_count=minimum_holdout_sample_count,
+    )
+    holdout_sample_count = int(holdout_after_pruning["evaluated_bets"])
+    if (
+        sample_readiness["training_sample_shortfall"] > 0
+        and sample_readiness["holdout_sample_shortfall"] > 0
+    ):
+        validation_status = "insufficient_training_and_holdout"
+    elif sample_readiness["training_sample_shortfall"] > 0:
+        validation_status = "insufficient_training"
+    elif sample_readiness["holdout_sample_shortfall"] > 0:
+        validation_status = "insufficient_holdout"
+    elif not removed_segments:
+        validation_status = "no_training_pruning_segments"
+    elif holdout_sample_count < minimum_holdout_sample_count:
+        validation_status = "insufficient_holdout_after_pruning"
+    elif holdout_hit_rate_lift > 0:
+        validation_status = "improves_holdout"
+    elif holdout_hit_rate_lift < 0:
+        validation_status = "degrades_holdout"
+    else:
+        validation_status = "neutral_holdout"
+    return {
+        "diagnostic_only": True,
+        "validation_status": validation_status,
+        "minimum_holdout_sample_count": minimum_holdout_sample_count,
+        "sample_readiness": sample_readiness,
+        "training_pruning": training_pruning,
+        "training": training_summary,
+        "training_after_pruning": training_after_pruning,
+        "training_hit_rate_lift": round(
+            float(training_after_pruning["live_betting_hit_rate"])
+            - float(training_summary["live_betting_hit_rate"]),
+            4,
+        ),
+        "holdout": holdout_summary,
+        "holdout_after_pruning": holdout_after_pruning,
+        "holdout_hit_rate_lift": holdout_hit_rate_lift,
+        "holdout_removed_sample_count": (
+            int(holdout_summary["evaluated_bets"]) - holdout_sample_count
+        ),
+    }
+
+
+def _daily_pick_pruning_validation_sample_readiness(
+    *,
+    training_sample_count: int,
+    holdout_sample_count: int,
+    minimum_holdout_sample_count: int,
+) -> dict:
+    training_sample_shortfall = max(
+        DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT - training_sample_count,
+        0,
+    )
+    holdout_sample_shortfall = max(
+        minimum_holdout_sample_count - holdout_sample_count,
+        0,
+    )
+    return {
+        "training_sample_count": training_sample_count,
+        "minimum_training_sample_count": DEFAULT_DAILY_PICK_MIN_SAMPLE_COUNT,
+        "training_sample_shortfall": training_sample_shortfall,
+        "holdout_sample_count": holdout_sample_count,
+        "minimum_holdout_sample_count": minimum_holdout_sample_count,
+        "holdout_sample_shortfall": holdout_sample_shortfall,
+        "ready_for_pruning_validation": (
+            training_sample_shortfall == 0 and holdout_sample_shortfall == 0
+        ),
+    }
+
+
+def _remove_pruning_segments(
+    rows: list[dict],
+    removed_segments: list[dict],
+) -> list[dict]:
+    if not removed_segments:
+        return rows
+    return [
+        row
+        for row in rows
+        if not any(
+            _row_matches_pruning_segment(
+                row,
+                dict(segment.get("segment") or {}),
+            )
+            for segment in removed_segments
+        )
+    ]
+
+
+def _row_matches_pruning_segment(row: dict, segment: dict) -> bool:
+    if not segment:
+        return False
+    row_values = dict(_daily_pick_frontier_segment_values(row))
+    return all(
+        field in row_values and row_values[field] == expected
+        for field, expected in segment.items()
+    )
+
+
+def _daily_pick_pruning_candidates(
+    indexed_rows: list[tuple[int, dict]],
+    *,
+    removable_budget: int,
+    minimum_segment_sample: int,
+) -> list[dict]:
+    segment_rows: dict[tuple[tuple[str, object], ...], list[tuple[int, dict]]] = {}
+    for indexed_row in indexed_rows:
+        _index, row = indexed_row
+        values = _daily_pick_frontier_segment_values(row)
+        for segment in [(value,) for value in values]:
+            segment_rows.setdefault(segment, []).append(indexed_row)
+        for index, left in enumerate(values):
+            for right in values[index + 1 :]:
+                if left[0] == right[0]:
+                    continue
+                segment_rows.setdefault((left, right), []).append(indexed_row)
+
+    current_hit_count = sum(
+        int(row.get("prequential_hit") or 0) for _index, row in indexed_rows
+    )
+    current_sample_count = len(indexed_rows)
+    candidates = []
+    for segment, segment_group in segment_rows.items():
+        sample_count = len(segment_group)
+        if sample_count < minimum_segment_sample or sample_count > removable_budget:
+            continue
+        hit_count = sum(
+            int(row.get("prequential_hit") or 0) for _index, row in segment_group
+        )
+        miss_count = sample_count - hit_count
+        if miss_count <= 0:
+            continue
+        remaining_sample_count = current_sample_count - sample_count
+        remaining_hit_count = current_hit_count - hit_count
+        remaining_hit_rate = (
+            remaining_hit_count / remaining_sample_count
+            if remaining_sample_count
+            else 0.0
+        )
+        candidates.append(
+            {
+                "segment": {
+                    field: value
+                    for field, value in segment
+                },
+                "row_indexes": [index for index, _row in segment_group],
+                "sample_count": sample_count,
+                "hit_count": hit_count,
+                "miss_count": miss_count,
+                "hit_rate": round(hit_count / sample_count, 4),
+                "remaining_hit_rate": round(remaining_hit_rate, 4),
+            }
+        )
+    return candidates
 
 
 def _daily_pick_frontier_segment_values(row: dict) -> list[tuple[str, object]]:

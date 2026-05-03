@@ -10,8 +10,8 @@ from batch.src.ingest.fetch_fixtures import (
     build_snapshot_rows_from_matches,
     merge_lineup_contexts,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 DEFAULT_LOOKBACK_MINUTES = 60
@@ -397,7 +397,7 @@ def refresh_rotowire_lineup_contexts_for_targets(
 
 
 def sync_prediction_checkpoints(
-    client: SupabaseClient,
+    client: DbClient,
     *,
     now: datetime | None = None,
     lookback_minutes: int = DEFAULT_LOOKBACK_MINUTES,
@@ -497,7 +497,7 @@ def sync_prediction_checkpoints(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     result = sync_prediction_checkpoints(
         client,
         now=resolve_now(),

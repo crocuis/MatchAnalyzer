@@ -29,11 +29,11 @@ from batch.src.ingest.fetch_markets import (
     football_data_season_code,
 )
 from batch.src.jobs.sample_data import SAMPLE_MATCH_ID
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.r2_client import R2Client
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 DEFAULT_MARKET_CHECKPOINT_TYPES = (
     "T_MINUS_24H",
@@ -475,7 +475,7 @@ def promote_market_snapshots(
     return promoted
 
 
-def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
+def read_optional_rows(client: DbClient, table_name: str) -> list[dict]:
     try:
         return client.read_rows(table_name)
     except ValueError as exc:
@@ -596,7 +596,7 @@ def main() -> None:
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     all_snapshot_rows = client.read_rows("match_snapshots")
     if not all_snapshot_rows:

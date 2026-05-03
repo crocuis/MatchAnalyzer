@@ -28,8 +28,8 @@ from batch.src.model.raw_signal_backtest import (
     DAILY_PICK_SEGMENT_HOLD_COMPETITIONS,
     DAILY_PICK_SEGMENT_HOLD_REASON,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 MAX_DAILY_RECOMMENDATIONS = 10
@@ -1068,7 +1068,7 @@ def _first_present(row: dict, *keys: str) -> object:
 
 
 def read_rows(
-    client: SupabaseClient,
+    client: DbClient,
     table_name: str,
     columns: tuple[str, ...] | None = None,
 ) -> list[dict]:
@@ -1079,7 +1079,7 @@ def read_rows(
 
 
 def read_rows_by_values(
-    client: SupabaseClient,
+    client: DbClient,
     table_name: str,
     column: str,
     values: list[str],
@@ -1106,7 +1106,7 @@ def run_job(
     *,
     sync_date: str | None,
     settle_date: str | None,
-    client: SupabaseClient,
+    client: DbClient,
     force_resync: bool = False,
 ) -> dict:
     result = {
@@ -1186,7 +1186,7 @@ def run_job(
     return result
 
 
-def replace_existing_daily_pick_items(client: SupabaseClient, run_id: str) -> None:
+def replace_existing_daily_pick_items(client: DbClient, run_id: str) -> None:
     existing_items = read_rows_by_values(
         client,
         "daily_pick_items",
@@ -1219,7 +1219,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     result = run_job(
         sync_date=args.sync_date,
         settle_date=args.settle_date,

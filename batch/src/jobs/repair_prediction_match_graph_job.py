@@ -5,8 +5,8 @@ import signal
 
 from batch.src.ingest.fetch_fixtures import load_sports_skills_football
 from batch.src.model.prediction_graph_integrity import plan_missing_match_repairs
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 def parse_allowed_competition_ids() -> set[str]:
@@ -45,7 +45,7 @@ def build_fetch_event_summary(football, timeout_seconds: int):
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     football = load_sports_skills_football()
     allowed_competition_ids = parse_allowed_competition_ids()
     match_ids = parse_match_ids()

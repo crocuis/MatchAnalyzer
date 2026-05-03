@@ -13,10 +13,10 @@ import batch.src.jobs.ingest_fixtures_job as ingest_fixtures_job
 import batch.src.jobs.ingest_markets_job as ingest_markets_job
 import batch.src.jobs.run_post_match_review_job as run_post_match_review_job
 import batch.src.jobs.run_predictions_job as run_predictions_job
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 PIPELINE_STAGE_CONFIG = {
@@ -80,10 +80,10 @@ def clone_rows(rows: list[dict]) -> list[dict]:
     return [deepcopy(row) for row in rows]
 
 
-def build_cached_supabase_client_class(base_client_class):
+def build_cached_db_client_class(base_client_class):
     cached_rows_by_table: dict[str, list[dict]] = {}
 
-    class CachedSupabaseClient:
+    class CachedDbClient:
         def __init__(self, base_url: str, service_key: str) -> None:
             self._client = base_client_class(base_url, service_key)
 
@@ -112,12 +112,12 @@ def build_cached_supabase_client_class(base_client_class):
                 cached_rows_by_table[table_name] = list(rows_by_id.values())
             return updated_count
 
-    return CachedSupabaseClient
+    return CachedDbClient
 
 
 @contextlib.contextmanager
 def prediction_stage_read_cache():
-    cached_client_class = build_cached_supabase_client_class(SupabaseClient)
+    cached_client_class = build_cached_db_client_class(DbClient)
     target_modules = (
         backfill_fixture_season_job,
         ingest_fixtures_job,
@@ -127,15 +127,15 @@ def prediction_stage_read_cache():
         evaluate_prediction_sources_job,
     )
     original_client_classes = {
-        module: module.SupabaseClient for module in target_modules
+        module: module.DbClient for module in target_modules
     }
     for module in target_modules:
-        module.SupabaseClient = cached_client_class
+        module.DbClient = cached_client_class
     try:
         yield
     finally:
         for module, original_client_class in original_client_classes.items():
-            module.SupabaseClient = original_client_class
+            module.DbClient = original_client_class
 
 
 def run_stage_for_date(stage: str, target_date: str) -> dict:
@@ -449,7 +449,7 @@ def resolve_pipeline_dates(
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     target_dates = sorted(
         {

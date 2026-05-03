@@ -1,4 +1,4 @@
-import type { ApiSupabaseClient } from "./supabase";
+import type { ApiDbClient } from "./db-client";
 
 export type RolloutLaneSummary = {
   status: string | null;
@@ -71,9 +71,9 @@ function isMissingRelationError(message: string | undefined) {
 }
 
 export async function loadRolloutLaneSummaries(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<{ shadow: RolloutLaneSummary | null; rollout: RolloutLaneSummary | null }> {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("rollout_lane_states")
     .select("rollout_channel, lane_payload")
     .in("rollout_channel", ["shadow", "rollout"])

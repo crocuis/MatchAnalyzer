@@ -4,8 +4,8 @@ from datetime import date
 
 from batch.src.jobs.backfill_assets_job import iter_dates
 from batch.src.jobs.run_post_match_review_job import run_review_job
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 def main() -> None:
@@ -15,7 +15,7 @@ def main() -> None:
         raise KeyError("REVIEW_BACKFILL_START and REVIEW_BACKFILL_END")
 
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
 
     dates = iter_dates(date.fromisoformat(start), date.fromisoformat(end))
     results = [run_review_job(client, target_date=day) for day in dates]

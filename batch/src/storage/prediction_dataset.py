@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from batch.src.storage.local_dataset_client import LocalDatasetClient
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 PREDICTION_DATASET_TABLES = (
     "matches",
@@ -40,4 +40,4 @@ def build_prediction_dataset_client(
     resolved_dir = resolve_local_prediction_dataset_dir(local_dataset_dir)
     if resolved_dir is not None:
         return LocalDatasetClient(resolved_dir)
-    return SupabaseClient(supabase_url, supabase_key)
+    return DbClient(supabase_url, supabase_key)

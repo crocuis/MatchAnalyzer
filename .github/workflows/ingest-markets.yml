@@ -20,8 +20,7 @@ jobs:
       group: ingest-markets
       cancel-in-progress: true
     env:
-      SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       ODDS_API_IO_BOOKMAKERS: Bet365,Unibet
       BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
@@ -38,8 +37,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: batch/requirements.txt
       - run: |
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          test -n "$DATABASE_URL"
           test -n "$R2_BUCKET"
       - name: Resolve target date
         shell: bash

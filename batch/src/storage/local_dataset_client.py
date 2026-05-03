@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from batch.src.storage.supabase_client import validate_table_name
+from batch.src.storage.db_client import validate_table_name
 
 
 class LocalDatasetClient:

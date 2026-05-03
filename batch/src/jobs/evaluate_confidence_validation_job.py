@@ -9,9 +9,9 @@ from batch.src.model.confidence_validation import (
     build_prediction_validation_record,
     summarize_validation_segments,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.rollout_state import read_optional_rows
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -61,7 +61,7 @@ def build_confidence_validation_report(
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     report = build_confidence_validation_report(
         predictions=read_optional_rows(client, "predictions"),
         matches=read_optional_rows(client, "matches"),

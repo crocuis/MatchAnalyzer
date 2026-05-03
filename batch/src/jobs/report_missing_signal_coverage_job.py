@@ -4,8 +4,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from batch.src.features.feature_builder import MISSING_SIGNAL_REASON_TAXONOMY
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 def build_sample_feature_snapshot_rows() -> list[dict]:
@@ -288,7 +288,7 @@ def filter_feature_snapshot_rows_by_target_date(
 
 def load_live_rows(*, target_date: str | None) -> tuple[list[dict], list[dict]]:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     feature_snapshot_rows = client.read_rows("prediction_feature_snapshots")
     match_rows = client.read_rows("matches")
     return filter_feature_snapshot_rows_by_target_date(

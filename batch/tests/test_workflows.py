@@ -188,8 +188,15 @@ def test_deploy_production_workflow_waits_for_main_ci_and_runs_ordered_deploy_st
     assert "environment: production" in workflow
     assert "npm install" in workflow
     assert "npm ci" not in workflow
-    assert "supabase db push" in workflow
+    assert "Apply Postgres migrations" in workflow
+    assert "MATCH_ANALYZER_MIGRATION_BASELINE_VERSION" in workflow
+    assert "python3 scripts/apply_postgres_migrations.py" in workflow
+    assert "Smoke check Neon database" in workflow
+    assert "load_settings()" not in workflow
+    assert "wrangler secret put DATABASE_URL" in workflow
+    assert "supabase db push" not in workflow
     assert "npm run deploy:api" in workflow
+    assert "wrangler pages secret put MATCH_ANALYZER_API_ORIGIN" in workflow
     assert "npm run deploy:web" in workflow
     assert "Smoke check production endpoints" in workflow
 
@@ -231,15 +238,17 @@ def test_sync_match_results_workflow_runs_every_two_hours_and_reviews_changed_da
 def test_deploy_production_workflow_documents_required_production_secrets() -> None:
     workflow = read_workflow("deploy-production.yml")
 
-    assert "SUPABASE_ACCESS_TOKEN" in workflow
-    assert "SUPABASE_PROJECT_ID" in workflow
-    assert "SUPABASE_DB_PASSWORD" in workflow
+    assert "DATABASE_URL" in workflow
     assert "CLOUDFLARE_API_TOKEN" in workflow
     assert "CLOUDFLARE_ACCOUNT_ID" in workflow
     assert "CLOUDFLARE_PAGES_PROJECT_NAME" in workflow
     assert "VITE_API_BASE_URL" in workflow
-    assert "VITE_SUPABASE_URL" in workflow
-    assert "VITE_SUPABASE_PUBLISHABLE_KEY" in workflow
+    assert "OPERATIONAL_REPORTS_API_KEY" in workflow
+    assert "SUPABASE_ACCESS_TOKEN" not in workflow
+    assert "SUPABASE_PROJECT_ID" not in workflow
+    assert "SUPABASE_DB_PASSWORD" not in workflow
+    assert "VITE_SUPABASE_URL" not in workflow
+    assert "VITE_SUPABASE_PUBLISHABLE_KEY" not in workflow
 
 
 def test_verify_workflow_uses_npm_install_without_lockfile_dependency() -> None:

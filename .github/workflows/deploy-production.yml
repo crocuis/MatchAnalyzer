@@ -30,15 +30,14 @@ jobs:
     environment: production
     env:
       DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      MATCH_ANALYZER_MIGRATION_BASELINE_VERSION: ${{ vars.MATCH_ANALYZER_MIGRATION_BASELINE_VERSION }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_PAGES_PROJECT_NAME: ${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
       VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      MATCH_ANALYZER_ARTIFACT_BASE_URL: ${{ vars.MATCH_ANALYZER_ARTIFACT_BASE_URL }}
+      OPERATIONAL_REPORTS_API_KEY: ${{ secrets.OPERATIONAL_REPORTS_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,32 +53,55 @@ jobs:
           cache: "pip"
           cache-dependency-path: batch/requirements.txt
 
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
       - name: Validate production secrets
         run: |
-          test -n "$SUPABASE_ACCESS_TOKEN"
-          test -n "$SUPABASE_PROJECT_ID"
-          test -n "$SUPABASE_DB_PASSWORD"
+          test -n "$DATABASE_URL"
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$CLOUDFLARE_PAGES_PROJECT_NAME"
           test -n "$VITE_API_BASE_URL"
-          test -n "$VITE_SUPABASE_URL"
-          test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
 
       - run: npm install --no-audit --no-fund
 
-      - name: Apply Supabase migrations
-        working-directory: .
+      - run: python3 -m pip install -r batch/requirements.txt
+
+      - name: Apply Postgres migrations
+        run: python3 scripts/apply_postgres_migrations.py
+
+      - name: Smoke check Neon database
         run: |
-          supabase link --project-ref "$SUPABASE_PROJECT_ID"
-          supabase db push --linked --include-all
+          python3 - <<'PY'
+          import os
+
+          from batch.src.storage.db_client import DbClient
+
+          database_url = os.environ["DATABASE_URL"]
+          client = DbClient(database_url, "")
+          rows = client.read_rows("matches", ("id",))
+          if not rows:
+              raise SystemExit("Neon DATABASE_URL is reachable, but public.matches is empty")
+          print(f"Neon database smoke ok: matches={len(rows)}")
+          PY
+
+      - name: Configure Cloudflare Worker secrets
+        run: |
+          printf '%s' "$DATABASE_URL" | npm --workspace apps/api exec -- wrangler secret put DATABASE_URL
+          if [ -n "${MATCH_ANALYZER_ARTIFACT_BASE_URL:-}" ]; then
+            printf '%s' "$MATCH_ANALYZER_ARTIFACT_BASE_URL" | npm --workspace apps/api exec -- wrangler secret put MATCH_ANALYZER_ARTIFACT_BASE_URL
+          fi
+          if [ -n "${OPERATIONAL_REPORTS_API_KEY:-}" ]; then
+            printf '%s' "$OPERATIONAL_REPORTS_API_KEY" | npm --workspace apps/api exec -- wrangler secret put OPERATIONAL_REPORTS_API_KEY
+          fi
 
       - name: Deploy Cloudflare Worker
         run: npm run deploy:api
+
+      - name: Configure Cloudflare Pages runtime secrets
+        run: |
+          printf '%s' "$VITE_API_BASE_URL" | npm --workspace apps/api exec -- wrangler pages secret put MATCH_ANALYZER_API_ORIGIN --project-name "$CLOUDFLARE_PAGES_PROJECT_NAME"
+          if [ -n "${OPERATIONAL_REPORTS_API_KEY:-}" ]; then
+            printf '%s' "$OPERATIONAL_REPORTS_API_KEY" | npm --workspace apps/api exec -- wrangler pages secret put OPERATIONAL_REPORTS_API_KEY --project-name "$CLOUDFLARE_PAGES_PROJECT_NAME"
+          fi
 
       - name: Deploy Cloudflare Pages
         run: npm run deploy:web

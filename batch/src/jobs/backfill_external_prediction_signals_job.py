@@ -15,8 +15,8 @@ from batch.src.ingest.external_signals import (
     fetch_understat_league_data,
     understat_season_start_year,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 EXTERNAL_SIGNAL_FIELDS = {
     "external_home_elo",
@@ -431,7 +431,7 @@ def build_external_signal_snapshot_updates(
     }
 
 
-def external_signal_columns_available(client: SupabaseClient) -> bool:
+def external_signal_columns_available(client: DbClient) -> bool:
     try:
         client.read_rows(
             "match_snapshots",
@@ -450,7 +450,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.kickoff_date is not None:
         date.fromisoformat(args.kickoff_date)
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     if args.apply and not external_signal_columns_available(client):
         raise ValueError(
             "match_snapshots is missing external signal columns; apply "

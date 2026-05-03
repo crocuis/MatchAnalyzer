@@ -17,10 +17,10 @@ from batch.src.jobs.ingest_markets_job import (
     parse_iso_datetime,
     read_optional_rows,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def parse_date_bound(value: str | None) -> str | None:
@@ -105,7 +105,7 @@ def main() -> None:
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     start_date = parse_date_bound(os.environ.get("FOOTBALL_DATA_BACKFILL_START_DATE"))
     end_date = parse_date_bound(os.environ.get("FOOTBALL_DATA_BACKFILL_END_DATE"))

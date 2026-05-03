@@ -173,7 +173,7 @@ def test_evaluate_prediction_sources_job_prints_segmented_variant_metrics(
             {},
         )
 
-    monkeypatch.setattr(evaluation_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(evaluation_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         evaluation_job,
         "load_settings",
@@ -357,7 +357,7 @@ def test_evaluate_prediction_sources_job_omits_new_artifact_links_when_archive_i
             return len(rows)
 
     monkeypatch.setenv("MATCH_ANALYZER_SKIP_SOURCE_EVALUATION_ARTIFACT_ARCHIVE", "1")
-    monkeypatch.setattr(evaluation_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(evaluation_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         evaluation_job,
         "load_settings",

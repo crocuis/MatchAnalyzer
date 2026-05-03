@@ -70,7 +70,7 @@ from batch.src.model.deployability import (
 )
 from batch.src.model.pre_match_prior_repair import choose_pre_match_prior_repair
 from batch.src.model.train_baseline import train_baseline_model
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.artifact_store import (
     archive_json_artifact,
     build_supabase_storage_artifact_client,
@@ -78,7 +78,7 @@ from batch.src.storage.artifact_store import (
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.r2_client import R2Client
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 BOOKMAKER_FALLBACK_DRAW_MIN_PROBABILITY = 0.30
@@ -183,7 +183,7 @@ def read_env_flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default) in {"1", "true", "TRUE", "yes", "YES"}
 
 
-def read_optional_rows(client: SupabaseClient, table_name: str) -> list[dict]:
+def read_optional_rows(client: DbClient, table_name: str) -> list[dict]:
     try:
         return client.read_rows(table_name)
     except KeyError:
@@ -218,7 +218,7 @@ def resolve_daily_pick_sync_dates_from_predictions(
 
 def sync_daily_pick_tracking_for_prediction_dates(
     *,
-    client: SupabaseClient,
+    client: DbClient,
     sync_dates: list[str],
 ) -> list[dict]:
     if not sync_dates:
@@ -277,7 +277,7 @@ def should_sync_daily_pick_tracking_after_predictions(
     return not read_env_flag("MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC")
 
 
-def read_latest_fusion_policy(client: SupabaseClient) -> dict | None:
+def read_latest_fusion_policy(client: DbClient) -> dict | None:
     for row in read_optional_rows(client, "prediction_fusion_policies"):
         if row.get("id") == "latest" and isinstance(row.get("policy_payload"), dict):
             return row
@@ -2504,7 +2504,7 @@ def main() -> None:
     client = (
         LocalDatasetClient(local_dataset_dir)
         if local_dataset_dir is not None
-        else SupabaseClient(settings.supabase_url, settings.supabase_key)
+        else DbClient(settings_db_url(settings), settings_db_key(settings))
     )
     persist_side_effects = local_dataset_side_effects_enabled(local_dataset_dir)
     r2_client = None

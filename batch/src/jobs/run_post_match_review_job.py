@@ -15,7 +15,7 @@ from batch.src.rollout.promotion_policy import (
     build_rollout_promotion_comparison,
     build_rollout_promotion_decision,
 )
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.artifact_store import (
     archive_json_artifact,
     build_supabase_storage_artifact_client,
@@ -29,7 +29,7 @@ from batch.src.storage.rollout_state import (
     stamp_rollout_row,
     utc_now_iso,
 )
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def is_no_bet_prediction(prediction: dict) -> bool:
@@ -378,7 +378,7 @@ def build_review_aggregation_comparison(
 
 
 def run_review_job(
-    client: SupabaseClient,
+    client: DbClient,
     r2_client: R2Client,
     *,
     target_date: str | None,
@@ -684,7 +684,7 @@ def run_review_job(
 
 def main() -> None:
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     r2_client = R2Client(
         getattr(settings, "r2_bucket", "workflow-artifacts"),
         access_key_id=getattr(settings, "r2_access_key_id", None),

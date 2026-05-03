@@ -17,8 +17,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
     env:
-      SUPABASE_URL: https://placeholder.supabase.local
-      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
+      DATABASE_URL: https://placeholder.db.local
       R2_BUCKET: workflow-artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 12

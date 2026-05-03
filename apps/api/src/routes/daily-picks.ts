@@ -15,7 +15,7 @@ import {
   normalizeVariantMarketsFromSummary,
   type PredictionLaneSummaryFields,
 } from "../lib/prediction-lanes";
-import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import { getDbClient, type ApiDbClient } from "../lib/db-client";
 import {
   loadPreferredTeamTranslations,
   normalizeLocale,
@@ -190,10 +190,10 @@ type PredictionCandidate = {
 };
 
 async function readRows(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   tableName: string,
 ): Promise<DailyPickRow[]> {
-  const result = await supabase
+  const result = await dbClient
     .from(tableName)
     .select(DAILY_PICK_SELECTS[tableName] ?? "id")
     .order("id");
@@ -229,7 +229,7 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 }
 
 async function readRowsByIds(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   tableName: string,
   ids: string[],
   columnName = "id",
@@ -237,7 +237,7 @@ async function readRowsByIds(
   if (ids.length === 0) {
     return [];
   }
-  const result = await supabase
+  const result = await dbClient
     .from(tableName)
     .select(DAILY_PICK_SELECTS[tableName] ?? columnName)
     .in(columnName, ids);
@@ -248,12 +248,12 @@ async function readRowsByIds(
 }
 
 async function readRowsByColumnValue(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   tableName: string,
   columnName: string,
   value: string,
 ): Promise<DailyPickRow[]> {
-  const result = await supabase
+  const result = await dbClient
     .from(tableName)
     .select(DAILY_PICK_SELECTS[tableName] ?? "id")
     .eq(columnName, value)
@@ -285,11 +285,11 @@ function buildPerformanceSummaryFromRow(
 }
 
 async function readDailyPickPerformanceSummary(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<DailyPicksValidationSummary | null> {
   try {
     const rows = await readRowsByColumnValue(
-      supabase,
+      dbClient,
       "daily_pick_performance_summary",
       "id",
       "all",
@@ -301,10 +301,10 @@ async function readDailyPickPerformanceSummary(
 }
 
 async function readSettledDailyPickPerformanceSummary(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<DailyPicksValidationSummary | null> {
   try {
-    const resultRows = await readRows(supabase, "daily_pick_results");
+    const resultRows = await readRows(dbClient, "daily_pick_results");
     return buildRuntimePerformanceSummary(resultRows);
   } catch {
     return null;
@@ -312,19 +312,19 @@ async function readSettledDailyPickPerformanceSummary(
 }
 
 async function readDailyPickRuntimePerformanceSummary(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<DailyPicksValidationSummary | null> {
   return (
-    await readDailyPickPerformanceSummary(supabase)
-    ?? await readSettledDailyPickPerformanceSummary(supabase)
+    await readDailyPickPerformanceSummary(dbClient)
+    ?? await readSettledDailyPickPerformanceSummary(dbClient)
   );
 }
 
 async function readMatches(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   options: LoadDailyPicksOptions,
 ): Promise<DailyPickRow[]> {
-  let query = supabase.from("matches").select(DAILY_PICK_MATCH_SELECT);
+  let query = dbClient.from("matches").select(DAILY_PICK_MATCH_SELECT);
   const date = normalizeDateFilter(options.date);
   if (date) {
     const nextDate = new Date(`${date}T00:00:00Z`);
@@ -387,18 +387,18 @@ function hasKickoffPassed(kickoffAt: string): boolean {
 }
 
 export async function loadDailyPicksView(
-  supabase: ApiSupabaseClient | null,
+  dbClient: ApiDbClient | null,
   options: LoadDailyPicksOptions = {},
 ): Promise<DailyPicksView> {
   const normalizedOptions = {
     ...options,
     date: resolveRequestedDate(options.date),
   };
-  if (!supabase) {
+  if (!dbClient) {
     return { ...EMPTY_VIEW, date: normalizedOptions.date ?? null };
   }
 
-  const matches = await readMatches(supabase, normalizedOptions);
+  const matches = await readMatches(dbClient, normalizedOptions);
   const matchIds = matches.flatMap((row) => {
     const id = readString(row.id);
     return id ? [id] : [];
@@ -415,13 +415,13 @@ export async function loadDailyPicksView(
   }))];
 
   const [teams, competitions, predictions, performanceSummary] = await Promise.all([
-    readRowsByIds(supabase, "teams", teamIds),
-    readRowsByIds(supabase, "competitions", competitionIds),
-    readRowsByIds(supabase, "predictions", matchIds, "match_id"),
-    readDailyPickRuntimePerformanceSummary(supabase),
+    readRowsByIds(dbClient, "teams", teamIds),
+    readRowsByIds(dbClient, "competitions", competitionIds),
+    readRowsByIds(dbClient, "predictions", matchIds, "match_id"),
+    readDailyPickRuntimePerformanceSummary(dbClient),
   ]);
   const teamTranslations = await loadPreferredTeamTranslations(
-    supabase,
+    dbClient,
     teamIds,
     normalizedOptions.locale,
   );
@@ -429,7 +429,7 @@ export async function loadDailyPicksView(
     const id = readString(row.snapshot_id);
     return id ? [id] : [];
   }))];
-  const snapshots = await readRowsByIds(supabase, "match_snapshots", snapshotIds);
+  const snapshots = await readRowsByIds(dbClient, "match_snapshots", snapshotIds);
 
   return buildDailyPicksView({
     matches,
@@ -873,7 +873,7 @@ function recomputeCoverage(items: DailyPickItem[], heldItems: DailyPickItem[]) {
 }
 
 async function localizeDailyPickItems(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   items: DailyPickItem[],
   locale: string | null | undefined,
 ) {
@@ -883,7 +883,7 @@ async function localizeDailyPickItems(
     );
     return ids;
   }))];
-  const translations = await loadPreferredTeamTranslations(supabase, teamIds, locale);
+  const translations = await loadPreferredTeamTranslations(dbClient, teamIds, locale);
   if (translations.size === 0) {
     return items;
   }
@@ -899,7 +899,7 @@ async function localizeDailyPickItems(
 }
 
 async function loadDailyPicksArtifactView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   bindings: AppBindings["Bindings"],
   options: LoadDailyPicksOptions,
 ): Promise<DailyPicksView | null> {
@@ -909,7 +909,7 @@ async function loadDailyPicksArtifactView(
   }
   let loaded: unknown = null;
   try {
-    const row = await loadLatestStoredArtifact(supabase, {
+    const row = await loadLatestStoredArtifact(dbClient, {
       ownerType: "daily_picks",
       ownerId: date,
       artifactKind: DAILY_PICKS_ARTIFACT_KIND,
@@ -926,16 +926,16 @@ async function loadDailyPicksArtifactView(
     ? filterDailyPickItems(loaded.heldItems, options).slice(0, 10)
     : [];
   const localizedItems = await localizeDailyPickItems(
-    supabase,
+    dbClient,
     filteredItems,
     options.locale,
   );
   const localizedHeldItems = await localizeDailyPickItems(
-    supabase,
+    dbClient,
     filteredHeldItems,
     options.locale,
   );
-  const performanceSummary = await readDailyPickRuntimePerformanceSummary(supabase);
+  const performanceSummary = await readDailyPickRuntimePerformanceSummary(dbClient);
 
   return {
     ...loaded,
@@ -948,7 +948,7 @@ async function loadDailyPicksArtifactView(
 }
 
 async function loadTrackedDailyPicksView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   options: LoadDailyPicksOptions,
 ): Promise<DailyPicksView | null> {
   const normalizedOptions = {
@@ -960,7 +960,7 @@ async function loadTrackedDailyPicksView(
   }
 
   const pickRows = await readRowsByColumnValue(
-    supabase,
+    dbClient,
     "daily_pick_items",
     "pick_date",
     normalizedOptions.date,
@@ -978,10 +978,10 @@ async function loadTrackedDailyPicksView(
     return pickItemId ? [pickItemId] : [];
   }))];
   const [matches, results, runs, performanceSummary] = await Promise.all([
-    readRowsByIds(supabase, "matches", matchIds),
-    readRowsByIds(supabase, "daily_pick_results", pickItemIds, "pick_item_id"),
-    readRowsByColumnValue(supabase, "daily_pick_runs", "pick_date", normalizedOptions.date),
-    readDailyPickRuntimePerformanceSummary(supabase),
+    readRowsByIds(dbClient, "matches", matchIds),
+    readRowsByIds(dbClient, "daily_pick_results", pickItemIds, "pick_item_id"),
+    readRowsByColumnValue(dbClient, "daily_pick_runs", "pick_date", normalizedOptions.date),
+    readDailyPickRuntimePerformanceSummary(dbClient),
   ]);
   const matchesById = new Map(
     matches.flatMap((row) => {
@@ -1000,9 +1000,9 @@ async function loadTrackedDailyPicksView(
     return id ? [id] : [];
   }))];
   const [teams, competitions, teamTranslations] = await Promise.all([
-    readRowsByIds(supabase, "teams", teamIds),
-    readRowsByIds(supabase, "competitions", competitionIds),
-    loadPreferredTeamTranslations(supabase, teamIds, normalizedOptions.locale),
+    readRowsByIds(dbClient, "teams", teamIds),
+    readRowsByIds(dbClient, "competitions", competitionIds),
+    loadPreferredTeamTranslations(dbClient, teamIds, normalizedOptions.locale),
   ]);
   const teamsById = new Map(
     teams.flatMap((row) => {
@@ -1243,7 +1243,7 @@ function resolveTrackedNoBetReason(
 
 dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
-    const supabase = getSupabaseClient(c.env);
+    const dbClient = getDbClient(c.env);
     const marketFamilyQuery = c.req.query("marketFamily");
     const marketFamily: LoadDailyPicksOptions["marketFamily"] =
       marketFamilyQuery === "moneyline"
@@ -1259,8 +1259,8 @@ dailyPicks.get("/", async (c) => {
       includeHeld: c.req.query("includeHeld") === "true",
       locale: normalizeLocale(c.req.query("locale")),
     };
-    const artifactView = supabase
-      ? await loadDailyPicksArtifactView(supabase, c.env, options)
+    const artifactView = dbClient
+      ? await loadDailyPicksArtifactView(dbClient, c.env, options)
       : null;
 
     if (artifactView) {
@@ -1271,9 +1271,9 @@ dailyPicks.get("/", async (c) => {
     }
 
     let trackedView: DailyPicksView | null = null;
-    if (supabase) {
+    if (dbClient) {
       try {
-        trackedView = await loadTrackedDailyPicksView(supabase, options);
+        trackedView = await loadTrackedDailyPicksView(dbClient, options);
       } catch {
         trackedView = null;
       }
@@ -1286,7 +1286,7 @@ dailyPicks.get("/", async (c) => {
       });
     }
 
-    const view = await loadDailyPicksView(supabase, options);
+    const view = await loadDailyPicksView(dbClient, options);
 
     return c.json(view, 200, {
       "cache-control": API_SHORT_CACHE_CONTROL,

@@ -306,7 +306,7 @@ def test_backfill_team_translations_job_fails_fast_when_curated_map_is_missing(
     )
     monkeypatch.setattr(
         backfill_team_translations_job,
-        "SupabaseClient",
+        "DbClient",
         FakeClient,
     )
     monkeypatch.setattr(

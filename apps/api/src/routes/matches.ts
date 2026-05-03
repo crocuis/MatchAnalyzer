@@ -15,7 +15,7 @@ import {
   type ValueRecommendation,
   type VariantMarket,
 } from "../lib/prediction-lanes";
-import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import { getDbClient, type ApiDbClient } from "../lib/db-client";
 import {
   loadPreferredTeamTranslations,
   normalizeLocale,
@@ -481,14 +481,14 @@ function buildPredictionSummaryFromMatchCards(
 }
 
 async function loadCompetitionLabels(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   competitionIds: string[],
-) {
+): Promise<Map<string, { label: string; emblemUrl: string | null }>> {
   if (competitionIds.length === 0) {
     return new Map<string, { label: string; emblemUrl: string | null }>();
   }
 
-  const competitionsResult = await supabase
+  const competitionsResult = await dbClient
     .from("competitions")
     .select("id, name, emblem_url")
     .in("id", competitionIds);
@@ -497,11 +497,11 @@ async function loadCompetitionLabels(
   let competitionsError = competitionsResult.error;
 
   if (competitionsError?.message?.includes("emblem_url")) {
-    const fallback = await supabase
+    const fallback = await dbClient
       .from("competitions")
       .select("id, name")
       .in("id", competitionIds);
-    competitions = (fallback.data ?? []).map((row) => ({
+    competitions = ((fallback.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
       ...row,
       emblem_url: null,
     }));
@@ -513,7 +513,11 @@ async function loadCompetitionLabels(
   }
 
   return new Map(
-    (competitions ?? []).map((row) => [
+    ((competitions ?? []) as Array<{
+      id: string;
+      name: string;
+      emblem_url: string | null;
+    }>).map((row) => [
       row.id,
       { label: row.name, emblemUrl: row.emblem_url },
     ]),
@@ -521,9 +525,9 @@ async function loadCompetitionLabels(
 }
 
 async function loadBootstrapLeagueSummaries(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("league_prediction_summaries")
     .select(
       "league_id, league_label, league_emblem_url, match_count, review_count, predicted_count, evaluated_count, correct_count, incorrect_count, success_rate",
@@ -574,10 +578,10 @@ function isMissingRelationError(error: { message?: string } | null | undefined) 
 }
 
 export async function loadDashboardMatchCardsPageView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   options: LoadMatchItemsOptions = {},
 ): Promise<MatchListView> {
-  const leagues = await loadBootstrapLeagueSummaries(supabase);
+  const leagues = await loadBootstrapLeagueSummaries(dbClient);
   const selectedLeagueId =
     options.leagueId && leagues.some((league) => league.id === options.leagueId)
       ? options.leagueId
@@ -600,7 +604,7 @@ export async function loadDashboardMatchCardsPageView(
   );
   const offset = parseCursorOffset(options.cursor);
   const upperBound = offset + limit;
-  const cardsQuery: any = supabase
+  const cardsQuery: any = dbClient
     .from("match_cards")
     .select(
       "id, league_id, league_label, league_emblem_url, home_team, home_team_logo_url, away_team, away_team_logo_url, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, representative_confidence_score, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, has_prediction, needs_review",
@@ -623,7 +627,7 @@ export async function loadDashboardMatchCardsPageView(
     throw new Error(`dashboard card query failed: ${error.message}`);
   }
 
-  const summaryCardsQuery: any = supabase
+  const summaryCardsQuery: any = dbClient
     .from("match_cards")
     .select(
       "id, kickoff_at, final_result, home_score, away_score, representative_recommended_pick, main_recommendation_pick, has_prediction",
@@ -731,7 +735,7 @@ export async function loadDashboardMatchCardsPageView(
 }
 
 async function localizeDashboardMatchCardItems(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   items: MatchListItem[],
   locale: string | null,
 ): Promise<MatchListItem[]> {
@@ -740,7 +744,7 @@ async function localizeDashboardMatchCardItems(
   }
 
   const matchIds = items.map((item) => item.id);
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("matches")
     .select("id, home_team_id, away_team_id")
     .in("id", matchIds);
@@ -758,7 +762,7 @@ async function localizeDashboardMatchCardItems(
   const teamIds = [
     ...new Set(rows.flatMap((row) => [row.home_team_id, row.away_team_id])),
   ];
-  const teamById = await loadTeamLabels(supabase, teamIds, locale);
+  const teamById = await loadTeamLabels(dbClient, teamIds, locale);
 
   return items.map((item) => {
     const row = matchById.get(item.id);
@@ -776,14 +780,14 @@ async function localizeDashboardMatchCardItems(
 }
 
 async function loadLocalizedDashboardMatchCardsPageView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   options: LoadMatchItemsOptions,
 ): Promise<MatchListView> {
-  const view = await loadDashboardMatchCardsPageView(supabase, options);
+  const view = await loadDashboardMatchCardsPageView(dbClient, options);
   return {
     ...view,
     items: await localizeDashboardMatchCardItems(
-      supabase,
+      dbClient,
       view.items,
       normalizeLocale(options.locale),
     ),
@@ -791,15 +795,15 @@ async function loadLocalizedDashboardMatchCardsPageView(
 }
 
 async function loadTeamLabels(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   teamIds: string[],
   locale?: string | null,
-) {
+): Promise<Map<string, { label: string; crestUrl: string | null }>> {
   if (teamIds.length === 0) {
     return new Map<string, { label: string; crestUrl: string | null }>();
   }
 
-  const teamsResult = await supabase
+  const teamsResult = await dbClient
     .from("teams")
     .select("id, name, crest_url")
     .in("id", teamIds);
@@ -807,8 +811,8 @@ async function loadTeamLabels(
   let teams = teamsResult.data;
   let teamsError = teamsResult.error;
   if (teamsError?.message?.includes("crest_url")) {
-    const fallback = await supabase.from("teams").select("id, name").in("id", teamIds);
-    teams = (fallback.data ?? []).map((row) => ({
+    const fallback = await dbClient.from("teams").select("id, name").in("id", teamIds);
+    teams = ((fallback.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
       ...row,
       crest_url: null,
     }));
@@ -820,13 +824,17 @@ async function loadTeamLabels(
   }
 
   const translatedNames = await loadPreferredTeamTranslations(
-    supabase,
+    dbClient,
     teamIds,
     locale,
   );
 
   return new Map(
-    (teams ?? []).map((row) => [
+    ((teams ?? []) as Array<{
+      id: string;
+      name: string;
+      crest_url: string | null;
+    }>).map((row) => [
       row.id,
       { label: translatedNames.get(row.id) ?? row.name, crestUrl: row.crest_url },
     ]),
@@ -849,11 +857,11 @@ function buildReviewMap(
 }
 
 async function loadSelectedLeaguePageView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   leagueId: string,
   options: LoadMatchItemsOptions,
 ): Promise<MatchListView> {
-  const matchesBaseQuery: any = supabase
+  const matchesBaseQuery: any = dbClient
     .from("matches")
     .select(
       "id, competition_id, kickoff_at, home_team_id, away_team_id, final_result, home_score, away_score",
@@ -871,7 +879,7 @@ async function loadSelectedLeaguePageView(
   }
 
   const matchesData = (matchRows ?? []) as MatchSourceRow[];
-  const competitionById = await loadCompetitionLabels(supabase, [leagueId]);
+  const competitionById = await loadCompetitionLabels(dbClient, [leagueId]);
   if (matchesData.length === 0) {
     return {
       items: [],
@@ -925,21 +933,21 @@ async function loadSelectedLeaguePageView(
     { data: snapshotRows, error: snapshotsError },
   ] = await Promise.all([
     pagedMatchIds.length > 0
-      ? supabase
+      ? dbClient
           .from("post_match_reviews")
           .select("prediction_id, cause_tags, created_at")
           .in("match_id", pagedMatchIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
-    loadTeamLabels(supabase, pagedTeamIds, options.locale),
-    supabase
+    loadTeamLabels(dbClient, pagedTeamIds, options.locale),
+    dbClient
       .from("predictions")
       .select(
         "id, match_id, snapshot_id, recommended_pick, confidence_score, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, created_at",
       )
       .in("match_id", matchIds)
       .order("created_at", { ascending: false }),
-    supabase
+    dbClient
       .from("match_snapshots")
       .select("id, checkpoint_type")
       .in("match_id", matchIds),
@@ -952,14 +960,14 @@ async function loadSelectedLeaguePageView(
   const reviewByPredictionId = buildReviewMap(
     (reviewRows ?? []) as Array<{ prediction_id: string | null; cause_tags: unknown }>,
   );
-  const snapshotsById = new Map(
-    (snapshotRows ?? []).map((row) => [
+  const snapshotsById = new Map<string, { checkpointType: string }>(
+    ((snapshotRows ?? []) as Array<{ id: string; checkpoint_type: string }>).map((row) => [
       row.id,
       { checkpointType: row.checkpoint_type },
     ]),
   );
   const predictionCandidatesByMatchId = new Map<string, PredictionCandidate[]>();
-  for (const row of predictionRows ?? []) {
+  for (const row of (predictionRows ?? []) as Array<Record<string, any>>) {
     const current = predictionCandidatesByMatchId.get(row.match_id) ?? [];
     current.push({
       predictionId: row.id ?? null,
@@ -1122,14 +1130,14 @@ async function loadSelectedLeaguePageView(
 }
 
 export async function loadMatchPageView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   options: LoadMatchItemsOptions = {},
 ): Promise<MatchListView> {
   if (options.leagueId) {
-    return loadSelectedLeaguePageView(supabase, options.leagueId, options);
+    return loadSelectedLeaguePageView(dbClient, options.leagueId, options);
   }
 
-  const leagues = await loadBootstrapLeagueSummaries(supabase);
+  const leagues = await loadBootstrapLeagueSummaries(dbClient);
   const selectedLeagueId = leagues[0]?.id ?? null;
   if (!selectedLeagueId) {
     return {
@@ -1143,7 +1151,7 @@ export async function loadMatchPageView(
   }
 
   const selectedLeaguePage = await loadSelectedLeaguePageView(
-    supabase,
+    dbClient,
     selectedLeagueId,
     options,
   );
@@ -1162,23 +1170,23 @@ export async function loadMatchPageView(
 }
 
 export async function loadMatchItems(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   options: LoadMatchItemsOptions = {},
 ): Promise<MatchListItem[]> {
-  const view = await loadMatchPageView(supabase, options);
+  const view = await loadMatchPageView(dbClient, options);
   return view.items;
 }
 
 matches.get("/", async (c) => {
   return cachedResponse(c, async () => {
-    const supabase = getSupabaseClient(c.env);
+    const dbClient = getDbClient(c.env);
     const leagueId = c.req.query("leagueId") ?? undefined;
     const cursor = c.req.query("cursor") ?? undefined;
     const limit = c.req.query("limit") ?? undefined;
     const locale = normalizeLocale(c.req.query("locale"));
     const view = parseMatchListView(c.req.query("view"));
 
-    if (!supabase) {
+    if (!dbClient) {
       return c.json({
         items: [],
         leagues: [],
@@ -1193,7 +1201,7 @@ matches.get("/", async (c) => {
     try {
       if (locale) {
         return c.json(
-          await loadLocalizedDashboardMatchCardsPageView(supabase, {
+          await loadLocalizedDashboardMatchCardsPageView(dbClient, {
             leagueId,
             cursor,
             limit,
@@ -1205,7 +1213,7 @@ matches.get("/", async (c) => {
         );
       }
       return c.json(
-        await loadDashboardMatchCardsPageView(supabase, {
+        await loadDashboardMatchCardsPageView(dbClient, {
           leagueId,
           cursor,
           limit,
@@ -1220,7 +1228,7 @@ matches.get("/", async (c) => {
         && isMissingRelationError({ message: error.message })
       ) {
         return c.json(
-          await loadMatchPageView(supabase, {
+          await loadMatchPageView(dbClient, {
             leagueId,
             cursor,
             limit,

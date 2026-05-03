@@ -12,7 +12,7 @@ import {
   API_SHORT_CACHE_CONTROL,
   cachedResponse,
 } from "../lib/edge-cache";
-import { getSupabaseClient, type ApiSupabaseClient } from "../lib/supabase";
+import { getDbClient, type ApiDbClient } from "../lib/db-client";
 
 const reviews = new Hono<AppBindings>();
 
@@ -148,14 +148,14 @@ function normalizeReviewHistoryEntry(
 }
 
 async function loadArtifactById(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   artifactId: string | null | undefined,
 ) {
   if (!artifactId) {
     return null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("stored_artifacts")
     .select(
       "id, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256",
@@ -193,10 +193,10 @@ async function loadArtifactById(
 }
 
 export async function loadReviewView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
   matchId: string,
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("post_match_reviews")
     .select(
       "match_id, actual_outcome, error_summary, cause_tags, summary_payload, comparison_available, market_outperformed_model, taxonomy_miss_family, taxonomy_severity, taxonomy_consensus_level, taxonomy_market_signal, attribution_primary_signal, attribution_secondary_signal, review_artifact_id, created_at",
@@ -211,7 +211,7 @@ export async function loadReviewView(
   }
 
   const artifact = data
-    ? await loadArtifactById(supabase, data.review_artifact_id)
+    ? await loadArtifactById(dbClient, data.review_artifact_id)
     : null;
 
   return {
@@ -253,9 +253,9 @@ export async function loadReviewView(
 }
 
 export async function loadLatestReviewAggregationView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ) {
-  const { data, error } = await supabase
+  const { data, error } = await dbClient
     .from("post_match_review_aggregations")
     .select(REVIEW_AGGREGATION_SELECT)
     .order("created_at", { ascending: false })
@@ -275,10 +275,10 @@ export async function loadLatestReviewAggregationView(
 }
 
 export async function loadReviewAggregationHistoryView(
-  supabase: ApiSupabaseClient,
+  dbClient: ApiDbClient,
 ): Promise<ReviewAggregationHistoryView> {
-  const laneSummaries = await loadRolloutLaneSummaries(supabase);
-  const { data, error } = await supabase
+  const laneSummaries = await loadRolloutLaneSummaries(dbClient);
+  const { data, error } = await dbClient
     .from("post_match_review_aggregations")
     .select(REVIEW_AGGREGATION_SELECT)
     .order("created_at", { ascending: false })
@@ -346,9 +346,9 @@ reviews.get("/aggregation/history", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       latest: null,
       previous: null,
@@ -359,7 +359,7 @@ reviews.get("/aggregation/history", async (c) => {
   }
 
   try {
-    return c.json(await loadReviewAggregationHistoryView(supabase));
+    return c.json(await loadReviewAggregationHistoryView(dbClient));
   } catch {
     return c.json(
       {
@@ -376,9 +376,9 @@ reviews.get("/aggregation/history", async (c) => {
 
 reviews.get("/:matchId", async (c) => {
   const matchId = c.req.param("matchId");
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       matchId,
       review: null,
@@ -386,7 +386,7 @@ reviews.get("/:matchId", async (c) => {
   }
   try {
     return cachedResponse(c, async () => {
-      const artifactPayload = await loadMatchArtifactJson(supabase, c.env, {
+      const artifactPayload = await loadMatchArtifactJson(dbClient, c.env, {
         matchId,
         artifactKind: "review_view",
       });
@@ -397,7 +397,7 @@ reviews.get("/:matchId", async (c) => {
         });
       }
 
-      return c.json(await loadReviewView(supabase, matchId), 200, {
+      return c.json(await loadReviewView(dbClient, matchId), 200, {
         "cache-control": API_SHORT_CACHE_CONTROL,
         "x-match-analyzer-artifact": "fallback",
       });
@@ -412,16 +412,16 @@ reviews.get("/aggregation/latest", async (c) => {
   if (forbidden) {
     return forbidden;
   }
-  const supabase = getSupabaseClient(c.env);
+  const dbClient = getDbClient(c.env);
 
-  if (!supabase) {
+  if (!dbClient) {
     return c.json({
       report: null,
     });
   }
 
   try {
-    return c.json(await loadLatestReviewAggregationView(supabase));
+    return c.json(await loadLatestReviewAggregationView(dbClient));
   } catch {
     return c.json({ report: null }, 500);
   }

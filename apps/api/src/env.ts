@@ -1,22 +1,25 @@
 export type AppBindings = {
   Bindings: {
-    SUPABASE_URL?: string;
-    SUPABASE_SERVICE_ROLE_KEY?: string;
+    DATABASE_URL?: string;
+    NEON_DATABASE_URL?: string;
+    NEON_DEVELOPMENT_DATABASE_URL?: string;
     OPERATIONAL_REPORTS_API_KEY?: string;
     MATCH_ANALYZER_ARTIFACT_BASE_URL?: string;
   };
 };
 
 export type AppEnv = {
-  supabaseUrl: string | null;
-  supabaseServiceRoleKey: string | null;
+  databaseUrl: string | null;
   operationalReportsApiKey: string | null;
   artifactBaseUrl: string | null;
 };
 
 export const getEnv = (bindings?: AppBindings["Bindings"]): AppEnv => ({
-  supabaseUrl: bindings?.SUPABASE_URL ?? null,
-  supabaseServiceRoleKey: bindings?.SUPABASE_SERVICE_ROLE_KEY ?? null,
+  databaseUrl:
+    bindings?.DATABASE_URL ??
+    bindings?.NEON_DATABASE_URL ??
+    bindings?.NEON_DEVELOPMENT_DATABASE_URL ??
+    null,
   operationalReportsApiKey: bindings?.OPERATIONAL_REPORTS_API_KEY ?? null,
   artifactBaseUrl: bindings?.MATCH_ANALYZER_ARTIFACT_BASE_URL ?? null,
 });

@@ -4,11 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
-from batch.src.settings import load_settings
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
 from batch.src.storage.prediction_dataset import PREDICTION_DATASET_TABLES
 from batch.src.storage.rollout_state import read_optional_rows
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.storage.db_client import DbClient
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -30,7 +30,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
-    source_client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    source_client = DbClient(settings_db_url(settings), settings_db_key(settings))
     target_client = LocalDatasetClient(Path(args.output_dir))
     tables = tuple(args.tables or PREDICTION_DATASET_TABLES)
     row_counts = {}

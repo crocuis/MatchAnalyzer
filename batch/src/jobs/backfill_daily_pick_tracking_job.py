@@ -18,8 +18,8 @@ from batch.src.jobs.run_daily_pick_tracking_job import (
     sync_daily_picks_for_date,
 )
 from batch.src.model.betting_recommendations import choose_latest_prediction
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -82,7 +82,7 @@ def select_daily_pick_backfill_dates(
 
 def backfill_daily_pick_tracking(
     *,
-    client: SupabaseClient,
+    client: DbClient,
     start_date: str | None,
     end_date: str | None,
     force_resync: bool,
@@ -233,7 +233,7 @@ def _match_in_backfill_date_range(
 
 
 def replace_existing_daily_pick_items_for_runs(
-    client: SupabaseClient,
+    client: DbClient,
     run_ids: list[str],
 ) -> None:
     if not run_ids:
@@ -273,7 +273,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     result = backfill_daily_pick_tracking(
         client=client,
         start_date=args.start_date,

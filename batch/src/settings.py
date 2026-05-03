@@ -29,6 +29,13 @@ def load_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
+        value = value.strip()
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in {"'", '"'}
+        ):
+            value = value[1:-1]
         values[key.strip()] = value.strip()
     return values
 
@@ -38,6 +45,7 @@ class Settings:
     supabase_url: str
     supabase_key: str
     r2_bucket: str
+    database_url: str | None = None
     rollout_ramp_sequence: tuple[int, ...] = (25, 50, 100)
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None
@@ -67,12 +75,42 @@ class Settings:
     bsd_api_key: str | None = None
 
     @property
+    def db_url(self) -> str:
+        return self.database_url or self.supabase_url
+
+    @property
+    def db_key(self) -> str:
+        return self.supabase_key
+
+    @property
     def supabase_service_key(self) -> str:
         return self.supabase_key
 
     @property
     def supabase_service_role_key(self) -> str:
         return self.supabase_key
+
+
+def settings_db_url(settings: object) -> str:
+    value = (
+        getattr(settings, "db_url", None)
+        or getattr(settings, "database_url", None)
+        or getattr(settings, "supabase_url", None)
+    )
+    if not isinstance(value, str) or not value:
+        raise KeyError("DATABASE_URL or SUPABASE_URL")
+    return value
+
+
+def settings_db_key(settings: object) -> str:
+    value = (
+        getattr(settings, "db_key", None)
+        or getattr(settings, "supabase_key", None)
+        or getattr(settings, "supabase_service_role_key", None)
+        or getattr(settings, "supabase_service_key", None)
+        or ""
+    )
+    return str(value)
 
 
 def load_settings() -> Settings:
@@ -116,14 +154,28 @@ def load_settings() -> Settings:
         else DEFAULT_NVIDIA_MODEL
     )
 
+    process_database_url = (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("NEON_DATABASE_URL")
+        or os.environ.get("NEON_DEVELOPMENT_DATABASE_URL")
+    )
+    file_database_url = (
+        file_env.get("DATABASE_URL")
+        or file_env.get("NEON_DATABASE_URL")
+        or file_env.get("NEON_DEVELOPMENT_DATABASE_URL")
+    )
+    database_url = process_database_url or (
+        None if os.environ.get("SUPABASE_URL") else file_database_url
+    )
+
     supabase_key = env_prefer_process(
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_PUBLISHABLE_KEY",
     )
-    if not supabase_key:
+    if not supabase_key and not database_url:
         raise KeyError(
-            "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY or SUPABASE_PUBLISHABLE_KEY"
+            "DATABASE_URL or SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY or SUPABASE_PUBLISHABLE_KEY"
         )
 
     rollout_ramp_raw = env("ROLLOUT_RAMP_SEQUENCE")
@@ -145,9 +197,11 @@ def load_settings() -> Settings:
         rollout_ramp_sequence = parsed_sequence
 
     return Settings(
-        supabase_url=env("SUPABASE_URL")
-        or (_ for _ in ()).throw(KeyError("SUPABASE_URL")),
-        supabase_key=supabase_key,
+        supabase_url=database_url
+        or env("SUPABASE_URL")
+        or (_ for _ in ()).throw(KeyError("DATABASE_URL or SUPABASE_URL")),
+        supabase_key=supabase_key or "",
+        database_url=database_url,
         r2_bucket=env("R2_BUCKET") or (_ for _ in ()).throw(KeyError("R2_BUCKET")),
         rollout_ramp_sequence=rollout_ramp_sequence,
         r2_access_key_id=env("R2_ACCESS_KEY_ID"),

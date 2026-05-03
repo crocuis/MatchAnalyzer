@@ -15,8 +15,8 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
     filter_backfill_scope,
     parse_match_id_filter,
 )
-from batch.src.settings import load_settings
-from batch.src.storage.supabase_client import SupabaseClient
+from batch.src.settings import load_settings, settings_db_key, settings_db_url
+from batch.src.storage.db_client import DbClient
 
 MATCH_HISTORY_SIGNAL_FIELDS = (
     "home_elo",
@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.kickoff_date is not None:
         date.fromisoformat(args.kickoff_date)
     settings = load_settings()
-    client = SupabaseClient(settings.supabase_url, settings.supabase_key)
+    client = DbClient(settings_db_url(settings), settings_db_key(settings))
     snapshots = client.read_rows("match_snapshots")
     matches = client.read_rows("matches")
     snapshots, matches = filter_backfill_scope(

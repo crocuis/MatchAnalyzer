@@ -92,7 +92,7 @@ def test_execute_rollout_promotion_job_promotes_current_bundle_into_rollout_lane
             state[table_name] = list(existing.values())
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
@@ -168,7 +168,7 @@ def test_execute_rollout_promotion_job_skips_when_latest_decision_is_not_approve
             state[table_name] = list(rows)
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
@@ -269,7 +269,7 @@ def test_execute_rollout_promotion_job_bootstraps_current_lane_before_rollout(
             state[table_name] = list(existing.values())
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
@@ -424,7 +424,7 @@ def test_execute_rollout_promotion_job_ramps_existing_rollout_lane_before_promot
             state[table_name] = list(existing.values())
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
@@ -583,7 +583,7 @@ def test_execute_rollout_promotion_job_promotes_current_after_full_rollout_ramp(
             state[table_name] = list(existing.values())
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
@@ -718,7 +718,7 @@ def test_execute_rollout_promotion_job_updates_shadow_lane_for_new_candidate_eve
             state[table_name] = list(existing.values())
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
@@ -877,7 +877,7 @@ def test_execute_rollout_promotion_job_uses_configured_ramp_sequence(
             state[table_name] = list(existing.values())
             return len(rows)
 
-    monkeypatch.setattr(rollout_executor_job, "SupabaseClient", FakeClient)
+    monkeypatch.setattr(rollout_executor_job, "DbClient", FakeClient)
     monkeypatch.setattr(
         rollout_executor_job,
         "load_settings",
