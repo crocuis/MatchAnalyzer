@@ -7683,6 +7683,36 @@ def test_select_real_market_snapshots_enriches_snapshot_rows_for_matching():
     ]
 
 
+def test_select_real_market_snapshots_accepts_datetime_kickoff_values():
+    rows = select_real_market_snapshots(
+        snapshot_rows=[
+            {
+                "id": "match_001_t_minus_24h",
+                "match_id": "match_001",
+                "checkpoint_type": "T_MINUS_24H",
+                "captured_at": datetime(2026, 4, 11, 15, 30, tzinfo=timezone.utc),
+            },
+        ],
+        match_rows=[
+            {
+                "id": "match_001",
+                "competition_id": "epl",
+                "kickoff_at": datetime(2026, 4, 12, 15, 30, tzinfo=timezone.utc),
+                "home_team_id": "chelsea",
+                "away_team_id": "man-city",
+            }
+        ],
+        team_rows=[
+            {"id": "chelsea", "name": "Chelsea FC"},
+            {"id": "man-city", "name": "Manchester City FC"},
+        ],
+        target_date="2026-04-12",
+    )
+
+    assert [row["id"] for row in rows] == ["match_001_t_minus_24h"]
+    assert rows[0]["kickoff_at"] == datetime(2026, 4, 12, 15, 30, tzinfo=timezone.utc)
+
+
 def test_select_real_market_snapshots_allows_checkpoint_override():
     rows = select_real_market_snapshots(
         snapshot_rows=[
