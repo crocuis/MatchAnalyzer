@@ -90,11 +90,15 @@ describe("supabase schema integration", () => {
        from information_schema.tables
        where table_name = 'prediction_feature_snapshots'`,
     );
-    const droppedFeatureSnapshotSourceMetadataColumns = await db.query<{ count: number }>(
+    const droppedFeatureSnapshotPayloadColumns = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.columns
        where table_name = 'prediction_feature_snapshots'
-         and column_name = 'source_metadata'`,
+         and column_name in (
+           'feature_context',
+           'feature_metadata',
+           'source_metadata'
+         )`,
     );
     const fusionPolicyTables = await db.query<{ count: number }>(
       `select count(*)::int as count
@@ -260,7 +264,7 @@ describe("supabase schema integration", () => {
     expect(crestColumns.rows[0]?.count).toBe(1);
     expect(emblemColumns.rows[0]?.count).toBe(1);
     expect(featureSnapshotTables.rows[0]?.count).toBe(1);
-    expect(droppedFeatureSnapshotSourceMetadataColumns.rows[0]?.count).toBe(0);
+    expect(droppedFeatureSnapshotPayloadColumns.rows[0]?.count).toBe(0);
     expect(fusionPolicyTables.rows[0]?.count).toBe(1);
     expect(evaluationHistoryTables.rows[0]?.count).toBe(1);
     expect(fusionPolicyHistoryTables.rows[0]?.count).toBe(1);

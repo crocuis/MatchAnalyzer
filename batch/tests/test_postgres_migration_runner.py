@@ -25,7 +25,7 @@ def test_discovers_ordered_supabase_sql_migrations() -> None:
     migrations = runner.discover_migrations(REPO_ROOT / "supabase" / "migrations")
 
     assert migrations[0].filename == "202604180001_initial_schema.sql"
-    assert migrations[-1].filename == "20260503112656_slim_prediction_feature_snapshot_source_metadata.sql"
+    assert migrations[-1].filename == "20260503125000_slim_prediction_feature_snapshot_payloads.sql"
     assert all(len(migration.checksum) == 64 for migration in migrations)
     assert migrations == sorted(migrations, key=lambda migration: migration.filename)
 

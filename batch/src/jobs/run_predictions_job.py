@@ -3235,9 +3235,6 @@ def main() -> None:
                 snapshot=signal_snapshot,
                 match_id=row["match_id"],
                 model_version_id=SAMPLE_MODEL_VERSION_ID,
-                feature_context=feature_context,
-                feature_metadata=feature_metadata,
-                source_metadata=source_metadata,
             )
         )
 
