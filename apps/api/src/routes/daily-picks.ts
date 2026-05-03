@@ -204,6 +204,9 @@ async function readRows(
 }
 
 function readString(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
