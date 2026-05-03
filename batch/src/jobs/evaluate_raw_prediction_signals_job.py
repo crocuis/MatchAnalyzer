@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import boto3
 
 from batch.src.model.raw_signal_backtest import (
     build_raw_moneyline_rows,
@@ -17,6 +14,9 @@ from batch.src.jobs.backfill_external_prediction_signals_job import (
 )
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.local_dataset_client import LocalDatasetClient
+from batch.src.storage.prediction_payload_hydration import (
+    hydrate_prediction_summary_payloads_from_artifacts,
+)
 from batch.src.storage.prediction_dataset import resolve_local_prediction_dataset_dir
 from batch.src.storage.rollout_state import read_optional_rows
 from batch.src.storage.db_client import DbClient
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
     artifact_payloads_loaded = 0
     artifact_payloads_missing = 0
     if payload_source == "r2":
-        payloads = load_prediction_artifact_payloads(
+        predictions, payloads = hydrate_prediction_summary_payloads_from_artifacts(
             settings=settings,
             predictions=predictions,
             stored_artifacts=stored_artifacts,
@@ -135,16 +135,6 @@ def main(argv: list[str] | None = None) -> None:
             if prediction.get("explanation_artifact_id")
             and str(prediction.get("id") or "") not in payloads
         )
-        predictions = [
-            {
-                **prediction,
-                "summary_payload": payloads.get(
-                    str(prediction.get("id") or ""),
-                    prediction.get("summary_payload"),
-                ),
-            }
-            for prediction in predictions
-        ]
 
     raw_rows = build_raw_moneyline_rows(
         matches=matches,
@@ -195,69 +185,5 @@ def main(argv: list[str] | None = None) -> None:
             sort_keys=True,
         )
     )
-
-
-def load_prediction_artifact_payloads(
-    *,
-    settings,
-    predictions: list[dict],
-    stored_artifacts: list[dict],
-) -> dict[str, dict]:
-    if not (
-        settings.r2_access_key_id
-        and settings.r2_secret_access_key
-        and settings.r2_s3_endpoint
-    ):
-        return {}
-    artifact_by_id = {
-        str(row.get("id") or ""): row
-        for row in stored_artifacts
-        if row.get("artifact_kind") == "prediction_explanation"
-    }
-    artifact_by_owner = {
-        str(row.get("owner_id") or ""): row
-        for row in stored_artifacts
-        if row.get("artifact_kind") == "prediction_explanation"
-    }
-    targets: dict[str, str] = {}
-    for prediction in predictions:
-        prediction_id = str(prediction.get("id") or "")
-        artifact = artifact_by_id.get(str(prediction.get("explanation_artifact_id") or ""))
-        if artifact is None:
-            artifact = artifact_by_owner.get(prediction_id)
-        object_key = artifact.get("object_key") if artifact else None
-        if prediction_id and isinstance(object_key, str) and object_key:
-            targets[prediction_id] = object_key
-
-    s3_client = boto3.client(
-        "s3",
-        endpoint_url=settings.r2_s3_endpoint,
-        aws_access_key_id=settings.r2_access_key_id,
-        aws_secret_access_key=settings.r2_secret_access_key,
-        region_name="auto",
-    )
-    payloads: dict[str, dict] = {}
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        futures = {
-            executor.submit(_load_json_object, s3_client, settings.r2_bucket, object_key): prediction_id
-            for prediction_id, object_key in targets.items()
-        }
-        for future in as_completed(futures):
-            prediction_id = futures[future]
-            payload = future.result()
-            if isinstance(payload, dict):
-                payloads[prediction_id] = payload
-    return payloads
-
-
-def _load_json_object(s3_client, bucket: str, object_key: str) -> dict | None:
-    try:
-        body = s3_client.get_object(Bucket=bucket, Key=object_key)["Body"].read()
-        payload = json.loads(body)
-    except Exception:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
 if __name__ == "__main__":
     main()

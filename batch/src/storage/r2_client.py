@@ -56,3 +56,30 @@ class R2Client:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(payload, sort_keys=True))
         return archive_uri
+
+    def load_json(self, key: str) -> dict | None:
+        archive_key = validate_archive_key(key)
+        try:
+            if self._use_remote_backend():
+                client = boto3.client(
+                    "s3",
+                    endpoint_url=self.s3_endpoint,
+                    aws_access_key_id=self.access_key_id,
+                    aws_secret_access_key=self.secret_access_key,
+                    region_name="auto",
+                )
+                body = client.get_object(
+                    Bucket=self.bucket,
+                    Key=archive_key.as_posix(),
+                )["Body"].read()
+            else:
+                body = (
+                    Path(".tmp")
+                    / "r2"
+                    / self.bucket
+                    / Path(*archive_key.parts)
+                ).read_bytes()
+            payload = json.loads(body)
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
