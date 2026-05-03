@@ -15,6 +15,7 @@ import {
   normalizeVariantMarketsFromSummary,
   type PredictionLaneSummaryFields,
 } from "../lib/prediction-lanes";
+import { hydratePredictionSummaryPayloadsFromArtifacts } from "../lib/prediction-summary-hydration";
 import { getDbClient, type ApiDbClient } from "../lib/db-client";
 import {
   loadPreferredTeamTranslations,
@@ -132,7 +133,7 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
   competitions: "id, name",
   match_snapshots: "id, match_id, checkpoint_type",
   predictions:
-    "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary",
+    "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id",
   daily_pick_runs: "id, pick_date, generated_at, status",
   daily_pick_items:
     "id, run_id, pick_date, match_id, prediction_id, market_family, selection_label, line_value, market_price, model_probability, market_probability, expected_value, edge, confidence, score, status, validation_metadata, reason_labels, created_at",
@@ -389,9 +390,111 @@ function hasKickoffPassed(kickoffAt: string): boolean {
   return Number.isFinite(kickoffMillis) && kickoffMillis <= Date.now();
 }
 
+function buildSnapshotIndexes(snapshots: DailyPickRow[]) {
+  const snapshotMatchById = new Map(
+    snapshots.flatMap((row) => {
+      const id = readString(row.id);
+      const matchId = readString(row.match_id);
+      return id && matchId ? [[id, matchId] as const] : [];
+    }),
+  );
+  const snapshotsById = new Map(
+    snapshots.flatMap((row) => {
+      const id = readString(row.id);
+      const checkpointType = readString(row.checkpoint_type);
+      return id
+        ? [[id, { checkpointType: checkpointType ?? "" }] as const]
+        : [];
+    }),
+  );
+  return { snapshotMatchById, snapshotsById };
+}
+
+function pickPredictionRowsForSummaryHydration(
+  predictions: DailyPickRow[],
+  snapshots: DailyPickRow[],
+) {
+  const { snapshotMatchById, snapshotsById } = buildSnapshotIndexes(snapshots);
+  const rowsByMatch = new Map<string, DailyPickRow[]>();
+
+  for (const prediction of predictions) {
+    const matchId = readString(prediction.match_id);
+    if (!matchId) {
+      continue;
+    }
+    const snapshotId = readString(prediction.snapshot_id);
+    if (snapshotId && snapshotMatchById.size > 0) {
+      const snapshotMatchId = snapshotMatchById.get(snapshotId);
+      if (snapshotMatchId !== matchId) {
+        continue;
+      }
+    }
+    const rows = rowsByMatch.get(matchId) ?? [];
+    rows.push(prediction);
+    rowsByMatch.set(matchId, rows);
+  }
+
+  return [...rowsByMatch.values()].flatMap((rows) => {
+    const sorted = [...rows].sort((left, right) =>
+      comparePredictionRows(
+        {
+          snapshotId: readString(left.snapshot_id) ?? "",
+          createdAt: readString(left.created_at),
+        },
+        {
+          snapshotId: readString(right.snapshot_id) ?? "",
+          createdAt: readString(right.created_at),
+        },
+        snapshotsById,
+      ),
+    );
+    return sorted[0] ? [sorted[0]] : [];
+  });
+}
+
+async function hydrateDailyPickPredictionSummaries(
+  dbClient: ApiDbClient,
+  bindings: AppBindings["Bindings"],
+  predictions: DailyPickRow[],
+  snapshots: DailyPickRow[],
+) {
+  const rowsForHydration = pickPredictionRowsForSummaryHydration(
+    predictions,
+    snapshots,
+  ) as Array<
+    DailyPickRow & {
+      id: string;
+      explanation_artifact_id?: string | null;
+      summary_payload?: unknown;
+    }
+  >;
+  let hydratedRows: typeof rowsForHydration;
+  try {
+    hydratedRows = await hydratePredictionSummaryPayloadsFromArtifacts(
+      dbClient,
+      bindings,
+      rowsForHydration,
+    );
+  } catch {
+    return predictions;
+  }
+  const hydratedById = new Map(
+    hydratedRows.flatMap((row) => {
+      const id = readString(row.id);
+      return id ? [[id, row] as const] : [];
+    }),
+  );
+
+  return predictions.map((prediction) => {
+    const id = readString(prediction.id);
+    return id ? hydratedById.get(id) ?? prediction : prediction;
+  });
+}
+
 export async function loadDailyPicksView(
   dbClient: ApiDbClient | null,
   options: LoadDailyPicksOptions = {},
+  bindings: AppBindings["Bindings"] = {},
 ): Promise<DailyPicksView> {
   const normalizedOptions = {
     ...options,
@@ -433,6 +536,12 @@ export async function loadDailyPicksView(
     return id ? [id] : [];
   }))];
   const snapshots = await readRowsByIds(dbClient, "match_snapshots", snapshotIds);
+  const hydratedPredictions = await hydrateDailyPickPredictionSummaries(
+    dbClient,
+    bindings,
+    predictions,
+    snapshots,
+  );
 
   return buildDailyPicksView({
     matches,
@@ -440,7 +549,7 @@ export async function loadDailyPicksView(
     teamTranslations,
     competitions,
     snapshots,
-    predictions,
+    predictions: hydratedPredictions,
     performanceSummary,
     options: normalizedOptions,
   });
@@ -459,22 +568,7 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
       return id ? [[id, row] as const] : [];
     }),
   );
-  const snapshotMatchById = new Map(
-    args.snapshots.flatMap((row) => {
-      const id = readString(row.id);
-      const matchId = readString(row.match_id);
-      return id && matchId ? [[id, matchId] as const] : [];
-    }),
-  );
-  const snapshotsById = new Map(
-    args.snapshots.flatMap((row) => {
-      const id = readString(row.id);
-      const checkpointType = readString(row.checkpoint_type);
-      return id
-        ? [[id, { checkpointType: checkpointType ?? "" }] as const]
-        : [];
-    }),
-  );
+  const { snapshotMatchById, snapshotsById } = buildSnapshotIndexes(args.snapshots);
   const predictionCandidatesByMatch = new Map<string, PredictionCandidate[]>();
   for (const prediction of args.predictions) {
     const matchId = readString(prediction.match_id);
@@ -1289,7 +1383,7 @@ dailyPicks.get("/", async (c) => {
       });
     }
 
-    const view = await loadDailyPicksView(dbClient, options);
+    const view = await loadDailyPicksView(dbClient, options, c.env);
 
     return c.json(view, 200, {
       "cache-control": API_SHORT_CACHE_CONTROL,
