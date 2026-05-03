@@ -66,6 +66,7 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
     assert "target_date:" in workflow
     assert "ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}" in workflow
     assert "BSD_API_KEY: ${{ secrets.BSD_API_KEY }}" in workflow
+    assert 'FOOTBALL_DATA_MARKET_FALLBACK: "1"' in workflow
     assert "BSD_LINEUP_LOOKAHEAD_HOURS: 48" in workflow
     assert "MARKET_CHECKPOINT_TYPES: T_MINUS_24H,T_MINUS_6H,T_MINUS_1H,LINEUP_CONFIRMED" in workflow
     assert "REAL_MARKET_DATE=" in workflow
