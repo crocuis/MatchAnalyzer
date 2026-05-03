@@ -8,6 +8,24 @@ def read_workflow(name: str) -> str:
     return (REPO_ROOT / ".github" / "workflows" / name).read_text()
 
 
+def test_operational_workflows_accept_neon_database_url_secret_fallback() -> None:
+    workflow_names = [
+        "deploy-production.yml",
+        "ingest-fixtures.yml",
+        "ingest-markets.yml",
+        "post-match-review.yml",
+        "report-missing-signal-coverage.yml",
+        "run-predictions.yml",
+        "sync-match-results.yml",
+        "sync-prediction-checkpoints.yml",
+    ]
+
+    for workflow_name in workflow_names:
+        workflow = read_workflow(workflow_name)
+
+        assert "DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}" in workflow
+
+
 def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     workflow = read_workflow("ingest-fixtures.yml")
 

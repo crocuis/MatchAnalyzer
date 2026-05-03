@@ -1413,6 +1413,42 @@ def test_build_snapshot_rows_from_matches_enriches_historical_strength_metrics()
     assert snapshot["away_rest_days"] == 2
 
 
+def test_build_snapshot_rows_from_matches_accepts_datetime_kickoff_values():
+    rows = build_snapshot_rows_from_matches(
+        [
+            {
+                "id": "match_010",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": datetime(2026, 8, 15, 15, 0, tzinfo=timezone.utc),
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": None,
+            }
+        ],
+        captured_at="2026-08-14T15:00:00+00:00",
+        historical_matches=[
+            {
+                "id": "hist_001",
+                "competition_id": "epl",
+                "season": "2026-2027",
+                "kickoff_at": datetime(2026, 8, 8, 15, 0, tzinfo=timezone.utc),
+                "home_team_id": "arsenal",
+                "away_team_id": "liverpool",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 0,
+                "result_observed_at": datetime(2026, 8, 8, 18, 0, tzinfo=timezone.utc),
+            },
+        ],
+    )
+
+    [snapshot] = rows
+    assert snapshot["home_points_last_5"] == 3
+    assert snapshot["away_points_last_5"] is None
+    assert snapshot["home_rest_days"] == 7
+
+
 def test_build_match_history_snapshot_fields_excludes_results_observed_after_snapshot():
     match = {
         "id": "target_match",
