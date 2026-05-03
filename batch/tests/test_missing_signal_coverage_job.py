@@ -320,6 +320,110 @@ def test_main_live_mode_hydrates_missing_signal_metadata_from_artifact(
     assert payload["reason_summary"]["form_context_missing"]["snapshot_count"] == 1
 
 
+def test_main_live_mode_limits_artifact_hydration_to_target_date(
+    monkeypatch,
+    capsys,
+) -> None:
+    captured_prediction_ids = []
+    state = {
+        "prediction_feature_snapshots": [
+            {
+                "id": "prediction-001",
+                "prediction_id": "prediction-001",
+                "match_id": "match-001",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "prediction-002",
+                "prediction_id": "prediction-002",
+                "match_id": "match-002",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+        ],
+        "matches": [
+            {
+                "id": "match-001",
+                "competition_id": "epl",
+                "kickoff_at": "2026-04-20T19:00:00+00:00",
+            },
+            {
+                "id": "match-002",
+                "competition_id": "ucl",
+                "kickoff_at": "2026-04-21T19:00:00+00:00",
+            },
+        ],
+        "predictions": [
+            {
+                "id": "prediction-001",
+                "summary_payload": {
+                    "feature_metadata": {
+                        "snapshot_quality": "partial",
+                        "missing_signal_reasons": [],
+                    },
+                },
+            },
+            {
+                "id": "prediction-002",
+                "summary_payload": {
+                    "feature_metadata": {
+                        "snapshot_quality": "partial",
+                        "missing_signal_reasons": [],
+                    },
+                },
+            },
+        ],
+        "stored_artifacts": [
+            {
+                "id": "prediction_artifact_prediction-001",
+                "owner_type": "prediction",
+                "owner_id": "prediction-001",
+                "artifact_kind": "prediction_explanation",
+                "object_key": "predictions/match-001/prediction-001.json",
+            },
+            {
+                "id": "prediction_artifact_prediction-002",
+                "owner_type": "prediction",
+                "owner_id": "prediction-002",
+                "artifact_kind": "prediction_explanation",
+                "object_key": "predictions/match-002/prediction-002.json",
+            },
+        ],
+    }
+
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            pass
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+    def fake_hydrate_from_artifacts(*, settings, predictions, stored_artifacts):
+        captured_prediction_ids.extend(row["id"] for row in predictions)
+        return predictions, {}
+
+    monkeypatch.setattr(
+        coverage_job,
+        "load_settings",
+        lambda: SimpleNamespace(
+            supabase_url="https://example.test",
+            supabase_key="key",
+        ),
+    )
+    monkeypatch.setattr(coverage_job, "DbClient", FakeClient)
+    monkeypatch.setattr(
+        coverage_job,
+        "hydrate_prediction_summary_payloads_from_artifacts",
+        fake_hydrate_from_artifacts,
+    )
+
+    coverage_job.main(["--target-date", "2026-04-20"])
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+    assert captured_prediction_ids == ["prediction-001"]
+    assert payload["total_feature_snapshots"] == 1
+
+
 def test_main_live_mode_prints_zero_count_payload_for_empty_target_date(
     monkeypatch,
     capsys,
