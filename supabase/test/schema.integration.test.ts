@@ -21,6 +21,37 @@ async function createDb() {
 }
 
 describe("supabase schema integration", () => {
+  it("repairs restored market probability tables missing raw payload", async () => {
+    const db = new PGlite();
+    const migration = await readFile(
+      new URL(
+        "../migrations/20260503090043_add_market_probabilities_raw_payload.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    await db.exec("create table market_probabilities (id text primary key);");
+    await db.exec(migration);
+
+    const rawPayloadColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'market_probabilities'
+         and column_name = 'raw_payload'
+         and data_type = 'jsonb'
+         and is_nullable = 'NO'`,
+    );
+
+    await db.exec("insert into market_probabilities (id) values ('market_001');");
+    const insertedRows = await db.query<{ raw_payload: unknown }>(
+      "select raw_payload from market_probabilities where id = 'market_001'",
+    );
+
+    expect(rawPayloadColumns.rows[0]?.count).toBe(1);
+    expect(insertedRows.rows).toEqual([{ raw_payload: {} }]);
+  });
+
   it("loads the migration and seed data", async () => {
     const db = await createDb();
 
@@ -179,6 +210,14 @@ describe("supabase schema integration", () => {
        where table_name = 'market_probabilities'
          and column_name = 'market_family'`,
     );
+    const marketRawPayloadColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name = 'market_probabilities'
+         and column_name = 'raw_payload'
+         and data_type = 'jsonb'
+         and is_nullable = 'NO'`,
+    );
     const bsdEventSignalColumns = await db.query<{ count: number }>(
       `select count(*)::int as count
        from information_schema.columns
@@ -222,6 +261,7 @@ describe("supabase schema integration", () => {
     expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
     expect(dailyPickLeagueColumns.rows[0]?.count).toBe(0);
     expect(marketFamilyColumns.rows[0]?.count).toBe(1);
+    expect(marketRawPayloadColumns.rows[0]?.count).toBe(1);
     expect(bsdEventSignalColumns.rows[0]?.count).toBe(4);
   });
 
