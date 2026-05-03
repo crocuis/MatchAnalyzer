@@ -4,6 +4,9 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from batch.src.features.feature_builder import MISSING_SIGNAL_REASON_TAXONOMY
+from batch.src.model.prediction_graph_integrity import (
+    hydrate_feature_snapshot_rows_from_predictions,
+)
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.db_client import DbClient
 
@@ -289,7 +292,11 @@ def filter_feature_snapshot_rows_by_target_date(
 def load_live_rows(*, target_date: str | None) -> tuple[list[dict], list[dict]]:
     settings = load_settings()
     client = DbClient(settings_db_url(settings), settings_db_key(settings))
-    feature_snapshot_rows = client.read_rows("prediction_feature_snapshots")
+    predictions = client.read_rows("predictions")
+    feature_snapshot_rows = hydrate_feature_snapshot_rows_from_predictions(
+        feature_snapshot_rows=client.read_rows("prediction_feature_snapshots"),
+        predictions=predictions,
+    )
     match_rows = client.read_rows("matches")
     return filter_feature_snapshot_rows_by_target_date(
         feature_snapshot_rows=feature_snapshot_rows,

@@ -17,6 +17,7 @@ from batch.src.jobs.run_predictions_job import select_real_prediction_inputs
 from batch.src.jobs.run_predictions_job import should_sync_daily_pick_tracking_after_predictions
 from batch.src.markets import index_market_rows_by_snapshot
 from batch.src.model.prediction_graph_integrity import (
+    hydrate_feature_snapshot_rows_from_predictions,
     plan_missing_match_repairs,
     plan_missing_snapshot_repairs,
 )
@@ -5966,6 +5967,48 @@ def test_plan_missing_snapshot_repairs_rebuilds_snapshot_rows_from_feature_snaps
     assert created_rows[0]["lineup_source_summary"] is None
 
 
+def test_hydrates_feature_snapshots_from_prediction_summary_payload() -> None:
+    feature_snapshot_rows = [
+        {
+            "id": "prediction-001",
+            "prediction_id": "prediction-001",
+            "snapshot_id": "snapshot-001",
+            "match_id": "match-001",
+            "checkpoint_type": "T_MINUS_24H",
+        }
+    ]
+    predictions = [
+        {
+            "id": "prediction-001",
+            "summary_payload": {
+                "feature_context": {
+                    "home_lineup_score": 0.7,
+                    "snapshot_quality_complete": 1,
+                },
+                "feature_metadata": {
+                    "lineup_status": "confirmed",
+                    "snapshot_quality": "complete",
+                },
+            },
+        }
+    ]
+
+    hydrated_rows = hydrate_feature_snapshot_rows_from_predictions(
+        feature_snapshot_rows=feature_snapshot_rows,
+        predictions=predictions,
+    )
+
+    assert hydrated_rows[0]["feature_context"] == {
+        "home_lineup_score": 0.7,
+        "snapshot_quality_complete": 1,
+    }
+    assert hydrated_rows[0]["feature_metadata"] == {
+        "lineup_status": "confirmed",
+        "snapshot_quality": "complete",
+    }
+    assert "source_metadata" not in hydrated_rows[0]
+
+
 def test_plan_missing_match_repairs_rebuilds_orphan_match_graph() -> None:
     orphan_feature_snapshot = {
         "id": "746952_t_minus_24h_model_v1",
@@ -6038,20 +6081,26 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
             "match_id": "746952",
             "model_version_id": "model_v1",
             "checkpoint_type": "T_MINUS_24H",
-            "feature_context": {
-                "home_lineup_score": 0.0,
-                "away_lineup_score": 0.0,
-                "lineup_strength_delta": 0.0,
-                "lineup_source_summary": "none",
-                "snapshot_quality_complete": 0,
-                "lineup_confirmed": 0,
-            },
-            "feature_metadata": {
-                "lineup_status": "unknown",
-                "snapshot_quality": "partial",
-            },
-            "source_metadata": {},
             "created_at": "2026-03-21T14:30:00+00:00",
+        }
+    ]
+    prediction_rows = [
+        {
+            "id": "746952_t_minus_24h_model_v1",
+            "summary_payload": {
+                "feature_context": {
+                    "home_lineup_score": 0.0,
+                    "away_lineup_score": 0.0,
+                    "lineup_strength_delta": 0.0,
+                    "lineup_source_summary": "none",
+                    "snapshot_quality_complete": 0,
+                    "lineup_confirmed": 0,
+                },
+                "feature_metadata": {
+                    "lineup_status": "unknown",
+                    "snapshot_quality": "partial",
+                },
+            },
         }
     ]
     event_summary = {
@@ -6083,6 +6132,7 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
             self.tables = {
                 "matches": [],
                 "prediction_feature_snapshots": feature_snapshot_rows,
+                "predictions": prediction_rows,
             }
 
         def read_rows(self, table_name: str) -> list[dict]:
@@ -6114,6 +6164,7 @@ def test_repair_prediction_match_graph_job_upserts_orphan_match_graph(
     assert out["summary"]["repaired_matches"] == 1
     assert state["matches"][0]["id"] == "746952"
     assert state["match_snapshots"][0]["id"] == "746952_t_minus_24h"
+    assert state["match_snapshots"][0]["lineup_source_summary"] == "none"
 
 
 def test_backfill_prediction_recalibration_job_updates_changed_rows(
@@ -6181,20 +6232,26 @@ def test_repair_prediction_snapshot_graph_job_upserts_missing_snapshots(
             "match_id": predictions[0]["match_id"],
             "model_version_id": "model_v1",
             "checkpoint_type": "T_MINUS_24H",
-            "feature_context": predictions[0]["explanation_payload"]["feature_context"],
-            "feature_metadata": {
-                "lineup_status": "unknown",
-                "snapshot_quality": "partial",
-            },
-            "source_metadata": predictions[0]["explanation_payload"]["source_metadata"],
             "created_at": "2026-04-12T12:00:00Z",
+        }
+    ]
+    prediction_rows = [
+        {
+            **predictions[0],
+            "summary_payload": {
+                "feature_context": predictions[0]["explanation_payload"]["feature_context"],
+                "feature_metadata": {
+                    "lineup_status": "unknown",
+                    "snapshot_quality": "partial",
+                },
+            },
         }
     ]
 
     class FakeClient:
         def __init__(self, _url: str, _key: str):
             self.tables = {
-                "predictions": [predictions[0]],
+                "predictions": prediction_rows,
                 "matches": [matches[0]],
                 "match_snapshots": [],
                 "prediction_feature_snapshots": feature_snapshot_rows,

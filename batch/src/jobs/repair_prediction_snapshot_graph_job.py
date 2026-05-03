@@ -1,7 +1,10 @@
 import json
 import os
 
-from batch.src.model.prediction_graph_integrity import plan_missing_snapshot_repairs
+from batch.src.model.prediction_graph_integrity import (
+    hydrate_feature_snapshot_rows_from_predictions,
+    plan_missing_snapshot_repairs,
+)
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.db_client import DbClient
 
@@ -12,7 +15,10 @@ def main() -> None:
     predictions = client.read_rows("predictions")
     matches = client.read_rows("matches")
     snapshot_rows = client.read_rows("match_snapshots")
-    feature_snapshot_rows = client.read_rows("prediction_feature_snapshots")
+    feature_snapshot_rows = hydrate_feature_snapshot_rows_from_predictions(
+        feature_snapshot_rows=client.read_rows("prediction_feature_snapshots"),
+        predictions=predictions,
+    )
 
     created_rows, summary = plan_missing_snapshot_repairs(
         predictions=predictions,

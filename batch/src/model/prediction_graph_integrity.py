@@ -62,6 +62,45 @@ def prediction_graph_status(
     return "missing_match_and_snapshot"
 
 
+def _read_prediction_feature_payload(prediction: dict) -> dict:
+    for key in ("summary_payload", "explanation_payload"):
+        payload = prediction.get(key)
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def hydrate_feature_snapshot_rows_from_predictions(
+    *,
+    feature_snapshot_rows: list[dict],
+    predictions: list[dict],
+) -> list[dict]:
+    prediction_payload_by_id = {
+        str(prediction.get("id") or ""): _read_prediction_feature_payload(prediction)
+        for prediction in predictions
+        if prediction.get("id")
+    }
+    hydrated_rows: list[dict] = []
+    for row in feature_snapshot_rows:
+        payload = prediction_payload_by_id.get(str(row.get("prediction_id") or row.get("id") or ""))
+        if not payload:
+            hydrated_rows.append(dict(row))
+            continue
+
+        hydrated = dict(row)
+        if not isinstance(hydrated.get("feature_context"), dict):
+            feature_context = payload.get("feature_context")
+            if isinstance(feature_context, dict):
+                hydrated["feature_context"] = feature_context
+        if not isinstance(hydrated.get("feature_metadata"), dict):
+            feature_metadata = payload.get("feature_metadata")
+            if isinstance(feature_metadata, dict):
+                hydrated["feature_metadata"] = feature_metadata
+        hydrated.pop("source_metadata", None)
+        hydrated_rows.append(hydrated)
+    return hydrated_rows
+
+
 def build_snapshot_row_from_feature_snapshot(feature_snapshot: dict) -> dict:
     feature_context = (
         feature_snapshot.get("feature_context")
