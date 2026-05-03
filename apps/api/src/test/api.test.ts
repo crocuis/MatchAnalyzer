@@ -283,6 +283,114 @@ describe("prediction API", () => {
     expect(body.prediction.recommendedPick).toBe("HOME");
   });
 
+  it("hydrates database prediction detail from an explanation artifact", async () => {
+    const predictionsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "prediction-1",
+            match_id: "match-123",
+            snapshot_id: "snapshot-1",
+            home_prob: 0.52,
+            draw_prob: 0.27,
+            away_prob: 0.21,
+            recommended_pick: "HOME",
+            confidence_score: 0.62,
+            summary_payload: {},
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.62,
+            main_recommendation_recommended: true,
+            variant_markets_summary: [],
+            explanation_artifact_id: "prediction_artifact_prediction-1",
+            created_at: "2026-04-26T00:00:00Z",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const snapshotsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "snapshot-1",
+            checkpoint_type: "T_MINUS_24H",
+            captured_at: "2026-04-26T00:00:00Z",
+            lineup_status: "unknown",
+            snapshot_quality: "complete",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: null,
+          home_score: null,
+          away_score: null,
+        },
+        error: null,
+      }),
+    };
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "prediction_artifact_prediction-1",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "predictions/match-123/prediction-1.json",
+          storage_uri: "r2://workflow-artifacts/predictions/match-123/prediction-1.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi
+        .fn()
+        .mockReturnValueOnce(predictionsQuery)
+        .mockReturnValueOnce(snapshotsQuery)
+        .mockReturnValueOnce(matchQuery)
+        .mockReturnValueOnce(artifactQuery)
+        .mockReturnValueOnce(artifactQuery),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          bullets: ["Artifact backed explanation."],
+          validation_metadata: {
+            model_scope: "daily_pick_prequential",
+            sample_count: 76,
+          },
+        }),
+      ),
+    );
+
+    const body = await loadPredictionView(dbClient, "match-123", {
+      MATCH_ANALYZER_ARTIFACT_BASE_URL: "https://artifacts.example",
+    });
+
+    expect(body.prediction?.validationMetadata).toEqual({
+      model_scope: "daily_pick_prequential",
+      sample_count: 76,
+    });
+    expect(body.prediction?.explanationPayload).toMatchObject({
+      bullets: ["Artifact backed explanation."],
+    });
+    expect(body.checkpoints[0].bullets).toEqual(["Artifact backed explanation."]);
+  });
+
   it("returns an empty review payload for a match", async () => {
     const response = await app.request("/reviews/match-123");
     expect(response.status).toBe(200);

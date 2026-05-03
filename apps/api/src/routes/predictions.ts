@@ -13,6 +13,7 @@ import {
 } from "../lib/prediction-lanes";
 import { ensureOperationalReportsAccess } from "../lib/operational-auth";
 import { loadMatchArtifactJson } from "../lib/artifact-cache";
+import { hydratePredictionSummaryPayloadsFromArtifacts } from "../lib/prediction-summary-hydration";
 import {
   API_ARTIFACT_CACHE_CONTROL,
   API_SHORT_CACHE_CONTROL,
@@ -867,6 +868,7 @@ function pickMarketEnrichedPrediction(
 export async function loadPredictionView(
   dbClient: ApiDbClient,
   matchId: string,
+  bindings: AppBindings["Bindings"] = {},
 ) {
   const [
     { data: predictionRows, error: predictionsError },
@@ -901,13 +903,18 @@ export async function loadPredictionView(
       row,
     ]),
   );
-  const sortedPredictions = [
+  const predictionRowsForView = [
     ...((predictionRows ?? []) as Array<
       Record<string, any> & { snapshot_id: string; created_at: string | null }
     >),
-  ].sort((left, right) =>
-    comparePredictionRows(left, right, snapshotsById),
-  );
+  ];
+  const sortedPredictions = (
+    await hydratePredictionSummaryPayloadsFromArtifacts(
+      dbClient,
+      bindings,
+      predictionRowsForView,
+    )
+  ).sort((left, right) => comparePredictionRows(left, right, snapshotsById));
 
   const latestPrediction = sortedPredictions[0] ?? null;
   const marketEnrichedPrediction = pickMarketEnrichedPrediction(
@@ -1223,7 +1230,7 @@ predictions.get("/:matchId", async (c) => {
         });
       }
 
-      return c.json(await loadPredictionView(dbClient, matchId), 200, {
+      return c.json(await loadPredictionView(dbClient, matchId, c.env), 200, {
         "cache-control": API_SHORT_CACHE_CONTROL,
         "x-match-analyzer-artifact": "fallback",
       });
