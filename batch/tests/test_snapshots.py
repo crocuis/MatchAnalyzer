@@ -190,6 +190,22 @@ def test_prediction_feature_snapshot_migration_captures_context_and_metadata():
     assert "foreign key (prediction_id, match_id) references predictions(id, match_id)" in migration
 
 
+def test_prediction_feature_snapshot_payload_slimming_migration_keeps_relational_keys():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260503125000_slim_prediction_feature_snapshot_payloads.sql"
+        ).read_text()
+    )
+
+    assert "create table public.prediction_feature_snapshots_payload_slim" in migration
+    assert "prediction_id text not null unique" in migration
+    assert "model_version_id text not null references model_versions(id)" in migration
+    assert "feature_context jsonb" not in migration
+    assert "feature_metadata jsonb" not in migration
+    assert "source_metadata jsonb" not in migration
+    assert "foreign key (prediction_id, match_id) references predictions(id, match_id)" in migration
+
+
 def test_model_version_selection_metadata_migration_adds_jsonb_columns():
     migration = normalize_sql(
         Path(

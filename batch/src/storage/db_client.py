@@ -21,8 +21,6 @@ REMOTE_READ_DEFAULT_COLUMNS = {
         "match_id",
         "model_version_id",
         "checkpoint_type",
-        "feature_context",
-        "feature_metadata",
         "created_at",
     ),
     "predictions": (

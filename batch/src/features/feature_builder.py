@@ -592,9 +592,6 @@ def build_prediction_feature_snapshot_row(
     snapshot: dict,
     match_id: str,
     model_version_id: str,
-    feature_context: dict,
-    feature_metadata: dict,
-    source_metadata: dict,
 ) -> dict:
     return {
         "id": prediction_id,
@@ -603,6 +600,4 @@ def build_prediction_feature_snapshot_row(
         "match_id": match_id,
         "model_version_id": model_version_id,
         "checkpoint_type": snapshot["checkpoint_type"],
-        "feature_context": feature_context,
-        "feature_metadata": feature_metadata,
     }
