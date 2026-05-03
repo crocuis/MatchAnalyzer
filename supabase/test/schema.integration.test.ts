@@ -235,6 +235,16 @@ describe("supabase schema integration", () => {
        where (table_name = 'predictions' and column_name = 'explanation_payload')
           or (table_name = 'post_match_reviews' and column_name = 'market_comparison_summary')`,
     );
+    const droppedMatchCardSummaryPayloadColumns = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from information_schema.columns
+       where table_name in (
+           'match_card_projection_cache',
+           'match_cards',
+           'dashboard_match_cards'
+         )
+         and column_name = 'summary_payload'`,
+    );
 
     expect(competitions.rows[0]?.count).toBe(1);
     expect(teams.rows[0]?.count).toBe(2);
@@ -259,6 +269,7 @@ describe("supabase schema integration", () => {
     expect(artifactTables.rows[0]?.count).toBe(1);
     expect(predictionSummaryColumns.rows[0]?.count).toBe(15);
     expect(droppedLegacyPayloadColumns.rows[0]?.count).toBe(0);
+    expect(droppedMatchCardSummaryPayloadColumns.rows[0]?.count).toBe(0);
     expect(dailyPickLeagueColumns.rows[0]?.count).toBe(0);
     expect(marketFamilyColumns.rows[0]?.count).toBe(1);
     expect(marketRawPayloadColumns.rows[0]?.count).toBe(1);
@@ -856,8 +867,9 @@ describe("supabase schema integration", () => {
       sort_bucket: number;
       main_recommendation_pick: string | null;
       value_recommendation_pick: string | null;
-      summary_payload: unknown;
+      variant_markets_summary: unknown;
       explanation_artifact_id: string | null;
+      explanation_artifact_uri: string | null;
     }>(
       `select
          id,
@@ -866,8 +878,9 @@ describe("supabase schema integration", () => {
          sort_bucket,
          main_recommendation_pick,
          value_recommendation_pick,
-         summary_payload,
-         explanation_artifact_id
+         variant_markets_summary,
+         explanation_artifact_id,
+         explanation_artifact_uri
        from match_cards
        where id = 'match_001'`,
     );
@@ -878,8 +891,11 @@ describe("supabase schema integration", () => {
     expect(cards.rows[0]?.sort_bucket).toBe(0);
     expect(cards.rows[0]?.main_recommendation_pick).toBe("HOME");
     expect(cards.rows[0]?.value_recommendation_pick).toBe("AWAY");
-    expect(cards.rows[0]?.summary_payload).toEqual({ source_agreement_ratio: 0.67 });
+    expect(cards.rows[0]?.variant_markets_summary).toEqual([]);
     expect(cards.rows[0]?.explanation_artifact_id).toBe("artifact_prediction_001");
+    expect(cards.rows[0]?.explanation_artifact_uri).toBe(
+      "r2://workflow-artifacts/predictions/match_001/latest.json",
+    );
   });
 
   it("exposes historical form and rest columns on match snapshots", async () => {
