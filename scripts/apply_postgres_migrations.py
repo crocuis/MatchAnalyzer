@@ -6,6 +6,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -126,6 +127,23 @@ def apply_migration(conn, migration: Migration) -> None:
             )
 
 
+def validate_database_url(database_url: str) -> str:
+    if not database_url.startswith(("postgres://", "postgresql://")):
+        return database_url
+
+    parsed = urlparse(database_url)
+    if not parsed.hostname:
+        raise RuntimeError("DATABASE_URL or NEON_DATABASE_URL must include a Postgres host.")
+    if not parsed.username:
+        raise RuntimeError("DATABASE_URL or NEON_DATABASE_URL must include a Postgres user.")
+    if parsed.password is None or parsed.password == "":
+        raise RuntimeError(
+            "DATABASE_URL or NEON_DATABASE_URL must include a Postgres password. "
+            "Copy the full Neon connection string and URL-encode special characters in the password."
+        )
+    return database_url
+
+
 def run(
     database_url: str,
     migrations_dir: Path,
@@ -209,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     database_url = os.environ.get("DATABASE_URL") or os.environ.get("NEON_DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL or NEON_DATABASE_URL is required.")
+    database_url = validate_database_url(database_url)
     return run(
         database_url,
         Path(args.migrations_dir),

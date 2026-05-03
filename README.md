@@ -255,14 +255,15 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 
 ### GitHub Actions / 배포
 
-운영 배포는 GitHub secret `DATABASE_URL`을 Neon/Postgres 연결 문자열로 사용한다.
+운영 배포는 GitHub secret `NEON_DATABASE_URL` 또는 `DATABASE_URL`을 Neon/Postgres 연결 문자열로 사용한다.
+값은 `postgresql://user:password@host/db?...` 형태의 전체 연결 문자열이어야 하며, 비밀번호가 빠지거나 `#`, `@`, `:` 같은 특수문자가 URL 인코딩되지 않으면 배포 전 migration 단계에서 실패한다.
 `deploy-production`은 `scripts/apply_postgres_migrations.py`로 `supabase/migrations/*.sql`을 파일명 순서대로 적용한 뒤 Neon smoke check를 수행하고, Cloudflare Worker secret에 `DATABASE_URL`을 주입한다.
 이미 Supabase dump/restore로 스키마가 반영된 DB는 ledger가 없으면 자동 baseline 처리하지 않는다.
 복원본에 포함된 마지막 migration을 확인한 뒤 production variable `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION`에 그 version을 설정하면, runner가 해당 version까지만 ledger에 표시하고 이후 migration은 실제로 적용한다.
 
 필수 production secret:
 
-- `DATABASE_URL`
+- `NEON_DATABASE_URL` 또는 `DATABASE_URL`
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_PAGES_PROJECT_NAME`

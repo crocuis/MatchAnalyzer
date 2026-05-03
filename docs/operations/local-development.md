@@ -36,10 +36,11 @@
 
    또는 `batch/.env.local` 파일을 만들어 같은 값을 저장해도 된다. 템플릿은 `batch/.env.example`을 기준으로 맞춘다.
 
-8. GitHub Actions와 배포 환경은 Neon 연결 문자열을 GitHub secret `DATABASE_URL`로 받는다.
+8. GitHub Actions와 배포 환경은 Neon 연결 문자열을 GitHub secret `NEON_DATABASE_URL` 또는 `DATABASE_URL`로 받는다.
+   값은 `postgresql://user:password@host/db?...` 형태의 전체 연결 문자열이어야 하며, Neon 비밀번호에 `#`, `@`, `:` 같은 특수문자가 있으면 URL 인코딩된 값을 저장한다.
    운영 배포에는 아래 secret/variable을 설정한다.
 
-   - `DATABASE_URL`
+   - `NEON_DATABASE_URL` 또는 `DATABASE_URL`
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
    - `CLOUDFLARE_PAGES_PROJECT_NAME`
