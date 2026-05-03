@@ -45,6 +45,18 @@ DAILY_PICK_PRECISION_HOLD_REASONS = {
     "insufficient_sample",
     CENTROID_DEPLOYABILITY_HOLD_REASON,
 }
+DAILY_PICK_BETMAN_WATCHLIST_MIN_CONFIDENCE = 0.70
+DAILY_PICK_BETMAN_WATCHLIST_MIN_SOURCE_AGREEMENT = 0.50
+DAILY_PICK_BETMAN_WATCHLIST_BLOCKED_HOLD_REASONS = {
+    "away_confidence_reliability_gap",
+    "below_high_confidence_threshold",
+    "below_segment_reliability",
+    "betman_market_missing",
+    "betman_value_edge_missing",
+    "calibration_gap",
+    "confidence_reliability_missing",
+    "low_confidence",
+}
 DAILY_PICK_PRE_MATCH_CHECKPOINTS = {
     "T_MINUS_24H",
     "T_MINUS_6H",
@@ -106,9 +118,44 @@ def is_betman_daily_pick_item(item: dict) -> bool:
     reason_labels = reason_labels if isinstance(reason_labels, list) else []
     return (
         metadata.get("betman_market_available") is True
+        or metadata.get("betman_market_available") is False
         or is_betman_market_source(metadata.get("value_recommendation_market_source"))
         or "betmanValue" in reason_labels
     )
+
+
+def _is_daily_pick_held_tracking_candidate(candidate: dict) -> bool:
+    if candidate.get("status") != "held":
+        return False
+    if not is_betman_daily_pick_item(candidate):
+        return True
+    if candidate.get("market_family") != "moneyline":
+        return False
+    metadata = candidate.get("validation_metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    hold_reasons = {
+        str(value)
+        for value in (
+            candidate.get("reliability_hold_reason"),
+            metadata.get("confidence_reliability"),
+        )
+        if value
+    }
+    if hold_reasons & DAILY_PICK_BETMAN_WATCHLIST_BLOCKED_HOLD_REASONS:
+        return False
+    confidence = _read_numeric(candidate.get("confidence"))
+    if (
+        confidence is None
+        or confidence < DAILY_PICK_BETMAN_WATCHLIST_MIN_CONFIDENCE
+    ):
+        return False
+    source_agreement = _read_numeric(metadata.get("source_agreement_ratio"))
+    if (
+        source_agreement is not None
+        and source_agreement < DAILY_PICK_BETMAN_WATCHLIST_MIN_SOURCE_AGREEMENT
+    ):
+        return False
+    return True
 
 
 def sync_daily_picks_for_date(
@@ -170,9 +217,10 @@ def sync_daily_picks_for_date(
     run_id = build_daily_pick_run_id(pick_date)
     recommended_candidates = [row for row in candidates if row.get("status") == "recommended"]
     held_candidates = [row for row in candidates if row.get("status") == "held"]
+    selected_held_candidates = select_daily_pick_held_candidates(held_candidates)
     selected_candidates = (
         recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]
-        + held_candidates[:MAX_DAILY_HELD_CANDIDATES]
+        + selected_held_candidates[:MAX_DAILY_HELD_CANDIDATES]
     )
     selected_items_by_id: dict[str, dict] = {}
     for row in selected_candidates:
@@ -204,11 +252,19 @@ def sync_daily_picks_for_date(
             "candidate_count": len(candidates),
             "selected_count": len(selected_items),
             "recommended_count": len(recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]),
-            "held_count": len(held_candidates[:MAX_DAILY_HELD_CANDIDATES]),
+            "held_count": len(selected_held_candidates[:MAX_DAILY_HELD_CANDIDATES]),
             "ranking": "expected_value_edge_probability_confidence",
         },
     }
     return run, selected_items
+
+
+def select_daily_pick_held_candidates(candidates: list[dict]) -> list[dict]:
+    return [
+        row
+        for row in candidates
+        if _is_daily_pick_held_tracking_candidate(row)
+    ]
 
 
 def build_recommended_pick_candidates(
