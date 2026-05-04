@@ -18,6 +18,10 @@ DEFAULT_RESULT_SYNC_LOOKBACK_HOURS = 48
 
 
 def parse_utc_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
     if not isinstance(value, str) or not value:
         return None
     try:

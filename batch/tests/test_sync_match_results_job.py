@@ -68,6 +68,24 @@ def test_select_unsettled_result_candidates_after_delay_and_lookback():
     assert [row["id"] for row in candidates] == ["eligible"]
 
 
+def test_select_unsettled_result_candidates_accepts_postgres_datetime_values():
+    now = datetime(2026, 5, 4, 4, 27, tzinfo=timezone.utc)
+    candidates = sync_job.select_unsettled_result_candidates(
+        [
+            {
+                "id": "postgres_datetime",
+                "kickoff_at": datetime(2026, 5, 3, 18, 0, tzinfo=timezone.utc),
+                "final_result": None,
+            },
+        ],
+        now=now,
+        settle_delay_hours=2,
+        lookback_hours=48,
+    )
+
+    assert [row["id"] for row in candidates] == ["postgres_datetime"]
+
+
 def test_sync_match_results_updates_only_newly_closed_targets(monkeypatch):
     now = datetime(2026, 4, 26, 13, 0, tzinfo=timezone.utc)
     state = {
