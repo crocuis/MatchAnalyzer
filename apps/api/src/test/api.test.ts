@@ -900,6 +900,40 @@ describe("prediction API", () => {
     vi.useRealTimers();
   });
 
+  it("derives daily pick validation from settled results before stale summary rows", async () => {
+    const dbClient = buildTableDbClient({
+      matches: [],
+      teams: [],
+      competitions: [],
+      predictions: [],
+      daily_pick_results: [
+        { id: "result-hit-1", pick_item_id: "historical-1", result_status: "hit" },
+        { id: "result-hit-2", pick_item_id: "historical-2", result_status: "hit" },
+        { id: "result-miss-1", pick_item_id: "historical-3", result_status: "miss" },
+        { id: "result-pending-1", pick_item_id: "historical-4", result_status: "pending" },
+      ],
+      daily_pick_performance_summary: [
+        {
+          id: "all",
+          sample_count: 80,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.64,
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+    });
+
+    expect(view.validation).toMatchObject({
+      hitRate: 0.6667,
+      sampleCount: 3,
+      confidenceReliability: "settled_daily_picks",
+      modelScope: "daily_pick_settled_runtime",
+    });
+  });
+
   it("builds capped moneyline picks and keeps price-only variants held", async () => {
     setDailyPicksClock();
     const tables = {
@@ -1177,8 +1211,8 @@ describe("prediction API", () => {
     });
     expect(view.validation).toEqual({
       hitRate: 0.75,
-      sampleCount: 76,
-      wilsonLowerBound: 0.6422,
+      sampleCount: 4,
+      wilsonLowerBound: 0.3006,
       confidenceReliability: "settled_daily_picks",
       modelScope: "daily_pick_settled_runtime",
     });
@@ -1466,9 +1500,9 @@ describe("prediction API", () => {
     expect(await response.json()).toMatchObject({
       date: "2026-04-24",
       validation: {
-        hitRate: 0.75,
-        sampleCount: 76,
-        wilsonLowerBound: 0.6422,
+        hitRate: 1,
+        sampleCount: 2,
+        wilsonLowerBound: 0.3424,
         confidenceReliability: "settled_daily_picks",
         modelScope: "daily_pick_settled_runtime",
       },
@@ -2910,7 +2944,7 @@ describe("prediction API", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
     expect(response.headers.get("cache-control")).toBe(
-      "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+      "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
     );
     const body = await response.json() as {
       validation: { hitRate: number; sampleCount: number; wilsonLowerBound: number };
@@ -2930,7 +2964,7 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(dbClient.from).toHaveBeenCalledTimes(2);
+    expect(dbClient.from).toHaveBeenCalledTimes(3);
   });
 
   it("falls back to persisted daily pick tracking rows when the date artifact is unavailable", async () => {
@@ -3065,9 +3099,9 @@ describe("prediction API", () => {
     };
     expect(body.generatedAt).toBe("2026-04-24T03:00:00Z");
     expect(body.validation).toMatchObject({
-      hitRate: 0.75,
-      sampleCount: 80,
-      wilsonLowerBound: 0.64,
+      hitRate: 0.6667,
+      sampleCount: 3,
+      wilsonLowerBound: 0.2077,
       confidenceReliability: "settled_daily_picks",
       modelScope: "daily_pick_settled_runtime",
     });

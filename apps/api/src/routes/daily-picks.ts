@@ -5,7 +5,6 @@ import {
   loadStoredArtifactJson,
 } from "../lib/artifact-cache";
 import {
-  API_ARTIFACT_CACHE_CONTROL,
   API_SHORT_CACHE_CONTROL,
   cachedResponse,
 } from "../lib/edge-cache";
@@ -380,10 +379,11 @@ async function readSettledDailyPickPerformanceAggregate(
     return null;
   }
 
-  return buildRuntimePerformanceSummaryFromCounts(
-    readCount(row.hit_count),
-    readCount(row.miss_count),
-  );
+  const hitCount = readCount(row.hit_count);
+  const missCount = readCount(row.miss_count);
+  return hitCount + missCount > 0
+    ? buildRuntimePerformanceSummaryFromCounts(hitCount, missCount)
+    : null;
 }
 
 async function readSettledDailyPickPerformanceSummary(
@@ -396,6 +396,13 @@ async function readSettledDailyPickPerformanceSummary(
       return aggregateSummary;
     }
     const resultRows = await readRows(dbClient, "daily_pick_results");
+    const hasSettledRows = resultRows.some((row) => {
+      const status = readString(row.result_status);
+      return status === "hit" || status === "miss";
+    });
+    if (!hasSettledRows) {
+      return null;
+    }
     return buildRuntimePerformanceSummary(resultRows);
   } catch {
     return null;
@@ -406,8 +413,8 @@ async function readDailyPickRuntimePerformanceSummary(
   dbClient: ApiDbClient,
 ): Promise<DailyPicksValidationSummary | null> {
   return (
-    await readDailyPickPerformanceSummary(dbClient)
-    ?? await readSettledDailyPickPerformanceSummary(dbClient)
+    await readSettledDailyPickPerformanceSummary(dbClient)
+    ?? await readDailyPickPerformanceSummary(dbClient)
   );
 }
 
@@ -1456,7 +1463,7 @@ dailyPicks.get("/", async (c) => {
 
     if (artifactView) {
       return c.json(artifactView, 200, {
-        "cache-control": API_ARTIFACT_CACHE_CONTROL,
+        "cache-control": API_SHORT_CACHE_CONTROL,
         "x-match-analyzer-artifact": "hit",
       });
     }
