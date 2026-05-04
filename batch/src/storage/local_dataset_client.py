@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from batch.src.storage.db_client import validate_table_name
+from batch.src.storage.json_payload import make_json_safe
 
 
 class LocalDatasetClient:
@@ -40,7 +41,7 @@ class LocalDatasetClient:
     def write_rows(self, table: str, rows: list[dict]) -> int:
         target = self._table_path(table)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(rows, sort_keys=True))
+        target.write_text(json.dumps(make_json_safe(rows), sort_keys=True))
         return len(rows)
 
     def upsert_rows(self, table: str, rows: list[dict]) -> int:
@@ -88,4 +89,3 @@ class LocalDatasetClient:
         ]
         self.write_rows(table, retained_rows)
         return len(rows) - len(retained_rows)
-

@@ -45,6 +45,7 @@ from batch.src.model.fusion import (
     build_main_recommendation,
     fuse_probabilities,
     build_value_recommendation,
+    has_sparse_prediction_context,
     normalize_fusion_weights,
     MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
     VALUE_RECOMMENDATION_EV_THRESHOLD,
@@ -115,6 +116,15 @@ ADAPTIVE_RECOMMENDATION_CONFIDENCE_THRESHOLD = 0.55
 ADAPTIVE_RECOMMENDATION_MIN_SAMPLE_COUNT = 5
 ADAPTIVE_RECOMMENDATION_TARGET_HIT_RATE = 0.70
 ADAPTIVE_RECOMMENDATION_MIN_WILSON_LOWER_BOUND = 0.30
+SPARSE_CONTEXT_HIGH_CONFIDENCE_HOLD_REASON = "sparse_context_without_prediction_market"
+LATE_SPARSE_CONTEXT_NO_BET_REASON = "late_sparse_context_without_prediction_market"
+LATE_SPARSE_CONTEXT_CHECKPOINTS = {"LINEUP_CONFIRMED", "T_MINUS_1H"}
+MARGINAL_SPARSE_T24_NO_BET_REASON = "marginal_sparse_t24_no_market"
+MARGINAL_SPARSE_T24_BOOK_GAP_MIN = 0.30
+MARGINAL_SPARSE_T24_BOOK_GAP_MAX = 0.40
+LOW_GAP_SPARSE_T24_DRAW_RISK_NO_BET_REASON = "low_gap_sparse_t24_draw_risk"
+LOW_GAP_SPARSE_T24_BOOK_GAP_MAX = 0.30
+LOW_GAP_SPARSE_T24_DRAW_PROB_MIN = 0.20
 PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
     "snapshot_quality",
     "lineup_status",
@@ -605,6 +615,99 @@ def build_current_validation_candidate(
             if value_recommendation
             else None
         ),
+    }
+
+
+def apply_contextual_high_confidence_gate(
+    eligibility: dict,
+    *,
+    feature_context: dict,
+) -> dict:
+    if not eligibility.get("high_confidence_eligible"):
+        return eligibility
+    if not has_sparse_prediction_context(feature_context):
+        return eligibility
+
+    validation_metadata = dict(eligibility.get("validation_metadata") or {})
+    validation_metadata["contextual_hold_reason"] = (
+        SPARSE_CONTEXT_HIGH_CONFIDENCE_HOLD_REASON
+    )
+    return {
+        **eligibility,
+        "high_confidence_eligible": False,
+        "decision": "held",
+        "confidence_reliability": SPARSE_CONTEXT_HIGH_CONFIDENCE_HOLD_REASON,
+        "validation_metadata": validation_metadata,
+    }
+
+
+def apply_late_sparse_context_recommendation_gate(
+    main_recommendation: dict,
+    *,
+    checkpoint: str,
+    feature_context: dict,
+) -> dict:
+    if main_recommendation.get("recommended") is False:
+        return main_recommendation
+    if checkpoint not in LATE_SPARSE_CONTEXT_CHECKPOINTS:
+        return main_recommendation
+    if not has_sparse_prediction_context(feature_context):
+        return main_recommendation
+    return {
+        **main_recommendation,
+        "recommended": False,
+        "no_bet_reason": LATE_SPARSE_CONTEXT_NO_BET_REASON,
+    }
+
+
+def apply_marginal_sparse_t24_recommendation_gate(
+    main_recommendation: dict,
+    *,
+    checkpoint: str,
+    feature_context: dict,
+) -> dict:
+    if main_recommendation.get("recommended") is False:
+        return main_recommendation
+    if checkpoint != "T_MINUS_24H":
+        return main_recommendation
+    if not has_sparse_prediction_context(feature_context):
+        return main_recommendation
+    book_favorite_gap = float(feature_context.get("book_favorite_gap") or 0.0)
+    if not (
+        MARGINAL_SPARSE_T24_BOOK_GAP_MIN
+        <= book_favorite_gap
+        < MARGINAL_SPARSE_T24_BOOK_GAP_MAX
+    ):
+        return main_recommendation
+    return {
+        **main_recommendation,
+        "recommended": False,
+        "no_bet_reason": MARGINAL_SPARSE_T24_NO_BET_REASON,
+    }
+
+
+def apply_low_gap_sparse_t24_draw_risk_gate(
+    main_recommendation: dict,
+    *,
+    checkpoint: str,
+    feature_context: dict,
+    draw_prob: float,
+) -> dict:
+    if main_recommendation.get("recommended") is False:
+        return main_recommendation
+    if checkpoint != "T_MINUS_24H":
+        return main_recommendation
+    if not has_sparse_prediction_context(feature_context):
+        return main_recommendation
+    book_favorite_gap = float(feature_context.get("book_favorite_gap") or 0.0)
+    if book_favorite_gap >= LOW_GAP_SPARSE_T24_BOOK_GAP_MAX:
+        return main_recommendation
+    if float(draw_prob or 0.0) < LOW_GAP_SPARSE_T24_DRAW_PROB_MIN:
+        return main_recommendation
+    return {
+        **main_recommendation,
+        "recommended": False,
+        "no_bet_reason": LOW_GAP_SPARSE_T24_DRAW_RISK_NO_BET_REASON,
     }
 
 
@@ -3182,6 +3285,10 @@ def main() -> None:
                 validation_segment_cache[snapshot_target_date],
                 validated_as_of=snapshot_target_date,
             )
+            eligibility = apply_contextual_high_confidence_gate(
+                eligibility,
+                feature_context=feature_context,
+            )
             explanation_payload = attach_validation_metadata(
                 explanation_payload,
                 eligibility,
@@ -3190,6 +3297,22 @@ def main() -> None:
                 main_recommendation,
                 eligibility,
             )
+        main_recommendation = apply_late_sparse_context_recommendation_gate(
+            main_recommendation,
+            checkpoint=signal_snapshot["checkpoint_type"],
+            feature_context=feature_context,
+        )
+        main_recommendation = apply_marginal_sparse_t24_recommendation_gate(
+            main_recommendation,
+            checkpoint=signal_snapshot["checkpoint_type"],
+            feature_context=feature_context,
+        )
+        main_recommendation = apply_low_gap_sparse_t24_draw_risk_gate(
+            main_recommendation,
+            checkpoint=signal_snapshot["checkpoint_type"],
+            feature_context=feature_context,
+            draw_prob=row["draw_prob"],
+        )
         main_recommendation = apply_model_source_deployment_gate(
             main_recommendation,
             base_model_source=base_model_source,

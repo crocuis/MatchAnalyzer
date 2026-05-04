@@ -215,7 +215,7 @@ def build_review_payload(
                 "actual_outcome": review["actual_outcome"],
                 "error_summary": (
                     f"Prediction matched the actual {review['actual_outcome'].lower()} result."
-                    if not review["cause_tags"]
+                    if review["taxonomy"]["miss_family"] == "correct_call"
                     else f"Prediction missed the actual {review['actual_outcome'].lower()} result."
                 ),
                 "cause_tags": review["cause_tags"],

@@ -313,6 +313,164 @@ def test_prediction_row_versions_migration_captures_prediction_updates():
     assert "to_jsonb(old) = to_jsonb(new)" in migration
 
 
+def test_clear_stale_prediction_reviews_migration_deletes_reviews_after_prediction_updates():
+    migration = normalize_sql(
+        Path("supabase/migrations/202605040002_clear_stale_prediction_reviews.sql").read_text()
+    )
+
+    assert "create or replace function public.clear_stale_post_match_reviews_for_prediction_update()" in migration
+    assert "old.recommended_pick is distinct from new.recommended_pick" in migration
+    assert "old.main_recommendation_pick is distinct from new.main_recommendation_pick" in migration
+    assert "delete from public.post_match_reviews where prediction_id = old.id" in migration
+    assert "delete from public.post_match_reviews reviews using public.predictions predictions" in migration
+    assert "reviews.actual_outcome = case when predictions.main_recommendation_recommended is false then null else coalesce(predictions.main_recommendation_pick, predictions.recommended_pick) end" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+    assert "after update on public.predictions" in migration
+
+
+def test_clear_stale_held_prediction_reviews_migration_deletes_existing_held_reviews():
+    migration = normalize_sql(
+        Path("supabase/migrations/202605040003_clear_stale_held_prediction_reviews.sql").read_text()
+    )
+
+    assert "delete from public.post_match_reviews reviews using public.predictions predictions" in migration
+    assert "predictions.main_recommendation_recommended is false" in migration
+    assert "reviews.actual_outcome = coalesce( predictions.main_recommendation_pick, predictions.recommended_pick )" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
+def test_reclassify_unvalidated_review_confidence_migration_relabels_review_tags():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040004_reclassify_unvalidated_review_confidence.sql"
+        ).read_text()
+    )
+
+    assert "update public.post_match_reviews reviews set" in migration
+    assert "unvalidated_confidence_miss" in migration
+    assert "high_confidence_miss" in migration
+    assert "taxonomy_severity = 'medium'" in migration
+    assert "predictions.summary_payload ->> 'confidence_reliability' = 'validated'" in migration
+
+
+def test_normalize_review_confidence_taxonomy_migration_clears_legacy_high_tags():
+    migration = normalize_sql(
+        Path("supabase/migrations/202605040005_normalize_review_confidence_taxonomy.sql").read_text()
+    )
+
+    assert "update public.post_match_reviews reviews set" in migration
+    assert "unvalidated_confidence_miss" in migration
+    assert "predictions.confidence_score < 0.7" in migration
+    assert "taxonomy_severity = case" in migration
+    assert "reviews.cause_tags ? 'major_directional_miss'" in migration
+
+
+def test_normalize_validated_high_confidence_review_severity_migration_sets_high():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040006_normalize_validated_high_confidence_review_severity.sql"
+        ).read_text()
+    )
+
+    assert "reviews.cause_tags ? 'high_confidence_miss'" in migration
+    assert "taxonomy_severity = 'high'" in migration
+    assert "jsonb_set(reviews.summary_payload, '{taxonomy,severity}', '\"high\"', true)" in migration
+
+
+def test_reclassify_sparse_context_high_confidence_reviews_migration_holds_reviews():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040007_reclassify_sparse_context_high_confidence_reviews.sql"
+        ).read_text()
+    )
+
+    assert "sparse_context_without_prediction_market" in migration
+    assert "unvalidated_confidence_miss" in migration
+    assert "predictions.summary_payload #>> '{feature_context,prediction_market_available}' = 'false'" in migration
+    assert "predictions.summary_payload #>> '{feature_context,lineup_confirmed}'" in migration
+    assert ") in ('0', 'false')" in migration
+    assert "taxonomy_severity = 'medium'" in migration
+
+
+def test_gate_late_sparse_context_predictions_migration_holds_predictions():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040008_gate_late_sparse_context_predictions.sql"
+        ).read_text()
+    )
+
+    assert "late_sparse_context_without_prediction_market" in migration
+    assert "main_recommendation_recommended = false" in migration
+    assert "snapshots.checkpoint_type in ('LINEUP_CONFIRMED', 'T_MINUS_1H')" in migration
+    assert "predictions.summary_payload #>> '{feature_context,prediction_market_available}' = 'false'" in migration
+    assert "jsonb_set" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
+def test_gate_marginal_sparse_t24_predictions_migration_holds_predictions():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040009_gate_marginal_sparse_t24_predictions.sql"
+        ).read_text()
+    )
+
+    assert "marginal_sparse_t24_no_market" in migration
+    assert "main_recommendation_recommended = false" in migration
+    assert "snapshots.checkpoint_type = 'T_MINUS_24H'" in migration
+    assert "(predictions.summary_payload #>> '{feature_context,book_favorite_gap}')::numeric >= 0.30" in migration
+    assert "(predictions.summary_payload #>> '{feature_context,book_favorite_gap}')::numeric < 0.40" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
+def test_gate_low_gap_sparse_t24_draw_risk_predictions_migration_holds_predictions():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040010_gate_low_gap_sparse_t24_draw_risk_predictions.sql"
+        ).read_text()
+    )
+
+    assert "low_gap_sparse_t24_draw_risk" in migration
+    assert "main_recommendation_recommended = false" in migration
+    assert "snapshots.checkpoint_type = 'T_MINUS_24H'" in migration
+    assert "(predictions.summary_payload #>> '{feature_context,book_favorite_gap}')::numeric < 0.30" in migration
+    assert "predictions.draw_prob >= 0.20" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
+def test_reclassify_market_aligned_upset_reviews_migration_clears_review_tags():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040011_reclassify_market_aligned_upset_reviews.sql"
+        ).read_text()
+    )
+
+    assert "market_aligned_upset" in migration
+    assert "reviews.cause_tags ? 'major_directional_miss'" in migration
+    assert "market_pick = recommended_pick" in migration
+    assert "market_actual_prob - model_actual_prob <= 0.01" in migration
+    assert "cause_tags = '[]'::jsonb" in migration
+    assert "taxonomy_severity = 'low'" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
+def test_fix_sparse_context_and_market_selection_backfills_migration_is_idempotent():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040012_fix_sparse_context_and_market_selection_backfills.sql"
+        ).read_text()
+    )
+
+    assert "create or replace function public.is_sparse_prediction_context" in migration
+    assert "create or replace function public.market_probability_source_priority" in migration
+    assert "public.is_sparse_prediction_context(predictions.summary_payload)" in migration
+    assert "late_sparse_context_without_prediction_market" in migration
+    assert "marginal_sparse_t24_no_market" in migration
+    assert "low_gap_sparse_t24_draw_risk" in migration
+    assert "market_aligned_upset" in migration
+    assert "source_priority desc" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
 def test_dashboard_performance_index_migration_adds_lookup_indexes():
     migration = normalize_sql(
         Path(

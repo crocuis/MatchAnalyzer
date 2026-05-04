@@ -722,6 +722,34 @@ def test_build_review_compares_market_against_actual_outcome_probability():
     assert review["market_outperformed_model"] is True
 
 
+def test_build_review_keeps_market_aligned_upsets_out_of_actionable_tags():
+    review = build_review(
+        prediction={
+            "recommended_pick": "HOME",
+            "confidence_score": 0.78,
+            "home_prob": 0.72,
+            "draw_prob": 0.16,
+            "away_prob": 0.12,
+            "summary_payload": {
+                "high_confidence_eligible": False,
+                "confidence_reliability": "sparse_context_without_prediction_market",
+                "source_agreement_ratio": 1.0,
+            },
+        },
+        actual_outcome="AWAY",
+        market_probs={"home": 0.73, "draw": 0.15, "away": 0.12},
+    )
+
+    assert review["cause_tags"] == []
+    assert review["market_outperformed_model"] is False
+    assert review["taxonomy"] == {
+        "miss_family": "directional_miss",
+        "severity": "low",
+        "consensus_level": "high",
+        "market_signal": "market_aligned_upset",
+    }
+
+
 def test_build_review_adds_richer_taxonomy_tags_for_draw_blind_spot_and_consensus_risk():
     review = build_review(
         prediction={
@@ -767,6 +795,30 @@ def test_build_review_adds_richer_taxonomy_tags_for_draw_blind_spot_and_consensu
         "primary_signal": "strengthHome",
         "secondary_signal": "xgHome",
     }
+
+
+def test_build_review_does_not_mark_unvalidated_confidence_as_high_confidence_miss():
+    review = build_review(
+        prediction={
+            "recommended_pick": "HOME",
+            "confidence_score": 0.76,
+            "home_prob": 0.64,
+            "draw_prob": 0.16,
+            "away_prob": 0.20,
+            "summary_payload": {
+                "high_confidence_eligible": False,
+                "confidence_reliability": "below_high_confidence_threshold",
+                "source_agreement_ratio": 1.0,
+            },
+        },
+        actual_outcome="DRAW",
+        market_probs={"home": 0.58, "draw": 0.25, "away": 0.17},
+    )
+
+    assert "major_directional_miss" in review["cause_tags"]
+    assert "unvalidated_confidence_miss" in review["cause_tags"]
+    assert "high_confidence_miss" not in review["cause_tags"]
+    assert review["taxonomy"]["severity"] == "medium"
 
 
 def test_build_review_marks_market_comparison_unavailable_without_market_probs():
@@ -1424,6 +1476,198 @@ def test_apply_adaptive_recommendation_gate_holds_weak_segments():
     assert gated["adaptive_validation_gate"]["reasons"] == ["insufficient_sample"]
 
 
+def test_contextual_high_confidence_gate_holds_sparse_no_market_context():
+    gated = run_predictions_job.apply_contextual_high_confidence_gate(
+        {
+            "calibrated_confidence": 0.84,
+            "high_confidence_eligible": True,
+            "decision": "eligible",
+            "confidence_reliability": "validated",
+            "validation_metadata": {
+                "sample_count": 60,
+                "hit_rate": 0.9,
+                "wilson_lower_bound": 0.7,
+            },
+        },
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+        },
+    )
+
+    assert gated["high_confidence_eligible"] is False
+    assert gated["decision"] == "held"
+    assert gated["confidence_reliability"] == "sparse_context_without_prediction_market"
+    assert (
+        gated["validation_metadata"]["contextual_hold_reason"]
+        == "sparse_context_without_prediction_market"
+    )
+
+
+def test_contextual_high_confidence_gate_holds_projected_lineups_without_stats_or_market():
+    gated = run_predictions_job.apply_contextual_high_confidence_gate(
+        {
+            "calibrated_confidence": 0.84,
+            "high_confidence_eligible": True,
+            "decision": "eligible",
+            "confidence_reliability": "validated",
+            "validation_metadata": {
+                "sample_count": 60,
+                "hit_rate": 0.9,
+                "wilson_lower_bound": 0.7,
+            },
+        },
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+            "football_data_match_stats_available": 0,
+            "snapshot_quality_complete": 1,
+        },
+    )
+
+    assert gated["high_confidence_eligible"] is False
+    assert gated["confidence_reliability"] == "sparse_context_without_prediction_market"
+
+
+def test_late_sparse_context_recommendation_gate_holds_late_no_market_calls():
+    gated = run_predictions_job.apply_late_sparse_context_recommendation_gate(
+        {
+            "pick": "HOME",
+            "confidence": 0.76,
+            "recommended": True,
+            "no_bet_reason": None,
+        },
+        checkpoint="LINEUP_CONFIRMED",
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+            "football_data_match_stats_available": 0,
+            "snapshot_quality_complete": 1,
+        },
+    )
+
+    assert gated["recommended"] is False
+    assert gated["no_bet_reason"] == "late_sparse_context_without_prediction_market"
+
+
+def test_late_sparse_context_recommendation_gate_keeps_t_minus_24h_calls():
+    recommendation = {
+        "pick": "HOME",
+        "confidence": 0.76,
+        "recommended": True,
+        "no_bet_reason": None,
+    }
+
+    gated = run_predictions_job.apply_late_sparse_context_recommendation_gate(
+        recommendation,
+        checkpoint="T_MINUS_24H",
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+        },
+    )
+
+    assert gated == recommendation
+
+
+def test_marginal_sparse_t24_recommendation_gate_holds_mid_book_gap_calls():
+    gated = run_predictions_job.apply_marginal_sparse_t24_recommendation_gate(
+        {
+            "pick": "AWAY",
+            "confidence": 0.75,
+            "recommended": True,
+            "no_bet_reason": None,
+        },
+        checkpoint="T_MINUS_24H",
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+            "book_favorite_gap": 0.35,
+        },
+    )
+
+    assert gated["recommended"] is False
+    assert gated["no_bet_reason"] == "marginal_sparse_t24_no_market"
+
+
+def test_marginal_sparse_t24_recommendation_gate_keeps_decisive_book_gap_calls():
+    recommendation = {
+        "pick": "AWAY",
+        "confidence": 0.85,
+        "recommended": True,
+        "no_bet_reason": None,
+    }
+
+    gated = run_predictions_job.apply_marginal_sparse_t24_recommendation_gate(
+        recommendation,
+        checkpoint="T_MINUS_24H",
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+            "book_favorite_gap": 0.56,
+        },
+    )
+
+    assert gated == recommendation
+
+
+def test_low_gap_sparse_t24_draw_risk_gate_holds_draw_exposed_calls():
+    gated = run_predictions_job.apply_low_gap_sparse_t24_draw_risk_gate(
+        {
+            "pick": "HOME",
+            "confidence": 0.72,
+            "recommended": True,
+            "no_bet_reason": None,
+        },
+        checkpoint="T_MINUS_24H",
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+            "book_favorite_gap": 0.25,
+        },
+        draw_prob=0.21,
+    )
+
+    assert gated["recommended"] is False
+    assert gated["no_bet_reason"] == "low_gap_sparse_t24_draw_risk"
+
+
+def test_low_gap_sparse_t24_draw_risk_gate_keeps_low_draw_risk_calls():
+    recommendation = {
+        "pick": "HOME",
+        "confidence": 0.72,
+        "recommended": True,
+        "no_bet_reason": None,
+    }
+
+    gated = run_predictions_job.apply_low_gap_sparse_t24_draw_risk_gate(
+        recommendation,
+        checkpoint="T_MINUS_24H",
+        feature_context={
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+            "book_favorite_gap": 0.25,
+        },
+        draw_prob=0.18,
+    )
+
+    assert gated == recommendation
+
+
 def test_apply_model_source_deployment_gate_holds_centroid_predictions():
     gated = run_predictions_job.apply_model_source_deployment_gate(
         {
@@ -1625,6 +1869,58 @@ def test_build_review_payload_keeps_completed_predictions_without_market_rows():
             },
         }
     ]
+
+
+def test_build_review_payload_reports_market_aligned_upset_as_miss_without_review_tag():
+    predictions = [
+        {
+            "id": "match_a_t_minus_24h_model_v1",
+            "snapshot_id": "match_a_t_minus_24h",
+            "match_id": "match_a",
+            "recommended_pick": "HOME",
+            "confidence_score": 0.78,
+            "home_prob": 0.72,
+            "draw_prob": 0.16,
+            "away_prob": 0.12,
+            "summary_payload": {
+                "high_confidence_eligible": False,
+                "confidence_reliability": "sparse_context_without_prediction_market",
+                "source_agreement_ratio": 1.0,
+            },
+        }
+    ]
+    match_rows = [
+        {
+            "id": "match_a",
+            "kickoff_at": "2026-04-12T18:00:00+00:00",
+            "final_result": "AWAY",
+        }
+    ]
+    market_rows = [
+        {
+            "snapshot_id": "match_a_t_minus_24h",
+            "source_type": "bookmaker",
+            "source_name": "football_data_moneyline_3way",
+            "market_family": "moneyline_3way",
+            "home_prob": 0.73,
+            "draw_prob": 0.15,
+            "away_prob": 0.12,
+        }
+    ]
+
+    payload, skipped_predictions = build_review_payload(
+        predictions=predictions,
+        match_rows=match_rows,
+        market_rows=market_rows,
+        target_date="2026-04-12",
+    )
+
+    assert skipped_predictions == []
+    assert payload[0]["error_summary"] == "Prediction missed the actual away result."
+    assert payload[0]["cause_tags"] == []
+    assert payload[0]["market_comparison_summary"]["taxonomy"]["market_signal"] == (
+        "market_aligned_upset"
+    )
 
 
 def test_build_review_payload_accepts_postgres_datetime_kickoff_for_target_date():
@@ -2127,6 +2423,32 @@ def test_build_prediction_row_smoke():
     assert prediction["explanation_bullets"][-1] == (
         "Bookmakers and the prediction market agree on the likely winner."
     )
+
+
+def test_build_prediction_row_applies_draw_floor_for_sparse_context():
+    prediction = build_prediction_row(
+        match_id="match-1",
+        checkpoint="2026-04-18T00:00:00Z",
+        base_probs={"home": 0.72, "draw": 0.12, "away": 0.16},
+        book_probs={"home": 0.72, "draw": 0.12, "away": 0.16},
+        market_probs={"home": 0.34, "draw": 0.33, "away": 0.33},
+        context={
+            "bookmaker_available": True,
+            "prediction_market_available": False,
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "snapshot_quality_complete": 0,
+            "max_abs_divergence": 0.0,
+            "sources_agree": 1,
+        },
+        source_weights={"base_model": 0.5, "bookmaker": 0.5},
+    )
+
+    total = prediction["home_prob"] + prediction["draw_prob"] + prediction["away_prob"]
+
+    assert prediction["draw_prob"] == pytest.approx(0.24)
+    assert prediction["home_prob"] < 0.72
+    assert round(total, 6) == 1.0
 
 
 def test_run_predictions_job_surfaces_divergence_features_and_market_availability(
@@ -5579,12 +5901,12 @@ def test_run_predictions_job_blocks_extreme_confidence_bookmaker_fallback_withou
     explanation_payload = state["predictions"][0]["summary_payload"]
     assert explanation_payload["base_model_source"] == "bookmaker_fallback"
     assert explanation_payload["prediction_market_available"] is False
+    assert explanation_payload["raw_confidence_score"] < 0.8
     assert state["predictions"][0]["main_recommendation_recommended"] is False
     assert (
         state["predictions"][0]["main_recommendation_no_bet_reason"]
-        == "unsupported_high_confidence_fallback"
+        == "insufficient_sample"
     )
-    assert explanation_payload["raw_confidence_score"] > 0.8
 
 
 def test_run_predictions_job_uses_prior_fallback_when_bookmaker_rows_are_missing(
@@ -5750,7 +6072,7 @@ def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_witho
     )
 
     assert summary == {
-        "0.3-0.4": {
+        "0.2-0.3": {
             "count": 1,
             "hit_rate": 1.0,
         }
