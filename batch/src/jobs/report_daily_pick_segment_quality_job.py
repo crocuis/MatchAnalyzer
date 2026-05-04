@@ -45,6 +45,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print one pending Betman watchlist pick date per line for workflow retries.",
     )
+    parser.add_argument(
+        "--pending-recommended-dates-only",
+        action="store_true",
+        help="Print one pending recommended pick date per line for settlement retries.",
+    )
     return parser.parse_args(argv)
 
 
@@ -111,6 +116,10 @@ def build_daily_pick_segment_quality_report(
             "min_wilson_lower_bound": min_wilson_lower_bound,
         },
         "overall_recommended_moneyline": global_recommended_moneyline,
+        "pending_recommended_settlement_monitor": build_pending_settlement_monitor(
+            recommended_items,
+            matches_by_id=matches_by_id,
+        ),
         "betman": {
             "item_count": len(betman_items),
             "recommended_count": len(betman_recommended_items),
@@ -145,6 +154,38 @@ def build_daily_pick_segment_quality_report(
             min_wilson_lower_bound=min_wilson_lower_bound,
         )
     return report
+
+
+def build_pending_settlement_monitor(
+    rows: Iterable[dict],
+    *,
+    matches_by_id: dict[str, dict] | None = None,
+) -> dict:
+    matches_by_id = matches_by_id or {}
+    pending_rows = [
+        row
+        for row in rows
+        if row["result_status"] == "pending"
+    ]
+    final_result_available_rows = [
+        row
+        for row in pending_rows
+        if read_final_result(matches_by_id.get(row["match_id"])) is not None
+    ]
+    pending_dates = sorted({row["pick_date"] for row in pending_rows if row["pick_date"]})
+    final_result_available_dates = sorted(
+        {row["pick_date"] for row in final_result_available_rows if row["pick_date"]}
+    )
+    return {
+        "pending_count": len(pending_rows),
+        "pending_dates": pending_dates,
+        "oldest_pending_pick_date": pending_dates[0] if pending_dates else None,
+        "final_result_available_pending_count": len(final_result_available_rows),
+        "final_result_available_pending_dates": final_result_available_dates,
+        "final_result_available_pending_match_ids": sorted(
+            {row["match_id"] for row in final_result_available_rows if row["match_id"]}
+        ),
+    }
 
 
 def build_betman_pending_watchlist_monitor(
@@ -405,6 +446,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     if args.pending_dates_only:
         for pick_date in report["betman"]["pending_watchlist_monitor"]["pending_dates"]:
+            print(pick_date)
+        return
+    if args.pending_recommended_dates_only:
+        for pick_date in report["pending_recommended_settlement_monitor"][
+            "final_result_available_pending_dates"
+        ]:
             print(pick_date)
         return
     print(json.dumps(report, sort_keys=True))

@@ -61,6 +61,18 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
                 "moneyline_signal_score": 1.2,
             },
         },
+        {
+            "id": "item-pending",
+            "pick_date": "2026-05-03",
+            "match_id": "match-pending",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.73,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+            },
+        },
     ]
     results = [
         {"pick_item_id": "item-hit", "result_status": "hit"},
@@ -74,7 +86,11 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
             {
                 "id": "match-betman",
                 "final_result": "AWAY",
-            }
+            },
+            {
+                "id": "match-pending",
+                "final_result": "HOME",
+            },
         ],
         min_sample_count=2,
         target_hit_rate=0.5,
@@ -82,6 +98,14 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
     )
 
     assert report["overall_recommended_moneyline"]["sample_count"] == 2
+    assert report["pending_recommended_settlement_monitor"] == {
+        "pending_count": 1,
+        "pending_dates": ["2026-05-03"],
+        "oldest_pending_pick_date": "2026-05-03",
+        "final_result_available_pending_count": 1,
+        "final_result_available_pending_dates": ["2026-05-03"],
+        "final_result_available_pending_match_ids": ["match-pending"],
+    }
     assert report["overall_recommended_moneyline"]["hit_rate"] == 0.5
     assert report["overall_recommended_moneyline"]["meets_quality_floor"] is True
     assert report["betman"]["item_count"] == 1

@@ -70,11 +70,43 @@ jobs:
               continue
             fi
             echo "::group::REAL_REVIEW_DATE=$TARGET_DATE"
+            set +e
             REAL_REVIEW_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_post_match_review_job
+            REVIEW_STATUS="$?"
+            set -e
+            DAILY_PICK_SETTLE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
+            DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            if [ "$REVIEW_STATUS" -ne 0 ]; then
+              echo "Post-match review refresh failed after daily pick settlement."
+              exit "$REVIEW_STATUS"
+            fi
+            echo "::endgroup::"
+          done <<< "$SYNC_CHANGED_DATES"
+      - name: Collect pending recommended dates
+        shell: bash
+        run: |
+          python3 -m batch.src.jobs.report_daily_pick_segment_quality_job --pending-recommended-dates-only > pending-recommended-dates.txt
+          {
+            echo "PENDING_RECOMMENDED_DATES<<EOF"
+            cat pending-recommended-dates.txt
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+      - name: Retry pending recommended settlements
+        shell: bash
+        run: |
+          if [ -z "$PENDING_RECOMMENDED_DATES" ]; then
+            echo "No pending recommended dates with final results detected."
+            exit 0
+          fi
+          while IFS= read -r TARGET_DATE; do
+            if [ -z "$TARGET_DATE" ]; then
+              continue
+            fi
+            echo "::group::PENDING_RECOMMENDED_SETTLE_DATE=$TARGET_DATE"
             DAILY_PICK_SETTLE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
             DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
             echo "::endgroup::"
-          done <<< "$SYNC_CHANGED_DATES"
+          done <<< "$PENDING_RECOMMENDED_DATES"
       - name: Collect pending Betman watchlist dates
         shell: bash
         run: |

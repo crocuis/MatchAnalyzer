@@ -246,6 +246,12 @@ def test_sync_match_results_workflow_runs_every_two_hours_and_reviews_changed_da
     assert "python3 -m batch.src.jobs.run_post_match_review_job" in workflow
     assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
     assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
+    assert "Post-match review refresh failed after daily pick settlement." in workflow
+    assert "Collect pending recommended dates" in workflow
+    assert "PENDING_RECOMMENDED_DATES" in workflow
+    assert "python3 -m batch.src.jobs.report_daily_pick_segment_quality_job --pending-recommended-dates-only" in workflow
+    assert "Retry pending recommended settlements" in workflow
+    assert "PENDING_RECOMMENDED_SETTLE_DATE=$TARGET_DATE" in workflow
     assert "Collect pending Betman watchlist dates" in workflow
     assert "BETMAN_WATCHLIST_DATES" in workflow
     assert "python3 -m batch.src.jobs.report_daily_pick_segment_quality_job --pending-dates-only" in workflow
