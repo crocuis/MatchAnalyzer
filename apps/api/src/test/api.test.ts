@@ -2964,7 +2964,482 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(dbClient.from).toHaveBeenCalledTimes(3);
+    expect(dbClient.from).toHaveBeenCalledTimes(4);
+  });
+
+  it("ignores stale daily pick artifacts when tracked rows were regenerated later", async () => {
+    const baseDbClient = buildTableDbClient({
+      daily_pick_items: [
+        {
+          id: "daily_pick_item_current",
+          run_id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "moneyline",
+          selection_label: "HOME",
+          confidence: 0.82,
+          score: 0.82,
+          status: "recommended",
+          validation_metadata: {
+            confidence_reliability: "validated",
+            high_confidence_eligible: true,
+            sample_count: 80,
+          },
+          reason_labels: ["mainRecommendation"],
+        },
+      ],
+      daily_pick_runs: [
+        {
+          id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          generated_at: "2026-04-24T04:00:00Z",
+        },
+      ],
+      daily_pick_results: [],
+      daily_pick_performance_summary: [],
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "league-1",
+          kickoff_at: "2026-04-24T12:00:00Z",
+          home_team_id: "team-home",
+          away_team_id: "team-away",
+        },
+      ],
+      teams: [
+        { id: "team-home", name: "Arsenal", crest_url: "home.png" },
+        { id: "team-away", name: "Chelsea", crest_url: "away.png" },
+      ],
+      competitions: [
+        { id: "league-1", name: "Premier League" },
+      ],
+    });
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "daily_picks_view_2026-04-24",
+          owner_type: "daily_picks",
+          owner_id: "2026-04-24",
+          artifact_kind: "daily_picks_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "daily-picks/2026-04-24/view.json",
+          storage_uri: "https://artifacts.example/daily-picks/2026-04-24/view.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-24T03:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "stored_artifacts" ? artifactQuery : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    const fetchMock = vi.fn(async () => Response.json({
+      generatedAt: "2026-04-24T03:00:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      validation: {
+        hitRate: null,
+        sampleCount: 0,
+        wilsonLowerBound: null,
+        confidenceReliability: null,
+        modelScope: null,
+      },
+      coverage: {
+        moneyline: 0,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [],
+      heldItems: [],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("tracked-fallback");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = await response.json() as {
+      items: Array<{ id: string }>;
+    };
+    expect(body.items).toEqual([
+      expect.objectContaining({ id: "daily_pick_item_current" }),
+    ]);
+  });
+
+  it("keeps fresh daily pick artifacts when only the manifest insert time is older", async () => {
+    const baseDbClient = buildTableDbClient({
+      daily_pick_items: [
+        {
+          id: "daily_pick_item_current",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "moneyline",
+          selection_label: "HOME",
+          confidence: 0.82,
+          score: 0.82,
+          status: "recommended",
+          validation_metadata: {
+            confidence_reliability: "validated",
+            high_confidence_eligible: true,
+            sample_count: 80,
+          },
+          reason_labels: ["mainRecommendation"],
+        },
+      ],
+      daily_pick_runs: [
+        {
+          id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          generated_at: "2026-04-24T04:00:00Z",
+        },
+      ],
+      daily_pick_performance_summary: [],
+    });
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "daily_picks_view_2026-04-24",
+          owner_type: "daily_picks",
+          owner_id: "2026-04-24",
+          artifact_kind: "daily_picks_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "daily-picks/2026-04-24/view.json",
+          storage_uri: "https://artifacts.example/daily-picks/2026-04-24/view.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-24T03:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "stored_artifacts" ? artifactQuery : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      generatedAt: "2026-04-24T04:05:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      validation: {
+        hitRate: null,
+        sampleCount: 0,
+        wilsonLowerBound: null,
+        confidenceReliability: null,
+        modelScope: null,
+      },
+      coverage: {
+        moneyline: 1,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [
+        {
+          id: "daily_pick_item_artifact",
+          matchId: "match-1",
+          predictionId: "prediction-1",
+          leagueId: "league-1",
+          leagueLabel: "Premier League",
+          homeTeam: "Arsenal",
+          homeTeamLogoUrl: null,
+          awayTeam: "Chelsea",
+          awayTeamLogoUrl: null,
+          kickoffAt: "2026-04-24T12:00:00Z",
+          marketFamily: "moneyline",
+          selectionLabel: "HOME",
+          confidence: 0.82,
+          edge: null,
+          expectedValue: null,
+          marketPrice: null,
+          modelProbability: null,
+          marketProbability: null,
+          sourceAgreementRatio: null,
+          confidenceReliability: "validated",
+          highConfidenceEligible: true,
+          validationMetadata: { sample_count: 80 },
+          status: "recommended",
+          noBetReason: null,
+          reasonLabels: ["mainRecommendation"],
+        },
+      ],
+      heldItems: [],
+    })));
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
+    const body = await response.json() as {
+      items: Array<{ id: string }>;
+    };
+    expect(body.items).toEqual([
+      expect.objectContaining({ id: "daily_pick_item_artifact" }),
+    ]);
+  });
+
+  it("keeps the artifact while a newer daily pick run has not written items yet", async () => {
+    const baseDbClient = buildTableDbClient({
+      daily_pick_items: [],
+      daily_pick_runs: [
+        {
+          id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          generated_at: "2026-04-24T04:00:00Z",
+          metadata: {
+            selected_count: 1,
+          },
+        },
+      ],
+      daily_pick_performance_summary: [],
+    });
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "daily_picks_view_2026-04-24",
+          owner_type: "daily_picks",
+          owner_id: "2026-04-24",
+          artifact_kind: "daily_picks_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "daily-picks/2026-04-24/view.json",
+          storage_uri: "https://artifacts.example/daily-picks/2026-04-24/view.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-24T03:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "stored_artifacts" ? artifactQuery : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      generatedAt: "2026-04-24T03:00:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      validation: {
+        hitRate: null,
+        sampleCount: 0,
+        wilsonLowerBound: null,
+        confidenceReliability: null,
+        modelScope: null,
+      },
+      coverage: {
+        moneyline: 1,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [
+        {
+          id: "daily_pick_item_artifact",
+          matchId: "match-1",
+          predictionId: "prediction-1",
+          leagueId: "league-1",
+          leagueLabel: "Premier League",
+          homeTeam: "Arsenal",
+          homeTeamLogoUrl: null,
+          awayTeam: "Chelsea",
+          awayTeamLogoUrl: null,
+          kickoffAt: "2026-04-24T12:00:00Z",
+          marketFamily: "moneyline",
+          selectionLabel: "HOME",
+          confidence: 0.82,
+          edge: null,
+          expectedValue: null,
+          marketPrice: null,
+          modelProbability: null,
+          marketProbability: null,
+          sourceAgreementRatio: null,
+          confidenceReliability: "validated",
+          highConfidenceEligible: true,
+          validationMetadata: { sample_count: 80 },
+          status: "recommended",
+          noBetReason: null,
+          reasonLabels: ["mainRecommendation"],
+        },
+      ],
+      heldItems: [],
+    })));
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
+    const body = await response.json() as {
+      items: Array<{ id: string }>;
+    };
+    expect(body.items).toEqual([
+      expect.objectContaining({ id: "daily_pick_item_artifact" }),
+    ]);
+  });
+
+  it("returns an empty tracked view for a completed newer run with no selected items", async () => {
+    const baseDbClient = buildTableDbClient({
+      daily_pick_items: [],
+      daily_pick_runs: [
+        {
+          id: "daily_pick_run_2026-04-24",
+          pick_date: "2026-04-24",
+          generated_at: "2026-04-24T04:00:00Z",
+          metadata: {
+            selected_count: 0,
+          },
+        },
+      ],
+      daily_pick_performance_summary: [],
+    });
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "daily_picks_view_2026-04-24",
+          owner_type: "daily_picks",
+          owner_id: "2026-04-24",
+          artifact_kind: "daily_picks_view",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "daily-picks/2026-04-24/view.json",
+          storage_uri: "https://artifacts.example/daily-picks/2026-04-24/view.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-04-24T03:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "stored_artifacts" ? artifactQuery : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      generatedAt: "2026-04-24T03:00:00Z",
+      date: "2026-04-24",
+      target: {
+        minDailyRecommendations: 5,
+        maxDailyRecommendations: 10,
+        hitRate: 0.7,
+        roi: 0.2,
+      },
+      validation: {
+        hitRate: null,
+        sampleCount: 0,
+        wilsonLowerBound: null,
+        confidenceReliability: null,
+        modelScope: null,
+      },
+      coverage: {
+        moneyline: 1,
+        spreads: 0,
+        totals: 0,
+        held: 0,
+      },
+      items: [
+        {
+          id: "daily_pick_item_artifact",
+          matchId: "match-1",
+          predictionId: "prediction-1",
+          leagueId: "league-1",
+          leagueLabel: "Premier League",
+          homeTeam: "Arsenal",
+          homeTeamLogoUrl: null,
+          awayTeam: "Chelsea",
+          awayTeamLogoUrl: null,
+          kickoffAt: "2026-04-24T12:00:00Z",
+          marketFamily: "moneyline",
+          selectionLabel: "HOME",
+          confidence: 0.82,
+          edge: null,
+          expectedValue: null,
+          marketPrice: null,
+          modelProbability: null,
+          marketProbability: null,
+          sourceAgreementRatio: null,
+          confidenceReliability: "validated",
+          highConfidenceEligible: true,
+          validationMetadata: { sample_count: 80 },
+          status: "recommended",
+          noBetReason: null,
+          reasonLabels: ["mainRecommendation"],
+        },
+      ],
+      heldItems: [],
+    })));
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("tracked-fallback");
+    const body = await response.json() as {
+      generatedAt: string;
+      items: unknown[];
+      heldItems: unknown[];
+      coverage: Record<string, number>;
+    };
+    expect(body.generatedAt).toBe("2026-04-24T04:00:00Z");
+    expect(body.items).toEqual([]);
+    expect(body.heldItems).toEqual([]);
+    expect(body.coverage).toEqual({
+      moneyline: 0,
+      spreads: 0,
+      totals: 0,
+      held: 0,
+    });
   });
 
   it("falls back to persisted daily pick tracking rows when the date artifact is unavailable", async () => {
