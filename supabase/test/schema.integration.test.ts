@@ -1137,7 +1137,11 @@ describe("supabase schema integration", () => {
         0.12,
         'HOME',
         0.78,
-        '{"source_agreement_ratio":1.0}'::jsonb,
+        '{
+          "source_agreement_ratio": 0.33,
+          "high_confidence_eligible": true,
+          "confidence_reliability": "validated"
+        }'::jsonb,
         'HOME',
         0.78,
         true
@@ -1192,7 +1196,12 @@ describe("supabase schema integration", () => {
         'prediction_market_priority',
         'AWAY',
         'prediction missed the actual away result',
-        '["major_directional_miss"]'::jsonb
+        '[
+          "major_directional_miss",
+          "high_confidence_miss",
+          "low_consensus_call",
+          "market_signal_miss"
+        ]'::jsonb
       );
     `);
 
@@ -1201,15 +1210,49 @@ describe("supabase schema integration", () => {
 
     const reviews = await db.query<{
       cause_tags: unknown;
+      summary_payload: {
+        comparison_available?: boolean;
+        market_outperformed_model?: boolean;
+        taxonomy?: {
+          miss_family?: string;
+          severity?: string;
+          consensus_level?: string;
+          market_signal?: string;
+        };
+      };
+      taxonomy_severity: string | null;
+      taxonomy_consensus_level: string | null;
       taxonomy_market_signal: string | null;
     }>(
-      `select cause_tags, taxonomy_market_signal
+      `select
+         cause_tags,
+         summary_payload,
+         taxonomy_severity,
+         taxonomy_consensus_level,
+         taxonomy_market_signal
        from post_match_reviews
        where id = 'review_market_priority'`,
     );
 
-    expect(reviews.rows[0]?.cause_tags).toEqual(["major_directional_miss"]);
+    expect(reviews.rows[0]?.cause_tags).toEqual([
+      "major_directional_miss",
+      "high_confidence_miss",
+      "low_consensus_call",
+      "market_signal_miss",
+    ]);
+    expect(reviews.rows[0]?.taxonomy_severity).toBe("high");
+    expect(reviews.rows[0]?.taxonomy_consensus_level).toBe("low");
     expect(reviews.rows[0]?.taxonomy_market_signal).toBe("market_outperformed_model");
+    expect(reviews.rows[0]?.summary_payload).toMatchObject({
+      comparison_available: true,
+      market_outperformed_model: true,
+      taxonomy: {
+        miss_family: "directional_miss",
+        severity: "high",
+        consensus_level: "low",
+        market_signal: "market_outperformed_model",
+      },
+    });
   });
 
   it("gates existing late sparse predictions with missing lineup scores or stats", async () => {

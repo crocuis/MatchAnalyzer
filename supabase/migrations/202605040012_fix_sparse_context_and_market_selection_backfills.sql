@@ -176,6 +176,9 @@ with scored_reviews as (
   select
     reviews.id as review_id,
     predictions.recommended_pick,
+    predictions.confidence_score,
+    predictions.draw_prob,
+    predictions.summary_payload,
     reviews.actual_outcome,
     case reviews.actual_outcome
       when 'HOME' then predictions.home_prob
@@ -219,6 +222,10 @@ selected_markets as (
   select distinct on (review_id)
     review_id,
     recommended_pick,
+    confidence_score,
+    draw_prob,
+    summary_payload,
+    actual_outcome,
     market_pick,
     model_actual_prob,
     market_actual_prob
@@ -233,7 +240,19 @@ selected_markets as (
 wrong_market_aligned_upsets as (
   select
     review_id,
-    market_actual_prob - model_actual_prob as market_actual_edge
+    actual_outcome,
+    confidence_score,
+    draw_prob,
+    market_actual_prob - model_actual_prob as market_actual_edge,
+    nullif(summary_payload ->> 'source_agreement_ratio', '')::numeric as source_agreement_ratio,
+    confidence_score >= 0.7
+      and case
+        when jsonb_typeof(summary_payload -> 'high_confidence_eligible') = 'boolean'
+          then (summary_payload ->> 'high_confidence_eligible')::boolean
+        when jsonb_typeof(summary_payload -> 'confidence_reliability') = 'string'
+          then summary_payload ->> 'confidence_reliability' = 'validated'
+        else true
+      end as validated_high_confidence
   from selected_markets
   where not (
     market_pick = recommended_pick
@@ -242,35 +261,86 @@ wrong_market_aligned_upsets as (
 )
 update public.post_match_reviews reviews
 set
-  cause_tags = '["major_directional_miss"]'::jsonb,
+  cause_tags = '["major_directional_miss"]'::jsonb
+    || case
+      when wrong_market_aligned_upsets.validated_high_confidence
+        then '["high_confidence_miss"]'::jsonb
+      when wrong_market_aligned_upsets.confidence_score >= 0.7
+        then '["unvalidated_confidence_miss"]'::jsonb
+      else '[]'::jsonb
+    end
+    || case
+      when wrong_market_aligned_upsets.actual_outcome = 'DRAW'
+        and wrong_market_aligned_upsets.draw_prob <= 0.2
+        then '["draw_blind_spot"]'::jsonb
+      else '[]'::jsonb
+    end
+    || case
+      when wrong_market_aligned_upsets.source_agreement_ratio is not null
+        and wrong_market_aligned_upsets.source_agreement_ratio < 0.5
+        then '["low_consensus_call"]'::jsonb
+      else '[]'::jsonb
+    end
+    || case
+      when wrong_market_aligned_upsets.source_agreement_ratio is not null
+        and wrong_market_aligned_upsets.market_actual_edge > 0.01
+        then '["market_signal_miss"]'::jsonb
+      else '[]'::jsonb
+    end,
   market_outperformed_model = wrong_market_aligned_upsets.market_actual_edge > 0.01,
-  taxonomy_severity = 'medium',
+  taxonomy_severity = case
+    when wrong_market_aligned_upsets.validated_high_confidence then 'high'
+    else 'medium'
+  end,
+  taxonomy_consensus_level = case
+    when wrong_market_aligned_upsets.source_agreement_ratio is null then 'unknown'
+    when wrong_market_aligned_upsets.source_agreement_ratio < 0.5 then 'low'
+    when wrong_market_aligned_upsets.source_agreement_ratio < 0.8 then 'medium'
+    else 'high'
+  end,
   taxonomy_market_signal = case
     when wrong_market_aligned_upsets.market_actual_edge > 0.01
       then 'market_outperformed_model'
     else 'model_outperformed_market'
   end,
-  summary_payload = jsonb_set(
-    jsonb_set(
-      jsonb_set(
-        coalesce(reviews.summary_payload, '{}'::jsonb),
-        '{market_outperformed_model}',
-        to_jsonb(wrong_market_aligned_upsets.market_actual_edge > 0.01),
-        true
-      ),
-      '{taxonomy,severity}',
-      '"medium"'::jsonb,
-      true
-    ),
-    '{taxonomy,market_signal}',
-    to_jsonb(
+  summary_payload = jsonb_build_object(
+    'comparison_available',
+    true,
+    'market_outperformed_model',
+    wrong_market_aligned_upsets.market_actual_edge > 0.01,
+    'taxonomy',
+    jsonb_build_object(
+      'miss_family',
+      'directional_miss',
+      'severity',
+      case
+        when wrong_market_aligned_upsets.validated_high_confidence then 'high'
+        else 'medium'
+      end,
+      'consensus_level',
+      case
+        when wrong_market_aligned_upsets.source_agreement_ratio is null then 'unknown'
+        when wrong_market_aligned_upsets.source_agreement_ratio < 0.5 then 'low'
+        when wrong_market_aligned_upsets.source_agreement_ratio < 0.8 then 'medium'
+        else 'high'
+      end,
+      'market_signal',
       case
         when wrong_market_aligned_upsets.market_actual_edge > 0.01
           then 'market_outperformed_model'
         else 'model_outperformed_market'
       end
     ),
-    true
+    'attribution_summary',
+    coalesce(
+      reviews.summary_payload -> 'attribution_summary',
+      jsonb_build_object(
+        'primary_signal',
+        null,
+        'secondary_signal',
+        null
+      )
+    )
   )
 from wrong_market_aligned_upsets
 where reviews.id = wrong_market_aligned_upsets.review_id;
