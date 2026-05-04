@@ -767,6 +767,78 @@ describe("supabase schema integration", () => {
     ]);
   });
 
+  it("archives the previous prediction row before updates", async () => {
+    const db = await createDb();
+
+    await db.exec(`
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values ('snapshot_versioned_001', 'match_001', 'T_MINUS_24H', 'unknown', 'complete');
+
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score,
+        summary_payload,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended,
+        variant_markets_summary
+      )
+      values (
+        'prediction_versioned_001',
+        'snapshot_versioned_001',
+        'match_001',
+        'model_v1',
+        0.34,
+        0.40,
+        0.26,
+        'DRAW',
+        0.40,
+        '{"source_agreement_ratio":0.5}'::jsonb,
+        'DRAW',
+        0.40,
+        true,
+        '[]'::jsonb
+      );
+
+      update predictions
+      set
+        home_prob = 0.52,
+        draw_prob = 0.25,
+        away_prob = 0.23,
+        recommended_pick = 'HOME',
+        main_recommendation_pick = 'HOME'
+      where id = 'prediction_versioned_001';
+    `);
+
+    const versions = await db.query<{
+      prediction_id: string;
+      prediction_payload: {
+        recommended_pick?: string;
+        home_prob?: number;
+        main_recommendation_pick?: string;
+      };
+    }>(
+      `select prediction_id, prediction_payload
+       from prediction_row_versions
+       where prediction_id = 'prediction_versioned_001'`,
+    );
+
+    expect(versions.rows).toHaveLength(1);
+    expect(versions.rows[0]?.prediction_payload.recommended_pick).toBe("DRAW");
+    expect(Number(versions.rows[0]?.prediction_payload.home_prob)).toBeCloseTo(0.34);
+    expect(versions.rows[0]?.prediction_payload.main_recommendation_pick).toBe("DRAW");
+  });
+
   it("exposes match card projections with sort metadata and review flags", async () => {
     const db = await createDb();
 
