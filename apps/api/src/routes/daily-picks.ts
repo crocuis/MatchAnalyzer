@@ -136,7 +136,7 @@ const DAILY_PICK_SELECTS: Record<string, string> = {
   competitions: "id, name",
   match_snapshots: "id, match_id, checkpoint_type",
   predictions: DAILY_PICK_PREDICTION_DETAIL_SELECT,
-  daily_pick_runs: "id, pick_date, generated_at, status",
+  daily_pick_runs: "id, pick_date, generated_at, status, metadata",
   daily_pick_items:
     "id, run_id, pick_date, match_id, prediction_id, market_family, selection_label, line_value, market_price, model_probability, market_probability, expected_value, edge, confidence, score, status, validation_metadata, reason_labels, created_at",
   daily_pick_results:
@@ -167,6 +167,15 @@ function resolveRequestedDate(value: string | null | undefined): string | null {
     return resolveDefaultDate();
   }
   return normalizeDateFilter(value);
+}
+
+function readTimestampMillis(value: unknown): number | null {
+  const rawValue = value instanceof Date ? value.toISOString() : readString(value);
+  if (!rawValue) {
+    return null;
+  }
+  const millis = Date.parse(rawValue);
+  return Number.isFinite(millis) ? millis : null;
 }
 
 type PredictionCandidate = {
@@ -1130,6 +1139,9 @@ async function loadDailyPicksArtifactView(
   if (!isDailyPicksView(loaded)) {
     return null;
   }
+  if (await hasNewerTrackedDailyPickRun(dbClient, date, loaded.generatedAt)) {
+    return null;
+  }
   const filteredItems = filterDailyPickItems(loaded.items, options).slice(0, 10);
   const filteredHeldItems = options.includeHeld
     ? filterDailyPickItems(loaded.heldItems, options).slice(0, 10)
@@ -1156,6 +1168,60 @@ async function loadDailyPicksArtifactView(
   };
 }
 
+async function hasNewerTrackedDailyPickRun(
+  dbClient: ApiDbClient,
+  date: string,
+  artifactCreatedAt: string | null,
+): Promise<boolean> {
+  const artifactCreatedMillis = readTimestampMillis(artifactCreatedAt);
+  if (artifactCreatedMillis === null) {
+    return false;
+  }
+  try {
+    const runs = await readRowsByColumnValue(
+      dbClient,
+      "daily_pick_runs",
+      "pick_date",
+      date,
+    );
+    const newerRuns = runs.filter((run) => {
+      const generatedMillis = readTimestampMillis(run.generated_at);
+      return generatedMillis !== null && generatedMillis > artifactCreatedMillis;
+    });
+    if (newerRuns.length === 0) {
+      return false;
+    }
+    const pickRows = await readRowsByColumnValue(
+      dbClient,
+      "daily_pick_items",
+      "pick_date",
+      date,
+    );
+    return newerRuns.some((run) => isTrackedDailyPickRunComplete(run, pickRows));
+  } catch {
+    return false;
+  }
+}
+
+function isTrackedDailyPickRunComplete(
+  run: DailyPickRow,
+  pickRows: DailyPickRow[],
+): boolean {
+  const metadata = readRecord(run.metadata);
+  const selectedCount = readNumber(metadata?.selected_count);
+  if (selectedCount === 0) {
+    return true;
+  }
+  const runId = readString(run.id);
+  const runPickRows = runId
+    ? pickRows.filter((row) => readString(row.run_id) === runId)
+    : pickRows;
+  if (selectedCount !== null && selectedCount > 0) {
+    return runPickRows.length >= selectedCount;
+  }
+  return runPickRows.length > 0;
+}
+
 async function loadTrackedDailyPicksView(
   dbClient: ApiDbClient,
   options: LoadDailyPicksOptions,
@@ -1168,13 +1234,26 @@ async function loadTrackedDailyPicksView(
     return null;
   }
 
-  const pickRows = await readRowsByColumnValue(
-    dbClient,
-    "daily_pick_items",
-    "pick_date",
-    normalizedOptions.date,
-  );
+  const [pickRows, runs, performanceSummary] = await Promise.all([
+    readRowsByColumnValue(
+      dbClient,
+      "daily_pick_items",
+      "pick_date",
+      normalizedOptions.date,
+    ),
+    readRowsByColumnValue(dbClient, "daily_pick_runs", "pick_date", normalizedOptions.date),
+    readDailyPickRuntimePerformanceSummary(dbClient),
+  ]);
   if (pickRows.length === 0) {
+    const emptyRun = latestCompletedEmptyDailyPickRun(runs);
+    if (emptyRun) {
+      return {
+        ...EMPTY_VIEW,
+        generatedAt: readString(emptyRun.generated_at) ?? new Date().toISOString(),
+        date: normalizedOptions.date,
+        validation: performanceSummary ?? EMPTY_VIEW.validation,
+      };
+    }
     return null;
   }
 
@@ -1186,11 +1265,9 @@ async function loadTrackedDailyPicksView(
     const pickItemId = readString(row.id);
     return pickItemId ? [pickItemId] : [];
   }))];
-  const [matches, results, runs, performanceSummary] = await Promise.all([
+  const [matches, results] = await Promise.all([
     readRowsByIds(dbClient, "matches", matchIds),
     readRowsByIds(dbClient, "daily_pick_results", pickItemIds, "pick_item_id"),
-    readRowsByColumnValue(dbClient, "daily_pick_runs", "pick_date", normalizedOptions.date),
-    readDailyPickRuntimePerformanceSummary(dbClient),
   ]);
   const matchesById = new Map(
     matches.flatMap((row) => {
@@ -1291,6 +1368,19 @@ async function loadTrackedDailyPicksView(
     items: visibleItems,
     heldItems: visibleHeldItems,
   };
+}
+
+function latestCompletedEmptyDailyPickRun(runs: DailyPickRow[]): DailyPickRow | null {
+  const emptyRuns = runs.filter((run) => isCompletedEmptyDailyPickRun(run));
+  return emptyRuns.sort((left, right) => (
+    (readTimestampMillis(right.generated_at) ?? 0)
+    - (readTimestampMillis(left.generated_at) ?? 0)
+  ))[0] ?? null;
+}
+
+function isCompletedEmptyDailyPickRun(run: DailyPickRow): boolean {
+  const metadata = readRecord(run.metadata);
+  return readNumber(metadata?.selected_count) === 0;
 }
 
 function readTrackedStatus(

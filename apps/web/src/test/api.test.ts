@@ -64,7 +64,7 @@ describe("buildApiUrl", () => {
 });
 
 describe("daily picks fetcher", () => {
-  it("formats today's local date for daily picks calls", async () => {
+  it("formats the current UTC date for daily picks calls", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-24T15:30:00Z"));
     const fetchMock = vi.fn(async () => ({
@@ -87,6 +87,21 @@ describe("daily picks fetcher", () => {
 
     const { fetchDailyPicks, resolveDailyPicksDate } = await import("../lib/api");
     const expectedDate = resolveDailyPicksDate();
+    const dateWithDivergentLocalFields = {
+      getFullYear: vi.fn(() => 2026),
+      getMonth: vi.fn(() => 4),
+      getDate: vi.fn(() => 5),
+      getUTCFullYear: vi.fn(() => 2026),
+      getUTCMonth: vi.fn(() => 4),
+      getUTCDate: vi.fn(() => 4),
+    } as unknown as Date;
+
+    expect(resolveDailyPicksDate(new Date("2026-05-04T15:30:00Z"))).toBe(
+      "2026-05-04",
+    );
+    expect(resolveDailyPicksDate(dateWithDivergentLocalFields)).toBe(
+      "2026-05-04",
+    );
 
     await fetchDailyPicks({
       date: expectedDate,
