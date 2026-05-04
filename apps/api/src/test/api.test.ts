@@ -6513,6 +6513,105 @@ describe("prediction API", () => {
     });
   });
 
+  it("ignores post-kickoff snapshots in the detail view", async () => {
+    const predictionsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "prediction-post-kickoff",
+            match_id: "match-1",
+            snapshot_id: "snapshot-lineup-post-kickoff",
+            home_prob: 0.7,
+            draw_prob: 0.2,
+            away_prob: 0.1,
+            recommended_pick: "HOME",
+            confidence_score: 0.7,
+            main_recommendation_pick: "HOME",
+            main_recommendation_confidence: 0.7,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            summary_payload: { source_agreement_ratio: 1 },
+            created_at: "2026-04-27T20:30:00Z",
+          },
+          {
+            id: "prediction-pre-kickoff",
+            match_id: "match-1",
+            snapshot_id: "snapshot-24h",
+            home_prob: 0.3,
+            draw_prob: 0.42,
+            away_prob: 0.28,
+            recommended_pick: "DRAW",
+            confidence_score: 0.42,
+            main_recommendation_pick: "DRAW",
+            main_recommendation_confidence: 0.42,
+            main_recommendation_recommended: true,
+            main_recommendation_no_bet_reason: null,
+            summary_payload: { source_agreement_ratio: 0.67 },
+            created_at: "2026-04-26T19:00:00Z",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const snapshotsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: "snapshot-24h",
+            checkpoint_type: "T_MINUS_24H",
+            captured_at: "2026-04-26T19:00:00Z",
+            lineup_status: "unknown",
+            snapshot_quality: "complete",
+          },
+          {
+            id: "snapshot-lineup-post-kickoff",
+            checkpoint_type: "LINEUP_CONFIRMED",
+            captured_at: "2026-04-27T20:30:00Z",
+            lineup_status: "confirmed",
+            snapshot_quality: "complete",
+          },
+        ],
+        error: null,
+      }),
+    };
+    const matchQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          kickoff_at: "2026-04-27T19:00:00Z",
+          final_result: "HOME",
+          home_score: 1,
+          away_score: 0,
+        },
+        error: null,
+      }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(predictionsQuery)
+      .mockReturnValueOnce(snapshotsQuery)
+      .mockReturnValueOnce(matchQuery);
+
+    const detail = await loadPredictionView({ from } as never, "match-1");
+
+    expect(detail.prediction?.checkpointLabel).toBe("T_MINUS_24H");
+    expect(detail.prediction?.recommendedPick).toBe("DRAW");
+    expect(detail.checkpoints).toEqual([
+      expect.objectContaining({
+        id: "snapshot-24h",
+        note: expect.stringContaining("Pick DRAW"),
+      }),
+      expect.objectContaining({
+        id: "snapshot-lineup-post-kickoff",
+        note: "complete snapshot · confirmed lineup",
+      }),
+    ]);
+  });
+
   it("falls back to the most recent market-enriched row when the latest checkpoint lacks value data", async () => {
     const predictionsQuery = {
       select: vi.fn().mockReturnThis(),

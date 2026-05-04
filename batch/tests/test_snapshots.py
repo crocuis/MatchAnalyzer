@@ -301,6 +301,18 @@ def test_rollout_history_support_migration_adds_version_columns_and_history_tabl
     assert "source_report_id text not null references prediction_source_evaluation_report_versions(id)" in migration
 
 
+def test_prediction_row_versions_migration_captures_prediction_updates():
+    migration = normalize_sql(
+        Path("supabase/migrations/202605040001_prediction_row_versions.sql").read_text()
+    )
+
+    assert "create table if not exists prediction_row_versions" in migration
+    assert "prediction_payload jsonb not null" in migration
+    assert "create or replace function capture_prediction_row_version()" in migration
+    assert "before update on public.predictions" in migration
+    assert "to_jsonb(old) = to_jsonb(new)" in migration
+
+
 def test_dashboard_performance_index_migration_adds_lookup_indexes():
     migration = normalize_sql(
         Path(

@@ -4,6 +4,7 @@ import os
 import re
 from copy import deepcopy
 from datetime import datetime
+from hashlib import sha256
 from typing import Any
 
 from batch.src.features.feature_builder import (
@@ -278,6 +279,18 @@ def should_sync_daily_pick_tracking_after_predictions(
     return not read_env_flag("MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC")
 
 
+def should_preserve_existing_settled_prediction(
+    *,
+    existing_prediction: dict | None,
+    match: dict,
+) -> bool:
+    if existing_prediction is None:
+        return False
+    if read_env_flag("MATCH_ANALYZER_ALLOW_SETTLED_PREDICTION_REWRITE"):
+        return False
+    return bool(match.get("final_result"))
+
+
 def read_latest_fusion_policy(client: DbClient) -> dict | None:
     for row in read_optional_rows(client, "prediction_fusion_policies"):
         if row.get("id") == "latest" and isinstance(row.get("policy_payload"), dict):
@@ -334,6 +347,29 @@ def should_archive_prediction_artifacts(
         not use_real_prediction_targets
         or target_snapshot_count <= BULK_REAL_PREDICTION_ARTIFACT_ARCHIVE_LIMIT
     )
+
+
+def build_prediction_artifact_reference(
+    *,
+    prediction_id: str,
+    match_id: str,
+    explanation_payload: dict[str, Any],
+) -> dict[str, str]:
+    safe_payload = make_json_safe(explanation_payload)
+    encoded = json.dumps(
+        safe_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    payload_hash = sha256(encoded).hexdigest()[:16]
+    artifact_id = f"prediction_artifact_{prediction_id}_{payload_hash}"
+    return {
+        "id": artifact_id,
+        "owner_type": "prediction_artifact",
+        "owner_id": artifact_id,
+        "key": f"predictions/{match_id}/{prediction_id}/{payload_hash}.json",
+        "payload_hash": payload_hash,
+    }
 
 
 def attach_prediction_output_payload(
@@ -2608,6 +2644,7 @@ def main() -> None:
     artifact_payload = []
     model_selection_by_checkpoint: dict[str, dict] = {}
     skipped_snapshots = []
+    locked_prediction_ids = []
     match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
     validation_records = build_validation_records(
         prediction_rows=prediction_rows,
@@ -2649,6 +2686,14 @@ def main() -> None:
 
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
+        prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
+        existing_prediction = existing_predictions_by_id.get(prediction_id)
+        if should_preserve_existing_settled_prediction(
+            existing_prediction=existing_prediction,
+            match=match,
+        ):
+            locked_prediction_ids.append(prediction_id)
+            continue
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
             snapshot,
             match=match,
@@ -3001,8 +3046,6 @@ def main() -> None:
             match=match,
             teams_by_id=teams_by_id,
         )
-        prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
-        existing_prediction = existing_predictions_by_id.get(prediction_id)
         existing_prediction_payload = read_prediction_payload(existing_prediction)
         preserved_market_enrichment = False
         if value_recommendation is None:
@@ -3083,7 +3126,6 @@ def main() -> None:
                     )
                     if persisted_llm_advisory:
                         llm_advisory = persisted_llm_advisory
-        prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
         explanation_payload = {
             "bullets": row["explanation_bullets"],
             "feature_attribution": row["feature_attribution"],
@@ -3161,17 +3203,22 @@ def main() -> None:
         explanation_payload = make_json_safe(explanation_payload)
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
-        artifact_id = f"prediction_artifact_{prediction_id}"
+        artifact_reference = build_prediction_artifact_reference(
+            prediction_id=prediction_id,
+            match_id=row["match_id"],
+            explanation_payload=explanation_payload,
+        )
+        artifact_id = artifact_reference["id"]
         if archive_prediction_artifacts:
             artifact_payload.append(
                 archive_json_artifact(
                     r2_client=r2_client,
                     supabase_storage_client=supabase_storage_client,
                     artifact_id=artifact_id,
-                    owner_type="prediction",
-                    owner_id=prediction_id,
+                    owner_type=artifact_reference["owner_type"],
+                    owner_id=artifact_reference["owner_id"],
                     artifact_kind="prediction_explanation",
-                    key=f"predictions/{row['match_id']}/{prediction_id}.json",
+                    key=artifact_reference["key"],
                     payload=explanation_payload,
                     summary_payload={
                         "match_id": row["match_id"],
@@ -3180,6 +3227,8 @@ def main() -> None:
                     },
                     metadata={
                         "model_version_id": SAMPLE_MODEL_VERSION_ID,
+                        "prediction_id": prediction_id,
+                        "payload_hash": artifact_reference["payload_hash"],
                     },
                 )
             )
@@ -3238,9 +3287,29 @@ def main() -> None:
             )
         )
 
+    if not payload and use_real_prediction_targets and locked_prediction_ids:
+        result_payload = {
+            "snapshot_rows": len(snapshot_rows),
+            "target_snapshot_rows": len(target_snapshots),
+            "model_rows": 0,
+            "artifact_rows": 0,
+            "inserted_rows": 0,
+            "feature_snapshot_rows": 0,
+            "daily_pick_sync_dates": [],
+            "daily_pick_tracking_results": [],
+            "skipped_snapshots": skipped_snapshots,
+            "locked_prediction_ids": locked_prediction_ids,
+        }
+        attach_prediction_output_payload(
+            result_payload,
+            payload=[],
+            use_real_prediction_targets=use_real_prediction_targets,
+        )
+        print(json.dumps(result_payload, sort_keys=True))
+        return
     if not payload:
         raise ValueError("no prediction payload was generated for the sample pipeline")
-    if len(payload) != len(target_snapshots):
+    if not use_real_prediction_targets and len(payload) != len(target_snapshots):
         raise ValueError("sample prediction pipeline requires a payload per snapshot")
 
     model_rows = (
@@ -3290,6 +3359,7 @@ def main() -> None:
         "daily_pick_sync_dates": daily_pick_sync_dates,
         "daily_pick_tracking_results": daily_pick_tracking_results,
         "skipped_snapshots": skipped_snapshots,
+        "locked_prediction_ids": locked_prediction_ids,
     }
     attach_prediction_output_payload(
         result_payload,

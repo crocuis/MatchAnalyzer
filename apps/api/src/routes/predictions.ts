@@ -850,6 +850,21 @@ function comparePredictionRows(
   return rightCreatedAt - leftCreatedAt;
 }
 
+function isSnapshotBeforeKickoff(
+  snapshot: { captured_at?: string | null } | undefined,
+  kickoffAt: string | null | undefined,
+) {
+  if (!snapshot || !kickoffAt) {
+    return true;
+  }
+  const capturedAtMillis = snapshot.captured_at ? Date.parse(snapshot.captured_at) : NaN;
+  const kickoffMillis = Date.parse(kickoffAt);
+  if (!Number.isFinite(capturedAtMillis) || !Number.isFinite(kickoffMillis)) {
+    return true;
+  }
+  return capturedAtMillis < kickoffMillis;
+}
+
 function pickMarketEnrichedPrediction(
   predictions: Array<{
     value_recommendation_pick?: string | null;
@@ -963,13 +978,23 @@ export async function loadPredictionView(
     throw new Error("prediction queries failed");
   }
 
-  const snapshotsById = new Map<string, { checkpoint_type?: string }>(
-    ((snapshotRows ?? []) as Array<{ id: string; checkpoint_type?: string }>).map((row) => [
-      row.id,
-      row,
-    ]),
+  const snapshotsById = new Map<
+    string,
+    { checkpoint_type?: string; captured_at?: string | null }
+  >(
+    ((snapshotRows ?? []) as Array<{
+      id: string;
+      checkpoint_type?: string;
+      captured_at?: string | null;
+    }>).map((row) => [row.id, row]),
   );
   const predictionSelectorRowsForView = ((predictionSelectorRows ?? []) as PredictionDetailRow[])
+    .filter((prediction) =>
+      isSnapshotBeforeKickoff(
+        snapshotsById.get(prediction.snapshot_id),
+        matchRow?.kickoff_at ?? null,
+      ),
+    )
     .sort((left, right) => comparePredictionRows(left, right, snapshotsById));
   const selectedPredictionRows = collectPredictionDetailRows(
     predictionSelectorRowsForView,

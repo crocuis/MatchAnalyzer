@@ -1298,6 +1298,25 @@ def test_should_archive_prediction_artifacts_can_be_disabled_for_experiments(mon
     )
 
 
+def test_build_prediction_artifact_reference_is_content_addressed():
+    artifact = run_predictions_job.build_prediction_artifact_reference(
+        prediction_id="match_a_t_minus_24h_model_v1",
+        match_id="match_a",
+        explanation_payload={"recommended_pick": "HOME", "confidence_score": 0.62},
+    )
+    changed_artifact = run_predictions_job.build_prediction_artifact_reference(
+        prediction_id="match_a_t_minus_24h_model_v1",
+        match_id="match_a",
+        explanation_payload={"recommended_pick": "DRAW", "confidence_score": 0.41},
+    )
+
+    assert artifact["id"].startswith("prediction_artifact_match_a_t_minus_24h_model_v1_")
+    assert artifact["id"] != changed_artifact["id"]
+    assert artifact["owner_type"] == "prediction_artifact"
+    assert artifact["owner_id"] == artifact["id"]
+    assert artifact["key"].startswith("predictions/match_a/match_a_t_minus_24h_model_v1/")
+
+
 def test_attach_prediction_output_payload_can_omit_bulk_sample(monkeypatch):
     monkeypatch.setenv("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_SAMPLE", "1")
     payload = [{"id": f"prediction_{index}"} for index in range(25)]
@@ -2248,6 +2267,167 @@ def test_run_predictions_job_generates_all_available_checkpoints_in_real_mode(
         "match_a_t_minus_24h",
         "match_a_t_minus_6h",
     ]
+
+
+def test_run_predictions_job_keeps_existing_settled_predictions_immutable(monkeypatch):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "settled_match_t_minus_24h",
+                        "match_id": "settled_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 3,
+                        "rest_delta": 1,
+                    },
+                    {
+                        "id": "upcoming_match_t_minus_24h",
+                        "match_id": "upcoming_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 1,
+                        "rest_delta": 0,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "settled_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "settled_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.34,
+                        "draw_prob": 0.36,
+                        "away_prob": 0.30,
+                    },
+                    {
+                        "id": "upcoming_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "upcoming_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.52,
+                        "draw_prob": 0.25,
+                        "away_prob": 0.23,
+                    },
+                ],
+                "matches": [
+                    {
+                        "id": "settled_match",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "final_result": "HOME",
+                    },
+                    {
+                        "id": "upcoming_match",
+                        "kickoff_at": "2026-04-12T21:00:00+00:00",
+                        "final_result": None,
+                    },
+                ],
+                "predictions": [
+                    {
+                        "id": "settled_match_t_minus_24h_model_v1",
+                        "snapshot_id": "settled_match_t_minus_24h",
+                        "match_id": "settled_match",
+                        "model_version_id": "model_v1",
+                        "home_prob": 0.31,
+                        "draw_prob": 0.38,
+                        "away_prob": 0.31,
+                        "recommended_pick": "DRAW",
+                        "confidence_score": 0.38,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    assert [row["match_id"] for row in state["predictions"]] == ["upcoming_match"]
+
+
+def test_run_predictions_job_returns_noop_when_all_real_targets_are_locked(
+    monkeypatch,
+    capsys,
+):
+    state: dict[str, list[dict]] = {}
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            self.tables = {
+                "match_snapshots": [
+                    {
+                        "id": "settled_match_t_minus_24h",
+                        "match_id": "settled_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "form_delta": 3,
+                        "rest_delta": 1,
+                    },
+                ],
+                "market_probabilities": [
+                    {
+                        "id": "settled_match_t_minus_24h_bookmaker",
+                        "snapshot_id": "settled_match_t_minus_24h",
+                        "source_type": "bookmaker",
+                        "home_prob": 0.34,
+                        "draw_prob": 0.36,
+                        "away_prob": 0.30,
+                    },
+                ],
+                "matches": [
+                    {
+                        "id": "settled_match",
+                        "kickoff_at": "2026-04-12T18:00:00+00:00",
+                        "final_result": "HOME",
+                    },
+                ],
+                "predictions": [
+                    {
+                        "id": "settled_match_t_minus_24h_model_v1",
+                        "snapshot_id": "settled_match_t_minus_24h",
+                        "match_id": "settled_match",
+                        "model_version_id": "model_v1",
+                        "home_prob": 0.31,
+                        "draw_prob": 0.38,
+                        "away_prob": 0.31,
+                        "recommended_pick": "DRAW",
+                        "confidence_score": 0.38,
+                    },
+                ],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.tables[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        run_predictions_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(run_predictions_job, "DbClient", FakeClient)
+    monkeypatch.setenv("REAL_PREDICTION_DATE", "2026-04-12")
+
+    run_predictions_job.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["inserted_rows"] == 0
+    assert output["locked_prediction_ids"] == ["settled_match_t_minus_24h_model_v1"]
+    assert output["payload"] == []
+    assert state == {}
 
 
 def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch):
