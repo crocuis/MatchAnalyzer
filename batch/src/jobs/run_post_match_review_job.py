@@ -1,6 +1,7 @@
 import json
 import os
 from collections import Counter
+from datetime import datetime, timezone
 
 from batch.src.jobs.sample_data import SAMPLE_MATCH_ID, SAMPLE_RESULT_ROWS
 from batch.src.llm.advisory import (
@@ -54,6 +55,19 @@ def read_env_flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default) in {"1", "true", "TRUE", "yes", "YES"}
 
 
+def kickoff_matches_target_date(value: object, target_date: str | None) -> bool:
+    if target_date is None:
+        return True
+    if isinstance(value, datetime):
+        resolved = (
+            value.replace(tzinfo=timezone.utc)
+            if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
+        return resolved.date().isoformat() == target_date
+    return isinstance(value, str) and value.startswith(target_date)
+
+
 def build_post_match_llm_context(
     *,
     prediction: dict,
@@ -93,7 +107,7 @@ def build_review_payload(
         row["id"]: row
         for row in match_rows
         if row.get("final_result")
-        and (target_date is None or row.get("kickoff_at", "").startswith(target_date))
+        and kickoff_matches_target_date(row.get("kickoff_at"), target_date)
     }
     selected_predictions = [
         prediction
@@ -397,7 +411,7 @@ def run_review_job(
         completed_match_ids = {
             row["id"]
             for row in match_rows
-            if row.get("kickoff_at", "").startswith(target_date)
+            if kickoff_matches_target_date(row.get("kickoff_at"), target_date)
             and row.get("final_result")
         }
         completed_predictions = [
@@ -434,7 +448,7 @@ def run_review_job(
             [
                 row
                 for row in match_rows
-                if row.get("kickoff_at", "").startswith(target_date)
+                if kickoff_matches_target_date(row.get("kickoff_at"), target_date)
                 and row.get("final_result")
             ]
         )

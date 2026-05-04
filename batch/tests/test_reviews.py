@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import datetime, timezone
 from decimal import Decimal
 import json
 from types import SimpleNamespace
@@ -1624,6 +1625,37 @@ def test_build_review_payload_keeps_completed_predictions_without_market_rows():
             },
         }
     ]
+
+
+def test_build_review_payload_accepts_postgres_datetime_kickoff_for_target_date():
+    predictions = [
+        {
+            "id": "match_a_t_minus_24h_model_v1",
+            "snapshot_id": "match_a_t_minus_24h",
+            "match_id": "match_a",
+            "recommended_pick": "HOME",
+            "home_prob": 0.55,
+            "draw_prob": 0.20,
+            "away_prob": 0.25,
+        }
+    ]
+    match_rows = [
+        {
+            "id": "match_a",
+            "kickoff_at": datetime(2026, 4, 12, 18, 0, tzinfo=timezone.utc),
+            "final_result": "AWAY",
+        }
+    ]
+
+    payload, skipped_predictions = build_review_payload(
+        predictions=predictions,
+        match_rows=match_rows,
+        market_rows=[],
+        target_date="2026-04-12",
+    )
+
+    assert skipped_predictions == []
+    assert [row["match_id"] for row in payload] == ["match_a"]
 
 
 def test_build_review_payload_prefers_prediction_market_over_bookmaker():
