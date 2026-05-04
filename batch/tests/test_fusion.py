@@ -2,6 +2,7 @@ import pytest
 
 from batch.src.model.explanations import build_explanation_bullets
 from batch.src.model.fusion import (
+    apply_contextual_draw_floor,
     build_fusion_policy_comparison,
     build_latest_fusion_policy,
     build_main_recommendation,
@@ -55,6 +56,53 @@ def test_choose_recommended_pick_keeps_side_for_decisive_home_prior():
         choose_recommended_pick({"home": 0.4, "draw": 0.35, "away": 0.25})
         == "HOME"
     )
+
+
+def test_apply_contextual_draw_floor_raises_draw_when_context_is_sparse():
+    adjusted = apply_contextual_draw_floor(
+        {"home": 0.72, "draw": 0.12, "away": 0.16},
+        context={
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 0,
+        },
+    )
+
+    assert adjusted["draw"] == pytest.approx(0.24)
+    assert adjusted["home"] < 0.72
+    assert adjusted["away"] < 0.16
+    assert round(sum(adjusted.values()), 6) == 1.0
+
+
+def test_apply_contextual_draw_floor_keeps_supported_market_shape():
+    adjusted = apply_contextual_draw_floor(
+        {"home": 0.72, "draw": 0.12, "away": 0.16},
+        context={
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "prediction_market_available": True,
+            "snapshot_quality_complete": 0,
+        },
+    )
+
+    assert adjusted == {"home": 0.72, "draw": 0.12, "away": 0.16}
+
+
+def test_apply_contextual_draw_floor_raises_draw_for_projected_lineups_without_stats_or_market():
+    adjusted = apply_contextual_draw_floor(
+        {"home": 0.65, "draw": 0.16, "away": 0.19},
+        context={
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+            "prediction_market_available": False,
+            "football_data_match_stats_available": 0,
+            "snapshot_quality_complete": 1,
+        },
+    )
+
+    assert adjusted["draw"] == pytest.approx(0.24)
+    assert round(sum(adjusted.values()), 6) == 1.0
 
 
 def test_fuse_probabilities_defaults_to_sharper_sources_when_no_weights_are_provided():
@@ -431,6 +479,35 @@ def test_confidence_score_penalizes_divergence_and_missing_market():
     )
 
     assert high_quality > low_quality
+
+
+def test_confidence_score_dampens_sparse_context_without_prediction_market():
+    supported_context_score = confidence_score(
+        {"home": 0.58, "draw": 0.24, "away": 0.18},
+        base_probs={"home": 0.61, "draw": 0.22, "away": 0.17},
+        context={
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "rotowire_lineups",
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 1,
+            "max_abs_divergence": 0.01,
+            "source_agreement_ratio": 1.0,
+        },
+    )
+    sparse_context_score = confidence_score(
+        {"home": 0.58, "draw": 0.24, "away": 0.18},
+        base_probs={"home": 0.61, "draw": 0.22, "away": 0.17},
+        context={
+            "lineup_confirmed": 0,
+            "lineup_source_summary": "none",
+            "prediction_market_available": False,
+            "snapshot_quality_complete": 0,
+            "max_abs_divergence": 0.01,
+            "source_agreement_ratio": 1.0,
+        },
+    )
+
+    assert sparse_context_score <= supported_context_score - 0.06
 
 
 def test_confidence_score_recovers_decisive_prediction_market_consensus_from_fallback_penalty():

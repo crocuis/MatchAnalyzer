@@ -981,6 +981,94 @@ describe("supabase schema integration", () => {
     );
   });
 
+  it("clears stale post-match reviews when prediction outcome fields change", async () => {
+    const db = await createDb();
+
+    await db.exec(`
+      update matches
+      set final_result = 'AWAY',
+          home_score = 0,
+          away_score = 1
+      where id = 'match_001';
+
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values ('snapshot_001', 'match_001', 'LINEUP_CONFIRMED', 'unknown', 'complete');
+
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_v1', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended
+      )
+      values (
+        'prediction_001',
+        'snapshot_001',
+        'match_001',
+        'model_v1',
+        0.7,
+        0.2,
+        0.1,
+        'HOME',
+        0.7,
+        'HOME',
+        0.7,
+        true
+      );
+
+      insert into post_match_reviews (
+        id,
+        match_id,
+        prediction_id,
+        actual_outcome,
+        error_summary,
+        cause_tags
+      )
+      values (
+        'review_001',
+        'match_001',
+        'prediction_001',
+        'AWAY',
+        'prediction missed the actual away result',
+        '["major_directional_miss"]'::jsonb
+      );
+
+      update predictions
+      set home_prob = 0.1,
+          draw_prob = 0.2,
+          away_prob = 0.7,
+          recommended_pick = 'AWAY',
+          confidence_score = 0.7,
+          main_recommendation_pick = 'AWAY',
+          main_recommendation_confidence = 0.7
+      where id = 'prediction_001';
+    `);
+
+    const reviewRows = await db.query<{ count: number }>(
+      `select count(*)::int as count
+       from post_match_reviews
+       where prediction_id = 'prediction_001'`,
+    );
+    const cards = await db.query<{ needs_review: boolean }>(
+      `select needs_review
+       from match_cards
+       where id = 'match_001'`,
+    );
+
+    expect(reviewRows.rows[0]?.count).toBe(0);
+    expect(cards.rows[0]?.needs_review).toBe(false);
+  });
+
   it("exposes historical form and rest columns on match snapshots", async () => {
     const db = await createDb();
 

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import batch.src.jobs.export_local_prediction_dataset_job as export_job
 from batch.src.storage.local_dataset_client import LocalDatasetClient
@@ -81,3 +82,39 @@ def test_export_local_prediction_dataset_writes_table_files(monkeypatch, tmp_pat
     output = json.loads(capsys.readouterr().out)
     assert output["tables"] == {"matches": 1, "predictions": 1}
 
+
+def test_export_local_prediction_dataset_serializes_datetime_rows(
+    monkeypatch,
+    tmp_path,
+):
+    class FakeDbClient:
+        def __init__(self, _url, _key):
+            pass
+
+        def read_rows(self, table_name: str):
+            return [
+                {
+                    "id": f"{table_name}-1",
+                    "kickoff_at": datetime(2026, 5, 4, 12, 30, tzinfo=timezone.utc),
+                }
+            ]
+
+    monkeypatch.setattr(export_job, "DbClient", FakeDbClient)
+    monkeypatch.setattr(
+        export_job,
+        "load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+            },
+        )(),
+    )
+
+    export_job.main(["--output-dir", str(tmp_path), "--table", "matches"])
+
+    assert json.loads((tmp_path / "matches.json").read_text()) == [
+        {"id": "matches-1", "kickoff_at": "2026-05-04T12:30:00+00:00"}
+    ]

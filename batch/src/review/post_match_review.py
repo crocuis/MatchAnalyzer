@@ -1,3 +1,33 @@
+MARKET_ALIGNED_UPSET_MAX_MARKET_ACTUAL_EDGE = 0.01
+
+
+def is_validated_high_confidence(
+    prediction: dict,
+    prediction_payload: dict,
+) -> bool:
+    if prediction.get("confidence_score") is None:
+        return False
+    if float(prediction["confidence_score"]) < 0.7:
+        return False
+
+    high_confidence_eligible = prediction_payload.get("high_confidence_eligible")
+    if isinstance(high_confidence_eligible, bool):
+        return high_confidence_eligible
+
+    confidence_reliability = prediction_payload.get("confidence_reliability")
+    if isinstance(confidence_reliability, str):
+        return confidence_reliability == "validated"
+
+    return True
+
+
+def market_favorite_from_probs(market_probs: dict) -> str:
+    return max(
+        ("HOME", "DRAW", "AWAY"),
+        key=lambda outcome: float(market_probs[outcome.lower()]),
+    )
+
+
 def build_review(
     prediction: dict,
     actual_outcome: str,
@@ -15,34 +45,57 @@ def build_review(
     )
     source_agreement_ratio = prediction_payload.get("source_agreement_ratio")
     directional_miss = prediction["recommended_pick"] != actual_outcome
-    if directional_miss:
-        cause_tags.append("major_directional_miss")
-    if (
-        directional_miss
+    outcome_key = actual_outcome.lower()
+    prediction_key = f"{outcome_key}_prob"
+    market_comparison_available = market_probs is not None
+    market_outperformed_model = None
+    market_aligned_upset = False
+    if market_comparison_available:
+        market_actual_edge = float(market_probs[outcome_key]) - float(
+            prediction[prediction_key]
+        )
+        market_outperformed_model = (
+            market_actual_edge > MARKET_ALIGNED_UPSET_MAX_MARKET_ACTUAL_EDGE
+        )
+        market_aligned_upset = (
+            directional_miss
+            and market_favorite_from_probs(market_probs) == prediction["recommended_pick"]
+            and not market_outperformed_model
+        )
+
+    actionable_directional_miss = directional_miss and not market_aligned_upset
+    high_confidence_miss = actionable_directional_miss and is_validated_high_confidence(
+        prediction,
+        prediction_payload,
+    )
+    unvalidated_confidence_miss = (
+        actionable_directional_miss
         and prediction.get("confidence_score") is not None
         and float(prediction["confidence_score"]) >= 0.7
-    ):
+        and not high_confidence_miss
+    )
+    if actionable_directional_miss:
+        cause_tags.append("major_directional_miss")
+    if high_confidence_miss:
         cause_tags.append("high_confidence_miss")
-    if actual_outcome == "DRAW" and float(prediction.get("draw_prob", 0.0)) <= 0.2:
+    elif unvalidated_confidence_miss:
+        cause_tags.append("unvalidated_confidence_miss")
+    if (
+        actionable_directional_miss
+        and actual_outcome == "DRAW"
+        and float(prediction.get("draw_prob", 0.0)) <= 0.2
+    ):
         cause_tags.append("draw_blind_spot")
     if (
-        directional_miss
+        actionable_directional_miss
         and source_agreement_ratio is not None
         and float(source_agreement_ratio) < 0.5
     ):
         cause_tags.append("low_consensus_call")
 
-    outcome_key = actual_outcome.lower()
-    prediction_key = f"{outcome_key}_prob"
-    actual_outcome_value = 1.0
-    model_outcome_error = abs(prediction[prediction_key] - actual_outcome_value)
-    market_comparison_available = market_probs is not None
-    market_outperformed_model = None
     if market_comparison_available:
-        market_outcome_error = abs(market_probs[outcome_key] - actual_outcome_value)
-        market_outperformed_model = market_outcome_error < model_outcome_error
         if (
-            directional_miss
+            actionable_directional_miss
             and source_agreement_ratio is not None
             and market_outperformed_model
         ):
@@ -53,9 +106,9 @@ def build_review(
     else:
         miss_family = "correct_call"
 
-    if directional_miss and prediction.get("confidence_score") is not None and float(prediction["confidence_score"]) >= 0.7:
+    if high_confidence_miss:
         severity = "high"
-    elif directional_miss:
+    elif directional_miss and cause_tags:
         severity = "medium"
     else:
         severity = "low"
@@ -71,6 +124,8 @@ def build_review(
 
     if not market_comparison_available:
         market_signal = "market_unavailable"
+    elif market_aligned_upset:
+        market_signal = "market_aligned_upset"
     elif market_outperformed_model:
         market_signal = "market_outperformed_model"
     else:

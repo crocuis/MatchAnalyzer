@@ -33,6 +33,9 @@ MAX_INFERRED_SOURCE_WEIGHT = 0.6
 DRAW_CLOSE_MATCH_MIN_PROBABILITY = 0.33
 DRAW_CLOSE_MATCH_MAX_HOME_AWAY_GAP = 0.25
 DRAW_CLOSE_MATCH_MAX_SIDE_PROBABILITY = 0.37
+CONTEXTUAL_DRAW_FLOOR_MIN_PROBABILITY = 0.24
+CONTEXTUAL_DATA_GAP_CONFIDENCE_PENALTY = 0.06
+MISSING_LINEUP_SOURCE_VALUES = {"", "none", "null", "unknown", "unavailable"}
 
 
 def _build_equal_weights(allowed_variants: tuple[str, ...]) -> dict[str, float]:
@@ -99,6 +102,59 @@ def _probability_margin(probabilities: dict[str, float]) -> float:
 
 def _top_pick(probabilities: dict[str, float]) -> str:
     return str(max(probabilities, key=probabilities.get))
+
+
+def has_sparse_prediction_context(context: dict | None) -> bool:
+    context = context or {}
+    if context.get("prediction_market_available", True):
+        return False
+    if context.get("lineup_confirmed"):
+        return False
+
+    lineup_source_summary = str(context.get("lineup_source_summary") or "").strip().lower()
+    lineup_source_missing = lineup_source_summary in MISSING_LINEUP_SOURCE_VALUES
+    lineup_score_missing = any(
+        key in context and context.get(key) is None
+        for key in ("home_lineup_score", "away_lineup_score")
+    )
+    snapshot_incomplete = not bool(context.get("snapshot_quality_complete", 1))
+    match_stats_missing = (
+        "football_data_match_stats_available" in context
+        and not bool(context.get("football_data_match_stats_available"))
+    )
+    return (
+        lineup_source_missing
+        or lineup_score_missing
+        or snapshot_incomplete
+        or match_stats_missing
+    )
+
+
+def apply_contextual_draw_floor(
+    fused_probs: dict[str, float],
+    context: dict | None = None,
+) -> dict[str, float]:
+    if not has_sparse_prediction_context(context):
+        return dict(fused_probs)
+
+    draw_probability = float(fused_probs.get("draw") or 0.0)
+    if draw_probability >= CONTEXTUAL_DRAW_FLOOR_MIN_PROBABILITY:
+        return dict(fused_probs)
+
+    home_probability = max(float(fused_probs.get("home") or 0.0), 0.0)
+    away_probability = max(float(fused_probs.get("away") or 0.0), 0.0)
+    side_total = home_probability + away_probability
+    if side_total <= 0:
+        return dict(fused_probs)
+
+    draw_delta = CONTEXTUAL_DRAW_FLOOR_MIN_PROBABILITY - draw_probability
+    adjusted = {
+        "home": home_probability - (draw_delta * (home_probability / side_total)),
+        "draw": CONTEXTUAL_DRAW_FLOOR_MIN_PROBABILITY,
+        "away": away_probability - (draw_delta * (away_probability / side_total)),
+    }
+    total = sum(adjusted.values())
+    return {key: value / total for key, value in adjusted.items()}
 
 
 def _rebalance_for_dual_source_consensus(
@@ -534,6 +590,9 @@ def confidence_score(
         <= CENTROID_DRAW_NO_MARKET_SIGNAL_THRESHOLD
     ):
         centroid_draw_no_market_bonus = CENTROID_DRAW_NO_MARKET_BONUS
+    contextual_data_gap_penalty = 0.0
+    if predicted_outcome != "draw" and has_sparse_prediction_context(context):
+        contextual_data_gap_penalty = CONTEXTUAL_DATA_GAP_CONFIDENCE_PENALTY
     raw_score = (
         0.35
         + (fused_margin * 0.55)
@@ -543,6 +602,7 @@ def confidence_score(
         + decisive_away_consensus_bonus
         + centroid_draw_no_market_bonus
         - (divergence_penalty * 0.6)
+        - contextual_data_gap_penalty
         + (0.04 if context.get("snapshot_quality_complete", 1) else 0.0)
         + (0.03 if context.get("lineup_confirmed") else 0.0)
         - (0.08 if not context.get("prediction_market_available", True) else 0.0)

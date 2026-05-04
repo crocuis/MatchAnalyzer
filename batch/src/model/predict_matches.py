@@ -3,6 +3,7 @@ from batch.src.model.explanations import (
     build_feature_attribution,
 )
 from batch.src.model.fusion import (
+    apply_contextual_draw_floor,
     choose_recommended_pick,
     confidence_score,
     fuse_probabilities,
@@ -70,6 +71,7 @@ def build_prediction_row(
         **context,
         "source_agreement_ratio": source_agreement_ratio,
     }
+    fused = apply_contextual_draw_floor(fused, context=scored_context)
     return {
         "match_id": match_id,
         "checkpoint": checkpoint,
