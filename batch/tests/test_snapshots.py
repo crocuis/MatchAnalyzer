@@ -453,6 +453,24 @@ def test_reclassify_market_aligned_upset_reviews_migration_clears_review_tags():
     assert "select public.refresh_match_card_projection_cache()" in migration
 
 
+def test_fix_sparse_context_and_market_selection_backfills_migration_is_idempotent():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/202605040012_fix_sparse_context_and_market_selection_backfills.sql"
+        ).read_text()
+    )
+
+    assert "create or replace function public.is_sparse_prediction_context" in migration
+    assert "create or replace function public.market_probability_source_priority" in migration
+    assert "public.is_sparse_prediction_context(predictions.summary_payload)" in migration
+    assert "late_sparse_context_without_prediction_market" in migration
+    assert "marginal_sparse_t24_no_market" in migration
+    assert "low_gap_sparse_t24_draw_risk" in migration
+    assert "market_aligned_upset" in migration
+    assert "source_priority desc" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
 def test_dashboard_performance_index_migration_adds_lookup_indexes():
     migration = normalize_sql(
         Path(

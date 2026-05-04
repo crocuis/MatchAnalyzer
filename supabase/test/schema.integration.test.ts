@@ -1069,6 +1069,316 @@ describe("supabase schema integration", () => {
     expect(cards.rows[0]?.needs_review).toBe(false);
   });
 
+  it("reclassifies market-aligned upsets using the selected market row precedence", async () => {
+    const db = await createDb();
+    const migration = await readFile(
+      new URL(
+        "../migrations/202605040011_reclassify_market_aligned_upset_reviews.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const fixMigration = await readFile(
+      new URL(
+        "../migrations/202605040012_fix_sparse_context_and_market_selection_backfills.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    await db.exec(`
+      insert into matches (
+        id,
+        competition_id,
+        season,
+        kickoff_at,
+        home_team_id,
+        away_team_id,
+        final_result
+      )
+      values (
+        'match_market_priority',
+        'epl',
+        '2026-2027',
+        '2026-08-16T15:00:00Z',
+        'arsenal',
+        'chelsea',
+        'AWAY'
+      );
+
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values ('snapshot_market_priority', 'match_market_priority', 'T_MINUS_24H', 'unknown', 'partial');
+
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_market_priority', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score,
+        summary_payload,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended
+      )
+      values (
+        'prediction_market_priority',
+        'snapshot_market_priority',
+        'match_market_priority',
+        'model_market_priority',
+        0.72,
+        0.16,
+        0.12,
+        'HOME',
+        0.78,
+        '{"source_agreement_ratio":1.0}'::jsonb,
+        'HOME',
+        0.78,
+        true
+      );
+
+      insert into market_probabilities (
+        id,
+        snapshot_id,
+        source_type,
+        source_name,
+        market_family,
+        home_prob,
+        draw_prob,
+        away_prob,
+        observed_at
+      )
+      values
+        (
+          'market_low_priority_aligned',
+          'snapshot_market_priority',
+          'bookmaker',
+          'football_data_moneyline_3way',
+          'moneyline_3way',
+          0.73,
+          0.15,
+          0.12,
+          '2026-08-15T10:00:00Z'
+        ),
+        (
+          'market_high_priority_actual',
+          'snapshot_market_priority',
+          'bookmaker',
+          'odds_api_io_moneyline_3way',
+          'moneyline_3way',
+          0.35,
+          0.15,
+          0.50,
+          '2026-08-15T09:00:00Z'
+        );
+
+      insert into post_match_reviews (
+        id,
+        match_id,
+        prediction_id,
+        actual_outcome,
+        error_summary,
+        cause_tags
+      )
+      values (
+        'review_market_priority',
+        'match_market_priority',
+        'prediction_market_priority',
+        'AWAY',
+        'prediction missed the actual away result',
+        '["major_directional_miss"]'::jsonb
+      );
+    `);
+
+    await db.exec(migration);
+    await db.exec(fixMigration);
+
+    const reviews = await db.query<{
+      cause_tags: unknown;
+      taxonomy_market_signal: string | null;
+    }>(
+      `select cause_tags, taxonomy_market_signal
+       from post_match_reviews
+       where id = 'review_market_priority'`,
+    );
+
+    expect(reviews.rows[0]?.cause_tags).toEqual(["major_directional_miss"]);
+    expect(reviews.rows[0]?.taxonomy_market_signal).toBe("market_outperformed_model");
+  });
+
+  it("gates existing late sparse predictions with missing lineup scores or stats", async () => {
+    const db = await createDb();
+    const migration = await readFile(
+      new URL(
+        "../migrations/202605040012_fix_sparse_context_and_market_selection_backfills.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    await db.exec(`
+      insert into matches (
+        id,
+        competition_id,
+        season,
+        kickoff_at,
+        home_team_id,
+        away_team_id
+      )
+      values
+        (
+          'match_sparse_lineup_score',
+          'epl',
+          '2026-2027',
+          '2026-08-17T15:00:00Z',
+          'arsenal',
+          'chelsea'
+        ),
+        (
+          'match_sparse_stats',
+          'epl',
+          '2026-2027',
+          '2026-08-18T15:00:00Z',
+          'arsenal',
+          'chelsea'
+        );
+
+      insert into match_snapshots (id, match_id, checkpoint_type, lineup_status, snapshot_quality)
+      values
+        (
+          'snapshot_sparse_lineup_score',
+          'match_sparse_lineup_score',
+          'LINEUP_CONFIRMED',
+          'projected',
+          'complete'
+        ),
+        (
+          'snapshot_sparse_stats',
+          'match_sparse_stats',
+          'LINEUP_CONFIRMED',
+          'projected',
+          'complete'
+        );
+
+      insert into model_versions (id, model_family, training_window, feature_version, calibration_version)
+      values ('model_sparse_backfill', 'baseline', '2024-2026', 'features_v1', 'calibration_v1');
+
+      insert into predictions (
+        id,
+        snapshot_id,
+        match_id,
+        model_version_id,
+        home_prob,
+        draw_prob,
+        away_prob,
+        recommended_pick,
+        confidence_score,
+        summary_payload,
+        main_recommendation_pick,
+        main_recommendation_confidence,
+        main_recommendation_recommended
+      )
+      values
+        (
+          'prediction_sparse_lineup_score',
+          'snapshot_sparse_lineup_score',
+          'match_sparse_lineup_score',
+          'model_sparse_backfill',
+          0.62,
+          0.20,
+          0.18,
+          'HOME',
+          0.74,
+          '{
+            "feature_context": {
+              "prediction_market_available": false,
+              "lineup_confirmed": 0,
+              "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+              "home_lineup_score": null,
+              "away_lineup_score": 0.58,
+              "snapshot_quality_complete": 1,
+              "football_data_match_stats_available": 1
+            },
+            "main_recommendation": {
+              "pick": "HOME",
+              "confidence": 0.74,
+              "recommended": true,
+              "no_bet_reason": null
+            }
+          }'::jsonb,
+          'HOME',
+          0.74,
+          true
+        ),
+        (
+          'prediction_sparse_stats',
+          'snapshot_sparse_stats',
+          'match_sparse_stats',
+          'model_sparse_backfill',
+          0.62,
+          0.20,
+          0.18,
+          'HOME',
+          0.74,
+          '{
+            "feature_context": {
+              "prediction_market_available": false,
+              "lineup_confirmed": 0,
+              "lineup_source_summary": "rotowire_lineups+rotowire_injuries",
+              "home_lineup_score": 0.61,
+              "away_lineup_score": 0.58,
+              "snapshot_quality_complete": 1,
+              "football_data_match_stats_available": 0
+            },
+            "main_recommendation": {
+              "pick": "HOME",
+              "confidence": 0.74,
+              "recommended": true,
+              "no_bet_reason": null
+            }
+          }'::jsonb,
+          'HOME',
+          0.74,
+          true
+        );
+    `);
+
+    await db.exec(migration);
+
+    const predictions = await db.query<{
+      id: string;
+      main_recommendation_recommended: boolean;
+      main_recommendation_no_bet_reason: string | null;
+    }>(
+      `select
+         id,
+         main_recommendation_recommended,
+         main_recommendation_no_bet_reason
+       from predictions
+       where id in ('prediction_sparse_lineup_score', 'prediction_sparse_stats')
+       order by id`,
+    );
+
+    expect(predictions.rows).toEqual([
+      {
+        id: "prediction_sparse_lineup_score",
+        main_recommendation_recommended: false,
+        main_recommendation_no_bet_reason: "late_sparse_context_without_prediction_market",
+      },
+      {
+        id: "prediction_sparse_stats",
+        main_recommendation_recommended: false,
+        main_recommendation_no_bet_reason: "late_sparse_context_without_prediction_market",
+      },
+    ]);
+  });
+
   it("exposes historical form and rest columns on match snapshots", async () => {
     const db = await createDb();
 
