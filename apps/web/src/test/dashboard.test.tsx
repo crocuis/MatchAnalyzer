@@ -1467,7 +1467,7 @@ describe("dashboard redesign", () => {
     const reopenCalls = dailyPicksUrls().slice(callsBeforeReopen);
 
     expect(reopenCalls).not.toContainEqual(expect.stringContaining("marketFamily=spreads"));
-    expect(reopenCalls).not.toContainEqual(expect.stringContaining("includeHeld=true"));
+    expect(reopenCalls).toContainEqual(expect.stringContaining("includeHeld=true"));
   });
 
   it("does not fetch evaluation reports when opening the match detail modal", async () => {
