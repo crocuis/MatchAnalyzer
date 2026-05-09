@@ -14,7 +14,7 @@ from batch.src.settings import load_settings, settings_db_key, settings_db_url
 from batch.src.storage.db_client import DbClient
 
 DEFAULT_RESULT_SYNC_DELAY_HOURS = 2
-DEFAULT_RESULT_SYNC_LOOKBACK_HOURS = 48
+DEFAULT_RESULT_SYNC_LOOKBACK_HOURS = 336
 
 
 def parse_utc_datetime(value: object) -> datetime | None:

@@ -4705,6 +4705,9 @@ describe("prediction API", () => {
   });
 
   it("filters match card projections by requested match view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
+
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -4728,6 +4731,7 @@ describe("prediction API", () => {
     const cardsQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      lt: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       range: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
@@ -4752,7 +4756,62 @@ describe("prediction API", () => {
     expect(from).toHaveBeenCalledWith("league_prediction_summaries");
     expect(from).toHaveBeenCalledWith("match_cards");
     expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
-    expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 1);
+    expect(cardsQuery.lt).toHaveBeenCalledWith("kickoff_at", "2026-05-10T00:00:00.000Z");
+    expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
+  });
+
+  it("excludes stale pending match cards from the upcoming view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
+
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 12,
+            review_count: 3,
+            predicted_count: 9,
+            evaluated_count: 6,
+            correct_count: 4,
+            incorrect_count: 2,
+            success_rate: 4 / 6,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
+
+    await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      view: "upcoming",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
+    expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 0);
+    expect(cardsQuery.gte).toHaveBeenCalledWith("kickoff_at", "2026-05-10T00:00:00.000Z");
     expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
   });
 

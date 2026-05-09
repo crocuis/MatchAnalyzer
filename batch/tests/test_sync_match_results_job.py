@@ -86,6 +86,29 @@ def test_select_unsettled_result_candidates_accepts_postgres_datetime_values():
     assert [row["id"] for row in candidates] == ["postgres_datetime"]
 
 
+def test_default_result_sync_lookback_covers_weeklong_outage():
+    now = datetime(2026, 5, 10, 13, 0, tzinfo=timezone.utc)
+    candidates = sync_job.select_unsettled_result_candidates(
+        [
+            {
+                "id": "week_old_pending",
+                "kickoff_at": "2026-05-03T10:00:00+00:00",
+                "final_result": None,
+            },
+            {
+                "id": "outside_recovery_window",
+                "kickoff_at": "2026-04-25T10:00:00+00:00",
+                "final_result": None,
+            },
+        ],
+        now=now,
+        settle_delay_hours=sync_job.DEFAULT_RESULT_SYNC_DELAY_HOURS,
+        lookback_hours=sync_job.DEFAULT_RESULT_SYNC_LOOKBACK_HOURS,
+    )
+
+    assert [row["id"] for row in candidates] == ["week_old_pending"]
+
+
 def test_sync_match_results_updates_only_newly_closed_targets(monkeypatch):
     now = datetime(2026, 4, 26, 13, 0, tzinfo=timezone.utc)
     state = {

@@ -314,7 +314,7 @@ def test_sync_match_results_workflow_runs_every_two_hours_and_reviews_changed_da
     assert "RESULT_SYNC_DELAY_HOURS:" in workflow
     assert "github.event.inputs.delay_hours || '2'" in workflow
     assert "RESULT_SYNC_LOOKBACK_HOURS:" in workflow
-    assert "github.event.inputs.lookback_hours || '48'" in workflow
+    assert "github.event.inputs.lookback_hours || '336'" in workflow
     assert "python3 -m batch.src.jobs.sync_match_results_job" in workflow
     assert "SYNC_CHANGED_DATES" in workflow
     assert "No changed match results detected; skipping review refresh." in workflow
