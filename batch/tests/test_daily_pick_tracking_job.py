@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from batch.src.jobs.run_daily_pick_tracking_job import (
     DAILY_PICK_PREDICTION_COLUMNS,
     DAILY_PICK_SNAPSHOT_COLUMNS,
@@ -81,6 +83,78 @@ def test_sync_daily_picks_stores_ranked_cross_market_candidates() -> None:
         "confidence_reliability": "variant_market_reliability_gap",
     }
     assert all("league_id" not in row for row in items)
+
+
+def test_sync_daily_picks_accepts_postgres_decimal_numeric_values() -> None:
+    run, items = sync_daily_picks_for_date(
+        pick_date="2026-05-09",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "bundesliga",
+                "kickoff_at": "2026-05-09T13:30:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "model_version_id": "model-1",
+                "recommended_pick": "HOME",
+                "confidence_score": Decimal("0.8543"),
+                "home_prob": Decimal("0.61"),
+                "draw_prob": Decimal("0.20"),
+                "away_prob": Decimal("0.19"),
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": Decimal("0.8543"),
+                "main_recommendation_recommended": True,
+                "value_recommendation_pick": "HOME",
+                "value_recommendation_recommended": True,
+                "value_recommendation_market_source": "betman_moneyline",
+                "value_recommendation_expected_value": Decimal("0.12"),
+                "value_recommendation_edge": Decimal("0.06"),
+                "value_recommendation_market_price": Decimal("0.55"),
+                "value_recommendation_model_probability": Decimal("0.61"),
+                "value_recommendation_market_probability": Decimal("0.55"),
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "high_confidence_eligible": True,
+                    "max_abs_divergence": Decimal("0.05"),
+                    "moneyline_signal_score": Decimal("3.2"),
+                    "source_agreement_ratio": Decimal("0.9"),
+                    "feature_context": {
+                        "external_rating_available": True,
+                    },
+                    "validation_metadata": {
+                        "sample_count": Decimal("90"),
+                        "hit_rate": Decimal("0.72"),
+                        "wilson_lower_bound": Decimal("0.61"),
+                    },
+                },
+                "created_at": "2026-05-08T08:00:00Z",
+            }
+        ],
+    )
+
+    assert run["metadata"]["candidate_count"] == 1
+    assert run["metadata"]["selected_count"] == 1
+    item = items[0]
+    assert item["market_family"] == "moneyline"
+    assert item["selection_label"] == "HOME"
+    assert item["confidence"] == 0.8543
+    assert item["market_price"] == 0.55
+    assert item["model_probability"] == 0.61
+    assert item["market_probability"] == 0.55
+    assert item["expected_value"] == 0.12
+    assert item["edge"] == 0.06
 
 
 def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:

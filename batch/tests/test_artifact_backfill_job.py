@@ -311,13 +311,16 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
                 "prediction_id": "prediction_001",
                 "market_family": "spreads",
                 "selection_label": "Home -0.5",
-                "market_price": 0.55,
-                "model_probability": 0.67,
-                "market_probability": 0.55,
-                "expected_value": 0.18,
-                "edge": 0.12,
-                "score": 0.18,
-                "validation_metadata": {"sample_count": 80, "hit_rate": 0.75},
+                "market_price": Decimal("0.55"),
+                "model_probability": Decimal("0.67"),
+                "market_probability": Decimal("0.55"),
+                "expected_value": Decimal("0.18"),
+                "edge": Decimal("0.12"),
+                "score": Decimal("0.18"),
+                "validation_metadata": {
+                    "sample_count": Decimal("80"),
+                    "hit_rate": Decimal("0.75"),
+                },
                 "reason_labels": ["spreads", "variantRecommendation"],
             },
             {
@@ -392,6 +395,11 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
     assert view["items"][0]["matchId"] == "match_001"
     assert view["items"][0]["homeTeamId"] == "team_home"
     assert view["items"][0]["status"] == "hit"
+    assert view["items"][0]["expectedValue"] == 0.18
+    assert view["items"][0]["marketPrice"] == 0.55
+    assert view["items"][0]["modelProbability"] == 0.67
+    assert view["items"][0]["marketProbability"] == 0.55
+    assert view["items"][0]["edge"] == 0.12
     assert view["items"][0]["highConfidenceEligible"] is True
     assert view["heldItems"][0]["status"] == "held"
     assert view["heldItems"][0]["noBetReason"] == "variant_market_reliability_gap"

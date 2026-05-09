@@ -5,6 +5,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Iterable
 
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
@@ -52,7 +53,7 @@ def read_text(value: Any) -> str | None:
 def read_number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
-    return float(value) if isinstance(value, (int, float)) else None
+    return float(value) if isinstance(value, (int, float, Decimal)) else None
 
 
 def read_bool(value: Any) -> bool | None:
