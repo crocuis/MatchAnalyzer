@@ -45,6 +45,7 @@ from batch.src.model.fusion import (
     build_main_recommendation,
     fuse_probabilities,
     build_value_recommendation,
+    build_value_recommendation_diagnostics,
     has_sparse_prediction_context,
     normalize_fusion_weights,
     MAIN_RECOMMENDATION_MAX_CALIBRATION_GAP,
@@ -2585,6 +2586,7 @@ def build_prediction_summary_payload(explanation_payload: dict) -> dict:
         "moneyline_signal_score",
         "prediction_market_available",
         "betman_market_available",
+        "value_recommendation_diagnostics",
         "confidence_calibration",
         "validation_metadata",
         "confidence_reliability",
@@ -3146,6 +3148,18 @@ def main() -> None:
                 else "betman_missing"
             ),
         )
+        value_recommendation_diagnostics = build_value_recommendation_diagnostics(
+            base_probs=base_probs,
+            market_probs=executable_market_probs or prediction_market_probs,
+            market_prices=executable_market_prices or prediction_market_prices,
+            prediction_market_available=feature_context["prediction_market_available"],
+            market_available=executable_market_available,
+            market_source=(
+                str(executable_market_row.get("source_name"))
+                if executable_market_available and executable_market_row
+                else "betman_missing"
+            ),
+        )
         snapshot_variant_rows = select_variant_rows_before_kickoff(
             variant_rows_by_snapshot.get(snapshot["id"], []),
             kickoff_at=match.get("kickoff_at"),
@@ -3254,6 +3268,7 @@ def main() -> None:
             "confidence_calibration": confidence_bucket_summary,
             "main_recommendation": main_recommendation,
             "value_recommendation": value_recommendation,
+            "value_recommendation_diagnostics": value_recommendation_diagnostics,
             "variant_markets": variant_markets,
             "no_bet_reason": main_recommendation["no_bet_reason"],
             "source_agreement_ratio": scoring_context["source_agreement_ratio"],

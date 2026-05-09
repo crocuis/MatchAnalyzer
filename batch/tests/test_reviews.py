@@ -1173,6 +1173,31 @@ def test_build_prediction_summary_payload_preserves_llm_advisory():
     assert "main_recommendation" not in summary
 
 
+def test_build_prediction_summary_payload_preserves_value_recommendation_diagnostics():
+    summary = run_predictions_job.build_prediction_summary_payload(
+        {
+            "value_recommendation_diagnostics": {
+                "market_source": "betman_moneyline_3way",
+                "skip_reason": "below_expected_value_threshold",
+                "best_expected_value": 0.1311,
+                "threshold": 0.15,
+            },
+            "main_recommendation": {
+                "pick": "HOME",
+                "recommended": True,
+            },
+        }
+    )
+
+    assert summary["value_recommendation_diagnostics"] == {
+        "market_source": "betman_moneyline_3way",
+        "skip_reason": "below_expected_value_threshold",
+        "best_expected_value": 0.1311,
+        "threshold": 0.15,
+    }
+    assert "main_recommendation" not in summary
+
+
 def test_read_persisted_available_llm_advisory_ignores_failed_status():
     available = run_predictions_job.read_persisted_available_llm_advisory(
         {
