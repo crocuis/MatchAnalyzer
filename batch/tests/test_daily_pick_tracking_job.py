@@ -1204,6 +1204,84 @@ def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> N
     )
 
 
+def test_sync_daily_picks_prefers_t24_checkpoint_over_later_pre_match_rows() -> None:
+    _run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-t24",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            },
+            {
+                "id": "snapshot-t1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_1H",
+            },
+        ],
+        predictions=[
+            {
+                "id": "prediction-t24",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-t24",
+                "created_at": "2026-04-23T19:00:00Z",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.76,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.76,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "max_abs_divergence": 0.02,
+                    "moneyline_signal_score": 4.0,
+                    "source_agreement_ratio": 0.67,
+                    "feature_context": {"external_rating_available": True},
+                    "validation_metadata": {
+                        "sample_count": 30,
+                        "hit_rate": 0.69,
+                        "wilson_lower_bound": 0.5,
+                    },
+                },
+            },
+            {
+                "id": "prediction-t1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-t1",
+                "created_at": "2026-04-24T18:00:00Z",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.45,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.45,
+                "main_recommendation_recommended": False,
+                "main_recommendation_no_bet_reason": "below_high_confidence_threshold",
+                "summary_payload": {
+                    "base_model_source": "trained_baseline_poisson_blend",
+                    "max_abs_divergence": 0.04,
+                    "moneyline_signal_score": 0.0,
+                    "source_agreement_ratio": 0.3,
+                    "validation_metadata": {
+                        "sample_count": 30,
+                        "hit_rate": 0.69,
+                        "wilson_lower_bound": 0.5,
+                    },
+                },
+            },
+        ],
+    )
+
+    assert len(items) == 1
+    assert items[0]["prediction_id"] == "prediction-t24"
+    assert items[0]["status"] == "recommended"
+
+
 def test_sync_daily_picks_allows_high_signal_moneyline_without_source_agreement() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
