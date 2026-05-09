@@ -1,3 +1,4 @@
+from batch.src.jobs import report_daily_pick_segment_quality_job as job
 from batch.src.jobs.report_daily_pick_segment_quality_job import (
     build_daily_pick_segment_quality_report,
 )
@@ -173,3 +174,196 @@ def test_daily_pick_segment_quality_marks_betman_watchlist_after_floor() -> None
     assert report["betman"]["pending_watchlist_monitor"]["pending_count"] == 1
     assert report["betman_held_candidates"][0]["promotion_status"] == "watchlist"
     assert report["betman_held_candidates"][0]["blockers"] == []
+
+
+def test_daily_pick_segment_quality_reports_recent_recommended_segments() -> None:
+    items = [
+        {
+            "id": "old-hit",
+            "pick_date": "2026-04-01",
+            "match_id": "old-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.82,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.8-0.9",
+            },
+        },
+        {
+            "id": "recent-hit",
+            "pick_date": "2026-05-08",
+            "match_id": "hit-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.76,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+        {
+            "id": "recent-miss",
+            "pick_date": "2026-05-09",
+            "match_id": "miss-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "AWAY",
+            "confidence": 0.74,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+        {
+            "id": "recent-pending",
+            "pick_date": "2026-05-10",
+            "match_id": "pending-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.72,
+            "validation_metadata": {
+                "league_or_sport": "la-liga",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+        {
+            "id": "recent-held",
+            "pick_date": "2026-05-10",
+            "match_id": "held-match",
+            "status": "held",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.72,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+    ]
+    results = [
+        {"pick_item_id": "old-hit", "result_status": "hit"},
+        {"pick_item_id": "recent-hit", "result_status": "hit"},
+        {"pick_item_id": "recent-miss", "result_status": "miss"},
+    ]
+
+    report = build_daily_pick_segment_quality_report(
+        items=items,
+        results=results,
+        min_sample_count=1,
+        target_hit_rate=0.7,
+        min_wilson_lower_bound=0.0,
+        recent_days=3,
+    )
+
+    assert report["recent_recommended_segments"]["window"] == {
+        "days": 3,
+        "start_date": "2026-05-07",
+        "end_date": "2026-05-09",
+    }
+    assert report["recent_recommended_segments"]["segments"] == [
+        {
+            "league": "premier-league",
+            "market_family": "moneyline",
+            "confidence_bucket": "0.7-0.8",
+            "item_count": 2,
+            "sample_count": 2,
+            "hit_count": 1,
+            "miss_count": 1,
+            "pending_count": 0,
+            "void_count": 0,
+            "hit_rate": 0.5,
+            "wilson_lower_bound": 0.0945,
+            "meets_quality_floor": False,
+        },
+    ]
+    assert report["recent_recommended_segments"]["underperforming_segments"] == [
+        {
+            "league": "premier-league",
+            "market_family": "moneyline",
+            "confidence_bucket": "0.7-0.8",
+            "sample_count": 2,
+            "hit_count": 1,
+            "miss_count": 1,
+            "hit_rate": 0.5,
+            "wilson_lower_bound": 0.0945,
+            "quality_gap": {
+                "hit_rate": 0.2,
+                "wilson_lower_bound": 0.0,
+            },
+        },
+    ]
+
+
+def test_daily_pick_segment_quality_prints_underperforming_segments_only(
+    monkeypatch,
+    capsys,
+) -> None:
+    items = [
+        {
+            "id": "recent-hit",
+            "pick_date": "2026-05-08",
+            "match_id": "hit-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.76,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+        {
+            "id": "recent-miss",
+            "pick_date": "2026-05-09",
+            "match_id": "miss-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "AWAY",
+            "confidence": 0.74,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+    ]
+    results = [
+        {"pick_item_id": "recent-hit", "result_status": "hit"},
+        {"pick_item_id": "recent-miss", "result_status": "miss"},
+    ]
+
+    monkeypatch.setattr(job, "load_settings", lambda: {})
+    monkeypatch.setattr(job, "settings_db_url", lambda _settings: "postgres://example")
+    monkeypatch.setattr(job, "settings_db_key", lambda _settings: "")
+    monkeypatch.setattr(job, "DbClient", lambda _url, _key: object())
+    monkeypatch.setattr(
+        job,
+        "read_optional_rows",
+        lambda _client, table_name: {
+            "daily_pick_items": items,
+            "daily_pick_results": results,
+            "matches": [],
+        }[table_name],
+    )
+
+    job.main([
+        "--underperforming-only",
+        "--recent-days",
+        "3",
+        "--min-sample-count",
+        "1",
+        "--target-hit-rate",
+        "0.7",
+        "--min-wilson-lower-bound",
+        "0.0",
+    ])
+
+    assert capsys.readouterr().out == (
+        "2026-05-07..2026-05-09 "
+        "premier-league moneyline 0.7-0.8 "
+        "sample=2 hit_rate=0.5 wilson=0.0945 "
+        "gap_hit_rate=0.2 gap_wilson=0.0\n"
+    )
