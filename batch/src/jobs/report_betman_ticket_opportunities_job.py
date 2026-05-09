@@ -222,13 +222,23 @@ def build_report_candidate_items(
 
 
 def format_ticket_opportunity_lines(report: dict) -> list[str]:
+    current_betman = report.get("current_betman")
+    current_betman = current_betman if isinstance(current_betman, dict) else {}
     lines = [
         (
             f"Betman ticket opportunities for {report.get('pick_date') or 'all-dates'}: "
+            f"candidates={report.get('candidate_item_count', 0)} "
             f"eligible_legs={report.get('eligible_leg_count', 0)} "
             f"tickets={report.get('ticket_count', 0)}"
         )
     ]
+    if current_betman:
+        lines.append(
+            "Current Betman filter: "
+            f"enabled={str(bool(current_betman.get('enabled'))).lower()} "
+            f"matched_matches={current_betman.get('matched_match_count', 0)} "
+            f"excluded_unavailable={current_betman.get('excluded_unavailable_item_count', 0)}"
+        )
     for index, ticket in enumerate(report.get("tickets") or [], start=1):
         lines.append(
             "#"

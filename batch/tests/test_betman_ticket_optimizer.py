@@ -1142,8 +1142,14 @@ def test_format_ticket_opportunity_lines_prints_purchase_unit_summary() -> None:
     lines = format_ticket_opportunity_lines(
         {
             "pick_date": "2026-05-10",
+            "candidate_item_count": 2,
             "eligible_leg_count": 2,
             "ticket_count": 1,
+            "current_betman": {
+                "enabled": True,
+                "matched_match_count": 2,
+                "excluded_unavailable_item_count": 0,
+            },
             "tickets": [
                 {
                     "id": "ticket:betman-a:betman-b",
@@ -1173,7 +1179,8 @@ def test_format_ticket_opportunity_lines_prints_purchase_unit_summary() -> None:
     )
 
     assert lines == [
-        "Betman ticket opportunities for 2026-05-10: eligible_legs=2 tickets=1",
+        "Betman ticket opportunities for 2026-05-10: candidates=2 eligible_legs=2 tickets=1",
+        "Current Betman filter: enabled=true matched_matches=2 excluded_unavailable=0",
         "#1 2-leg p=39.00% odds=4.00 EV=56.00%",
         "  - match-a moneyline HOME p=65.00% odds=2.00",
         "  - match-b moneyline AWAY p=60.00% odds=2.00",

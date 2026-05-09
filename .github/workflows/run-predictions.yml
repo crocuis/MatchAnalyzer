@@ -128,3 +128,29 @@ jobs:
         run: |
           DAILY_PICK_ARTIFACT_DATE="${REAL_PREDICTION_DATE:-$(date -u +%F)}" \
             python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+      - name: Report Betman ticket opportunities
+        if: ${{ env.REAL_PREDICTION_DATE != '' }}
+        continue-on-error: true
+        run: |
+          {
+            echo "Stored daily-pick baseline:"
+            python3 -m batch.src.jobs.report_betman_ticket_opportunities_job \
+              --pick-date "$REAL_PREDICTION_DATE" \
+              --min-legs 2 \
+              --max-legs 2 \
+              --risk-profile balanced \
+              --skip-current-betman
+            echo
+            echo "Current Betman buyable filter:"
+            python3 -m batch.src.jobs.report_betman_ticket_opportunities_job \
+              --pick-date "$REAL_PREDICTION_DATE" \
+              --min-legs 2 \
+              --max-legs 2 \
+              --risk-profile balanced \
+              || echo "::warning::Betman ticket opportunity report failed while fetching current buyable games."
+          } | tee betman-ticket-opportunities.txt
+          {
+            echo "## Betman ticket opportunities"
+            echo
+            cat betman-ticket-opportunities.txt
+          } >> "$GITHUB_STEP_SUMMARY"
