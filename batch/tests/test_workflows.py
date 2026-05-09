@@ -311,13 +311,16 @@ def test_sync_match_results_workflow_runs_every_two_hours_and_reviews_changed_da
     workflow = read_workflow("sync-match-results.yml")
 
     assert 'cron: "35 */2 * * *"' in workflow
+    assert "environment: production" in workflow
     assert "RESULT_SYNC_DELAY_HOURS:" in workflow
     assert "github.event.inputs.delay_hours || '2'" in workflow
     assert "RESULT_SYNC_LOOKBACK_HOURS:" in workflow
     assert "github.event.inputs.lookback_hours || '336'" in workflow
     assert "python3 -m batch.src.jobs.sync_match_results_job" in workflow
+    assert "python3 -m batch.src.jobs.refresh_stale_match_card_projection_cache_job" in workflow
     assert "SYNC_CHANGED_DATES" in workflow
-    assert "No changed match results detected; skipping review refresh." in workflow
+    assert "RESULT_REFRESH_DATES" in workflow
+    assert "No changed match results or stale dashboard projections detected; skipping review refresh." in workflow
     assert "REAL_REVIEW_DATE=\"$TARGET_DATE\"" in workflow
     assert 'LLM_REVIEW_ADVISORY_ENABLED: "0"' in workflow
     assert "python3 -m batch.src.jobs.run_post_match_review_job" in workflow

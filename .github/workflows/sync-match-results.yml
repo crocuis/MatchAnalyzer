@@ -25,6 +25,7 @@ jobs:
     concurrency:
       group: sync-match-results
       cancel-in-progress: true
+    environment: production
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
       R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'workflow-artifacts' }}
@@ -33,6 +34,9 @@ jobs:
       R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       RESULT_SYNC_DELAY_HOURS: ${{ github.event.inputs.delay_hours || '2' }}
       RESULT_SYNC_LOOKBACK_HOURS: ${{ github.event.inputs.lookback_hours || '336' }}
+      MATCH_CARD_PROJECTION_LOOKBACK_HOURS: ${{ github.event.inputs.lookback_hours || '336' }}
+      MATCH_CARD_PROJECTION_SCAN_LIMIT: "5000"
+      MATCH_CARD_PROJECTION_FUTURE_LOOKAHEAD_HOURS: "336"
       LLM_REVIEW_ADVISORY_ENABLED: "0"
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -58,11 +62,28 @@ jobs:
             cat changed-dates.txt
             echo "EOF"
           } >> "$GITHUB_ENV"
+      - name: Refresh stale dashboard projections
+        shell: bash
+        run: |
+          PROJECTION_LOG="$(mktemp)"
+          python3 -m batch.src.jobs.refresh_stale_match_card_projection_cache_job | tee "$PROJECTION_LOG"
+          python3 -c 'import json, sys; from pathlib import Path; lines = [line.strip() for line in Path(sys.argv[1]).read_text().splitlines() if line.strip()]; payload = json.loads(lines[-1]) if lines else {}; [print(date) for date in payload.get("changed_dates", [])]' "$PROJECTION_LOG" > projection-changed-dates.txt
+          {
+            echo "PROJECTION_CHANGED_DATES<<EOF"
+            cat projection-changed-dates.txt
+            echo "EOF"
+          } >> "$GITHUB_ENV"
       - name: Refresh changed result dates
         shell: bash
         run: |
-          if [ -z "$SYNC_CHANGED_DATES" ]; then
-            echo "No changed match results detected; skipping review refresh."
+          python3 -c 'import os; dates=sorted({line.strip() for name in ("SYNC_CHANGED_DATES", "PROJECTION_CHANGED_DATES") for line in os.environ.get(name, "").splitlines() if line.strip()}); [print(date) for date in dates]' > result-refresh-dates.txt
+          {
+            echo "RESULT_REFRESH_DATES<<EOF"
+            cat result-refresh-dates.txt
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+          if [ ! -s result-refresh-dates.txt ]; then
+            echo "No changed match results or stale dashboard projections detected; skipping review refresh."
             exit 0
           fi
           while IFS= read -r TARGET_DATE; do
@@ -85,7 +106,7 @@ jobs:
               exit "$REVIEW_STATUS"
             fi
             echo "::endgroup::"
-          done <<< "$SYNC_CHANGED_DATES"
+          done < result-refresh-dates.txt
       - name: Collect pending recommended dates
         shell: bash
         run: |
