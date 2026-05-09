@@ -306,7 +306,6 @@ def build_recommended_pick_candidates(
         "status": status,
         "validation_metadata": validation_metadata,
         "reliability_hold_reason": reliability_hold_reason,
-        "betman_market_available": summary_payload.get("betman_market_available"),
     }
     league_id = _read_text(match.get("competition_id"))
     if league_id in DAILY_PICK_SEGMENT_HOLD_COMPETITIONS:
