@@ -188,43 +188,69 @@ type PostgresQueryExecutor = {
   query(text: string, params?: unknown[]): Promise<Record<string, unknown>[]>;
 };
 
+const MAX_WORKER_POSTGRES_CONNECTIONS = 5;
+
 class PgQueryExecutor implements PostgresQueryExecutor {
-  private queue: Promise<unknown> = Promise.resolve();
+  private activeQueryCount = 0;
+  private readonly pendingQueryStarts: Array<() => void> = [];
 
   constructor(private readonly connectionString: string) {}
 
-  query(
+  async query(
     text: string,
     params: unknown[] = [],
   ): Promise<Record<string, unknown>[]> {
-    const run = async () => {
-      const client = new Client({ connectionString: this.connectionString });
-      let queryError: unknown;
+    const releaseQuerySlot = await this.acquireQuerySlot();
 
+    try {
+      return await this.runQuery(text, params);
+    } finally {
+      releaseQuerySlot();
+    }
+  }
+
+  private acquireQuerySlot(): Promise<() => void> {
+    if (this.activeQueryCount < MAX_WORKER_POSTGRES_CONNECTIONS) {
+      this.activeQueryCount += 1;
+      return Promise.resolve(() => this.releaseQuerySlot());
+    }
+
+    return new Promise((resolve) => {
+      this.pendingQueryStarts.push(() => {
+        this.activeQueryCount += 1;
+        resolve(() => this.releaseQuerySlot());
+      });
+    });
+  }
+
+  private releaseQuerySlot(): void {
+    this.activeQueryCount = Math.max(0, this.activeQueryCount - 1);
+    this.pendingQueryStarts.shift()?.();
+  }
+
+  private async runQuery(
+    text: string,
+    params: unknown[],
+  ): Promise<Record<string, unknown>[]> {
+    const client = new Client({ connectionString: this.connectionString });
+    let queryError: unknown;
+
+    try {
+      await client.connect();
+      const result = await client.query(text, params);
+      return result.rows as Record<string, unknown>[];
+    } catch (error) {
+      queryError = error;
+      throw error;
+    } finally {
       try {
-        await client.connect();
-        const result = await client.query(text, params);
-        return result.rows as Record<string, unknown>[];
-      } catch (error) {
-        queryError = error;
-        throw error;
-      } finally {
-        try {
-          await client.end();
-        } catch (closeError) {
-          if (!queryError) {
-            throw closeError;
-          }
+        await client.end();
+      } catch (closeError) {
+        if (!queryError) {
+          throw closeError;
         }
       }
-    };
-
-    const queued = this.queue.then(run, run);
-    this.queue = queued.then(
-      () => undefined,
-      () => undefined,
-    );
-    return queued;
+    }
   }
 }
 
