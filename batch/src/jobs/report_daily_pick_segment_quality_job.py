@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter, defaultdict
+from datetime import date, timedelta
 from typing import Iterable
 
 from batch.src.jobs.run_daily_pick_tracking_job import (
@@ -22,6 +23,7 @@ from batch.src.storage.db_client import DbClient
 DEFAULT_MIN_SAMPLE_COUNT = 250
 DEFAULT_TARGET_HIT_RATE = 0.70
 DEFAULT_MIN_WILSON_LOWER_BOUND = 0.70
+DEFAULT_RECENT_DAYS = 14
 PROMOTION_MIN_CONFIDENCE = 0.70
 PROMOTION_MIN_SOURCE_AGREEMENT = 0.50
 
@@ -39,6 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_MIN_WILSON_LOWER_BOUND,
     )
     parser.add_argument("--candidate-limit", type=int, default=20)
+    parser.add_argument("--recent-days", type=int, default=DEFAULT_RECENT_DAYS)
     parser.add_argument("--include-segments", action="store_true")
     parser.add_argument(
         "--pending-dates-only",
@@ -49,6 +52,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--pending-recommended-dates-only",
         action="store_true",
         help="Print one pending recommended pick date per line for settlement retries.",
+    )
+    parser.add_argument(
+        "--underperforming-only",
+        action="store_true",
+        help="Print one recent underperforming segment per line.",
     )
     return parser.parse_args(argv)
 
@@ -63,6 +71,7 @@ def build_daily_pick_segment_quality_report(
     min_wilson_lower_bound: float = DEFAULT_MIN_WILSON_LOWER_BOUND,
     candidate_limit: int = 20,
     include_segments: bool = True,
+    recent_days: int = DEFAULT_RECENT_DAYS,
 ) -> dict:
     result_by_item_id = {
         str(row.get("pick_item_id") or ""): row
@@ -144,6 +153,13 @@ def build_daily_pick_segment_quality_report(
             global_recommended_moneyline=global_recommended_moneyline,
             betman_tracked_quality=betman_tracked_quality,
             limit=candidate_limit,
+        ),
+        "recent_recommended_segments": build_recent_recommended_segments(
+            enriched_items,
+            recent_days=recent_days,
+            min_sample_count=min_sample_count,
+            target_hit_rate=target_hit_rate,
+            min_wilson_lower_bound=min_wilson_lower_bound,
         ),
     }
     if include_segments:
@@ -317,6 +333,183 @@ def build_segment_summaries(
     )
 
 
+def build_recent_recommended_segments(
+    rows: Iterable[dict],
+    *,
+    recent_days: int,
+    min_sample_count: int,
+    target_hit_rate: float,
+    min_wilson_lower_bound: float,
+) -> dict:
+    materialized = list(rows)
+    anchor_dates = sorted(
+        {
+            parsed
+            for row in materialized
+            if row["status"] == "recommended"
+            and row["result_status"] in {"hit", "miss", "void"}
+            and (parsed := parse_pick_date(row.get("pick_date"))) is not None
+        }
+    )
+    if not anchor_dates:
+        return {
+            "window": {
+                "days": recent_days,
+                "start_date": None,
+                "end_date": None,
+            },
+            "segments": [],
+            "underperforming_segments": [],
+        }
+
+    end_date = anchor_dates[-1]
+    window_days = max(1, recent_days)
+    start_date = end_date - timedelta(days=window_days - 1)
+    grouped: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for row in materialized:
+        pick_date = parse_pick_date(row.get("pick_date"))
+        if pick_date is None or pick_date < start_date or pick_date > end_date:
+            continue
+        if row["status"] != "recommended":
+            continue
+        grouped[
+            (
+                row["league"],
+                row["market_family"],
+                row["confidence_bucket"],
+            )
+        ].append(row)
+
+    segments = []
+    for (league, market_family, confidence_bucket), segment_rows in grouped.items():
+        segments.append(
+            {
+                "league": league,
+                "market_family": market_family,
+                "confidence_bucket": confidence_bucket,
+                **summarize_quality(
+                    segment_rows,
+                    min_sample_count=min_sample_count,
+                    target_hit_rate=target_hit_rate,
+                    min_wilson_lower_bound=min_wilson_lower_bound,
+                ),
+            }
+        )
+
+    return {
+        "window": {
+            "days": window_days,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "segments": sort_recent_segments(segments),
+        "underperforming_segments": build_underperforming_recent_segments(
+            segments,
+            min_sample_count=min_sample_count,
+            target_hit_rate=target_hit_rate,
+            min_wilson_lower_bound=min_wilson_lower_bound,
+        ),
+    }
+
+
+def sort_recent_segments(rows: Iterable[dict]) -> list[dict]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            row["league"],
+            row["market_family"],
+            row["confidence_bucket"],
+        ),
+    )
+
+
+def build_underperforming_recent_segments(
+    rows: Iterable[dict],
+    *,
+    min_sample_count: int,
+    target_hit_rate: float,
+    min_wilson_lower_bound: float,
+) -> list[dict]:
+    underperforming = []
+    for row in rows:
+        if row["sample_count"] < min_sample_count:
+            continue
+        hit_rate_gap = round(max(0.0, target_hit_rate - row["hit_rate"]), 4)
+        wilson_gap = round(
+            max(0.0, min_wilson_lower_bound - row["wilson_lower_bound"]),
+            4,
+        )
+        if hit_rate_gap == 0.0 and wilson_gap == 0.0:
+            continue
+        underperforming.append(
+            {
+                "league": row["league"],
+                "market_family": row["market_family"],
+                "confidence_bucket": row["confidence_bucket"],
+                "sample_count": row["sample_count"],
+                "hit_count": row["hit_count"],
+                "miss_count": row["miss_count"],
+                "hit_rate": row["hit_rate"],
+                "wilson_lower_bound": row["wilson_lower_bound"],
+                "quality_gap": {
+                    "hit_rate": hit_rate_gap,
+                    "wilson_lower_bound": wilson_gap,
+                },
+            }
+        )
+    return sorted(
+        underperforming,
+        key=lambda row: (
+            -row["sample_count"],
+            -row["quality_gap"]["hit_rate"],
+            row["league"],
+            row["market_family"],
+            row["confidence_bucket"],
+        ),
+    )
+
+
+def format_underperforming_segment_lines(report: dict) -> list[str]:
+    recent = report.get("recent_recommended_segments")
+    recent = recent if isinstance(recent, dict) else {}
+    window = recent.get("window")
+    window = window if isinstance(window, dict) else {}
+    start_date = window.get("start_date")
+    end_date = window.get("end_date")
+    date_range = f"{start_date}..{end_date}"
+    rows = recent.get("underperforming_segments")
+    rows = rows if isinstance(rows, list) else []
+    lines = []
+    for row in rows:
+        gap = row.get("quality_gap")
+        gap = gap if isinstance(gap, dict) else {}
+        lines.append(
+            " ".join(
+                [
+                    date_range,
+                    str(row.get("league") or "unknown"),
+                    str(row.get("market_family") or "unknown"),
+                    str(row.get("confidence_bucket") or "unknown"),
+                    f"sample={row.get('sample_count')}",
+                    f"hit_rate={row.get('hit_rate')}",
+                    f"wilson={row.get('wilson_lower_bound')}",
+                    f"gap_hit_rate={gap.get('hit_rate')}",
+                    f"gap_wilson={gap.get('wilson_lower_bound')}",
+                ]
+            )
+        )
+    return lines
+
+
+def parse_pick_date(value: object) -> date | None:
+    if not isinstance(value, str) or len(value) < 10:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
 def summarize_quality(
     rows: Iterable[dict],
     *,
@@ -443,6 +636,7 @@ def main(argv: list[str] | None = None) -> None:
         min_wilson_lower_bound=args.min_wilson_lower_bound,
         candidate_limit=args.candidate_limit,
         include_segments=args.include_segments,
+        recent_days=args.recent_days,
     )
     if args.pending_dates_only:
         for pick_date in report["betman"]["pending_watchlist_monitor"]["pending_dates"]:
@@ -453,6 +647,10 @@ def main(argv: list[str] | None = None) -> None:
             "final_result_available_pending_dates"
         ]:
             print(pick_date)
+        return
+    if args.underperforming_only:
+        for line in format_underperforming_segment_lines(report):
+            print(line)
         return
     print(json.dumps(report, sort_keys=True))
 

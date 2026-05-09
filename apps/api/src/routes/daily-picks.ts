@@ -27,6 +27,34 @@ const DAILY_PICK_PREDICTION_SELECTOR_SELECT =
   "id, match_id, snapshot_id, created_at";
 const DAILY_PICK_PREDICTION_DETAIL_SELECT =
   "id, match_id, snapshot_id, recommended_pick, confidence_score, created_at, summary_payload, main_recommendation_pick, main_recommendation_confidence, main_recommendation_recommended, main_recommendation_no_bet_reason, value_recommendation_pick, value_recommendation_recommended, value_recommendation_edge, value_recommendation_expected_value, value_recommendation_market_price, value_recommendation_model_probability, value_recommendation_market_probability, value_recommendation_market_source, variant_markets_summary, explanation_artifact_id";
+const DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75;
+const DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.70;
+const DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE = -5.0;
+const DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT = 0.67;
+const DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE = 3.0;
+const DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT = 0.0;
+const DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE = 0.03;
+const DAILY_PICK_PRECISION_LEAGUES = new Set([
+  "bundesliga",
+  "champions-league",
+  "conference-league",
+  "europa-league",
+  "la-liga",
+  "ligue-1",
+  "premier-league",
+  "serie-a",
+]);
+const DAILY_PICK_SEGMENT_HOLD_COMPETITIONS = new Set([
+  "serie-a",
+]);
+const DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = new Set([
+  "trained_baseline",
+  "trained_baseline_poisson_blend",
+]);
+const DEPLOYABILITY_EXCLUDED_BASE_MODEL_SOURCES = new Set([
+  "centroid_fallback",
+  "centroid_poisson_blend",
+]);
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
@@ -838,6 +866,18 @@ function buildBasePickContext(
     confidenceReliability:
       readString(summaryPayload?.confidence_reliability)
       ?? readString(summaryPayload?.confidenceReliability),
+    maxAbsDivergence:
+      readNumber(summaryPayload?.max_abs_divergence)
+      ?? readNumber(summaryPayload?.maxAbsDivergence),
+    moneylineSignalScore:
+      readNumber(summaryPayload?.moneyline_signal_score)
+      ?? readNumber(summaryPayload?.moneylineSignalScore),
+    baseModelSource:
+      readString(summaryPayload?.base_model_source)
+      ?? readString(summaryPayload?.baseModelSource),
+    featureContext:
+      readRecord(summaryPayload?.feature_context)
+      ?? readRecord(summaryPayload?.featureContext),
     highConfidenceEligible:
       readBoolean(summaryPayload?.high_confidence_eligible)
       ?? readBoolean(summaryPayload?.highConfidenceEligible),
@@ -890,8 +930,11 @@ function buildMoneylineAndVariantPicks(
       ? valueRecommendation
       : null;
   const reliabilityHoldReason = resolveReliabilityHoldReason(base);
+  const moneylineHoldReason =
+    reliabilityHoldReason
+    ?? resolveMoneylineDailyPickHoldReason(base, mainRecommendation);
   const status =
-    mainRecommendation.recommended && reliabilityHoldReason === null
+    mainRecommendation.recommended && moneylineHoldReason === null
       ? "recommended"
       : "held";
 
@@ -911,12 +954,12 @@ function buildMoneylineAndVariantPicks(
     highConfidenceEligible: base.highConfidenceEligible,
     validationMetadata: base.validationMetadata,
     status,
-    noBetReason: mainRecommendation.noBetReason ?? reliabilityHoldReason,
+    noBetReason: mainRecommendation.noBetReason ?? moneylineHoldReason,
     reasonLabels:
       status === "held"
         ? [
             "heldByRecommendationGate",
-            ...(reliabilityHoldReason ? [reliabilityHoldReason] : []),
+            ...(moneylineHoldReason ? [moneylineHoldReason] : []),
           ]
         : ["mainRecommendation"],
   };
@@ -1021,6 +1064,77 @@ function resolveReliabilityHoldReason(
     return null;
   }
   return base.confidenceReliability ?? "confidence_reliability_missing";
+}
+
+function resolveMoneylineDailyPickHoldReason(
+  base: ReturnType<typeof buildBasePickContext>,
+  mainRecommendation: {
+    pick: string;
+    confidence: number | null;
+  },
+): string | null {
+  if (
+    mainRecommendation.pick === "AWAY"
+    && (
+      mainRecommendation.confidence === null
+      || mainRecommendation.confidence < DAILY_PICK_AWAY_CONFIDENCE_MINIMUM
+    )
+  ) {
+    return "away_confidence_reliability_gap";
+  }
+  return isPrecisionMoneylineSupported(base, mainRecommendation.confidence)
+    ? null
+    : "daily_pick_precision_gate_required";
+}
+
+function isPrecisionMoneylineSupported(
+  base: ReturnType<typeof buildBasePickContext>,
+  confidence: number | null,
+): boolean {
+  const sourceAgreementRatio = base.sourceAgreementRatio;
+  const moneylineSignalScore = base.moneylineSignalScore;
+  const maxAbsDivergence = base.maxAbsDivergence;
+  const baseModelSource = base.baseModelSource;
+  const precisionSupported =
+    moneylineSignalScore !== null
+    && moneylineSignalScore >= DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
+    && sourceAgreementRatio !== null
+    && sourceAgreementRatio >= DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT;
+  const highSignalSupported =
+    moneylineSignalScore !== null
+    && moneylineSignalScore >= DAILY_PICK_EXPANSION_MIN_SIGNAL_SCORE
+    && sourceAgreementRatio !== null
+    && sourceAgreementRatio >= DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT;
+
+  return Boolean(
+    DAILY_PICK_PRECISION_LEAGUES.has(base.leagueId)
+    && !DAILY_PICK_SEGMENT_HOLD_COMPETITIONS.has(base.leagueId)
+    && confidence !== null
+    && confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
+    && maxAbsDivergence !== null
+    && maxAbsDivergence <= DAILY_PICK_PRECISION_MAX_ABS_DIVERGENCE
+    && (precisionSupported || highSignalSupported)
+    && baseModelSource !== null
+    && DAILY_PICK_PRECISION_BASE_MODEL_SOURCES.has(baseModelSource)
+    && !DEPLOYABILITY_EXCLUDED_BASE_MODEL_SOURCES.has(baseModelSource)
+    && hasPreMatchSignalSupport(base.featureContext)
+  );
+}
+
+function hasPreMatchSignalSupport(
+  featureContext: Record<string, unknown> | null,
+): boolean {
+  if (!featureContext) {
+    return false;
+  }
+  return Boolean(
+    featureContext.external_rating_available
+    || featureContext.understat_xg_available
+    || featureContext.football_data_match_stats_available
+    || featureContext.externalRatingAvailable
+    || featureContext.understatXgAvailable
+    || featureContext.footballDataMatchStatsAvailable,
+  );
 }
 
 function compareDailyPicks(left: DailyPickItem, right: DailyPickItem): number {

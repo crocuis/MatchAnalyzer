@@ -103,9 +103,15 @@ function validatedDailyPickSummary(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
+    base_model_source: "trained_baseline",
+    max_abs_divergence: 0.02,
+    moneyline_signal_score: 3.2,
     source_agreement_ratio: 0.8,
     confidence_reliability: "validated",
     high_confidence_eligible: true,
+    feature_context: {
+      external_rating_available: 1,
+    },
     validation_metadata: {
       model_scope: "daily_pick_prequential",
       sample_count: 76,
@@ -1088,9 +1094,9 @@ describe("prediction API", () => {
           match_id: "match-3",
           snapshot_id: "snapshot-3",
           recommended_pick: "HOME",
-          confidence_score: 0.68,
+          confidence_score: 0.73,
           main_recommendation_pick: "HOME",
-          main_recommendation_confidence: 0.68,
+          main_recommendation_confidence: 0.73,
           main_recommendation_recommended: true,
           main_recommendation_no_bet_reason: null,
           value_recommendation_pick: "HOME",
@@ -1130,9 +1136,9 @@ describe("prediction API", () => {
           match_id: "match-4",
           snapshot_id: "snapshot-4",
           recommended_pick: "HOME",
-          confidence_score: 0.66,
+          confidence_score: 0.71,
           main_recommendation_pick: "HOME",
-          main_recommendation_confidence: 0.66,
+          main_recommendation_confidence: 0.71,
           main_recommendation_recommended: true,
           main_recommendation_no_bet_reason: null,
           value_recommendation_pick: "HOME",
@@ -1653,6 +1659,143 @@ describe("prediction API", () => {
     ]));
   });
 
+  it("keeps computed high-confidence moneyline picks held without precision support", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+            confidence_reliability: "validated",
+            high_confidence_eligible: true,
+            validation_metadata: {
+              model_scope: "daily_pick_prequential",
+              sample_count: 250,
+              hit_rate: 0.8,
+              wilson_lower_bound: 0.75,
+            },
+          },
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        status: "held",
+        noBetReason: "daily_pick_precision_gate_required",
+        reasonLabels: [
+          "heldByRecommendationGate",
+          "daily_pick_precision_gate_required",
+        ],
+      }),
+    ]);
+  });
+
+  it("keeps computed precision moneyline picks held for segment-held leagues", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "serie-a",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "inter",
+          away_team_id: "milan",
+        },
+      ],
+      teams: [
+        { id: "inter", name: "Inter" },
+        { id: "milan", name: "Milan" },
+      ],
+      competitions: [
+        { id: "serie-a", name: "Serie A" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+            max_abs_divergence: 0.01,
+            moneyline_signal_score: 4.0,
+            base_model_source: "trained_baseline",
+            high_confidence_eligible: true,
+            feature_context: {
+              external_rating_available: 1,
+            },
+            validation_metadata: {
+              model_scope: "daily_pick_prequential",
+              sample_count: 250,
+              hit_rate: 0.8,
+              wilson_lower_bound: 0.75,
+            },
+          },
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        leagueId: "serie-a",
+        status: "held",
+      }),
+    ]);
+  });
+
   it("hydrates computed daily picks from prediction explanation artifacts", async () => {
     setDailyPicksClock();
     const baseDbClient = buildTableDbClient({
@@ -2146,9 +2289,9 @@ describe("prediction API", () => {
         match_id: `match-${index}`,
         snapshot_id: `snapshot-${index}`,
         recommended_pick: "HOME",
-        confidence_score: 0.5 + index / 100,
+        confidence_score: 0.7 + index / 100,
         main_recommendation_pick: "HOME",
-        main_recommendation_confidence: 0.5 + index / 100,
+        main_recommendation_confidence: 0.7 + index / 100,
         main_recommendation_recommended: true,
         main_recommendation_no_bet_reason: null,
         summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
