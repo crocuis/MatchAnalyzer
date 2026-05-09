@@ -1,4 +1,4 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { Client } from "pg";
 
 import type { AppBindings } from "../env";
 import { getEnv } from "../env";
@@ -70,7 +70,7 @@ class PostgresQueryBuilder implements ApiQueryBuilder {
   private offsetCount: number | null = null;
 
   constructor(
-    private readonly sql: NeonQueryFunction<false, false>,
+    private readonly sql: PostgresQueryExecutor,
     private readonly tableName: string,
   ) {}
 
@@ -184,11 +184,55 @@ class PostgresQueryBuilder implements ApiQueryBuilder {
   }
 }
 
+type PostgresQueryExecutor = {
+  query(text: string, params?: unknown[]): Promise<Record<string, unknown>[]>;
+};
+
+class PgQueryExecutor implements PostgresQueryExecutor {
+  private queue: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly connectionString: string) {}
+
+  query(
+    text: string,
+    params: unknown[] = [],
+  ): Promise<Record<string, unknown>[]> {
+    const run = async () => {
+      const client = new Client({ connectionString: this.connectionString });
+      let queryError: unknown;
+
+      try {
+        await client.connect();
+        const result = await client.query(text, params);
+        return result.rows as Record<string, unknown>[];
+      } catch (error) {
+        queryError = error;
+        throw error;
+      } finally {
+        try {
+          await client.end();
+        } catch (closeError) {
+          if (!queryError) {
+            throw closeError;
+          }
+        }
+      }
+    };
+
+    const queued = this.queue.then(run, run);
+    this.queue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
+  }
+}
+
 class PostgresClient {
-  private readonly sql: NeonQueryFunction<false, false>;
+  private readonly sql: PostgresQueryExecutor;
 
   constructor(databaseUrl: string) {
-    this.sql = neon(databaseUrl);
+    this.sql = new PgQueryExecutor(databaseUrl);
   }
 
   from(tableName: string): ApiQueryBuilder {
@@ -198,7 +242,7 @@ class PostgresClient {
   async query(text: string, params: unknown[] = []): Promise<ApiDbResult> {
     try {
       const data = await this.sql.query(text, params);
-      return { data: data as Record<string, unknown>[], error: null };
+      return { data, error: null };
     } catch (error) {
       return { data: null, error: normalizeError(error) };
     }

@@ -17,6 +17,7 @@
 
 4. Neon 개발 브랜치의 연결 문자열을 `.env.local`, `apps/api/.dev.vars`, `batch/.env.local`에 `DATABASE_URL`로 저장한다.
    URL에는 `&channel_binding=require` 같은 쿼리 문자열이 들어가므로 작은따옴표로 감싼다.
+   API Worker를 Hyperdrive 로컬 바인딩 형태로 검증하려면 `CLOUDFLARE_HYPERDRIVE_ID`와 `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE`를 export한 뒤 `npm --workspace apps/api run dev:hyperdrive`를 실행한다. 로컬 Hyperdrive 바인딩은 실제 캐시를 적용하지 않는다.
 5. 새 로컬 DB를 직접 준비해야 할 때만 `supabase/migrations/202604180001_initial_schema.sql`의 SQL과 `supabase/seed.sql`을 적용한다.
 6. API와 웹 앱 개발 서버를 각각 실행한다.
 
@@ -43,6 +44,7 @@
    - `NEON_DATABASE_URL` 또는 `DATABASE_URL`
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
+   - `CLOUDFLARE_HYPERDRIVE_ID` (production variable)
    - `CLOUDFLARE_PAGES_PROJECT_NAME`
    - `VITE_API_BASE_URL`
    - `OPERATIONAL_REPORTS_API_KEY`
@@ -52,7 +54,8 @@
    이 스크립트는 `supabase/migrations/*.sql`을 Postgres에 파일명 순서대로 적용하고 `public.match_analyzer_schema_migrations`에 적용 이력을 기록한다.
    이미 복원된 DB에 ledger가 없으면 자동으로 모든 migration을 적용 완료 처리하지 않는다.
    복원본의 마지막 적용 migration을 확인한 경우에만 `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION` variable을 설정해 그 version까지 baseline 처리한다.
-   `DATABASE_URL`을 Cloudflare Worker secret으로 주입하기 전에 migration과 Neon DB smoke check를 수행하고, 배포 후 API endpoint smoke check를 수행한다.
+   API Worker는 `CLOUDFLARE_HYPERDRIVE_ID`로 Wrangler Hyperdrive 바인딩을 렌더링하고, `DATABASE_URL`을 Cloudflare Worker fallback secret으로 주입하기 전에 migration과 Neon DB smoke check를 수행한다. 배포 후 API endpoint smoke check를 수행한다.
+   자세한 ledger 기준선과 예측 row version 복구 절차는 `docs/operations/postgres-maintenance.md`를 따른다.
 
 9. Cloudflare R2를 실제로 연결할 경우 아래 값을 추가한다.
 

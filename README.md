@@ -39,7 +39,7 @@ Cloudflare Workers + Hono 기반 읽기 API다.
 - `GET /predictions/:matchId`
 - `GET /reviews/:matchId`
 
-Postgres 연결 문자열(`DATABASE_URL`)로 경기, 스냅샷, 예측, 사후 리뷰를 읽어 대시보드가 바로 소비할 수 있는 형태로 반환한다.
+Cloudflare Hyperdrive 바인딩(`HYPERDRIVE`)이 있으면 이를 우선 사용하고, 없으면 Postgres 연결 문자열(`DATABASE_URL`)로 경기, 스냅샷, 예측, 사후 리뷰를 읽어 대시보드가 바로 소비할 수 있는 형태로 반환한다.
 
 ### `batch`
 
@@ -255,9 +255,17 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 
 ### GitHub Actions / 배포
 
-운영 배포는 GitHub secret `NEON_DATABASE_URL` 또는 `DATABASE_URL`을 Neon/Postgres 연결 문자열로 사용한다.
+운영 배포는 GitHub secret `NEON_DATABASE_URL` 또는 `DATABASE_URL`을 migration/smoke check와 Hyperdrive 원본 설정용 Neon/Postgres 연결 문자열로 사용한다.
 값은 `postgresql://user:password@host/db?...` 형태의 전체 연결 문자열이어야 하며, 비밀번호가 빠지거나 `#`, `@`, `:` 같은 특수문자가 URL 인코딩되지 않으면 배포 전 migration 단계에서 실패한다.
-`deploy-production`은 `scripts/apply_postgres_migrations.py`로 `supabase/migrations/*.sql`을 파일명 순서대로 적용한 뒤 Neon smoke check를 수행하고, Cloudflare Worker secret에 `DATABASE_URL`을 주입한다.
+API Worker는 배포 시 production variable `CLOUDFLARE_HYPERDRIVE_ID`로 Wrangler Hyperdrive 바인딩을 렌더링하고 `HYPERDRIVE.connectionString`을 우선 사용한다.
+Hyperdrive 구성은 아래처럼 Cloudflare에서 한 번 생성한 뒤 출력된 `id`를 production variable `CLOUDFLARE_HYPERDRIVE_ID`에 저장한다.
+
+```bash
+npm --workspace apps/api exec -- wrangler hyperdrive create match-analyzer-postgres \
+  --connection-string="$DATABASE_URL"
+```
+
+`deploy-production`은 `scripts/apply_postgres_migrations.py`로 `supabase/migrations/*.sql`을 파일명 순서대로 적용한 뒤 Neon smoke check를 수행하고, Cloudflare Worker secret에 fallback용 `DATABASE_URL`을 주입한다.
 이미 Supabase dump/restore로 스키마가 반영된 DB는 ledger가 없으면 자동 baseline 처리하지 않는다.
 복원본에 포함된 마지막 migration을 확인한 뒤 production variable `MATCH_ANALYZER_MIGRATION_BASELINE_VERSION`에 그 version을 설정하면, runner가 해당 version까지만 ledger에 표시하고 이후 migration은 실제로 적용한다.
 
@@ -266,6 +274,7 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 - `NEON_DATABASE_URL` 또는 `DATABASE_URL`
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_HYPERDRIVE_ID` (production variable)
 - `CLOUDFLARE_PAGES_PROJECT_NAME`
 - `VITE_API_BASE_URL`
 

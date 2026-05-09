@@ -1,5 +1,8 @@
 export type AppBindings = {
   Bindings: {
+    HYPERDRIVE?: {
+      connectionString: string;
+    };
     DATABASE_URL?: string;
     NEON_DATABASE_URL?: string;
     NEON_DEVELOPMENT_DATABASE_URL?: string;
@@ -16,6 +19,7 @@ export type AppEnv = {
 
 export const getEnv = (bindings?: AppBindings["Bindings"]): AppEnv => ({
   databaseUrl:
+    bindings?.HYPERDRIVE?.connectionString ??
     bindings?.DATABASE_URL ??
     bindings?.NEON_DATABASE_URL ??
     bindings?.NEON_DEVELOPMENT_DATABASE_URL ??

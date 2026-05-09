@@ -30,6 +30,7 @@ htmlcov/
 
 # Cloudflare / Supabase local state
 .wrangler/
+wrangler.hyperdrive.toml
 .dev.vars
 .vercel/
 .supabase/

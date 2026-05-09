@@ -15,4 +15,16 @@ describe("db client boundary", () => {
     expect(client).not.toBeNull();
     expect(client?.from("matches")).toHaveProperty("select");
   });
+
+  it("prefers the Hyperdrive binding connection string when configured", () => {
+    const client = getDbClient({
+      HYPERDRIVE: {
+        connectionString: "postgresql://hyperdrive-user:password@example.com/db",
+      },
+      DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
+    });
+
+    expect(client).not.toBeNull();
+    expect(client?.from("matches")).toHaveProperty("select");
+  });
 });
