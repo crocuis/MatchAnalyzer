@@ -1951,6 +1951,17 @@ def test_run_job_can_force_resync_settled_daily_pick_runs() -> None:
     )
 
     assert result["synced_items"] == 1
+    assert result["sync_diagnostics"] == {
+        "sync_date": "2026-04-24",
+        "match_count": 1,
+        "snapshot_count": 1,
+        "prediction_count": 1,
+        "candidate_count": 1,
+        "selected_count": 1,
+        "recommended_count": 0,
+        "held_count": 1,
+        "ranking": "expected_value_edge_probability_confidence",
+    }
     assert state["daily_pick_items"][0]["id"] != "item-existing"
     assert state["daily_pick_results"] == []
 
@@ -2065,6 +2076,10 @@ def test_run_job_filters_prediction_reads_to_sync_date_matches() -> None:
     )
 
     assert result["synced_items"] == 1
+    assert result["sync_diagnostics"]["match_count"] == 1
+    assert result["sync_diagnostics"]["snapshot_count"] == 1
+    assert result["sync_diagnostics"]["prediction_count"] == 1
+    assert result["sync_diagnostics"]["candidate_count"] == 1
     assert (
         "match_snapshots",
         "match_id",

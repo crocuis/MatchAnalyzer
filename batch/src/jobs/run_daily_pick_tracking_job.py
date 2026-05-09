@@ -1226,6 +1226,10 @@ def run_job(
         )
         if existing_run and existing_run.get("status") == "settled" and not force_resync:
             result["sync_skipped"] = "settled_run_exists"
+            result["sync_diagnostics"] = {
+                "sync_date": sync_date,
+                "existing_run_status": existing_run.get("status"),
+            }
         else:
             matches = read_rows(client, "matches", columns=DAILY_PICK_MATCH_COLUMNS)
             sync_match_ids = sorted(
@@ -1256,6 +1260,13 @@ def run_job(
                 snapshots=snapshots,
                 predictions=predictions,
             )
+            result["sync_diagnostics"] = {
+                "sync_date": sync_date,
+                "match_count": len(sync_match_ids),
+                "snapshot_count": len(snapshots),
+                "prediction_count": len(predictions),
+                **run["metadata"],
+            }
             replace_existing_daily_pick_items(client, str(run["id"]))
             client.upsert_rows("daily_pick_runs", [run])
             if items:
