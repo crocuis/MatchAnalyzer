@@ -1204,6 +1204,38 @@ function recomputeCoverage(items: DailyPickItem[], heldItems: DailyPickItem[]) {
   };
 }
 
+function normalizeDailyPickRecommendationSubset(items: DailyPickItem[]) {
+  return items.map((item) => {
+    if (item.status !== "recommended") {
+      return item;
+    }
+    const metadata = item.validationMetadata ?? {};
+    const highConfidenceEligible =
+      item.highConfidenceEligible
+      ?? readBoolean(metadata.high_confidence_eligible)
+      ?? readBoolean(metadata.highConfidenceEligible);
+    if (highConfidenceEligible !== false) {
+      return item;
+    }
+    const reason =
+      item.confidenceReliability
+      ?? readString(metadata.confidence_reliability)
+      ?? readString(metadata.confidenceReliability)
+      ?? "confidence_reliability_missing";
+    const reasonLabels = item.reasonLabels.includes("heldByRecommendationGate")
+      ? item.reasonLabels
+      : [...item.reasonLabels, "heldByRecommendationGate", reason];
+    return {
+      ...item,
+      status: "held" as const,
+      noBetReason: item.noBetReason ?? reason,
+      confidenceReliability: reason,
+      highConfidenceEligible: false,
+      reasonLabels,
+    };
+  });
+}
+
 async function localizeDailyPickItems(
   dbClient: ApiDbClient,
   items: DailyPickItem[],
@@ -1260,14 +1292,18 @@ async function loadDailyPicksArtifactView(
   const filteredHeldItems = options.includeHeld
     ? filterDailyPickItems(loaded.heldItems, options).slice(0, 10)
     : [];
+  const normalizedItems = normalizeDailyPickRecommendationSubset(filteredItems);
+  const normalizedHeldItems = normalizeDailyPickRecommendationSubset(filteredHeldItems);
+  const downgradedHeldItems = normalizedItems.filter((item) => item.status === "held");
+  const recommendedItems = normalizedItems.filter((item) => item.status !== "held");
   const localizedItems = await localizeDailyPickItems(
     dbClient,
-    filteredItems,
+    recommendedItems,
     options.locale,
   );
   const localizedHeldItems = await localizeDailyPickItems(
     dbClient,
-    filteredHeldItems,
+    options.includeHeld ? [...downgradedHeldItems, ...normalizedHeldItems] : [],
     options.locale,
   );
   const performanceSummary = await readDailyPickRuntimePerformanceSummary(dbClient);
@@ -1571,14 +1607,22 @@ function buildTrackedDailyPickItem({
   const awayTeam = awayTeamId ? teamsById.get(awayTeamId) : undefined;
   const competition = competitionsById.get(leagueId);
   const validationMetadata = readRecord(pick.validation_metadata);
-  const status = readTrackedStatus(pick, result);
+  const preliminaryStatus = readTrackedStatus(pick, result);
   const reasonLabels = Array.isArray(pick.reason_labels)
     ? pick.reason_labels.filter((value): value is string => typeof value === "string")
     : [];
-  const noBetReason = resolveTrackedNoBetReason(reasonLabels, status);
   const metadataReliability =
     readString(validationMetadata?.confidence_reliability)
     ?? readString(validationMetadata?.confidenceReliability);
+  const rawHighConfidenceEligible =
+    readBoolean(validationMetadata?.high_confidence_eligible)
+    ?? readBoolean(validationMetadata?.highConfidenceEligible);
+  const subsetHoldReason =
+    preliminaryStatus === "recommended" && rawHighConfidenceEligible === false
+      ? metadataReliability ?? "confidence_reliability_missing"
+      : null;
+  const status = subsetHoldReason ? "held" : preliminaryStatus;
+  const noBetReason = subsetHoldReason ?? resolveTrackedNoBetReason(reasonLabels, status);
   const confidenceReliability =
     status === "held" && noBetReason && noBetReason !== "held"
       ? noBetReason
@@ -1618,8 +1662,7 @@ function buildTrackedDailyPickItem({
       ?? readNumber(validationMetadata?.sourceAgreementRatio),
     confidenceReliability,
     highConfidenceEligible:
-      readBoolean(validationMetadata?.high_confidence_eligible)
-      ?? readBoolean(validationMetadata?.highConfidenceEligible)
+      rawHighConfidenceEligible
       ?? (status === "held" ? false : true),
     validationMetadata,
     status,

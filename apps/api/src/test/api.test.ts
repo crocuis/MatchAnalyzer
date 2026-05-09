@@ -3738,6 +3738,23 @@ describe("prediction API", () => {
           ],
         },
         {
+          id: "daily_pick_item_stale_precision",
+          pick_date: "2026-04-24",
+          match_id: "match-1",
+          prediction_id: "prediction-1",
+          market_family: "moneyline",
+          selection_label: "DRAW",
+          confidence: 0.76,
+          score: 0.9,
+          status: "recommended",
+          validation_metadata: {
+            confidence_reliability: "precision_moneyline_supported",
+            high_confidence_eligible: false,
+            sample_count: 30,
+          },
+          reason_labels: ["mainRecommendation"],
+        },
+        {
           id: "daily_pick_item_held_spread",
           pick_date: "2026-04-24",
           match_id: "match-1",
@@ -3835,10 +3852,10 @@ describe("prediction API", () => {
       modelScope: "daily_pick_settled_runtime",
     });
     expect(body.coverage).toEqual({
-      moneyline: 2,
+      moneyline: 3,
       spreads: 1,
       totals: 0,
-      held: 2,
+      held: 3,
     });
     expect(body.heldItems).toEqual([]);
     expect(body.items).toEqual([
@@ -3858,6 +3875,14 @@ describe("prediction API", () => {
         confidenceReliability: "insufficient_sample",
         highConfidenceEligible: false,
         noBetReason: "insufficient_sample",
+      }),
+      expect.objectContaining({
+        matchId: "match-1",
+        status: "held",
+        marketFamily: "moneyline",
+        confidenceReliability: "precision_moneyline_supported",
+        highConfidenceEligible: false,
+        noBetReason: "precision_moneyline_supported",
       }),
       expect.objectContaining({
         matchId: "match-1",
