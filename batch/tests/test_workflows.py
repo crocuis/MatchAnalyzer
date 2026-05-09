@@ -145,6 +145,19 @@ def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run()
     assert "--clubelo-date-stride-days 1" in workflow
     assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
     assert "if: ${{ env.DAILY_PICK_ARTIFACT_ENABLED == '1' }}" in workflow
+    assert "Report Betman ticket opportunities" in workflow
+    assert "continue-on-error: true" in workflow
+    assert "python3 -m batch.src.jobs.report_betman_ticket_opportunities_job" in workflow
+    assert '--pick-date "$REAL_PREDICTION_DATE"' in workflow
+    assert "--min-legs 2" in workflow
+    assert "--max-legs 2" in workflow
+    assert "--risk-profile balanced" in workflow
+    assert "--skip-current-betman" in workflow
+    assert "Stored daily-pick baseline:" in workflow
+    assert "Current Betman buyable filter:" in workflow
+    assert "Betman ticket opportunity report failed while fetching current buyable games." in workflow
+    assert "betman-ticket-opportunities.txt" in workflow
+    assert "## Betman ticket opportunities" in workflow
 
 
 def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick_dates() -> None:
