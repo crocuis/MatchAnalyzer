@@ -69,6 +69,7 @@ DAILY_PICK_PRE_MATCH_CHECKPOINTS = {
     "T_MINUS_1H",
     "LINEUP_CONFIRMED",
 }
+DAILY_PICK_PRIMARY_CHECKPOINT = "T_MINUS_24H"
 DAILY_PICK_MATCH_COLUMNS = (
     "id",
     "competition_id",
@@ -193,7 +194,7 @@ def sync_daily_picks_for_date(
         match_id = str(match.get("id") or "")
         if not match_id:
             continue
-        representative = choose_latest_prediction(
+        representative = choose_daily_pick_prediction(
             [
                 row
                 for row in predictions_by_match.get(match_id) or []
@@ -332,6 +333,27 @@ def build_recommended_pick_candidates(
             candidates.append(candidate)
 
     return candidates
+
+
+def choose_daily_pick_prediction(
+    rows: list[dict],
+    *,
+    snapshots_by_id: dict[str, dict],
+) -> dict | None:
+    primary_rows = [
+        row
+        for row in rows
+        if str(
+            (snapshots_by_id.get(str(row.get("snapshot_id") or "")) or {}).get(
+                "checkpoint_type"
+            )
+            or ""
+        )
+        == DAILY_PICK_PRIMARY_CHECKPOINT
+    ]
+    if primary_rows:
+        return max(primary_rows, key=lambda row: str(row.get("created_at") or ""))
+    return choose_latest_prediction(rows, snapshots_by_id=snapshots_by_id)
 
 
 def build_moneyline_pick_candidate(
