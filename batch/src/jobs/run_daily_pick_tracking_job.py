@@ -35,6 +35,11 @@ from batch.src.storage.db_client import DbClient
 MAX_DAILY_RECOMMENDATIONS = 10
 MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
+MONEYLINE_SELECTION_PROBABILITY_FIELDS = {
+    "HOME": "home_prob",
+    "DRAW": "draw_prob",
+    "AWAY": "away_prob",
+}
 DAILY_PICK_HELD_VARIANT_MARKET_FAMILIES = {"spreads", "totals"}
 DAILY_PICK_AWAY_CONFIDENCE_MINIMUM = 0.75
 DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM = 0.70
@@ -83,6 +88,9 @@ DAILY_PICK_PREDICTION_COLUMNS = (
     "snapshot_id",
     "match_id",
     "created_at",
+    "home_prob",
+    "draw_prob",
+    "away_prob",
     "model_version_id",
     "recommended_pick",
     "confidence_score",
@@ -368,9 +376,19 @@ def build_moneyline_pick_candidate(
         if value_aligned
         else None
     )
+    market_price_source = (
+        "value_recommendation_market_price"
+        if market_price is not None
+        else None
+    )
     model_probability = (
         _read_numeric(prediction.get("value_recommendation_model_probability"))
         if value_aligned
+        else None
+    )
+    model_probability_source = (
+        "value_recommendation_model_probability"
+        if model_probability is not None
         else None
     )
     market_probability = (
@@ -388,6 +406,37 @@ def build_moneyline_pick_candidate(
         if value_aligned
         else None
     )
+    if market_price is None:
+        market_price = _resolve_prediction_bookmaker_probability(
+            prediction,
+            selection_label,
+        )
+        if market_price is not None:
+            market_price_source = "prediction_summary_bookmaker"
+    if model_probability is None:
+        model_probability = _resolve_prediction_model_probability(
+            prediction,
+            selection_label,
+        )
+        if model_probability is not None:
+            model_probability_source = (
+                f"prediction_{MONEYLINE_SELECTION_PROBABILITY_FIELDS[selection_label]}"
+            )
+    if market_probability is None and market_price is not None:
+        market_probability = market_price
+    if (
+        edge is None
+        and model_probability is not None
+        and market_probability is not None
+    ):
+        edge = model_probability - market_probability
+    if (
+        expected_value is None
+        and model_probability is not None
+        and market_probability is not None
+        and market_probability > 0
+    ):
+        expected_value = (model_probability / market_probability) - 1.0
     candidate_base = _resolve_moneyline_daily_pick_gate(
         base,
         selection_label=selection_label,
@@ -414,6 +463,11 @@ def build_moneyline_pick_candidate(
             candidate_base,
             "daily_pick_precision_gate_required",
         )
+    candidate_base = _with_daily_pick_probability_provenance(
+        candidate_base,
+        market_price_source=market_price_source,
+        model_probability_source=model_probability_source,
+    )
     return {
         **candidate_base,
         "market_family": "moneyline",
@@ -604,6 +658,13 @@ def _build_daily_pick_validation_metadata(
         if prediction is not None
         else None
     )
+    prediction_created_at = (
+        _read_text((prediction or {}).get("created_at"))
+        if prediction is not None
+        else None
+    )
+    if prediction_created_at is not None:
+        metadata.setdefault("prediction_created_at", prediction_created_at)
     if isinstance(value_market_source, str) and value_market_source:
         metadata.setdefault("value_recommendation_market_source", value_market_source)
     if "high_confidence_eligible" not in metadata:
@@ -627,6 +688,47 @@ def _build_daily_pick_validation_metadata(
     ):
         metadata.setdefault("moneyline_signal_score", float(moneyline_signal_score))
     return metadata
+
+
+def _with_daily_pick_probability_provenance(
+    base: dict,
+    *,
+    market_price_source: str | None,
+    model_probability_source: str | None,
+) -> dict:
+    metadata = dict(base.get("validation_metadata") or {})
+    if market_price_source is not None:
+        metadata.setdefault("market_price_source", market_price_source)
+    if model_probability_source is not None:
+        metadata.setdefault("model_probability_source", model_probability_source)
+    return {**base, "validation_metadata": metadata}
+
+
+def _resolve_prediction_bookmaker_probability(
+    prediction: dict,
+    selection_label: str,
+) -> float | None:
+    summary = prediction.get("summary_payload")
+    summary = summary if isinstance(summary, dict) else {}
+    source_metadata = summary.get("source_metadata")
+    source_metadata = source_metadata if isinstance(source_metadata, dict) else {}
+    market_sources = source_metadata.get("market_sources")
+    market_sources = market_sources if isinstance(market_sources, dict) else {}
+    bookmaker = market_sources.get("bookmaker")
+    bookmaker = bookmaker if isinstance(bookmaker, dict) else {}
+    probabilities = bookmaker.get("probabilities")
+    probabilities = probabilities if isinstance(probabilities, dict) else {}
+    return _read_numeric(probabilities.get(selection_label.lower()))
+
+
+def _resolve_prediction_model_probability(
+    prediction: dict,
+    selection_label: str,
+) -> float | None:
+    probability_field = MONEYLINE_SELECTION_PROBABILITY_FIELDS.get(selection_label)
+    if probability_field is None:
+        return None
+    return _read_numeric(prediction.get(probability_field))
 
 
 def _has_daily_pick_validation_support(summary_payload: dict) -> bool:
