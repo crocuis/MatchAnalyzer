@@ -97,6 +97,7 @@ export default function DailyPicksModal({
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [payload, setPayload] = useState<DailyPicksResponse | null>(null);
   const [betmanPolicy, setBetmanPolicy] = useState<BetmanPolicySummary | null>(null);
+  const [betmanPolicyStatus, setBetmanPolicyStatus] = useState<"idle" | "loading" | "ready" | "unavailable">("idle");
 
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -110,6 +111,7 @@ export default function DailyPicksModal({
     if (!isOpen) {
       setPayload(null);
       setBetmanPolicy(null);
+      setBetmanPolicyStatus("idle");
       setStatus("loading");
     }
   }, [initialLeagueId, isOpen]);
@@ -145,15 +147,18 @@ export default function DailyPicksModal({
     if (!isOpen) return;
 
     let isMounted = true;
+    setBetmanPolicyStatus("loading");
     void fetchBetmanPolicySummary()
       .then((policy) => {
         if (isMounted) {
           setBetmanPolicy(policy);
+          setBetmanPolicyStatus(policy ? "ready" : "unavailable");
         }
       })
       .catch(() => {
         if (isMounted) {
           setBetmanPolicy(null);
+          setBetmanPolicyStatus("unavailable");
         }
       });
 
@@ -330,6 +335,14 @@ export default function DailyPicksModal({
                         topBetmanPolicyCandidate.splitStatus,
                       ),
                     })}</span>
+                  </div>
+                ) : betmanPolicyStatus === "unavailable" ? (
+                  <div
+                    className="dailyPicksBetmanPolicySummary dailyPicksBetmanPolicySummary-warning"
+                    aria-label={t("dailyPicks.betmanPolicy.unavailable")}
+                  >
+                    <small>{t("dailyPicks.betmanPolicy.unavailable")}</small>
+                    <span>{t("dailyPicks.betmanPolicy.unavailableHint")}</span>
                   </div>
                 ) : null}
               </div>

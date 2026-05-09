@@ -1213,6 +1213,9 @@ function stubDailyPicksModalFetch(policy: unknown) {
         };
       }
       if (url.endsWith("/api/betman-ticket-policy/latest")) {
+        if (policy instanceof Error) {
+          throw policy;
+        }
         return {
           ok: true,
           json: async () => ({ policy }),
@@ -1438,6 +1441,48 @@ describe("dashboard redesign", () => {
     expect(await within(dialog).findByText("EV 알 수 없음에서 알 수 없음 제외")).toBeInTheDocument();
     expect(within(dialog).getByText("ROI 알 수 없음 / 표본 알 수 없음 / 분할 알 수 없음")).toBeInTheDocument();
     expect(within(dialog).queryByText(/n\/a|Unknown/)).not.toBeInTheDocument();
+  });
+
+  it("shows a Betman policy report unavailable state", async () => {
+    stubDailyPicksModalFetch(null);
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText("Policy report unavailable")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Check the Betman policy report artifact and API availability."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a Betman policy unavailable state when the policy request fails", async () => {
+    stubDailyPicksModalFetch(new Error("network unavailable"));
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText("Policy report unavailable")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Check the Betman policy report artifact and API availability."),
+    ).toBeInTheDocument();
   });
 
   it("opens match detail from a daily pick outside the dashboard league page", async () => {

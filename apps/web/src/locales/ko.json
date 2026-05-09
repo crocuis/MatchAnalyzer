@@ -64,6 +64,8 @@
       "topCandidate": "최상위 정책",
       "topCandidateValue": "EV {{threshold}}에서 {{gate}} 제외",
       "topCandidateMeta": "ROI {{roi}} / 표본 {{quality}} / 분할 {{split}}",
+      "unavailable": "정책 리포트 없음",
+      "unavailableHint": "Betman 정책 리포트 artifact와 API 상태를 확인해야 합니다.",
       "unknown": "알 수 없음",
       "quality": {
         "stable": "안정",

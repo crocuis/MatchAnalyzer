@@ -365,6 +365,14 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   font-weight: 700;
 }
 
+.dailyPicksBetmanPolicySummary-warning {
+  border-top-color: rgba(245, 158, 11, 0.35);
+}
+
+.dailyPicksBetmanPolicySummary-warning small {
+  color: #a16207;
+}
+
 .dailyPicksFiltersContainer {
   display: flex;
   justify-content: space-between;

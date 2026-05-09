@@ -64,6 +64,8 @@
       "topCandidate": "Top policy",
       "topCandidateValue": "Exclude {{gate}} at EV {{threshold}}",
       "topCandidateMeta": "ROI {{roi}} / {{quality}} / split {{split}}",
+      "unavailable": "Policy report unavailable",
+      "unavailableHint": "Check the Betman policy report artifact and API availability.",
       "unknown": "Unknown",
       "quality": {
         "stable": "stable",
