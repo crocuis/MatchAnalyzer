@@ -15,6 +15,7 @@ from batch.src.storage.db_client import DbClient
 
 DEFAULT_RESULT_SYNC_DELAY_HOURS = 2
 DEFAULT_RESULT_SYNC_LOOKBACK_HOURS = 336
+SETTLED_FINAL_RESULTS = {"HOME", "DRAW", "AWAY"}
 
 
 def parse_utc_datetime(value: object) -> datetime | None:
@@ -46,6 +47,10 @@ def read_positive_int_env(name: str, default: int) -> int:
     return value
 
 
+def is_settled_final_result(value: object) -> bool:
+    return isinstance(value, str) and value.upper() in SETTLED_FINAL_RESULTS
+
+
 def resolve_now() -> datetime:
     configured = os.environ.get("RESULT_SYNC_NOW")
     if configured:
@@ -67,7 +72,7 @@ def select_unsettled_result_candidates(
     lower_bound = now - timedelta(hours=lookback_hours)
     candidates: list[dict] = []
     for row in matches:
-        if row.get("final_result") is not None:
+        if is_settled_final_result(row.get("final_result")):
             continue
         match_id = str(row.get("id") or "")
         kickoff_at = parse_utc_datetime(row.get("kickoff_at"))

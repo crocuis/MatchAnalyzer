@@ -86,6 +86,43 @@ def test_select_unsettled_result_candidates_accepts_postgres_datetime_values():
     assert [row["id"] for row in candidates] == ["postgres_datetime"]
 
 
+def test_select_unsettled_result_candidates_retries_invalid_final_result_values():
+    now = datetime(2026, 5, 10, 13, 0, tzinfo=timezone.utc)
+    candidates = sync_job.select_unsettled_result_candidates(
+        [
+            {
+                "id": "string_null_result",
+                "kickoff_at": "2026-05-03T10:00:00+00:00",
+                "final_result": "null",
+            },
+            {
+                "id": "pending_result",
+                "kickoff_at": "2026-05-03T11:00:00+00:00",
+                "final_result": "PENDING",
+            },
+            {
+                "id": "empty_result",
+                "kickoff_at": "2026-05-03T12:00:00+00:00",
+                "final_result": "",
+            },
+            {
+                "id": "settled",
+                "kickoff_at": "2026-05-03T13:00:00+00:00",
+                "final_result": "HOME",
+            },
+        ],
+        now=now,
+        settle_delay_hours=2,
+        lookback_hours=336,
+    )
+
+    assert [row["id"] for row in candidates] == [
+        "string_null_result",
+        "pending_result",
+        "empty_result",
+    ]
+
+
 def test_default_result_sync_lookback_covers_weeklong_outage():
     now = datetime(2026, 5, 10, 13, 0, tzinfo=timezone.utc)
     candidates = sync_job.select_unsettled_result_candidates(
@@ -183,6 +220,51 @@ def test_sync_match_results_updates_only_newly_closed_targets(monkeypatch):
             "result_observed_at": "2026-04-26T13:00:00+00:00",
         }
     ]
+
+
+def test_sync_match_results_overwrites_invalid_final_result_values(monkeypatch):
+    now = datetime(2026, 5, 10, 13, 0, tzinfo=timezone.utc)
+    state = {
+        "matches": [
+            {
+                "id": "string_null_result",
+                "competition_id": "premier-league",
+                "season": "premier-league-2026",
+                "kickoff_at": "2026-05-03T10:00:00+00:00",
+                "home_team_id": "arsenal",
+                "away_team_id": "chelsea",
+                "final_result": "null",
+            },
+        ]
+    }
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            assert table_name == "matches"
+            state[table_name] = rows
+            return len(rows)
+
+    monkeypatch.setattr(
+        sync_job,
+        "fetch_daily_schedule",
+        lambda target_date: {"data": {"events": [_event("string_null_result")]}},
+    )
+
+    result = sync_job.sync_match_results(
+        FakeClient(),
+        now=now,
+        settle_delay_hours=2,
+        lookback_hours=336,
+    )
+
+    assert result["candidate_match_ids"] == ["string_null_result"]
+    assert result["changed_match_ids"] == ["string_null_result"]
+    assert state["matches"][0]["final_result"] == "HOME"
+    assert state["matches"][0]["home_score"] == 2
+    assert state["matches"][0]["away_score"] == 1
 
 
 def test_main_prints_sync_result(monkeypatch, capsys):
