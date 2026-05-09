@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import DailyPicksModal from "../components/DailyPicksModal";
 import DailyPicksTeaser from "../components/DailyPicksTeaser";
 import FullReportView from "../components/FullReportView";
 import MatchCard from "../components/MatchCard";
@@ -923,7 +924,22 @@ beforeEach(async () => {
               generatedAt: "2026-05-10T01:00:00Z",
               policyCandidateCount: 2,
               promotionReadyCount: 1,
-              topCandidates: [],
+              topCandidates: [
+                {
+                  threshold: "0.05",
+                  gate: { dimension: "selection", bucket: "HOME" },
+                  profile: "balanced",
+                  roi: 0.12,
+                  roiDelta: 0.22,
+                  sampleQuality: "stable",
+                  promotionReady: true,
+                  splitStatus: "passed",
+                  shadow: {
+                    baselineTicketCount: 10,
+                    gatedTicketCount: 8,
+                  },
+                },
+              ],
             },
           }),
         };
@@ -1166,6 +1182,47 @@ function hasTextContent(text: string) {
     node?.textContent?.replace(/\s+/g, " ").trim() === text;
 }
 
+function stubDailyPicksModalFetch(policy: unknown) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/daily-picks")) {
+        return {
+          ok: true,
+          json: async () => ({
+            generatedAt: "2026-05-10T01:10:00Z",
+            date: "2026-05-10",
+            target: {
+              minDailyRecommendations: 5,
+              maxDailyRecommendations: 10,
+              hitRate: 0.7,
+              roi: 0.2,
+            },
+            validation: {
+              hitRate: 0.75,
+              sampleCount: 76,
+              wilsonLowerBound: 0.6422,
+              confidenceReliability: "validated",
+              modelScope: "daily_pick_prequential",
+            },
+            coverage: { moneyline: 0, spreads: 0, totals: 0, held: 0 },
+            items: [],
+            heldItems: [],
+          }),
+        };
+      }
+      if (url.endsWith("/api/betman-ticket-policy/latest")) {
+        return {
+          ok: true,
+          json: async () => ({ policy }),
+        };
+      }
+      return { ok: false, json: async () => ({}) };
+    }),
+  );
+}
+
 it("fetches daily picks with filters", async () => {
   const fetchMock = vi.fn(async () => ({
     ok: true,
@@ -1293,8 +1350,94 @@ describe("dashboard redesign", () => {
     expect(await within(dialog).findByText("Betman policies")).toBeInTheDocument();
     expect(within(dialog).getByText("2 policies")).toBeInTheDocument();
     expect(within(dialog).getByText("1 ready")).toBeInTheDocument();
+    expect(within(dialog).getByText("Top policy")).toBeInTheDocument();
+    expect(within(dialog).getByText("Exclude selection:HOME at EV 0.05")).toBeInTheDocument();
+    expect(within(dialog).getByText("ROI +12.0% / stable / split passed")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /over\/under/i })).toBeInTheDocument();
+  });
+
+  it("localizes the Betman policy summary in Korean", async () => {
+    await i18n.changeLanguage("ko");
+    stubDailyPicksModalFetch({
+      generatedAt: "2026-05-10T01:00:00Z",
+      policyCandidateCount: 1,
+      promotionReadyCount: 0,
+      topCandidates: [
+        {
+          threshold: "0.05",
+          gate: { dimension: "selection", bucket: "HOME" },
+          profile: "balanced",
+          roi: 0.12,
+          roiDelta: 0.22,
+          sampleQuality: "stable",
+          promotionReady: false,
+          splitStatus: "passed",
+          shadow: {
+            baselineTicketCount: 10,
+            gatedTicketCount: 8,
+          },
+        },
+      ],
+    });
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText("최상위 정책")).toBeInTheDocument();
+    expect(within(dialog).getByText("EV 0.05에서 selection:HOME 제외")).toBeInTheDocument();
+    expect(within(dialog).getByText("ROI +12.0% / 표본 안정 / 분할 통과")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/stable|passed|n\/a/)).not.toBeInTheDocument();
+  });
+
+  it("uses localized Betman policy fallbacks for sparse candidates", async () => {
+    await i18n.changeLanguage("ko");
+    stubDailyPicksModalFetch({
+      generatedAt: "2026-05-10T01:00:00Z",
+      policyCandidateCount: 1,
+      promotionReadyCount: 0,
+      topCandidates: [
+        {
+          threshold: null,
+          gate: { dimension: null, bucket: null },
+          profile: null,
+          roi: null,
+          roiDelta: null,
+          sampleQuality: null,
+          promotionReady: false,
+          splitStatus: null,
+          shadow: {
+            baselineTicketCount: null,
+            gatedTicketCount: null,
+          },
+        },
+      ],
+    });
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText("EV 알 수 없음에서 알 수 없음 제외")).toBeInTheDocument();
+    expect(within(dialog).getByText("ROI 알 수 없음 / 표본 알 수 없음 / 분할 알 수 없음")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/n\/a|Unknown/)).not.toBeInTheDocument();
   });
 
   it("opens match detail from a daily pick outside the dashboard league page", async () => {

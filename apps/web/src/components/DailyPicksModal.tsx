@@ -5,6 +5,7 @@ import {
   fetchBetmanPolicySummary,
   fetchDailyPicks,
   resolveDailyPicksDate,
+  type BetmanPolicyCandidateSummary,
   type BetmanPolicySummary,
   type DailyPickMarketFamily,
   type DailyPickItem,
@@ -28,11 +29,41 @@ type DailyPicksModalProps = {
 };
 
 type MarketFilter = "all" | DailyPickMarketFamily;
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 const MARKET_FILTERS: MarketFilter[] = ["all", "moneyline", "spreads", "totals"];
 
 function formatPercent(value: number | null): string {
   return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatSignedPercent(value: number | null, fallback: string): string {
+  if (value === null) {
+    return fallback;
+  }
+  const percent = value * 100;
+  return `${percent > 0 ? "+" : ""}${percent.toFixed(1)}%`;
+}
+
+function formatPolicyGate(candidate: BetmanPolicyCandidateSummary): string {
+  if (!candidate.gate.dimension || !candidate.gate.bucket) {
+    return "";
+  }
+  return `${candidate.gate.dimension}:${candidate.gate.bucket}`;
+}
+
+function formatPolicyStatusLabel(
+  t: Translate,
+  category: "quality" | "split",
+  value: string | null,
+): string {
+  const fallback = t("dailyPicks.betmanPolicy.unknown");
+  if (!value) {
+    return fallback;
+  }
+  return t(`dailyPicks.betmanPolicy.${category}.${value}`, {
+    defaultValue: fallback,
+  });
 }
 
 function matchesActiveFilters(
@@ -198,6 +229,7 @@ export default function DailyPicksModal({
         minute: "2-digit",
       })
     : null;
+  const topBetmanPolicyCandidate = betmanPolicy?.topCandidates[0] ?? null;
 
   if (!isOpen) return null;
 
@@ -270,6 +302,36 @@ export default function DailyPicksModal({
                     </>
                   ) : null}
                 </div>
+                {topBetmanPolicyCandidate ? (
+                  <div
+                    className="dailyPicksBetmanPolicySummary"
+                    aria-label={t("dailyPicks.betmanPolicy.topCandidate")}
+                  >
+                    <small>{t("dailyPicks.betmanPolicy.topCandidate")}</small>
+                    <strong>{t("dailyPicks.betmanPolicy.topCandidateValue", {
+                      threshold: topBetmanPolicyCandidate.threshold
+                        ?? t("dailyPicks.betmanPolicy.unknown"),
+                      gate: formatPolicyGate(topBetmanPolicyCandidate)
+                        || t("dailyPicks.betmanPolicy.unknown"),
+                    })}</strong>
+                    <span>{t("dailyPicks.betmanPolicy.topCandidateMeta", {
+                      roi: formatSignedPercent(
+                        topBetmanPolicyCandidate.roi,
+                        t("dailyPicks.betmanPolicy.unknown"),
+                      ),
+                      quality: formatPolicyStatusLabel(
+                        t,
+                        "quality",
+                        topBetmanPolicyCandidate.sampleQuality,
+                      ),
+                      split: formatPolicyStatusLabel(
+                        t,
+                        "split",
+                        topBetmanPolicyCandidate.splitStatus,
+                      ),
+                    })}</span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

@@ -60,7 +60,24 @@
       "candidates": "Betman 정책 후보",
       "candidateValue": "{{count}}건",
       "ready": "준비된 정책",
-      "readyValue": "{{count}}건"
+      "readyValue": "{{count}}건",
+      "topCandidate": "최상위 정책",
+      "topCandidateValue": "EV {{threshold}}에서 {{gate}} 제외",
+      "topCandidateMeta": "ROI {{roi}} / 표본 {{quality}} / 분할 {{split}}",
+      "unknown": "알 수 없음",
+      "quality": {
+        "stable": "안정",
+        "limited": "제한적",
+        "exploratory": "탐색",
+        "unknown": "알 수 없음"
+      },
+      "split": {
+        "passed": "통과",
+        "mixed": "혼재",
+        "insufficient": "표본 부족",
+        "invalid_gate": "유효하지 않은 gate",
+        "unknown": "알 수 없음"
+      }
     },
     "metrics": {
       "confidence": "신뢰도",

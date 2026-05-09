@@ -60,7 +60,24 @@
       "candidates": "Betman policies",
       "candidateValue": "{{count}} policies",
       "ready": "Ready policies",
-      "readyValue": "{{count}} ready"
+      "readyValue": "{{count}} ready",
+      "topCandidate": "Top policy",
+      "topCandidateValue": "Exclude {{gate}} at EV {{threshold}}",
+      "topCandidateMeta": "ROI {{roi}} / {{quality}} / split {{split}}",
+      "unknown": "Unknown",
+      "quality": {
+        "stable": "stable",
+        "limited": "limited",
+        "exploratory": "exploratory",
+        "unknown": "unknown"
+      },
+      "split": {
+        "passed": "passed",
+        "mixed": "mixed",
+        "insufficient": "insufficient",
+        "invalid_gate": "invalid gate",
+        "unknown": "unknown"
+      }
     },
     "metrics": {
       "confidence": "Confidence",
