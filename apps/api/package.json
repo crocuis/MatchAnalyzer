@@ -4,15 +4,18 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:hyperdrive": "node ../../scripts/render-api-wrangler-config.mjs && wrangler dev --config wrangler.hyperdrive.toml",
+    "deploy": "node ../../scripts/render-api-wrangler-config.mjs && wrangler deploy --config wrangler.hyperdrive.toml",
     "test": "vitest run",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.1.0",
-    "hono": "^4.7.2"
+    "hono": "^4.7.2",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
+    "@types/pg": "^8.20.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4",
     "wrangler": "^4.83.0"
