@@ -32,6 +32,7 @@ type MarketFilter = "all" | DailyPickMarketFamily;
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 const MARKET_FILTERS: MarketFilter[] = ["all", "moneyline", "spreads", "totals"];
+const BETMAN_POLICY_STALE_AFTER_HOURS = 36;
 
 function formatPercent(value: number | null): string {
   return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
@@ -64,6 +65,18 @@ function formatPolicyStatusLabel(
   return t(`dailyPicks.betmanPolicy.${category}.${value}`, {
     defaultValue: fallback,
   });
+}
+
+function isBetmanPolicyStale(generatedAt: string | null, now = new Date()): boolean | null {
+  if (!generatedAt) {
+    return null;
+  }
+  const generatedAtMillis = Date.parse(generatedAt);
+  if (!Number.isFinite(generatedAtMillis)) {
+    return null;
+  }
+  const staleAfterMillis = BETMAN_POLICY_STALE_AFTER_HOURS * 60 * 60 * 1000;
+  return now.getTime() - generatedAtMillis > staleAfterMillis;
 }
 
 function matchesActiveFilters(
@@ -235,6 +248,15 @@ export default function DailyPicksModal({
       })
     : null;
   const topBetmanPolicyCandidate = betmanPolicy?.topCandidates[0] ?? null;
+  const betmanPolicyGeneratedAtLabel = betmanPolicy?.generatedAt
+    ? formatDateTime(betmanPolicy.generatedAt, i18n.language, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+  const betmanPolicyIsStale = isBetmanPolicyStale(betmanPolicy?.generatedAt ?? null);
 
   if (!isOpen) return null;
 
@@ -307,34 +329,60 @@ export default function DailyPicksModal({
                     </>
                   ) : null}
                 </div>
-                {topBetmanPolicyCandidate ? (
+                {betmanPolicy ? (
                   <div
                     className="dailyPicksBetmanPolicySummary"
-                    aria-label={t("dailyPicks.betmanPolicy.topCandidate")}
+                    aria-label={
+                      topBetmanPolicyCandidate
+                        ? t("dailyPicks.betmanPolicy.topCandidate")
+                        : t("dailyPicks.betmanPolicy.reportStatus")
+                    }
                   >
-                    <small>{t("dailyPicks.betmanPolicy.topCandidate")}</small>
-                    <strong>{t("dailyPicks.betmanPolicy.topCandidateValue", {
-                      threshold: topBetmanPolicyCandidate.threshold
-                        ?? t("dailyPicks.betmanPolicy.unknown"),
-                      gate: formatPolicyGate(topBetmanPolicyCandidate)
-                        || t("dailyPicks.betmanPolicy.unknown"),
-                    })}</strong>
-                    <span>{t("dailyPicks.betmanPolicy.topCandidateMeta", {
-                      roi: formatSignedPercent(
-                        topBetmanPolicyCandidate.roi,
-                        t("dailyPicks.betmanPolicy.unknown"),
-                      ),
-                      quality: formatPolicyStatusLabel(
-                        t,
-                        "quality",
-                        topBetmanPolicyCandidate.sampleQuality,
-                      ),
-                      split: formatPolicyStatusLabel(
-                        t,
-                        "split",
-                        topBetmanPolicyCandidate.splitStatus,
-                      ),
-                    })}</span>
+                    {topBetmanPolicyCandidate ? (
+                      <>
+                        <small>{t("dailyPicks.betmanPolicy.topCandidate")}</small>
+                        <strong>{t("dailyPicks.betmanPolicy.topCandidateValue", {
+                          threshold: topBetmanPolicyCandidate.threshold
+                            ?? t("dailyPicks.betmanPolicy.unknown"),
+                          gate: formatPolicyGate(topBetmanPolicyCandidate)
+                            || t("dailyPicks.betmanPolicy.unknown"),
+                        })}</strong>
+                        <span>{t("dailyPicks.betmanPolicy.topCandidateMeta", {
+                          roi: formatSignedPercent(
+                            topBetmanPolicyCandidate.roi,
+                            t("dailyPicks.betmanPolicy.unknown"),
+                          ),
+                          quality: formatPolicyStatusLabel(
+                            t,
+                            "quality",
+                            topBetmanPolicyCandidate.sampleQuality,
+                          ),
+                          split: formatPolicyStatusLabel(
+                            t,
+                            "split",
+                            topBetmanPolicyCandidate.splitStatus,
+                          ),
+                        })}</span>
+                      </>
+                    ) : (
+                      <small>{t("dailyPicks.betmanPolicy.reportStatus")}</small>
+                    )}
+                    <span
+                      className={
+                        betmanPolicyIsStale
+                          ? "dailyPicksBetmanPolicyFreshness dailyPicksBetmanPolicyFreshness-stale"
+                          : "dailyPicksBetmanPolicyFreshness"
+                      }
+                    >
+                      {betmanPolicyGeneratedAtLabel
+                        ? t(
+                            betmanPolicyIsStale
+                              ? "dailyPicks.betmanPolicy.stale"
+                              : "dailyPicks.betmanPolicy.updated",
+                            { generatedAt: betmanPolicyGeneratedAtLabel },
+                          )
+                        : t("dailyPicks.betmanPolicy.ageUnknown")}
+                    </span>
                   </div>
                 ) : betmanPolicyStatus === "unavailable" ? (
                   <div

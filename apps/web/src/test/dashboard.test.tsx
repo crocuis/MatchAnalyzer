@@ -1485,6 +1485,69 @@ describe("dashboard redesign", () => {
     ).toBeInTheDocument();
   });
 
+  it("warns when the Betman policy report is stale", async () => {
+    stubDailyPicksModalFetch({
+      generatedAt: "2000-01-01T01:00:00Z",
+      policyCandidateCount: 1,
+      promotionReadyCount: 0,
+      topCandidates: [
+        {
+          threshold: "0.05",
+          gate: { dimension: "selection", bucket: "HOME" },
+          profile: "balanced",
+          roi: 0.12,
+          roiDelta: 0.22,
+          sampleQuality: "stable",
+          promotionReady: false,
+          splitStatus: "passed",
+          shadow: {
+            baselineTicketCount: 10,
+            gatedTicketCount: 8,
+          },
+        },
+      ],
+    });
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText(/Stale report/)).toBeInTheDocument();
+  });
+
+  it("shows stale freshness for empty Betman policy reports", async () => {
+    stubDailyPicksModalFetch({
+      generatedAt: "2000-01-01T01:00:00Z",
+      policyCandidateCount: 0,
+      promotionReadyCount: 0,
+      topCandidates: [],
+    });
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText("Policy report")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Stale report/)).toBeInTheDocument();
+    expect(within(dialog).queryByText("Top policy")).not.toBeInTheDocument();
+  });
+
   it("opens match detail from a daily pick outside the dashboard league page", async () => {
     render(<App />);
 

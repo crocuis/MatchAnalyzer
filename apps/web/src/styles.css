@@ -365,6 +365,15 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   font-weight: 700;
 }
 
+.dailyPicksBetmanPolicyFreshness {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.dailyPicksBetmanPolicyFreshness-stale {
+  color: #a16207;
+}
+
 .dailyPicksBetmanPolicySummary-warning {
   border-top-color: rgba(245, 158, 11, 0.35);
 }
