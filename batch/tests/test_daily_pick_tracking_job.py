@@ -249,6 +249,7 @@ def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
     assert items[0]["selection_label"] == "AWAY"
     assert items[0]["market_price"] == 0.28
     assert items[0]["validation_metadata"]["betman_market_available"] is True
+    assert "betman_market_available" not in items[0]
     assert items[0]["validation_metadata"]["value_recommendation_market_source"] == (
         "betman_moneyline_3way"
     )
