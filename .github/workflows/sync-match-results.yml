@@ -27,7 +27,7 @@ jobs:
       cancel-in-progress: true
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
-      R2_BUCKET: workflow-artifacts
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'workflow-artifacts' }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
@@ -75,7 +75,11 @@ jobs:
             REVIEW_STATUS="$?"
             set -e
             DAILY_PICK_SETTLE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
-            DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_S3_ENDPOINT" ]; then
+              DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            else
+              echo "::warning::Skipping daily-pick artifact export because R2 credentials are incomplete."
+            fi
             if [ "$REVIEW_STATUS" -ne 0 ]; then
               echo "Post-match review refresh failed after daily pick settlement."
               exit "$REVIEW_STATUS"
@@ -104,7 +108,11 @@ jobs:
             fi
             echo "::group::PENDING_RECOMMENDED_SETTLE_DATE=$TARGET_DATE"
             DAILY_PICK_SETTLE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
-            DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_S3_ENDPOINT" ]; then
+              DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            else
+              echo "::warning::Skipping daily-pick artifact export because R2 credentials are incomplete."
+            fi
             echo "::endgroup::"
           done <<< "$PENDING_RECOMMENDED_DATES"
       - name: Collect pending Betman watchlist dates
@@ -129,7 +137,11 @@ jobs:
             fi
             echo "::group::BETMAN_WATCHLIST_SETTLE_DATE=$TARGET_DATE"
             DAILY_PICK_SETTLE_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
-            DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_S3_ENDPOINT" ]; then
+              DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            else
+              echo "::warning::Skipping daily-pick artifact export because R2 credentials are incomplete."
+            fi
             echo "::endgroup::"
           done <<< "$BETMAN_WATCHLIST_DATES"
       - name: Report Betman watchlist quality

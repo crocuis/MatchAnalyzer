@@ -22,7 +22,7 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
       REAL_FIXTURE_SYNC_MODE: schedule
-      R2_BUCKET: workflow-artifacts
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'workflow-artifacts' }}
       FIXTURE_FUTURE_START_DAYS: 7
       FIXTURE_FUTURE_END_DAYS: 14
     runs-on: ubuntu-latest

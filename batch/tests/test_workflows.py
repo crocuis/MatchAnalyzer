@@ -26,6 +26,26 @@ def test_operational_workflows_accept_neon_database_url_secret_fallback() -> Non
         assert "DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}" in workflow
 
 
+def test_artifact_workflows_accept_configurable_r2_bucket() -> None:
+    workflow_names = [
+        "ingest-fixtures.yml",
+        "ingest-markets.yml",
+        "post-match-review.yml",
+        "report-missing-signal-coverage.yml",
+        "run-predictions.yml",
+        "sync-match-results.yml",
+        "sync-prediction-checkpoints.yml",
+    ]
+
+    for workflow_name in workflow_names:
+        workflow = read_workflow(workflow_name)
+
+        assert (
+            "R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'workflow-artifacts' }}"
+            in workflow
+        )
+
+
 def test_ingest_fixtures_workflow_sets_real_fixture_date() -> None:
     workflow = read_workflow("ingest-fixtures.yml")
 
@@ -97,6 +117,7 @@ def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run()
     assert "enable_llm_advisory:" in workflow
     assert "llm_provider:" in workflow
     assert "llm_model:" in workflow
+    assert "force_daily_pick_resync:" in workflow
     assert "REAL_PREDICTION_DATE=" in workflow
     assert "REAL_PREDICTION_MATCH_IDS=" in workflow
     assert "LLM_PREDICTION_ADVISORY_ENABLED=1" in workflow
@@ -110,9 +131,13 @@ def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run()
     assert '[ "${{ github.event_name }}" = "schedule" ]' not in workflow
     assert "DAILY_PICK_ARTIFACT_ENABLED=0" in workflow
     assert "DAILY_PICK_ARTIFACT_ENABLED=1" in workflow
+    assert "Skipping daily-pick artifact export because R2 credentials are incomplete." in workflow
     assert "MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1" in workflow
-    assert "DAILY_PICK_SYNC_DATE=" not in workflow
+    assert 'DAILY_PICK_SYNC_DATE="$REAL_PREDICTION_DATE"' in workflow
+    assert "DAILY_PICK_FORCE_RESYNC=1" in workflow
     assert "DAILY_PICK_ARTIFACT_DATE=" in workflow
+    assert "Force refresh daily pick tracking" in workflow
+    assert "python3 -m batch.src.jobs.run_daily_pick_tracking_job" in workflow
     assert "Backfill external prediction signals" in workflow
     assert "backfill_external_prediction_signals_job" in workflow
     assert '--match-ids "$REAL_PREDICTION_MATCH_IDS"' in workflow
@@ -210,10 +235,18 @@ def test_deploy_production_workflow_waits_for_main_ci_and_runs_ordered_deploy_st
     assert "Apply Postgres migrations" in workflow
     assert "MATCH_ANALYZER_MIGRATION_BASELINE_VERSION" in workflow
     assert "secrets.NEON_DATABASE_URL || secrets.DATABASE_URL" in workflow
+    assert (
+        "MATCH_ANALYZER_ARTIFACT_BASE_URL: "
+        "${{ secrets.MATCH_ANALYZER_ARTIFACT_BASE_URL || vars.MATCH_ANALYZER_ARTIFACT_BASE_URL }}"
+        in workflow
+    )
+    assert "test -n \"$MATCH_ANALYZER_ARTIFACT_BASE_URL\"" in workflow
     assert "python3 scripts/apply_postgres_migrations.py" in workflow
     assert "Smoke check Neon database" in workflow
     assert "load_settings()" not in workflow
     assert "wrangler secret put DATABASE_URL" in workflow
+    assert "wrangler secret put MATCH_ANALYZER_ARTIFACT_BASE_URL" in workflow
+    assert "if [ -n \"${MATCH_ANALYZER_ARTIFACT_BASE_URL:-}\" ]; then" not in workflow
     assert "supabase db push" not in workflow
     assert "npm run deploy:api" in workflow
     assert "wrangler pages secret put MATCH_ANALYZER_API_ORIGIN" in workflow
@@ -269,6 +302,7 @@ def test_deploy_production_workflow_documents_required_production_secrets() -> N
     assert "CLOUDFLARE_ACCOUNT_ID" in workflow
     assert "CLOUDFLARE_PAGES_PROJECT_NAME" in workflow
     assert "VITE_API_BASE_URL" in workflow
+    assert "MATCH_ANALYZER_ARTIFACT_BASE_URL" in workflow
     assert "OPERATIONAL_REPORTS_API_KEY" in workflow
     assert "SUPABASE_ACCESS_TOKEN" not in workflow
     assert "SUPABASE_PROJECT_ID" not in workflow

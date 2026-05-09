@@ -2963,7 +2963,9 @@ def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upse
     monkeypatch.setattr(
         run_predictions_job,
         "sync_daily_pick_tracking_for_prediction_dates",
-        lambda *, client, sync_dates: tracking_calls.append(sync_dates) or [
+        lambda *, client, sync_dates, force_resync_date=None: tracking_calls.append(
+            sync_dates
+        ) or [
             {"sync_date": sync_dates[0], "synced_items": 1}
         ],
     )
@@ -2973,6 +2975,58 @@ def test_run_predictions_job_refreshes_daily_pick_tracking_after_prediction_upse
 
     assert len(state["predictions"]) == 1
     assert tracking_calls == [["2026-04-19"]]
+
+
+def test_prediction_daily_pick_tracking_sync_forwards_force_resync_to_requested_date(
+    monkeypatch,
+):
+    import batch.src.jobs.run_daily_pick_tracking_job as tracking_job
+
+    calls: list[dict] = []
+
+    class FakeClient:
+        def delete_rows(self) -> None:
+            return None
+
+    def fake_run_job(*, sync_date, settle_date, client, force_resync=False):
+        calls.append(
+            {
+                "sync_date": sync_date,
+                "settle_date": settle_date,
+                "client": client,
+                "force_resync": force_resync,
+            }
+        )
+        return {"synced_items": 2}
+
+    monkeypatch.setattr(tracking_job, "run_job", fake_run_job)
+    monkeypatch.setenv("DAILY_PICK_FORCE_RESYNC", "1")
+
+    client = FakeClient()
+    result = run_predictions_job.sync_daily_pick_tracking_for_prediction_dates(
+        client=client,
+        sync_dates=["2026-05-08", "2026-05-09"],
+        force_resync_date="2026-05-09",
+    )
+
+    assert result == [
+        {"sync_date": "2026-05-08", "synced_items": 2},
+        {"sync_date": "2026-05-09", "synced_items": 2},
+    ]
+    assert calls == [
+        {
+            "sync_date": "2026-05-08",
+            "settle_date": None,
+            "client": client,
+            "force_resync": False,
+        },
+        {
+            "sync_date": "2026-05-09",
+            "settle_date": None,
+            "client": client,
+            "force_resync": True,
+        }
+    ]
 
 
 def test_run_predictions_job_persists_prediction_feature_snapshots(monkeypatch):

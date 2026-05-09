@@ -39,7 +39,7 @@ jobs:
       cancel-in-progress: false
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
-      R2_BUCKET: workflow-artifacts
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'workflow-artifacts' }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
@@ -113,7 +113,11 @@ jobs:
           IFS=',' read -ra TARGET_DATES <<< "$SYNC_DAILY_PICK_DATES"
           for TARGET_DATE in "${TARGET_DATES[@]}"; do
             DAILY_PICK_SYNC_DATE="$TARGET_DATE" python3 -m batch.src.jobs.run_daily_pick_tracking_job
-            DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_S3_ENDPOINT" ]; then
+              DAILY_PICK_ARTIFACT_DATE="$TARGET_DATE" python3 -m batch.src.jobs.export_daily_pick_artifacts_job
+            else
+              echo "::warning::Skipping daily-pick artifact export because R2 credentials are incomplete."
+            fi
           done
       - name: Skip empty daily pick refresh
         if: ${{ env.SYNC_DAILY_PICK_DATES == '' }}
