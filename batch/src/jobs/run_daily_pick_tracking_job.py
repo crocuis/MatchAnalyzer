@@ -5,6 +5,7 @@ import json
 import os
 from collections import defaultdict
 from datetime import datetime, timezone
+from decimal import Decimal
 from hashlib import sha256
 from typing import Iterable
 
@@ -1145,7 +1146,7 @@ def _moneyline_profit(item: dict, hit: bool) -> float | None:
 
 
 def _read_numeric(value: object) -> float | None:
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         if isinstance(value, bool):
             return None
         return float(value)
