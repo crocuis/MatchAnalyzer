@@ -381,8 +381,14 @@ def build_moneyline_pick_candidate(
     value_market_source = prediction.get("value_recommendation_market_source")
     value_is_betman = is_betman_market_source(value_market_source)
     value_recommended = prediction.get("value_recommendation_recommended") is True
+    validation_metadata = base.get("validation_metadata")
+    validation_metadata = (
+        validation_metadata if isinstance(validation_metadata, dict) else {}
+    )
+    betman_market_available = validation_metadata.get("betman_market_available")
     betman_market_known = (
         base.get("betman_market_available") is not None
+        or isinstance(betman_market_available, bool)
         or value_market_source is not None
     )
     selection_label = (
@@ -464,12 +470,14 @@ def build_moneyline_pick_candidate(
         selection_label=selection_label,
         confidence=confidence,
     )
-    if betman_market_known and not value_is_betman:
+    if betman_market_known and betman_market_available is False:
         candidate_base = _with_daily_pick_hold_reason(
             candidate_base,
             "betman_market_missing",
         )
-    elif betman_market_known and (not value_aligned or not value_recommended):
+    elif betman_market_known and (
+        not value_is_betman or not value_aligned or not value_recommended
+    ):
         candidate_base = _with_daily_pick_hold_reason(
             candidate_base,
             "betman_value_edge_missing",

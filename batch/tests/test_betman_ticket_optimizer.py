@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from batch.src.model.betman_ticket_optimizer import (
     build_betman_ticket_profile_backtest,
     build_betman_prediction_backed_ticket_legs,
@@ -13,7 +15,13 @@ from batch.src.jobs.report_betman_ticket_opportunities_job import (
     select_proto_victory_games,
 )
 from batch.src.jobs.report_betman_ticket_profile_backtest_job import (
+    add_value_threshold_split_validation,
+    add_value_threshold_shadow_projection,
     build_backtest_items_with_results,
+    build_betman_value_threshold_backtest,
+    build_betman_ticket_policy_report_artifact_row,
+    build_value_threshold_policy_candidates,
+    build_value_threshold_recommended_gate_candidates,
     format_backtest_lines,
     parse_args as parse_backtest_args,
 )
@@ -254,6 +262,614 @@ def test_build_betman_ticket_profile_backtest_compares_profiles_by_roi() -> None
     assert balanced["settled_ticket_count"] == 3
     assert balanced["winning_ticket_count"] == 1
     assert balanced["roi"] == 1.0833
+
+
+def test_build_betman_value_threshold_backtest_compares_threshold_ticket_roi() -> None:
+    report = build_betman_value_threshold_backtest(
+        predictions=[
+            {
+                "id": "prediction-a",
+                "match_id": "match-a",
+                "snapshot_id": "snapshot-a",
+                "created_at": "2026-05-01T08:00:00Z",
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.60, "draw": 0.25, "away": 0.15},
+                },
+            },
+            {
+                "id": "prediction-b",
+                "match_id": "match-b",
+                "snapshot_id": "snapshot-b",
+                "created_at": "2026-05-01T08:05:00Z",
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.56, "draw": 0.24, "away": 0.20},
+                },
+            },
+        ],
+        matches=[
+            {
+                "id": "match-a",
+                "kickoff_at": datetime(2026, 5, 2, 11, 30, tzinfo=timezone.utc),
+                "final_result": "HOME",
+            },
+            {
+                "id": "match-b",
+                "kickoff_at": "2026-05-02T14:00:00Z",
+                "final_result": "HOME",
+            },
+        ],
+        market_rows=[
+            {
+                "id": "market-a",
+                "snapshot_id": "snapshot-a",
+                "source_type": "bookmaker",
+                "source_name": "betman_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.28,
+                "away_prob": 0.22,
+                "home_price": 0.50,
+                "draw_price": 0.28,
+                "away_price": 0.22,
+                "observed_at": "2026-05-01T09:00:00Z",
+            },
+            {
+                "id": "market-b",
+                "snapshot_id": "snapshot-b",
+                "source_type": "bookmaker",
+                "source_name": "betman_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.28,
+                "away_prob": 0.22,
+                "home_price": 0.50,
+                "draw_price": 0.28,
+                "away_price": 0.22,
+                "observed_at": "2026-05-01T09:00:00Z",
+            },
+        ],
+        thresholds=[0.10, 0.15],
+        profiles=["balanced"],
+        limit=None,
+    )
+
+    low_threshold = report["thresholds"]["0.1"]["profiles"]["balanced"]
+    default_threshold = report["thresholds"]["0.15"]["profiles"]["balanced"]
+    low_breakdown = report["thresholds"]["0.1"]["item_breakdown"]
+    low_ticket_breakdown = report["thresholds"]["0.1"]["ticket_breakdown"]["balanced"]
+    assert report["thresholds"]["0.1"]["input"]["synthetic_item_count"] == 2
+    assert report["thresholds"]["0.15"]["input"]["synthetic_item_count"] == 1
+    assert low_breakdown["by_selection"]["HOME"]["hit_count"] == 2
+    assert low_threshold["settled_ticket_count"] == 1
+    assert low_threshold["winning_ticket_count"] == 1
+    assert low_threshold["roi"] == 3.0
+    assert low_ticket_breakdown["winning_ticket_count"] == 1
+    assert low_ticket_breakdown["losing_ticket_count"] == 0
+    assert default_threshold["ticket_count"] == 0
+
+
+def test_build_betman_value_threshold_backtest_filters_temporal_leaks_from_diagnostics() -> None:
+    report = build_betman_value_threshold_backtest(
+        predictions=[
+            {
+                "id": "prediction-a",
+                "match_id": "match-a",
+                "snapshot_id": "snapshot-a",
+                "created_at": "2026-05-03T08:00:00Z",
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.60, "draw": 0.25, "away": 0.15},
+                },
+            },
+            {
+                "id": "prediction-b",
+                "match_id": "match-b",
+                "snapshot_id": "snapshot-b",
+                "created_at": "2026-05-03T08:05:00Z",
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.56, "draw": 0.24, "away": 0.20},
+                },
+            },
+        ],
+        matches=[
+            {
+                "id": "match-a",
+                "kickoff_at": "2026-05-02T11:30:00Z",
+                "final_result": "HOME",
+            },
+            {
+                "id": "match-b",
+                "kickoff_at": "2026-05-02T14:00:00Z",
+                "final_result": "HOME",
+            },
+        ],
+        market_rows=[
+            {
+                "id": "market-a",
+                "snapshot_id": "snapshot-a",
+                "source_type": "bookmaker",
+                "source_name": "betman_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.28,
+                "away_prob": 0.22,
+                "home_price": 0.50,
+                "draw_price": 0.28,
+                "away_price": 0.22,
+                "observed_at": "2026-05-01T09:00:00Z",
+            },
+            {
+                "id": "market-b",
+                "snapshot_id": "snapshot-b",
+                "source_type": "bookmaker",
+                "source_name": "betman_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.28,
+                "away_prob": 0.22,
+                "home_price": 0.50,
+                "draw_price": 0.28,
+                "away_price": 0.22,
+                "observed_at": "2026-05-01T09:00:00Z",
+            },
+        ],
+        thresholds=[0.10],
+        profiles=["balanced"],
+        limit=None,
+        exclude_temporal_leaks=True,
+    )
+
+    threshold_report = report["thresholds"]["0.1"]
+    assert threshold_report["input"]["synthetic_item_count"] == 2
+    assert threshold_report["input"]["analysis_item_count"] == 0
+    assert threshold_report["input"]["temporal_leak_item_count"] == 2
+    assert threshold_report["profiles"]["balanced"]["ticket_count"] == 0
+    assert threshold_report["item_breakdown"]["item_count"] == 0
+    assert threshold_report["ticket_breakdown"]["balanced"]["ticket_count"] == 0
+    assert threshold_report["gate_simulations"] == []
+
+
+def test_build_betman_value_threshold_backtest_reports_losing_leg_breakdown() -> None:
+    report = build_betman_value_threshold_backtest(
+        predictions=[
+            {
+                "id": "prediction-a",
+                "match_id": "match-a",
+                "snapshot_id": "snapshot-a",
+                "created_at": "2026-05-01T08:00:00Z",
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.60, "draw": 0.25, "away": 0.15},
+                },
+            },
+            {
+                "id": "prediction-b",
+                "match_id": "match-b",
+                "snapshot_id": "snapshot-b",
+                "created_at": "2026-05-01T08:05:00Z",
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.56, "draw": 0.24, "away": 0.20},
+                },
+            },
+        ],
+        matches=[
+            {
+                "id": "match-a",
+                "kickoff_at": "2026-05-02T11:30:00Z",
+                "final_result": "HOME",
+            },
+            {
+                "id": "match-b",
+                "kickoff_at": "2026-05-02T14:00:00Z",
+                "final_result": "AWAY",
+            },
+        ],
+        market_rows=[
+            {
+                "id": "market-a",
+                "snapshot_id": "snapshot-a",
+                "source_type": "bookmaker",
+                "source_name": "betman_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.28,
+                "away_prob": 0.22,
+                "home_price": 0.50,
+                "draw_price": 0.28,
+                "away_price": 0.22,
+                "observed_at": "2026-05-01T09:00:00Z",
+            },
+            {
+                "id": "market-b",
+                "snapshot_id": "snapshot-b",
+                "source_type": "bookmaker",
+                "source_name": "betman_moneyline_3way",
+                "market_family": "moneyline_3way",
+                "home_prob": 0.50,
+                "draw_prob": 0.28,
+                "away_prob": 0.22,
+                "home_price": 0.50,
+                "draw_price": 0.28,
+                "away_price": 0.22,
+                "observed_at": "2026-05-01T09:00:00Z",
+            },
+        ],
+        thresholds=[0.10],
+        profiles=["balanced"],
+        limit=None,
+    )
+
+    threshold_report = report["thresholds"]["0.1"]
+    item_breakdown = threshold_report["item_breakdown"]
+    ticket_breakdown = threshold_report["ticket_breakdown"]["balanced"]
+    risk_flags = threshold_report["risk_flags"]
+    gate_simulations = threshold_report["gate_simulations"]
+    assert item_breakdown["by_selection"]["HOME"] == {
+        "item_count": 2,
+        "hit_count": 1,
+        "miss_count": 1,
+        "hit_rate": 0.5,
+    }
+    assert ticket_breakdown["losing_ticket_count"] == 1
+    assert ticket_breakdown["losses_by_miss_count"] == {"1": 1}
+    assert ticket_breakdown["losing_legs_by_selection"] == {"HOME": 1}
+    assert ticket_breakdown["losing_legs_by_expected_value_band"] == {"0.10-0.15": 1}
+    assert ticket_breakdown["losing_legs_by_market_price_band"] == {"0.50-0.60": 1}
+    assert {
+        "dimension": "selection",
+        "bucket": "HOME",
+        "item_count": 2,
+        "hit_count": 1,
+        "miss_count": 1,
+        "hit_rate": 0.5,
+    } in risk_flags["weak_item_buckets"]
+    assert risk_flags["losing_leg_buckets"][0] == {
+        "profile": "balanced",
+        "dimension": "expected_value_band",
+        "bucket": "0.10-0.15",
+        "miss_count": 1,
+        "losing_ticket_count": 1,
+    }
+    home_gate_simulation = next(
+        row
+        for row in gate_simulations
+        if row["gate"]["dimension"] == "selection"
+        and row["gate"]["bucket"] == "HOME"
+    )
+    assert home_gate_simulation["gate"] == {
+        "action": "exclude_bucket",
+        "dimension": "selection",
+        "bucket": "HOME",
+    }
+    assert home_gate_simulation["removed_item_count"] == 2
+    assert home_gate_simulation["profiles"]["balanced"]["ticket_count"] == 0
+
+
+def test_build_value_threshold_recommended_gate_candidates_promotes_profitable_gates() -> None:
+    candidates = build_value_threshold_recommended_gate_candidates(
+        baseline_profiles={
+            "balanced": {
+                "roi": -0.3768,
+                "settled_ticket_count": 9,
+                "winning_ticket_count": 1,
+            }
+        },
+        gate_simulations=[
+            {
+                "gate": {
+                    "action": "exclude_bucket",
+                    "dimension": "selection",
+                    "bucket": "HOME",
+                },
+                "removed_item_count": 5,
+                "profiles": {
+                    "balanced": {
+                        "roi": -0.2989,
+                        "settled_ticket_count": 7,
+                        "winning_ticket_count": 1,
+                    }
+                },
+            },
+            {
+                "gate": {
+                    "action": "exclude_bucket",
+                    "dimension": "expected_value_band",
+                    "bucket": "0.15-0.25",
+                },
+                "removed_item_count": 2,
+                "profiles": {
+                    "balanced": {
+                        "roi": 0.8696,
+                        "settled_ticket_count": 3,
+                        "winning_ticket_count": 2,
+                    }
+                },
+            },
+            {
+                "gate": {
+                    "action": "exclude_bucket",
+                    "dimension": "market_price_band",
+                    "bucket": "<0.30",
+                },
+                "removed_item_count": 9,
+                "profiles": {
+                    "balanced": {
+                        "roi": 1.25,
+                        "settled_ticket_count": 1,
+                        "winning_ticket_count": 1,
+                    }
+                },
+            },
+        ],
+        total_item_count=14,
+    )
+
+    assert candidates == [
+        {
+            "gate": {
+                "action": "exclude_bucket",
+                "dimension": "expected_value_band",
+                "bucket": "0.15-0.25",
+            },
+            "profile": "balanced",
+            "baseline_roi": -0.3768,
+            "candidate_roi": 0.8696,
+            "roi_delta": 1.2464,
+            "removed_item_count": 2,
+            "removed_item_share": 0.1429,
+            "settled_ticket_count": 3,
+            "winning_ticket_count": 2,
+            "sample_quality": "exploratory",
+            "promotion_ready": False,
+        }
+    ]
+
+
+def test_add_value_threshold_split_validation_requires_sufficient_split_sample() -> None:
+    candidates = add_value_threshold_split_validation(
+        candidates=[
+            {
+                "gate": {
+                    "action": "exclude_bucket",
+                    "dimension": "selection",
+                    "bucket": "HOME",
+                },
+                "profile": "balanced",
+                "promotion_ready": True,
+            }
+        ],
+        items=[
+            {
+                "id": "early-a",
+                "pick_date": "2026-05-01",
+                "match_id": "early-a",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "early-b",
+                "pick_date": "2026-05-01",
+                "match_id": "early-b",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "late-a",
+                "pick_date": "2026-05-02",
+                "match_id": "late-a",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "late-b",
+                "pick_date": "2026-05-02",
+                "match_id": "late-b",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "miss",
+                "reason_labels": ["betmanValue"],
+            },
+        ],
+        min_legs=2,
+        max_legs=2,
+        limit=None,
+        exclude_temporal_leaks=False,
+    )
+
+    validation = candidates[0]["split_validation"]
+    assert validation["status"] == "insufficient"
+    assert candidates[0]["promotion_ready"] is False
+    assert candidates[0]["promotion_blockers"] == ["split_validation"]
+    assert validation["settled_split_count"] == 2
+    assert validation["sufficiently_sampled_split_count"] == 0
+    assert validation["positive_roi_split_count"] == 0
+    assert [row["name"] for row in validation["splits"]] == ["early", "late"]
+
+
+def test_value_threshold_policy_candidates_include_shadow_projection() -> None:
+    candidates = add_value_threshold_shadow_projection(
+        candidates=[
+            {
+                "gate": {
+                    "action": "exclude_bucket",
+                    "dimension": "selection",
+                    "bucket": "HOME",
+                },
+                "profile": "balanced",
+            }
+        ],
+        items=[
+            {
+                "id": "leg-a",
+                "pick_date": "2026-05-02",
+                "match_id": "match-a",
+                "selection_label": "HOME",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "leg-b",
+                "pick_date": "2026-05-02",
+                "match_id": "match-b",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "older-a",
+                "pick_date": "2026-05-01",
+                "match_id": "older-a",
+                "selection_label": "HOME",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "older-b",
+                "pick_date": "2026-05-01",
+                "match_id": "older-b",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "result_status": "hit",
+                "reason_labels": ["betmanValue"],
+            },
+        ],
+        min_legs=2,
+        max_legs=2,
+        limit=None,
+    )
+
+    candidate = candidates[0]
+    assert candidate["shadow_projection"]["status"] == "report_only"
+    assert candidate["shadow_projection"]["pick_date"] == "2026-05-02"
+    assert candidate["shadow_projection"]["baseline_ticket_count"] == 1
+    assert candidate["shadow_projection"]["gated_ticket_count"] == 0
+
+
+def test_build_value_threshold_policy_candidates_ranks_gates_across_thresholds() -> None:
+    candidates = build_value_threshold_policy_candidates(
+        {
+            "0.05": {
+                "recommended_gate_candidates": [
+                    {
+                        "gate": {
+                            "action": "exclude_bucket",
+                            "dimension": "selection",
+                            "bucket": "HOME",
+                        },
+                        "profile": "aggressive",
+                        "baseline_roi": -1.0,
+                        "candidate_roi": 0.7956,
+                        "roi_delta": 1.7956,
+                        "removed_item_count": 5,
+                        "removed_item_share": 0.3571,
+                        "settled_ticket_count": 10,
+                        "winning_ticket_count": 6,
+                        "sample_quality": "stable",
+                        "promotion_ready": True,
+                    },
+                    {
+                        "gate": {
+                            "action": "exclude_bucket",
+                            "dimension": "expected_value_band",
+                            "bucket": "0.15-0.25",
+                        },
+                        "profile": "balanced",
+                        "baseline_roi": -0.3768,
+                        "candidate_roi": 0.8696,
+                        "roi_delta": 1.2464,
+                        "removed_item_count": 2,
+                        "removed_item_share": 0.1429,
+                        "settled_ticket_count": 3,
+                        "winning_ticket_count": 2,
+                        "sample_quality": "exploratory",
+                        "promotion_ready": False,
+                    },
+                ],
+            },
+            "0.1": {"recommended_gate_candidates": []},
+        }
+    )
+
+    assert candidates[0]["threshold"] == "0.05"
+    assert candidates[0]["gate"]["dimension"] == "selection"
+    assert candidates[0]["profile"] == "aggressive"
+    assert candidates[1]["gate"]["dimension"] == "expected_value_band"
+
+
+def test_build_betman_ticket_policy_report_artifact_row_summarizes_candidates() -> None:
+    class FakeR2Client:
+        bucket = "workflow-artifacts"
+        access_key_id = "key"
+        secret_access_key = "secret"
+        s3_endpoint = "https://r2.example.test"
+
+        def archive_json(self, key: str, payload: dict) -> str:
+            assert key == "reports/betman-ticket-policy/latest.json"
+            assert payload["value_threshold_backtest"]["policy_candidates"]
+            return f"r2://workflow-artifacts/{key}"
+
+    row = build_betman_ticket_policy_report_artifact_row(
+        report={
+            "value_threshold_backtest": {
+                "policy_candidates": [
+                    {"promotion_ready": True},
+                    {"promotion_ready": False},
+                ]
+            }
+        },
+        r2_client=FakeR2Client(),
+        generated_at="2026-05-09T00:00:00+00:00",
+    )
+
+    assert row["id"] == "betman_ticket_policy_report_latest"
+    assert row["artifact_kind"] == "betman_ticket_policy_report"
+    assert row["summary_payload"] == {
+        "generated_at": "2026-05-09T00:00:00+00:00",
+        "policy_candidate_count": 2,
+        "promotion_ready_count": 1,
+    }
+
+
+def test_build_betman_ticket_policy_report_artifact_row_requires_remote_r2() -> None:
+    class LocalFallbackR2Client:
+        bucket = "workflow-artifacts"
+        access_key_id = None
+        secret_access_key = None
+        s3_endpoint = None
+
+    try:
+        build_betman_ticket_policy_report_artifact_row(
+            report={},
+            r2_client=LocalFallbackR2Client(),
+            generated_at="2026-05-09T00:00:00+00:00",
+        )
+    except ValueError as exc:
+        assert "requires remote R2 credentials" in str(exc)
+    else:
+        raise AssertionError("expected missing remote R2 credentials to fail")
 
 
 def test_build_betman_ticket_profile_backtest_accepts_untagged_settled_moneyline_rows() -> None:
@@ -540,7 +1156,7 @@ def test_build_backtest_items_with_results_hydrates_market_price_from_prediction
                         }
                     }
                 },
-            }
+            },
         ],
     )
 
@@ -582,6 +1198,8 @@ def test_backtest_parse_args_accepts_profiles_and_ticket_controls() -> None:
             "3",
             "--limit",
             "5",
+            "--value-thresholds",
+            "0.10,0.15",
             "--exclude-temporal-leaks",
         ]
     )
@@ -589,6 +1207,7 @@ def test_backtest_parse_args_accepts_profiles_and_ticket_controls() -> None:
     assert args.profiles == "conservative,aggressive"
     assert args.max_legs == 3
     assert args.limit == 5
+    assert args.value_thresholds == "0.10,0.15"
     assert args.exclude_temporal_leaks is True
 
 
@@ -612,6 +1231,104 @@ def test_format_backtest_lines_prints_profile_percentages() -> None:
     assert lines == [
         "Betman ticket profile backtest: dates=3 profiles=1",
         "- balanced: tickets=10 settled=8 wins=5 hit_rate=62.50% roi=12.50%",
+    ]
+
+
+def test_format_backtest_lines_prints_value_threshold_sweep() -> None:
+    lines = format_backtest_lines(
+        {
+            "date_count": 0,
+            "profile_count": 1,
+            "profiles": {},
+            "value_threshold_backtest": {
+                "policy_candidates": [
+                    {
+                        "threshold": "0.1",
+                        "gate": {
+                            "dimension": "selection",
+                            "bucket": "HOME",
+                        },
+                        "profile": "balanced",
+                        "candidate_roi": 0.25,
+                        "roi_delta": 0.5,
+                        "settled_ticket_count": 3,
+                        "removed_item_share": 0.25,
+                        "sample_quality": "exploratory",
+                        "promotion_ready": False,
+                        "split_validation": {
+                            "status": "mixed",
+                            "method": "post_selection_diagnostic",
+                        },
+                        "shadow_projection": {
+                            "baseline_ticket_count": 1,
+                            "gated_ticket_count": 0,
+                        },
+                    }
+                ],
+                "thresholds": {
+                    "0.1": {
+                        "input": {"synthetic_item_count": 2},
+                        "profiles": {
+                            "balanced": {
+                                "ticket_count": 1,
+                                "settled_ticket_count": 1,
+                                "winning_ticket_count": 1,
+                                "roi": 3.0,
+                            }
+                        },
+                        "risk_flags": {
+                            "weak_item_buckets": [
+                                {
+                                    "dimension": "selection",
+                                    "bucket": "HOME",
+                                    "item_count": 2,
+                                    "hit_rate": 0.5,
+                                }
+                            ]
+                        },
+                        "gate_simulations": [
+                            {
+                                "gate": {
+                                    "dimension": "selection",
+                                    "bucket": "HOME",
+                                },
+                                "removed_item_count": 2,
+                                "profiles": {
+                                    "balanced": {
+                                        "roi": None,
+                                    }
+                                },
+                            }
+                        ],
+                        "recommended_gate_candidates": [
+                            {
+                                "gate": {
+                                    "dimension": "selection",
+                                    "bucket": "HOME",
+                                },
+                                "profile": "balanced",
+                                "candidate_roi": 0.25,
+                                "roi_delta": 0.5,
+                                "removed_item_share": 0.25,
+                                "sample_quality": "exploratory",
+                                "promotion_ready": False,
+                            }
+                        ],
+                    }
+                }
+            },
+        }
+    )
+
+    assert lines == [
+        "Betman ticket profile backtest: dates=0 profiles=1",
+        "Betman value threshold sweep:",
+        "Recommended Betman policies: threshold=0.1 exclude selection:HOME profile=balanced roi=25.00% delta=50.00% settled=3 removed=25.00% quality=exploratory ready=False split=mixed(post_selection_diagnostic) shadow=1->0",
+        "- threshold=0.1: synthetic_legs=2",
+        "  - balanced: tickets=1 settled=1 wins=1 losses=0 roi=300.00%",
+        "  risk_flags=selection:HOME(n=2,hit=50.00%)",
+        "  gate_simulations=exclude selection:HOME(removed=2,balanced_roi=n/a)",
+        "  recommended_gates=exclude selection:HOME(balanced_roi=25.00%,delta=50.00%,removed=25.00%,quality=exploratory)",
     ]
 
 

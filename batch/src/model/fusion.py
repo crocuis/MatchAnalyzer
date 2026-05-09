@@ -732,3 +732,78 @@ def build_value_recommendation(
         "market_price": round(market_prices[best_outcome], 4),
         "market_source": market_source,
     }
+
+
+def build_value_recommendation_diagnostics(
+    base_probs: dict,
+    market_probs: dict,
+    prediction_market_available: bool,
+    market_prices: dict | None = None,
+    market_available: bool | None = None,
+    market_source: str = "prediction_market",
+    threshold: float = VALUE_RECOMMENDATION_EV_THRESHOLD,
+    minimum_market_price: float = VALUE_RECOMMENDATION_MIN_MARKET_PRICE,
+) -> dict:
+    effective_market_available = (
+        prediction_market_available if market_available is None else market_available
+    )
+    if not effective_market_available:
+        return {
+            "market_available": False,
+            "market_source": market_source,
+            "minimum_market_price": minimum_market_price,
+            "recommended": False,
+            "skip_reason": "market_unavailable",
+            "threshold": threshold,
+            "valid_outcome_count": 0,
+        }
+
+    market_prices = market_prices or market_probs
+    valid_outcomes = [
+        outcome
+        for outcome in ("home", "draw", "away")
+        if isinstance(market_prices.get(outcome), (int, float))
+        and float(market_prices[outcome]) >= minimum_market_price
+        and isinstance(base_probs.get(outcome), (int, float))
+        and isinstance(market_probs.get(outcome), (int, float))
+    ]
+    if not valid_outcomes:
+        return {
+            "market_available": True,
+            "market_source": market_source,
+            "minimum_market_price": minimum_market_price,
+            "recommended": False,
+            "skip_reason": "no_valid_outcomes",
+            "threshold": threshold,
+            "valid_outcome_count": 0,
+        }
+
+    best_outcome = max(
+        valid_outcomes,
+        key=lambda outcome: (
+            (base_probs[outcome] / market_prices[outcome]) - 1.0
+            if market_prices[outcome] > 0
+            else float("-inf")
+        ),
+    )
+    edge = round(base_probs[best_outcome] - market_probs[best_outcome], 4)
+    expected_value = round(
+        (base_probs[best_outcome] / market_prices[best_outcome]) - 1.0,
+        4,
+    )
+    recommended = expected_value >= threshold
+    return {
+        "best_edge": edge,
+        "best_expected_value": expected_value,
+        "best_market_price": round(float(market_prices[best_outcome]), 4),
+        "best_market_probability": round(float(market_probs[best_outcome]), 4),
+        "best_model_probability": round(float(base_probs[best_outcome]), 4),
+        "best_pick": best_outcome.upper(),
+        "market_available": True,
+        "market_source": market_source,
+        "minimum_market_price": minimum_market_price,
+        "recommended": recommended,
+        "skip_reason": None if recommended else "below_expected_value_threshold",
+        "threshold": threshold,
+        "valid_outcome_count": len(valid_outcomes),
+    }

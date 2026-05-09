@@ -6,6 +6,7 @@ from batch.src.model.fusion import (
     build_fusion_policy_comparison,
     build_latest_fusion_policy,
     build_main_recommendation,
+    build_value_recommendation_diagnostics,
     choose_current_fused_probabilities,
     choose_fusion_weights,
     build_value_recommendation,
@@ -850,6 +851,33 @@ def test_build_value_recommendation_can_use_betman_as_executable_market():
     assert recommendation is not None
     assert recommendation["market_source"] == "betman_moneyline_3way"
     assert recommendation["pick"] == "AWAY"
+
+
+def test_build_value_recommendation_diagnostics_explains_below_threshold_betman_edge():
+    diagnostics = build_value_recommendation_diagnostics(
+        base_probs={"home": 0.6773, "draw": 0.2626, "away": 0.0602},
+        market_probs={"home": 0.5144, "draw": 0.2291, "away": 0.2565},
+        market_prices={"home": 0.5988, "draw": 0.2667, "away": 0.2985},
+        prediction_market_available=False,
+        market_available=True,
+        market_source="betman_moneyline_3way",
+    )
+
+    assert diagnostics == {
+        "best_edge": 0.1629,
+        "best_expected_value": 0.1311,
+        "best_market_price": 0.5988,
+        "best_market_probability": 0.5144,
+        "best_model_probability": 0.6773,
+        "best_pick": "HOME",
+        "market_available": True,
+        "market_source": "betman_moneyline_3way",
+        "minimum_market_price": 0.05,
+        "recommended": False,
+        "skip_reason": "below_expected_value_threshold",
+        "threshold": 0.15,
+        "valid_outcome_count": 3,
+    }
 
 
 def test_build_value_recommendation_allows_low_probability_pick_with_strong_ev():
