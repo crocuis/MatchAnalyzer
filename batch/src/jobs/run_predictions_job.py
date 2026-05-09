@@ -232,6 +232,7 @@ def sync_daily_pick_tracking_for_prediction_dates(
     *,
     client: DbClient,
     sync_dates: list[str],
+    force_resync_date: str | None = None,
 ) -> list[dict]:
     if not sync_dates:
         return []
@@ -248,9 +249,15 @@ def sync_daily_pick_tracking_for_prediction_dates(
     from batch.src.jobs.run_daily_pick_tracking_job import run_job
 
     results: list[dict] = []
+    force_resync_enabled = read_env_flag("DAILY_PICK_FORCE_RESYNC")
     for sync_date in sync_dates:
         try:
-            result = run_job(sync_date=sync_date, settle_date=None, client=client)
+            result = run_job(
+                sync_date=sync_date,
+                settle_date=None,
+                client=client,
+                force_resync=force_resync_enabled and sync_date == force_resync_date,
+            )
         except KeyError as exc:
             results.append({
                 "sync_date": sync_date,
@@ -3471,6 +3478,7 @@ def main() -> None:
         daily_pick_tracking_results = sync_daily_pick_tracking_for_prediction_dates(
             client=client,
             sync_dates=daily_pick_sync_dates,
+            force_resync_date=use_real_predictions,
         )
     result_payload = {
         "snapshot_rows": len(snapshot_rows),

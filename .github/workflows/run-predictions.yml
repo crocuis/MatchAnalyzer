@@ -31,6 +31,11 @@ on:
         description: "Optional provider model override. Leave blank to use the code default."
         required: false
         type: string
+      force_daily_pick_resync:
+        description: "Rewrite daily-pick tracking rows for target_date after predictions finish."
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   predict:
@@ -39,7 +44,7 @@ jobs:
       cancel-in-progress: true
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
-      R2_BUCKET: workflow-artifacts
+      R2_BUCKET: ${{ secrets.R2_BUCKET || vars.R2_BUCKET || 'workflow-artifacts' }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
@@ -74,7 +79,15 @@ jobs:
             TARGET_DATE="$(date -u +%F)"
           fi
           echo "REAL_PREDICTION_DATE=$TARGET_DATE" >> "$GITHUB_ENV"
-          echo "DAILY_PICK_ARTIFACT_ENABLED=1" >> "$GITHUB_ENV"
+          if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_S3_ENDPOINT" ]; then
+            echo "DAILY_PICK_ARTIFACT_ENABLED=1" >> "$GITHUB_ENV"
+          else
+            echo "DAILY_PICK_ARTIFACT_ENABLED=0" >> "$GITHUB_ENV"
+            echo "::warning::Skipping daily-pick artifact export because R2 credentials are incomplete."
+          fi
+          if [ "${{ github.event.inputs.force_daily_pick_resync }}" = "true" ]; then
+            echo "DAILY_PICK_FORCE_RESYNC=1" >> "$GITHUB_ENV"
+          fi
       - name: Resolve LLM advisory settings
         shell: bash
         run: |
@@ -104,6 +117,12 @@ jobs:
           fi
           python3 -m batch.src.jobs.backfill_external_prediction_signals_job "${BACKFILL_ARGS[@]}"
       - run: python3 -m batch.src.jobs.run_predictions_job
+      - name: Force refresh daily pick tracking
+        if: ${{ env.DAILY_PICK_FORCE_RESYNC == '1' && env.REAL_PREDICTION_DATE != '' }}
+        run: |
+          DAILY_PICK_SYNC_DATE="$REAL_PREDICTION_DATE" \
+          DAILY_PICK_FORCE_RESYNC=1 \
+            python3 -m batch.src.jobs.run_daily_pick_tracking_job
       - name: Export daily pick API artifact
         if: ${{ env.DAILY_PICK_ARTIFACT_ENABLED == '1' }}
         run: |

@@ -36,7 +36,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_PAGES_PROJECT_NAME: ${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
       VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-      MATCH_ANALYZER_ARTIFACT_BASE_URL: ${{ vars.MATCH_ANALYZER_ARTIFACT_BASE_URL }}
+      MATCH_ANALYZER_ARTIFACT_BASE_URL: ${{ secrets.MATCH_ANALYZER_ARTIFACT_BASE_URL || vars.MATCH_ANALYZER_ARTIFACT_BASE_URL }}
       OPERATIONAL_REPORTS_API_KEY: ${{ secrets.OPERATIONAL_REPORTS_API_KEY }}
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +60,7 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$CLOUDFLARE_PAGES_PROJECT_NAME"
           test -n "$VITE_API_BASE_URL"
+          test -n "$MATCH_ANALYZER_ARTIFACT_BASE_URL"
 
       - run: npm install --no-audit --no-fund
 
@@ -86,9 +87,7 @@ jobs:
       - name: Configure Cloudflare Worker secrets
         run: |
           printf '%s' "$DATABASE_URL" | npm --workspace apps/api exec -- wrangler secret put DATABASE_URL
-          if [ -n "${MATCH_ANALYZER_ARTIFACT_BASE_URL:-}" ]; then
-            printf '%s' "$MATCH_ANALYZER_ARTIFACT_BASE_URL" | npm --workspace apps/api exec -- wrangler secret put MATCH_ANALYZER_ARTIFACT_BASE_URL
-          fi
+          printf '%s' "$MATCH_ANALYZER_ARTIFACT_BASE_URL" | npm --workspace apps/api exec -- wrangler secret put MATCH_ANALYZER_ARTIFACT_BASE_URL
           if [ -n "${OPERATIONAL_REPORTS_API_KEY:-}" ]; then
             printf '%s' "$OPERATIONAL_REPORTS_API_KEY" | npm --workspace apps/api exec -- wrangler secret put OPERATIONAL_REPORTS_API_KEY
           fi

@@ -8,10 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from batch.src.settings import load_settings, settings_db_key, settings_db_url
-from batch.src.storage.artifact_store import (
-    archive_json_artifact,
-    build_supabase_storage_artifact_client,
-)
+from batch.src.storage.artifact_store import archive_json_artifact
 from batch.src.storage.r2_client import R2Client
 from batch.src.storage.rollout_state import read_optional_rows
 from batch.src.storage.db_client import DbClient
@@ -30,6 +27,22 @@ def read_date_filter(raw_dates: str | None) -> set[str]:
         for value in raw_dates.split(",")
         if value.strip()
     }
+
+
+def has_remote_r2_artifact_storage(settings: Any) -> bool:
+    return bool(
+        getattr(settings, "r2_access_key_id", None)
+        and getattr(settings, "r2_secret_access_key", None)
+        and getattr(settings, "r2_s3_endpoint", None)
+    )
+
+
+def require_remote_r2_artifact_storage(settings: Any) -> None:
+    if not has_remote_r2_artifact_storage(settings):
+        raise RuntimeError(
+            "daily pick artifact export is R2-only for the Neon-backed API artifact path; "
+            "set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_S3_ENDPOINT"
+        )
 
 
 def read_text(value: Any) -> str | None:
@@ -289,7 +302,6 @@ def build_daily_pick_artifact_rows(
     competitions: list[dict[str, Any]],
     results: list[dict[str, Any]],
     r2_client: R2Client,
-    supabase_storage_client: Any,
     generated_at: str,
     max_workers: int = DAILY_PICK_ARTIFACT_EXPORT_WORKERS,
 ) -> list[dict[str, Any]]:
@@ -331,7 +343,6 @@ def build_daily_pick_artifact_rows(
     def archive_task(pick_date: str, view: dict[str, Any]) -> dict[str, Any]:
         return archive_json_artifact(
             r2_client=r2_client,
-            supabase_storage_client=supabase_storage_client,
             artifact_id=f"daily_picks_view_{pick_date}",
             owner_type="daily_picks",
             owner_id=pick_date,
@@ -369,6 +380,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
+    require_remote_r2_artifact_storage(settings)
     client = DbClient(settings_db_url(settings), settings_db_key(settings))
     r2_client = R2Client(
         getattr(settings, "r2_bucket", "workflow-artifacts"),
@@ -376,7 +388,6 @@ def main(argv: Iterable[str] | None = None) -> None:
         secret_access_key=getattr(settings, "r2_secret_access_key", None),
         s3_endpoint=getattr(settings, "r2_s3_endpoint", None),
     )
-    supabase_storage_client = build_supabase_storage_artifact_client(settings)
     generated_at = datetime.now(timezone.utc).isoformat()
     artifact_rows = build_daily_pick_artifact_rows(
         pick_dates=read_date_filter(args.date),
@@ -387,7 +398,6 @@ def main(argv: Iterable[str] | None = None) -> None:
         competitions=read_optional_rows(client, "competitions"),
         results=read_optional_rows(client, "daily_pick_results"),
         r2_client=r2_client,
-        supabase_storage_client=supabase_storage_client,
         generated_at=generated_at,
     )
     persisted = (

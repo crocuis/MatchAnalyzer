@@ -3,7 +3,11 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import batch.src.jobs.backfill_artifact_pointers_job as artifact_backfill_job
-from batch.src.jobs.export_daily_pick_artifacts_job import build_daily_picks_view
+from batch.src.jobs.export_daily_pick_artifacts_job import (
+    build_daily_picks_view,
+    has_remote_r2_artifact_storage,
+    require_remote_r2_artifact_storage,
+)
 from batch.src.jobs.export_match_artifacts_job import (
     build_prediction_view,
     build_review_view,
@@ -68,6 +72,38 @@ def test_archive_json_artifact_normalizes_decimal_payloads():
     )
 
     assert row["size_bytes"] > 0
+
+
+def test_daily_pick_artifact_export_requires_remote_r2_storage():
+    local_only_settings = SimpleNamespace(
+        r2_access_key_id=None,
+        r2_secret_access_key=None,
+        r2_s3_endpoint=None,
+        supabase_artifact_bucket=None,
+    )
+
+    try:
+        require_remote_r2_artifact_storage(local_only_settings)
+    except RuntimeError as exc:
+        assert "R2-only for the Neon-backed API artifact path" in str(exc)
+    else:
+        raise AssertionError("expected remote R2 artifact storage validation to fail")
+
+    remote_r2_settings = SimpleNamespace(
+        r2_access_key_id="access",
+        r2_secret_access_key="secret",
+        r2_s3_endpoint="https://r2.example.test",
+        supabase_artifact_bucket=None,
+    )
+    assert has_remote_r2_artifact_storage(remote_r2_settings)
+
+    supabase_settings = SimpleNamespace(
+        r2_access_key_id=None,
+        r2_secret_access_key=None,
+        r2_s3_endpoint=None,
+        supabase_artifact_bucket="public-artifacts",
+    )
+    assert not has_remote_r2_artifact_storage(supabase_settings)
 
 
 def test_backfill_artifact_pointers_job_archives_existing_rows(monkeypatch, tmp_path, capsys):
