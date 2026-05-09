@@ -88,7 +88,7 @@ export default function DailyPicksModal({
       date: dailyPicksDate,
       leagueId,
       marketFamily,
-      includeHeld,
+      includeHeld: true,
       locale: i18n.language,
     })
       .then((response) => {
@@ -104,7 +104,7 @@ export default function DailyPicksModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, dailyPicksDate, i18n.language, includeHeld, leagueId, marketFamily]);
+  }, [isOpen, dailyPicksDate, i18n.language, leagueId, marketFamily]);
 
   useEffect(() => {
     if (!isOpen || !isActive) return;
