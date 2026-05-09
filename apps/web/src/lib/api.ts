@@ -448,6 +448,35 @@ export interface DailyPicksResponse {
   heldItems: DailyPickItem[];
 }
 
+export interface BetmanPolicyCandidateSummary {
+  threshold: string | null;
+  gate: {
+    dimension: string | null;
+    bucket: string | null;
+  };
+  profile: string | null;
+  roi: number | null;
+  roiDelta: number | null;
+  sampleQuality: string | null;
+  promotionReady: boolean;
+  splitStatus: string | null;
+  shadow: {
+    baselineTicketCount: number | null;
+    gatedTicketCount: number | null;
+  };
+}
+
+export interface BetmanPolicySummary {
+  generatedAt: string | null;
+  policyCandidateCount: number;
+  promotionReadyCount: number;
+  topCandidates: BetmanPolicyCandidateSummary[];
+}
+
+export interface BetmanPolicyResponse {
+  policy: BetmanPolicySummary | null;
+}
+
 export interface PredictionResponse {
   matchId: string;
   prediction: PredictionSummary | null;
@@ -607,6 +636,11 @@ export function fetchDailyPicks(params?: {
   }
   const query = search.toString();
   return fetchJson<DailyPicksResponse>(query ? `/daily-picks?${query}` : "/daily-picks");
+}
+
+export async function fetchBetmanPolicySummary(): Promise<BetmanPolicySummary | null> {
+  const response = await fetchJson<BetmanPolicyResponse>("/betman-ticket-policy/latest");
+  return response.policy ?? null;
 }
 
 export function fetchPrediction(matchId: string): Promise<PredictionResponse> {

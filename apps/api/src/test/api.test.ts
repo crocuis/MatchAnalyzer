@@ -906,6 +906,117 @@ describe("prediction API", () => {
     vi.useRealTimers();
   });
 
+  it("serves the latest Betman ticket policy summary from the archived report", async () => {
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "betman_ticket_policy_report_latest",
+          owner_type: "betman_ticket_policy_report",
+          owner_id: "latest",
+          artifact_kind: "betman_ticket_policy_report",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "reports/betman-ticket-policy/latest.json",
+          storage_uri: "https://artifacts.example/reports/betman-ticket-policy/latest.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-05-10T01:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn().mockReturnValue(artifactQuery),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        value_threshold_backtest: {
+          policy_candidates: [
+            {
+              threshold: "0.05",
+              gate: { dimension: "selection", bucket: "HOME" },
+              profile: "balanced",
+              candidate_roi: 0.12,
+              roi_delta: 0.22,
+              sample_quality: "stable",
+              promotion_ready: true,
+              split_validation: { status: "passed" },
+              shadow_projection: {
+                baseline_ticket_count: 10,
+                gated_ticket_count: 8,
+              },
+            },
+            {
+              threshold: "0.10",
+              gate: { dimension: "expected_value_band", bucket: "0.15-0.25" },
+              profile: "aggressive",
+              candidate_roi: -0.05,
+              roi_delta: 0.03,
+              sample_quality: "exploratory",
+              promotion_ready: false,
+              split_validation: { status: "insufficient" },
+              shadow_projection: {
+                baseline_ticket_count: 10,
+                gated_ticket_count: 2,
+              },
+            },
+          ],
+        },
+      })),
+    );
+
+    const response = await app.request("/betman-ticket-policy/latest");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+    );
+    await expect(response.json()).resolves.toEqual({
+      policy: {
+        generatedAt: "2026-05-10T01:00:00Z",
+        policyCandidateCount: 2,
+        promotionReadyCount: 1,
+        topCandidates: [
+          {
+            threshold: "0.05",
+            gate: { dimension: "selection", bucket: "HOME" },
+            profile: "balanced",
+            roi: 0.12,
+            roiDelta: 0.22,
+            sampleQuality: "stable",
+            promotionReady: true,
+            splitStatus: "passed",
+            shadow: {
+              baselineTicketCount: 10,
+              gatedTicketCount: 8,
+            },
+          },
+          {
+            threshold: "0.10",
+            gate: { dimension: "expected_value_band", bucket: "0.15-0.25" },
+            profile: "aggressive",
+            roi: -0.05,
+            roiDelta: 0.03,
+            sampleQuality: "exploratory",
+            promotionReady: false,
+            splitStatus: "insufficient",
+            shadow: {
+              baselineTicketCount: 10,
+              gatedTicketCount: 2,
+            },
+          },
+        ],
+      },
+    });
+  });
+
   it("derives daily pick validation from settled results before stale summary rows", async () => {
     const dbClient = buildTableDbClient({
       matches: [],

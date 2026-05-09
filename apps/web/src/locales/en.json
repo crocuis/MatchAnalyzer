@@ -56,6 +56,12 @@
       "sampleCount": "Validation sample",
       "sampleValue": "{{count}} picks"
     },
+    "betmanPolicy": {
+      "candidates": "Betman policies",
+      "candidateValue": "{{count}} policies",
+      "ready": "Ready policies",
+      "readyValue": "{{count}} ready"
+    },
     "metrics": {
       "confidence": "Confidence",
       "expectedValue": "Expected value",

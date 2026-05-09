@@ -56,6 +56,12 @@
       "sampleCount": "검증 표본",
       "sampleValue": "{{count}}건"
     },
+    "betmanPolicy": {
+      "candidates": "Betman 정책 후보",
+      "candidateValue": "{{count}}건",
+      "ready": "준비된 정책",
+      "readyValue": "{{count}}건"
+    },
     "metrics": {
       "confidence": "신뢰도",
       "expectedValue": "기대값",

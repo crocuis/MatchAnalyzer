@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  fetchBetmanPolicySummary,
   fetchDailyPicks,
   resolveDailyPicksDate,
+  type BetmanPolicySummary,
   type DailyPickMarketFamily,
   type DailyPickItem,
   type DailyPicksResponse,
@@ -63,6 +65,7 @@ export default function DailyPicksModal({
   const [includeHeld, setIncludeHeld] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [payload, setPayload] = useState<DailyPicksResponse | null>(null);
+  const [betmanPolicy, setBetmanPolicy] = useState<BetmanPolicySummary | null>(null);
 
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -75,6 +78,7 @@ export default function DailyPicksModal({
     setIncludeHeld(false);
     if (!isOpen) {
       setPayload(null);
+      setBetmanPolicy(null);
       setStatus("loading");
     }
   }, [initialLeagueId, isOpen]);
@@ -105,6 +109,27 @@ export default function DailyPicksModal({
       isMounted = false;
     };
   }, [isOpen, dailyPicksDate, i18n.language, leagueId, marketFamily]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    void fetchBetmanPolicySummary()
+      .then((policy) => {
+        if (isMounted) {
+          setBetmanPolicy(policy);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setBetmanPolicy(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !isActive) return;
@@ -226,6 +251,24 @@ export default function DailyPicksModal({
                       defaultValue: `${payload.validation?.sampleCount ?? 0}`,
                     })}</strong>
                   </div>
+                  {betmanPolicy ? (
+                    <>
+                      <div className="dailyPicksTargetStat">
+                        <small>{t("dailyPicks.betmanPolicy.candidates")}</small>
+                        <strong>{t("dailyPicks.betmanPolicy.candidateValue", {
+                          count: betmanPolicy.policyCandidateCount,
+                          defaultValue: `${betmanPolicy.policyCandidateCount}`,
+                        })}</strong>
+                      </div>
+                      <div className="dailyPicksTargetStat">
+                        <small>{t("dailyPicks.betmanPolicy.ready")}</small>
+                        <strong>{t("dailyPicks.betmanPolicy.readyValue", {
+                          count: betmanPolicy.promotionReadyCount,
+                          defaultValue: `${betmanPolicy.promotionReadyCount}`,
+                        })}</strong>
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               </div>
             ) : null}

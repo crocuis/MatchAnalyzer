@@ -915,6 +915,20 @@ beforeEach(async () => {
         };
       }
 
+      if (url.endsWith("/api/betman-ticket-policy/latest")) {
+        return {
+          ok: true,
+          json: async () => ({
+            policy: {
+              generatedAt: "2026-05-10T01:00:00Z",
+              policyCandidateCount: 2,
+              promotionReadyCount: 1,
+              topCandidates: [],
+            },
+          }),
+        };
+      }
+
       if (url.endsWith("/api/reviews/aggregation/history")) {
         return {
           ok: true,
@@ -1276,6 +1290,9 @@ describe("dashboard redesign", () => {
     expect(screen.getByText("DRAW")).toBeInTheDocument();
     expect(screen.queryByText("Home -0.5")).not.toBeInTheDocument();
     expect(screen.queryByText("Under 2.5")).not.toBeInTheDocument();
+    expect(await within(dialog).findByText("Betman policies")).toBeInTheDocument();
+    expect(within(dialog).getByText("2 policies")).toBeInTheDocument();
+    expect(within(dialog).getByText("1 ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /handicap/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /over\/under/i })).toBeInTheDocument();
   });
