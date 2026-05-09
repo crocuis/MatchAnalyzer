@@ -61,7 +61,7 @@ def build_betman_ticket_opportunity_report(
         current_market_rows or [],
         snapshots=snapshots or [],
     )
-    current_market_filter_enabled = current_market_rows is not None
+    current_market_filter_enabled = bool(current_market_rows)
     candidate_items = [
         row
         for row in items

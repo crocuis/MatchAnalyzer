@@ -736,6 +736,47 @@ def test_build_betman_ticket_opportunity_report_requires_current_betman_market_w
     assert report["tickets"][0]["decimal_odds"] == 5.0
 
 
+def test_build_betman_ticket_opportunity_report_does_not_require_market_when_empty_rows_load() -> None:
+    report = build_betman_ticket_opportunity_report(
+        items=[
+            {
+                "id": "leg-a",
+                "pick_date": "2026-05-10",
+                "match_id": "match-a",
+                "market_family": "moneyline",
+                "selection_label": "HOME",
+                "model_probability": 0.65,
+                "market_price": 0.50,
+                "status": "recommended",
+                "reason_labels": ["betmanValue"],
+            },
+            {
+                "id": "leg-b",
+                "pick_date": "2026-05-10",
+                "match_id": "match-b",
+                "market_family": "moneyline",
+                "selection_label": "AWAY",
+                "model_probability": 0.60,
+                "market_price": 0.50,
+                "status": "recommended",
+                "reason_labels": ["betmanValue"],
+            },
+        ],
+        pick_date="2026-05-10",
+        min_legs=2,
+        max_legs=2,
+        current_market_rows=[],
+    )
+
+    assert report["current_betman"] == {
+        "enabled": False,
+        "matched_match_count": 0,
+        "excluded_unavailable_item_count": 0,
+    }
+    assert report["eligible_leg_count"] == 2
+    assert report["ticket_count"] == 1
+
+
 def test_build_betman_prediction_backed_ticket_legs_uses_best_current_market_value() -> None:
     legs = build_betman_prediction_backed_ticket_legs(
         predictions=[

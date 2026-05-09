@@ -405,6 +405,7 @@ def build_recent_recommended_segments(
         "segments": sort_recent_segments(segments),
         "underperforming_segments": build_underperforming_recent_segments(
             segments,
+            min_sample_count=min_sample_count,
             target_hit_rate=target_hit_rate,
             min_wilson_lower_bound=min_wilson_lower_bound,
         ),
@@ -425,12 +426,13 @@ def sort_recent_segments(rows: Iterable[dict]) -> list[dict]:
 def build_underperforming_recent_segments(
     rows: Iterable[dict],
     *,
+    min_sample_count: int,
     target_hit_rate: float,
     min_wilson_lower_bound: float,
 ) -> list[dict]:
     underperforming = []
     for row in rows:
-        if row["sample_count"] <= 0:
+        if row["sample_count"] < min_sample_count:
             continue
         hit_rate_gap = round(max(0.0, target_hit_rate - row["hit_rate"]), 4)
         wilson_gap = round(

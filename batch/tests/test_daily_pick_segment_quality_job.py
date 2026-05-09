@@ -298,6 +298,52 @@ def test_daily_pick_segment_quality_reports_recent_recommended_segments() -> Non
     ]
 
 
+def test_daily_pick_segment_quality_underperforming_segments_respect_min_sample_count() -> None:
+    items = [
+        {
+            "id": "recent-hit",
+            "pick_date": "2026-05-09",
+            "match_id": "hit-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "confidence": 0.72,
+            "validation_metadata": {
+                "league_or_sport": "premier-league",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+        {
+            "id": "recent-miss",
+            "pick_date": "2026-05-09",
+            "match_id": "miss-match",
+            "status": "recommended",
+            "market_family": "moneyline",
+            "selection_label": "AWAY",
+            "confidence": 0.72,
+            "validation_metadata": {
+                "league_or_sport": "la-liga",
+                "confidence_bucket": "0.7-0.8",
+            },
+        },
+    ]
+    results = [
+        {"pick_item_id": "recent-hit", "result_status": "hit"},
+        {"pick_item_id": "recent-miss", "result_status": "miss"},
+    ]
+
+    report = build_daily_pick_segment_quality_report(
+        items=items,
+        results=results,
+        min_sample_count=2,
+        target_hit_rate=0.7,
+        min_wilson_lower_bound=0.0,
+        recent_days=3,
+    )
+
+    assert report["recent_recommended_segments"]["underperforming_segments"] == []
+
+
 def test_daily_pick_segment_quality_prints_underperforming_segments_only(
     monkeypatch,
     capsys,

@@ -1727,6 +1727,75 @@ describe("prediction API", () => {
     ]);
   });
 
+  it("keeps computed precision moneyline picks held for segment-held leagues", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "serie-a",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "inter",
+          away_team_id: "milan",
+        },
+      ],
+      teams: [
+        { id: "inter", name: "Inter" },
+        { id: "milan", name: "Milan" },
+      ],
+      competitions: [
+        { id: "serie-a", name: "Serie A" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.81,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.81,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          summary_payload: {
+            source_agreement_ratio: 0.8,
+            max_abs_divergence: 0.01,
+            moneyline_signal_score: 4.0,
+            base_model_source: "trained_baseline",
+            high_confidence_eligible: true,
+            feature_context: {
+              external_rating_available: 1,
+            },
+            validation_metadata: {
+              model_scope: "daily_pick_prequential",
+              sample_count: 250,
+              hit_rate: 0.8,
+              wilson_lower_bound: 0.75,
+            },
+          },
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems).toEqual([
+      expect.objectContaining({
+        marketFamily: "moneyline",
+        leagueId: "serie-a",
+        status: "held",
+      }),
+    ]);
+  });
+
   it("hydrates computed daily picks from prediction explanation artifacts", async () => {
     setDailyPicksClock();
     const baseDbClient = buildTableDbClient({

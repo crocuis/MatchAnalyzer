@@ -44,6 +44,9 @@ const DAILY_PICK_PRECISION_LEAGUES = new Set([
   "premier-league",
   "serie-a",
 ]);
+const DAILY_PICK_SEGMENT_HOLD_COMPETITIONS = new Set([
+  "serie-a",
+]);
 const DAILY_PICK_PRECISION_BASE_MODEL_SOURCES = new Set([
   "trained_baseline",
   "trained_baseline_poisson_blend",
@@ -1105,6 +1108,7 @@ function isPrecisionMoneylineSupported(
 
   return Boolean(
     DAILY_PICK_PRECISION_LEAGUES.has(base.leagueId)
+    && !DAILY_PICK_SEGMENT_HOLD_COMPETITIONS.has(base.leagueId)
     && confidence !== null
     && confidence >= DAILY_PICK_PRECISION_CONFIDENCE_MINIMUM
     && maxAbsDivergence !== null
