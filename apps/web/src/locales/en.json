@@ -56,6 +56,35 @@
       "sampleCount": "Validation sample",
       "sampleValue": "{{count}} picks"
     },
+    "betmanPolicy": {
+      "candidates": "Betman policies",
+      "candidateValue": "{{count}} policies",
+      "ready": "Ready policies",
+      "readyValue": "{{count}} ready",
+      "topCandidate": "Top policy",
+      "reportStatus": "Policy report",
+      "topCandidateValue": "Exclude {{gate}} at EV {{threshold}}",
+      "topCandidateMeta": "ROI {{roi}} / {{quality}} / split {{split}}",
+      "updated": "Updated {{generatedAt}}",
+      "stale": "Stale report · updated {{generatedAt}}",
+      "ageUnknown": "Report age unknown",
+      "unavailable": "Policy report unavailable",
+      "unavailableHint": "Check the Betman policy report artifact and API availability.",
+      "unknown": "Unknown",
+      "quality": {
+        "stable": "stable",
+        "limited": "limited",
+        "exploratory": "exploratory",
+        "unknown": "unknown"
+      },
+      "split": {
+        "passed": "passed",
+        "mixed": "mixed",
+        "insufficient": "insufficient",
+        "invalid_gate": "invalid gate",
+        "unknown": "unknown"
+      }
+    },
     "metrics": {
       "confidence": "Confidence",
       "expectedValue": "Expected value",

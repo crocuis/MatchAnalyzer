@@ -906,6 +906,117 @@ describe("prediction API", () => {
     vi.useRealTimers();
   });
 
+  it("serves the latest Betman ticket policy summary from the archived report", async () => {
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "betman_ticket_policy_report_latest",
+          owner_type: "betman_ticket_policy_report",
+          owner_id: "latest",
+          artifact_kind: "betman_ticket_policy_report",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "reports/betman-ticket-policy/latest.json",
+          storage_uri: "https://artifacts.example/reports/betman-ticket-policy/latest.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-05-10T01:00:00Z",
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn().mockReturnValue(artifactQuery),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({
+        value_threshold_backtest: {
+          policy_candidates: [
+            {
+              threshold: "0.05",
+              gate: { dimension: "selection", bucket: "HOME" },
+              profile: "balanced",
+              candidate_roi: 0.12,
+              roi_delta: 0.22,
+              sample_quality: "stable",
+              promotion_ready: true,
+              split_validation: { status: "passed" },
+              shadow_projection: {
+                baseline_ticket_count: 10,
+                gated_ticket_count: 8,
+              },
+            },
+            {
+              threshold: "0.10",
+              gate: { dimension: "expected_value_band", bucket: "0.15-0.25" },
+              profile: "aggressive",
+              candidate_roi: -0.05,
+              roi_delta: 0.03,
+              sample_quality: "exploratory",
+              promotion_ready: false,
+              split_validation: { status: "insufficient" },
+              shadow_projection: {
+                baseline_ticket_count: 10,
+                gated_ticket_count: 2,
+              },
+            },
+          ],
+        },
+      })),
+    );
+
+    const response = await app.request("/betman-ticket-policy/latest");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=30, s-maxage=30, stale-while-revalidate=120",
+    );
+    await expect(response.json()).resolves.toEqual({
+      policy: {
+        generatedAt: "2026-05-10T01:00:00Z",
+        policyCandidateCount: 2,
+        promotionReadyCount: 1,
+        topCandidates: [
+          {
+            threshold: "0.05",
+            gate: { dimension: "selection", bucket: "HOME" },
+            profile: "balanced",
+            roi: 0.12,
+            roiDelta: 0.22,
+            sampleQuality: "stable",
+            promotionReady: true,
+            splitStatus: "passed",
+            shadow: {
+              baselineTicketCount: 10,
+              gatedTicketCount: 8,
+            },
+          },
+          {
+            threshold: "0.10",
+            gate: { dimension: "expected_value_band", bucket: "0.15-0.25" },
+            profile: "aggressive",
+            roi: -0.05,
+            roiDelta: 0.03,
+            sampleQuality: "exploratory",
+            promotionReady: false,
+            splitStatus: "insufficient",
+            shadow: {
+              baselineTicketCount: 10,
+              gatedTicketCount: 2,
+            },
+          },
+        ],
+      },
+    });
+  });
+
   it("derives daily pick validation from settled results before stale summary rows", async () => {
     const dbClient = buildTableDbClient({
       matches: [],
@@ -4594,6 +4705,9 @@ describe("prediction API", () => {
   });
 
   it("filters match card projections by requested match view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
+
     const leagueSummaries = {
       select: vi.fn().mockReturnThis(),
       order: vi.fn().mockResolvedValue({
@@ -4617,6 +4731,7 @@ describe("prediction API", () => {
     const cardsQuery = {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      lt: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       range: vi.fn().mockResolvedValue({ data: [], error: null }),
     };
@@ -4641,7 +4756,62 @@ describe("prediction API", () => {
     expect(from).toHaveBeenCalledWith("league_prediction_summaries");
     expect(from).toHaveBeenCalledWith("match_cards");
     expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
-    expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 1);
+    expect(cardsQuery.lt).toHaveBeenCalledWith("kickoff_at", "2026-05-10T00:00:00.000Z");
+    expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
+  });
+
+  it("excludes stale pending match cards from the upcoming view", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
+
+    const leagueSummaries = {
+      select: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            league_id: "premier-league",
+            league_label: "Premier League",
+            league_emblem_url: null,
+            match_count: 12,
+            review_count: 3,
+            predicted_count: 9,
+            evaluated_count: 6,
+            correct_count: 4,
+            incorrect_count: 2,
+            success_rate: 4 / 6,
+          },
+        ],
+        error: null,
+      }),
+    };
+    const cardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const summaryCardsQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(leagueSummaries)
+      .mockReturnValueOnce(cardsQuery)
+      .mockReturnValueOnce(summaryCardsQuery);
+
+    await loadDashboardMatchCardsPageView({ from } as never, {
+      leagueId: "premier-league",
+      view: "upcoming",
+      limit: "6",
+      cursor: "0",
+    });
+
+    expect(cardsQuery.eq).toHaveBeenCalledWith("league_id", "premier-league");
+    expect(cardsQuery.eq).toHaveBeenCalledWith("sort_bucket", 0);
+    expect(cardsQuery.gte).toHaveBeenCalledWith("kickoff_at", "2026-05-10T00:00:00.000Z");
     expect(cardsQuery.range).toHaveBeenCalledWith(0, 6);
   });
 

@@ -531,6 +531,19 @@ def test_match_card_projection_cache_statement_refresh_migration_batches_trigger
     assert "create trigger refresh_match_card_projection_cache_reviews_delete after delete on public.post_match_reviews referencing old table as old_rows for each statement" in migration
 
 
+def test_match_card_projection_cache_classifies_past_pending_as_recent():
+    migration = normalize_sql(
+        Path(
+            "supabase/migrations/20260510090000_classify_past_pending_match_cards.sql"
+        ).read_text()
+    )
+
+    assert "when matches.final_result is null and matches.kickoff_at > now() then 0" in migration
+    assert "else 1 end as sort_bucket" in migration
+    assert "else -extract(epoch from matches.kickoff_at) end as sort_epoch" in migration
+    assert "select public.refresh_match_card_projection_cache()" in migration
+
+
 def test_dashboard_league_summary_view_migration_creates_security_invoker_view():
     migration = normalize_sql(
         Path(

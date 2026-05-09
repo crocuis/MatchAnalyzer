@@ -17,7 +17,7 @@ on:
       lookback_hours:
         description: "How far back to search unsettled matches."
         required: false
-        default: "48"
+        default: "336"
         type: string
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
       RESULT_SYNC_DELAY_HOURS: ${{ github.event.inputs.delay_hours || '2' }}
-      RESULT_SYNC_LOOKBACK_HOURS: ${{ github.event.inputs.lookback_hours || '48' }}
+      RESULT_SYNC_LOOKBACK_HOURS: ${{ github.event.inputs.lookback_hours || '336' }}
       LLM_REVIEW_ADVISORY_ENABLED: "0"
     runs-on: ubuntu-latest
     timeout-minutes: 8

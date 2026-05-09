@@ -335,6 +335,53 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
   color: var(--accent-success);
 }
 
+.dailyPicksBetmanPolicySummary {
+  display: grid;
+  gap: 4px;
+  padding: 12px 16px;
+  background: white;
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 0 0 19px 19px;
+}
+
+.dailyPicksBetmanPolicySummary small {
+  font-size: 0.6rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.dailyPicksBetmanPolicySummary strong {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.dailyPicksBetmanPolicySummary span {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.dailyPicksBetmanPolicyFreshness {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.dailyPicksBetmanPolicyFreshness-stale {
+  color: #a16207;
+}
+
+.dailyPicksBetmanPolicySummary-warning {
+  border-top-color: rgba(245, 158, 11, 0.35);
+}
+
+.dailyPicksBetmanPolicySummary-warning small {
+  color: #a16207;
+}
+
 .dailyPicksFiltersContainer {
   display: flex;
   justify-content: space-between;

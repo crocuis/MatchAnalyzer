@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 
 import type { AppBindings } from "./env";
+import betmanPolicy from "./routes/betman-policy";
 import dailyPicks from "./routes/daily-picks";
 import matches from "./routes/matches";
 import predictions from "./routes/predictions";
@@ -19,6 +20,7 @@ app.use(
 );
 
 app.get("/health", (c) => c.json({ ok: true }));
+app.route("/betman-ticket-policy", betmanPolicy);
 app.route("/daily-picks", dailyPicks);
 app.route("/matches", matches);
 app.route("/predictions", predictions);

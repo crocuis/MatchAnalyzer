@@ -130,6 +130,37 @@ function parseKickoffTime(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isUpcomingKickoff(kickoffAt: string, nowMillis = Date.now()): boolean {
+  const kickoffMillis = Date.parse(kickoffAt);
+  return Number.isFinite(kickoffMillis) && kickoffMillis > nowMillis;
+}
+
+function isRecentKickoff(kickoffAt: string, nowMillis = Date.now()): boolean {
+  const kickoffMillis = Date.parse(kickoffAt);
+  return Number.isFinite(kickoffMillis) && kickoffMillis <= nowMillis;
+}
+
+function applyMatchCardsViewFilter(
+  query: any,
+  view: MatchListViewKind | undefined,
+  nowIso: string,
+) {
+  if (!view) {
+    return query;
+  }
+  if (view === "upcoming") {
+    const bucketScopedQuery =
+      typeof query.eq === "function" ? query.eq("sort_bucket", 0) : query;
+    return typeof bucketScopedQuery.gte === "function"
+      ? bucketScopedQuery.gte("kickoff_at", nowIso)
+      : bucketScopedQuery;
+  }
+  if (typeof query.lt === "function") {
+    return query.lt("kickoff_at", nowIso);
+  }
+  return typeof query.eq === "function" ? query.eq("sort_bucket", 1) : query;
+}
+
 type LoadMatchItemsOptions = {
   leagueId?: string;
   cursor?: string;
@@ -641,10 +672,11 @@ export async function loadDashboardMatchCardsPageView(
     typeof cardsQuery.eq === "function"
       ? cardsQuery.eq("league_id", selectedLeagueId)
       : cardsQuery;
-  const viewScopedCardsQuery =
-    options.view && typeof scopedCardsQuery.eq === "function"
-      ? scopedCardsQuery.eq("sort_bucket", options.view === "upcoming" ? 0 : 1)
-      : scopedCardsQuery;
+  const viewScopedCardsQuery = applyMatchCardsViewFilter(
+    scopedCardsQuery,
+    options.view,
+    new Date(Date.now()).toISOString(),
+  );
   const orderedCardsQuery =
     viewScopedCardsQuery
       .order("sort_bucket", { ascending: true })
@@ -1041,11 +1073,12 @@ async function loadSelectedLeaguePageView(
   }
 
   const matchIds = matchesData.map((match) => match.id);
+  const nowMillis = Date.now();
   const viewMatches = options.view
     ? matchesData.filter((match) =>
         options.view === "upcoming"
-          ? match.final_result === null
-          : match.final_result !== null,
+          ? match.final_result === null && isUpcomingKickoff(match.kickoff_at, nowMillis)
+          : match.final_result !== null || isRecentKickoff(match.kickoff_at, nowMillis),
       )
     : matchesData;
   const sortedMatches = [...viewMatches].sort((left, right) => {

@@ -154,3 +154,30 @@ jobs:
             echo
             cat betman-ticket-opportunities.txt
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Report Betman ticket policy backtest
+        if: ${{ env.REAL_PREDICTION_DATE != '' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          BACKTEST_ARGS=(
+            --min-legs 2
+            --max-legs 2
+            --limit 10
+            --profiles balanced,aggressive
+            --exclude-temporal-leaks
+            --value-thresholds 0.05,0.10,0.15
+          )
+          if [ "$DAILY_PICK_ARTIFACT_ENABLED" = "1" ]; then
+            BACKTEST_ARGS+=(--archive-artifact)
+          else
+            echo "::warning::Skipping Betman ticket policy artifact archive because R2 credentials are incomplete."
+          fi
+          {
+            python3 -m batch.src.jobs.report_betman_ticket_profile_backtest_job "${BACKTEST_ARGS[@]}" \
+              || echo "::warning::Betman ticket policy backtest report failed."
+          } | tee betman-ticket-policy-backtest.txt
+          {
+            echo "## Betman ticket policy backtest"
+            echo
+            cat betman-ticket-policy-backtest.txt
+          } >> "$GITHUB_STEP_SUMMARY"

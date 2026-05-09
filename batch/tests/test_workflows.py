@@ -8,6 +8,15 @@ def read_workflow(name: str) -> str:
     return (REPO_ROOT / ".github" / "workflows" / name).read_text()
 
 
+def workflow_step_block(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    start = workflow.index(marker)
+    next_start = workflow.find("\n      - name:", start + len(marker))
+    if next_start == -1:
+        return workflow[start:]
+    return workflow[start:next_start]
+
+
 def test_operational_workflows_accept_neon_database_url_secret_fallback() -> None:
     workflow_names = [
         "deploy-production.yml",
@@ -107,6 +116,8 @@ def test_ingest_markets_workflow_sets_real_market_date() -> None:
 
 def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run() -> None:
     workflow = read_workflow("run-predictions.yml")
+    opportunity_step = workflow_step_block(workflow, "Report Betman ticket opportunities")
+    policy_step = workflow_step_block(workflow, "Report Betman ticket policy backtest")
 
     assert "schedule:" not in workflow
     assert "# 12:00 Asia/Seoul" not in workflow
@@ -146,18 +157,38 @@ def test_run_predictions_workflow_supports_manual_targets_and_optional_llm_run()
     assert "python3 -m batch.src.jobs.export_daily_pick_artifacts_job" in workflow
     assert "if: ${{ env.DAILY_PICK_ARTIFACT_ENABLED == '1' }}" in workflow
     assert "Report Betman ticket opportunities" in workflow
-    assert "continue-on-error: true" in workflow
-    assert "python3 -m batch.src.jobs.report_betman_ticket_opportunities_job" in workflow
-    assert '--pick-date "$REAL_PREDICTION_DATE"' in workflow
-    assert "--min-legs 2" in workflow
-    assert "--max-legs 2" in workflow
-    assert "--risk-profile balanced" in workflow
-    assert "--skip-current-betman" in workflow
-    assert "Stored daily-pick baseline:" in workflow
-    assert "Current Betman buyable filter:" in workflow
-    assert "Betman ticket opportunity report failed while fetching current buyable games." in workflow
-    assert "betman-ticket-opportunities.txt" in workflow
-    assert "## Betman ticket opportunities" in workflow
+    assert "continue-on-error: true" in opportunity_step
+    assert "python3 -m batch.src.jobs.report_betman_ticket_opportunities_job" in opportunity_step
+    assert '--pick-date "$REAL_PREDICTION_DATE"' in opportunity_step
+    assert "--min-legs 2" in opportunity_step
+    assert "--max-legs 2" in opportunity_step
+    assert "--risk-profile balanced" in opportunity_step
+    assert "--skip-current-betman" in opportunity_step
+    assert "Stored daily-pick baseline:" in opportunity_step
+    assert "Current Betman buyable filter:" in opportunity_step
+    assert (
+        "Betman ticket opportunity report failed while fetching current buyable games."
+        in opportunity_step
+    )
+    assert "betman-ticket-opportunities.txt" in opportunity_step
+    assert "## Betman ticket opportunities" in opportunity_step
+    assert "Report Betman ticket policy backtest" in workflow
+    assert "continue-on-error: true" in policy_step
+    assert "python3 -m batch.src.jobs.report_betman_ticket_profile_backtest_job" in policy_step
+    assert "--value-thresholds 0.05,0.10,0.15" in policy_step
+    assert "--profiles balanced,aggressive" in policy_step
+    assert "--exclude-temporal-leaks" in policy_step
+    assert (
+        'if [ "$DAILY_PICK_ARTIFACT_ENABLED" = "1" ]; then\n'
+        "            BACKTEST_ARGS+=(--archive-artifact)"
+        in policy_step
+    )
+    assert (
+        "Skipping Betman ticket policy artifact archive because R2 credentials are incomplete."
+        in policy_step
+    )
+    assert "betman-ticket-policy-backtest.txt" in policy_step
+    assert "## Betman ticket policy backtest" in policy_step
 
 
 def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick_dates() -> None:
@@ -283,7 +314,7 @@ def test_sync_match_results_workflow_runs_every_two_hours_and_reviews_changed_da
     assert "RESULT_SYNC_DELAY_HOURS:" in workflow
     assert "github.event.inputs.delay_hours || '2'" in workflow
     assert "RESULT_SYNC_LOOKBACK_HOURS:" in workflow
-    assert "github.event.inputs.lookback_hours || '48'" in workflow
+    assert "github.event.inputs.lookback_hours || '336'" in workflow
     assert "python3 -m batch.src.jobs.sync_match_results_job" in workflow
     assert "SYNC_CHANGED_DATES" in workflow
     assert "No changed match results detected; skipping review refresh." in workflow
