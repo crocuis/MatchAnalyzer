@@ -1261,9 +1261,12 @@ it("explains an empty daily picks modal with gate diagnostics", async () => {
 
   const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
   expect(await within(dialog).findByText("Recommendation funnel")).toBeInTheDocument();
-  expect(within(dialog).getByText("Matches")).toBeInTheDocument();
-  expect(within(dialog).getByText("Candidates")).toBeInTheDocument();
-  expect(within(dialog).getByText("Passed")).toBeInTheDocument();
+  const diagnostics = within(dialog).getByLabelText("Daily pick diagnostics");
+  const matchesLabel = within(diagnostics).getByText("Matches");
+  const candidatesLabel = within(diagnostics).getByText("Candidates");
+  const passedLabel = within(diagnostics).getByText("Passed");
+  expect(matchesLabel.compareDocumentPosition(candidatesLabel)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(candidatesLabel.compareDocumentPosition(passedLabel)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   expect(within(dialog).getAllByText("24")).toHaveLength(2);
   expect(within(dialog).getByText("0")).toBeInTheDocument();
   expect(within(dialog).getByText("Blockers")).toBeInTheDocument();

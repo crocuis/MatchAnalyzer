@@ -4397,6 +4397,275 @@ describe("prediction API", () => {
     });
   });
 
+  it("preserves Betman blocker diagnostics over a main recommendation hold reason", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.76,
+          home_prob: 0.62,
+          draw_prob: 0.23,
+          away_prob: 0.15,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.76,
+          main_recommendation_recommended: false,
+          main_recommendation_no_bet_reason: "low_confidence",
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: false,
+          value_recommendation_edge: null,
+          value_recommendation_expected_value: null,
+          value_recommendation_market_price: null,
+          value_recommendation_model_probability: null,
+          value_recommendation_market_probability: null,
+          value_recommendation_market_source: "betman_moneyline_3way",
+          summary_payload: validatedDailyPickSummary({
+            betman_market_available: true,
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      status: "held",
+      noBetReason: "betman_value_edge_missing",
+    });
+    expect(view.diagnostics?.holdReasonCounts).toEqual({
+      betman_value_edge_missing: 1,
+    });
+  });
+
+  it("normalizes lowercase Betman value picks before fallback alignment", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.76,
+          home_prob: 0.62,
+          draw_prob: 0.23,
+          away_prob: 0.15,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.76,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "away",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.08,
+          value_recommendation_expected_value: 0.15,
+          value_recommendation_market_price: 0.52,
+          value_recommendation_model_probability: 0.6,
+          value_recommendation_market_probability: 0.52,
+          value_recommendation_market_source: "betman_moneyline_3way",
+          summary_payload: validatedDailyPickSummary({
+            betman_market_available: true,
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "AWAY",
+      status: "recommended",
+      noBetReason: null,
+      edge: 0.08,
+    });
+    expect(view.heldItems).toEqual([]);
+    expect(view.diagnostics?.holdReasonCounts).toEqual({});
+  });
+
+  it("runs fallback daily pick gates against the resolved Betman selection", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.72,
+          home_prob: 0.62,
+          draw_prob: 0.23,
+          away_prob: 0.15,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.72,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "AWAY",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.08,
+          value_recommendation_expected_value: 0.15,
+          value_recommendation_market_price: 0.52,
+          value_recommendation_model_probability: 0.6,
+          value_recommendation_market_probability: 0.52,
+          value_recommendation_market_source: "betman_moneyline_3way",
+          summary_payload: validatedDailyPickSummary({
+            betman_market_available: true,
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "AWAY",
+      status: "held",
+      noBetReason: "away_confidence_reliability_gap",
+    });
+    expect(view.diagnostics?.holdReasonCounts).toEqual({
+      away_confidence_reliability_gap: 1,
+    });
+  });
+
+  it("uses raw Betman pick fields for fallback gating when value metrics are partial", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.76,
+          home_prob: 0.62,
+          draw_prob: 0.23,
+          away_prob: 0.15,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.76,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "AWAY",
+          value_recommendation_recommended: true,
+          value_recommendation_market_source: "betman_moneyline_3way",
+          summary_payload: validatedDailyPickSummary({
+            betman_market_available: true,
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "AWAY",
+      status: "recommended",
+      noBetReason: null,
+      edge: null,
+    });
+    expect(view.heldItems).toEqual([]);
+    expect(view.diagnostics?.holdReasonCounts).toEqual({});
+  });
+
   it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
     const selectedColumns: string[] = [];
     const query = {

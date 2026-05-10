@@ -106,6 +106,13 @@ function dailyPickDiagnosticMetrics(diagnostics: DailyPicksResponse["diagnostics
     return [];
   }
   return [
+    diagnostics.matchCount === null
+      ? null
+      : {
+        key: "matches",
+        label: t("dailyPicks.diagnostics.matches"),
+        value: diagnostics.matchCount,
+      },
     diagnostics.candidateCount === null
       ? null
       : {
@@ -119,13 +126,6 @@ function dailyPickDiagnosticMetrics(diagnostics: DailyPicksResponse["diagnostics
         key: "passed",
         label: t("dailyPicks.diagnostics.passed"),
         value: diagnostics.recommendedCount,
-      },
-    diagnostics.matchCount === null
-      ? null
-      : {
-        key: "matches",
-        label: t("dailyPicks.diagnostics.matches"),
-        value: diagnostics.matchCount,
       },
   ].filter((value): value is { key: string; label: string; value: number } => value !== null);
 }
