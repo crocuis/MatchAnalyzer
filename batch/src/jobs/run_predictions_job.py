@@ -180,6 +180,45 @@ PERSISTED_SNAPSHOT_SIGNAL_FIELDS = (
     "lineup_strength_delta",
     "lineup_source_summary",
 )
+PREDICTION_EXISTING_COLUMNS = (
+    "id",
+    "snapshot_id",
+    "match_id",
+    "created_at",
+    "model_version_id",
+    "home_prob",
+    "draw_prob",
+    "away_prob",
+    "recommended_pick",
+    "confidence_score",
+    "explanation_artifact_id",
+    "summary_payload",
+    "main_recommendation_pick",
+    "main_recommendation_confidence",
+    "main_recommendation_recommended",
+    "main_recommendation_no_bet_reason",
+    "value_recommendation_pick",
+    "value_recommendation_recommended",
+    "value_recommendation_edge",
+    "value_recommendation_expected_value",
+    "value_recommendation_market_price",
+    "value_recommendation_model_probability",
+    "value_recommendation_market_probability",
+    "value_recommendation_market_source",
+    "variant_markets_summary",
+)
+PREDICTION_VALIDATION_COLUMNS = (
+    "id",
+    "snapshot_id",
+    "match_id",
+    "created_at",
+    "model_version_id",
+    "recommended_pick",
+    "confidence_score",
+    "main_recommendation_pick",
+    "value_recommendation_market_price",
+    "value_recommendation_market_probability",
+)
 
 
 def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
@@ -196,9 +235,52 @@ def read_env_flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default) in {"1", "true", "TRUE", "yes", "YES"}
 
 
-def read_optional_rows(client: DbClient, table_name: str) -> list[dict]:
+def read_optional_rows(
+    client: DbClient,
+    table_name: str,
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
     try:
-        return client.read_rows(table_name)
+        if columns is None:
+            return client.read_rows(table_name)
+        try:
+            return client.read_rows(table_name, columns=columns)
+        except TypeError:
+            return client.read_rows(table_name)
+    except KeyError:
+        return []
+    except ValueError as exc:
+        message = str(exc).lower()
+        if (
+            "does not exist" in message
+            or "relation" in message
+            or "schema cache" in message
+        ):
+            return []
+        raise
+
+
+def read_optional_rows_by_values(
+    client: DbClient,
+    table_name: str,
+    column: str,
+    values: list[str],
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
+    try:
+        return client.read_rows_by_values(
+            table_name,
+            column,
+            values,
+            columns=columns,
+        )
+    except AttributeError:
+        value_set = {str(value) for value in values if value}
+        return [
+            row
+            for row in read_optional_rows(client, table_name, columns=columns)
+            if str(row.get(column) or "") in value_set
+        ]
     except KeyError:
         return []
     except ValueError as exc:
@@ -2700,11 +2782,12 @@ def main() -> None:
     )
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
-    prediction_rows = read_optional_rows(client, "predictions")
-    variant_rows = read_optional_rows(client, "market_variants")
     use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
     target_match_ids = parse_match_id_targets(os.environ.get("REAL_PREDICTION_MATCH_IDS"))
     use_real_prediction_targets = bool(use_real_predictions or target_match_ids)
+    current_fused_selector_enabled = read_env_flag(
+        "MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR",
+    ) and not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
     if not snapshot_rows:
         raise ValueError("match_snapshots must exist before running predictions")
     if not market_rows and not use_real_prediction_targets:
@@ -2741,6 +2824,40 @@ def main() -> None:
             )
         if len(target_snapshots) != 4:
             raise ValueError("sample pipeline expects exactly 4 snapshots")
+    target_snapshot_ids = [
+        str(row.get("id") or "")
+        for row in target_snapshots
+        if row.get("id")
+    ]
+    if use_real_prediction_targets:
+        prediction_rows = read_optional_rows_by_values(
+            client,
+            "predictions",
+            "snapshot_id",
+            target_snapshot_ids,
+            columns=PREDICTION_EXISTING_COLUMNS,
+        )
+        validation_prediction_rows = read_optional_rows(
+            client,
+            "predictions",
+            columns=PREDICTION_VALIDATION_COLUMNS,
+        )
+        historical_prediction_rows = (
+            read_optional_rows(client, "predictions")
+            if current_fused_selector_enabled
+            else validation_prediction_rows
+        )
+        variant_rows = read_optional_rows_by_values(
+            client,
+            "market_variants",
+            "snapshot_id",
+            target_snapshot_ids,
+        )
+    else:
+        prediction_rows = read_optional_rows(client, "predictions")
+        validation_prediction_rows = prediction_rows
+        historical_prediction_rows = prediction_rows
+        variant_rows = read_optional_rows(client, "market_variants")
     market_by_snapshot = index_market_rows_by_snapshot(market_rows)
     latest_fusion_policy = read_latest_fusion_policy(client)
     existing_predictions_by_id = {
@@ -2759,7 +2876,7 @@ def main() -> None:
     locked_prediction_ids = []
     match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
     validation_records = build_validation_records(
-        prediction_rows=prediction_rows,
+        prediction_rows=validation_prediction_rows,
         match_by_id=match_by_id,
     )
     validation_segment_cache: dict[str | None, dict[str, dict]] = {}
@@ -2782,9 +2899,6 @@ def main() -> None:
         tuple[str, str | None, bool],
         object | None,
     ] = {}
-    current_fused_selector_enabled = read_env_flag(
-        "MATCH_ANALYZER_ENABLE_CURRENT_FUSED_SELECTOR",
-    ) and not read_env_flag("MATCH_ANALYZER_DISABLE_CURRENT_FUSED_SELECTOR")
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
@@ -3030,7 +3144,7 @@ def main() -> None:
             if current_fused_key not in current_fused_candidates_cache:
                 current_fused_candidates_cache[current_fused_key] = (
                     build_historical_current_fused_candidates(
-                        prediction_rows=prediction_rows,
+                        prediction_rows=historical_prediction_rows,
                         snapshot_rows=snapshot_rows,
                         match_rows=match_rows,
                         checkpoint_type=signal_snapshot["checkpoint_type"],
@@ -3107,7 +3221,7 @@ def main() -> None:
             if confidence_key not in confidence_bucket_cache:
                 confidence_bucket_cache[confidence_key] = (
                     build_confidence_bucket_summary_from_predictions(
-                        prediction_rows=prediction_rows,
+                        prediction_rows=validation_prediction_rows,
                         snapshot_rows=snapshot_rows,
                         match_rows=match_rows,
                         checkpoint_type=signal_snapshot["checkpoint_type"],

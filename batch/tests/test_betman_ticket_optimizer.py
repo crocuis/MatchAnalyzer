@@ -1,5 +1,8 @@
+import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
+import batch.src.jobs.report_betman_ticket_profile_backtest_job as backtest_job
 from batch.src.model.betman_ticket_optimizer import (
     build_betman_ticket_profile_backtest,
     build_betman_prediction_backed_ticket_legs,
@@ -1902,3 +1905,143 @@ def test_format_ticket_opportunity_lines_prints_purchase_unit_summary() -> None:
         "  - match-a moneyline HOME p=65.00% odds=2.00",
         "  - match-b moneyline AWAY p=60.00% odds=2.00",
     ]
+
+
+def test_betman_ticket_profile_backtest_avoids_wide_prediction_full_read(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls = []
+    predictions = [
+        {
+            "id": "prediction-a",
+            "match_id": "match-a",
+            "snapshot_id": "snapshot-a",
+            "created_at": "2026-05-01T00:00:00Z",
+            "home_prob": 0.62,
+            "draw_prob": 0.22,
+            "away_prob": 0.16,
+            "summary_payload": {
+                "source_metadata": {
+                    "market_sources": {
+                        "bookmaker": {
+                            "probabilities": {
+                                "home": 0.50,
+                                "draw": 0.30,
+                                "away": 0.20,
+                            }
+                        }
+                    }
+                }
+            },
+        },
+        {
+            "id": "prediction-b",
+            "match_id": "match-b",
+            "snapshot_id": "snapshot-b",
+            "created_at": "2026-05-02T00:00:00Z",
+            "home_prob": 0.15,
+            "draw_prob": 0.25,
+            "away_prob": 0.60,
+            "summary_payload": {"large": "unused"},
+        },
+    ]
+
+    class FakeClient:
+        def __init__(self, _url: str, _key: str):
+            pass
+
+        def read_rows(
+            self,
+            table_name: str,
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            calls.append(("read_rows", table_name, columns))
+            if table_name == "predictions":
+                assert columns == backtest_job.PREDICTION_VALUE_THRESHOLD_COLUMNS
+                assert "summary_payload" not in columns
+                return [
+                    {key: value for key, value in row.items() if key in columns}
+                    for row in predictions
+                ]
+            if table_name == "daily_pick_items":
+                return [
+                    {
+                        "id": "item-a",
+                        "prediction_id": "prediction-a",
+                        "match_id": "match-a",
+                        "market_family": "moneyline",
+                        "selection_label": "HOME",
+                        "status": "recommended",
+                    }
+                ]
+            if table_name == "daily_pick_results":
+                return []
+            if table_name == "matches":
+                return [
+                    {
+                        "id": "match-a",
+                        "kickoff_at": "2026-05-01T12:00:00Z",
+                        "final_result": "HOME",
+                    },
+                    {
+                        "id": "match-b",
+                        "kickoff_at": "2026-05-02T12:00:00Z",
+                        "final_result": "AWAY",
+                    },
+                ]
+            if table_name == "market_probabilities":
+                return [
+                    {
+                        "id": "market-a",
+                        "snapshot_id": "snapshot-a",
+                        "source_name": "betman_moneyline_3way",
+                        "market_family": "moneyline_3way",
+                        "home_price": 0.50,
+                        "draw_price": 0.30,
+                        "away_price": 0.20,
+                    },
+                    {
+                        "id": "market-b",
+                        "snapshot_id": "snapshot-b",
+                        "source_name": "betman_moneyline_3way",
+                        "market_family": "moneyline_3way",
+                        "home_price": 0.20,
+                        "draw_price": 0.30,
+                        "away_price": 0.50,
+                    },
+                ]
+            raise AssertionError(f"unexpected read: {table_name}")
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            calls.append(("read_rows_by_values", table_name, column, values, columns))
+            assert table_name == "predictions"
+            assert column == "id"
+            assert values == ["prediction-a"]
+            assert columns == backtest_job.PREDICTION_BACKTEST_COLUMNS
+            return [predictions[0]]
+
+    monkeypatch.setattr(
+        backtest_job,
+        "load_settings",
+        lambda: SimpleNamespace(supabase_url="https://example.test", supabase_key="key"),
+    )
+    monkeypatch.setattr(backtest_job, "DbClient", FakeClient)
+
+    backtest_job.main(["--json", "--value-thresholds", "0.05"])
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["value_threshold_backtest"]["threshold_count"] == 1
+    assert (
+        "read_rows_by_values",
+        "predictions",
+        "id",
+        ["prediction-a"],
+        backtest_job.PREDICTION_BACKTEST_COLUMNS,
+    ) in calls
