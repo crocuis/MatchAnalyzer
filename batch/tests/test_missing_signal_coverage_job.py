@@ -206,7 +206,24 @@ def test_main_live_mode_prints_filtered_json_payload(monkeypatch, capsys) -> Non
             pass
 
         def read_rows(self, table_name: str) -> list[dict]:
+            if table_name == "predictions":
+                raise AssertionError("target-date coverage should not read all predictions")
             return list(state[table_name])
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            del columns
+            value_set = set(values)
+            return [
+                row
+                for row in state[table_name]
+                if str(row.get(column) or "") in value_set
+            ]
 
     monkeypatch.setattr(
         coverage_job,
@@ -395,7 +412,24 @@ def test_main_live_mode_limits_artifact_hydration_to_target_date(
             pass
 
         def read_rows(self, table_name: str) -> list[dict]:
+            if table_name == "predictions":
+                raise AssertionError("target-date coverage should not read all predictions")
             return list(state[table_name])
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            del columns
+            value_set = set(values)
+            return [
+                row
+                for row in state[table_name]
+                if str(row.get(column) or "") in value_set
+            ]
 
     def fake_hydrate_from_artifacts(*, settings, predictions, stored_artifacts):
         captured_prediction_ids.extend(row["id"] for row in predictions)
