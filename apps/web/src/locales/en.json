@@ -109,6 +109,7 @@
       "low_confidence": "Low confidence",
       "below_target_hit_rate": "Below target hit rate",
       "insufficient_sample": "Insufficient sample",
+      "below_segment_reliability": "Below segment reliability",
       "betman_market_missing": "Betman market missing",
       "betman_value_edge_missing": "Betman value edge missing",
       "heldByRecommendationGate": "Held by recommendation gate",
