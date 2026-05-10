@@ -93,12 +93,12 @@ function matchesActiveFilters(
   return true;
 }
 
-function topDailyPickHoldReasons(
+function dailyPickHoldReasons(
   diagnostics: DailyPicksResponse["diagnostics"],
 ) {
   return Object.entries(diagnostics?.holdReasonCounts ?? {})
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .slice(0, 3);
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
 }
 
 function dailyPickDiagnosticMetrics(diagnostics: DailyPicksResponse["diagnostics"], t: Translate) {
@@ -106,22 +106,28 @@ function dailyPickDiagnosticMetrics(diagnostics: DailyPicksResponse["diagnostics
     return [];
   }
   return [
-    diagnostics.candidateCount === null
-      ? null
-      : t("dailyPicks.diagnostics.candidates", {
-        count: diagnostics.candidateCount,
-      }),
-    diagnostics.recommendedCount === null
-      ? null
-      : t("dailyPicks.diagnostics.passed", {
-        count: diagnostics.recommendedCount,
-      }),
     diagnostics.matchCount === null
       ? null
-      : t("dailyPicks.diagnostics.matches", {
-        count: diagnostics.matchCount,
-      }),
-  ].filter((value): value is string => value !== null);
+      : {
+        key: "matches",
+        label: t("dailyPicks.diagnostics.matches"),
+        value: diagnostics.matchCount,
+      },
+    diagnostics.candidateCount === null
+      ? null
+      : {
+        key: "candidates",
+        label: t("dailyPicks.diagnostics.candidates"),
+        value: diagnostics.candidateCount,
+      },
+    diagnostics.recommendedCount === null
+      ? null
+      : {
+        key: "passed",
+        label: t("dailyPicks.diagnostics.passed"),
+        value: diagnostics.recommendedCount,
+      },
+  ].filter((value): value is { key: string; label: string; value: number } => value !== null);
 }
 
 export default function DailyPicksModal({
@@ -289,8 +295,9 @@ export default function DailyPicksModal({
     : null;
   const betmanPolicyIsStale = isBetmanPolicyStale(betmanPolicy?.generatedAt ?? null);
   const emptyDiagnostics = payload?.diagnostics ?? null;
-  const topHoldReasons = topDailyPickHoldReasons(emptyDiagnostics);
+  const holdReasons = dailyPickHoldReasons(emptyDiagnostics);
   const emptyDiagnosticMetrics = dailyPickDiagnosticMetrics(emptyDiagnostics, t);
+  const largestHoldReasonCount = holdReasons[0]?.[1] ?? 0;
 
   if (!isOpen) return null;
 
@@ -486,17 +493,36 @@ export default function DailyPicksModal({
                 <p className="timelineNote">{t("dailyPicks.empty")}</p>
                 {emptyDiagnostics ? (
                   <div className="dailyPicksDiagnostics" aria-label={t("dailyPicks.diagnostics.title")}>
+                    <div className="dailyPicksDiagnosticsHeader">
+                      <strong>{t("dailyPicks.diagnostics.funnelTitle")}</strong>
+                      <span>{t("dailyPicks.diagnostics.funnelSummary")}</span>
+                    </div>
                     <div className="dailyPicksDiagnosticsGrid">
-                      {emptyDiagnosticMetrics.map((metric) => (
-                        <span key={metric}>{metric}</span>
+                      {emptyDiagnosticMetrics.map((metric, index) => (
+                        <div className="dailyPicksFunnelStep" key={metric.key}>
+                          <small>{metric.label}</small>
+                          <strong>{metric.value}</strong>
+                          {index < emptyDiagnosticMetrics.length - 1 ? (
+                            <span className="dailyPicksFunnelArrow" aria-hidden="true">→</span>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
-                    {topHoldReasons.length > 0 ? (
+                    {holdReasons.length > 0 ? (
                       <div className="dailyPicksDiagnosticsReasons">
-                        {topHoldReasons.map(([reason, count]) => (
-                          <span key={reason}>
-                            {t(`dailyPicks.noBetReasons.${reason}`, { defaultValue: reason })} {count}
-                          </span>
+                        <strong>{t("dailyPicks.diagnostics.blockersTitle")}</strong>
+                        {holdReasons.map(([reason, count]) => (
+                          <div className="dailyPicksReasonRow" key={reason}>
+                            <span>{t(`dailyPicks.noBetReasons.${reason}`, { defaultValue: reason })}</span>
+                            <div className="dailyPicksReasonBarTrack" aria-hidden="true">
+                              <span style={{
+                                width: `${largestHoldReasonCount > 0
+                                  ? Math.max((count / largestHoldReasonCount) * 100, 8)
+                                  : 0}%`,
+                              }} />
+                            </div>
+                            <strong>{count}</strong>
+                          </div>
                         ))}
                       </div>
                     ) : null}

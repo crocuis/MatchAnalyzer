@@ -13,6 +13,7 @@ import {
   normalizeValueRecommendationFromSummary,
   normalizeVariantMarketsFromSummary,
   type PredictionLaneSummaryFields,
+  type ValueRecommendation,
 } from "../lib/prediction-lanes";
 import { hydratePredictionSummaryPayloadsFromArtifacts } from "../lib/prediction-summary-hydration";
 import { getDbClient, type ApiDbClient } from "../lib/db-client";
@@ -55,6 +56,18 @@ const DEPLOYABILITY_EXCLUDED_BASE_MODEL_SOURCES = new Set([
   "centroid_fallback",
   "centroid_poisson_blend",
 ]);
+const MONEYLINE_OUTCOME_LABELS = new Set(["HOME", "DRAW", "AWAY"]);
+
+function isBetmanMarketSource(value: string | null): boolean {
+  return value !== null && value.toLowerCase().includes("betman");
+}
+
+function normalizeMoneylineOutcomeLabel(value: string | null): string | null {
+  const normalized = value?.toUpperCase() ?? null;
+  return normalized !== null && MONEYLINE_OUTCOME_LABELS.has(normalized)
+    ? normalized
+    : null;
+}
 
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
@@ -1036,24 +1049,43 @@ function buildMoneylineAndVariantPicks(
       variantMarketsSummary: representative.variantMarketsSummary,
     } satisfies PredictionLaneSummaryFields,
   );
+  const valueSignal = buildMoneylineValueSignal(representative, valueRecommendation);
+  const selectionLabel = resolveMoneylineSelectionLabel(
+    mainRecommendation,
+    valueSignal,
+  );
   const alignedValueRecommendation =
-    valueRecommendation?.pick === mainRecommendation.pick
+    valueRecommendation !== null
+    && normalizeMoneylineOutcomeLabel(valueRecommendation.pick) === selectionLabel
       ? valueRecommendation
       : null;
   const reliabilityHoldReason = resolveReliabilityHoldReason(base);
+  const betmanHoldReason = resolveMoneylineBetmanHoldReason(
+    representative,
+    valueSignal,
+    selectionLabel,
+  );
   const moneylineHoldReason =
-    reliabilityHoldReason
-    ?? resolveMoneylineDailyPickHoldReason(base, mainRecommendation);
+    betmanHoldReason
+    ?? reliabilityHoldReason
+    ?? resolveMoneylineDailyPickHoldReason(base, {
+      pick: selectionLabel,
+      confidence: mainRecommendation.confidence,
+    });
   const status =
     mainRecommendation.recommended && moneylineHoldReason === null
       ? "recommended"
       : "held";
+  const noBetReason =
+    betmanHoldReason
+    ?? mainRecommendation.noBetReason
+    ?? moneylineHoldReason;
 
   const moneyline: DailyPickItem = {
     ...base,
     id: `${base.matchId}:moneyline`,
     marketFamily: "moneyline",
-    selectionLabel: mainRecommendation.pick,
+    selectionLabel,
     confidence: mainRecommendation.confidence,
     edge: alignedValueRecommendation?.edge ?? null,
     expectedValue: alignedValueRecommendation?.expectedValue ?? null,
@@ -1065,7 +1097,7 @@ function buildMoneylineAndVariantPicks(
     highConfidenceEligible: base.highConfidenceEligible,
     validationMetadata: base.validationMetadata,
     status,
-    noBetReason: mainRecommendation.noBetReason ?? moneylineHoldReason,
+    noBetReason,
     reasonLabels:
       status === "held"
         ? [
@@ -1081,6 +1113,119 @@ function buildMoneylineAndVariantPicks(
       .map((variant) => buildVariantPick(base, variant))
       .filter((item): item is DailyPickItem => item !== null),
   ];
+}
+
+type MoneylineValueSignal = {
+  pick: string | null;
+  normalizedPick: string | null;
+  recommended: boolean | null;
+  marketSource: string | null;
+  isBetman: boolean;
+};
+
+function buildMoneylineValueSignal(
+  representative: PredictionCandidate,
+  valueRecommendation: ValueRecommendation | null,
+): MoneylineValueSignal {
+  const pick = valueRecommendation?.pick ?? representative.valueRecommendationPick ?? null;
+  const marketSource =
+    valueRecommendation?.marketSource
+    ?? representative.valueRecommendationMarketSource
+    ?? null;
+  const recommended =
+    valueRecommendation?.recommended
+    ?? representative.valueRecommendationRecommended
+    ?? null;
+  return {
+    pick,
+    normalizedPick: normalizeMoneylineOutcomeLabel(pick),
+    recommended,
+    marketSource,
+    isBetman: isBetmanMarketSource(marketSource),
+  };
+}
+
+function resolveMoneylineSelectionLabel(
+  mainRecommendation: { pick: string },
+  valueSignal: MoneylineValueSignal,
+): string {
+  if (
+    valueSignal.recommended === true
+    && valueSignal.normalizedPick !== null
+    && valueSignal.isBetman
+  ) {
+    return valueSignal.normalizedPick;
+  }
+  return mainRecommendation.pick;
+}
+
+function resolveMoneylineBetmanHoldReason(
+  representative: PredictionCandidate,
+  valueSignal: MoneylineValueSignal,
+  selectionLabel: string,
+): string | null {
+  const summaryPayload = readRecord(representative.summaryPayload);
+  const betmanMarketAvailable =
+    readBoolean(summaryPayload?.betman_market_available)
+    ?? readBoolean(summaryPayload?.betmanMarketAvailable);
+  const valueMarketSource = valueSignal.marketSource;
+  const valueIsBetman = valueSignal.isBetman;
+
+  if (betmanMarketAvailable === false) {
+    return "betman_market_missing";
+  }
+  if (
+    betmanMarketAvailable !== true
+    && valueMarketSource !== null
+    && !valueIsBetman
+  ) {
+    return "betman_market_missing";
+  }
+  if (
+    (betmanMarketAvailable === true || valueIsBetman)
+    && (
+      !valueIsBetman
+      || valueSignal.recommended !== true
+      || valueSignal.normalizedPick === null
+      || valueSignal.normalizedPick !== selectionLabel
+    )
+  ) {
+    return resolveBetmanValueHoldReason({
+      valueIsBetman,
+      valuePick: valueSignal.pick,
+      valueRecommended: valueSignal.recommended,
+      valueAligned:
+        valueSignal.normalizedPick !== null
+        && valueSignal.normalizedPick === selectionLabel,
+    });
+  }
+  return null;
+}
+
+function resolveBetmanValueHoldReason({
+  valueIsBetman,
+  valuePick,
+  valueRecommended,
+  valueAligned,
+}: {
+  valueIsBetman: boolean;
+  valuePick: string | null;
+  valueRecommended: boolean | null;
+  valueAligned: boolean;
+}): string {
+  if (!valueIsBetman) {
+    return "betman_value_source_missing";
+  }
+  if (valuePick === null || !MONEYLINE_OUTCOME_LABELS.has(valuePick.toUpperCase())) {
+    return "betman_value_pick_invalid";
+  }
+  if (valueRecommended !== true) {
+    return "betman_value_edge_missing";
+  }
+  if (!valueAligned) {
+    return "betman_value_pick_invalid";
+  }
+  return "betman_value_edge_missing";
 }
 
 function buildVariantPick(

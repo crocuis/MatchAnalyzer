@@ -23,9 +23,12 @@
     "showHeldCandidates": "보류 후보 {{count}}건 보기",
     "diagnostics": {
       "title": "Daily Picks 진단",
-      "candidates": "평가 후보 {{count}}건",
-      "passed": "통과 {{count}}건",
-      "matches": "경기 {{count}}건"
+      "funnelTitle": "추천 전환 흐름",
+      "funnelSummary": "오늘 후보는 평가됐지만 모든 gate를 통과한 추천은 없습니다.",
+      "blockersTitle": "주요 차단 사유",
+      "candidates": "평가 후보",
+      "passed": "통과",
+      "matches": "경기"
     },
     "summary": {
       "recommendations": "추천 수",
@@ -112,6 +115,8 @@
       "below_segment_reliability": "세그먼트 신뢰도 미달",
       "betman_market_missing": "Betman 구매 가능 경기 없음",
       "betman_value_edge_missing": "Betman 가치 엣지 없음",
+      "betman_value_pick_invalid": "Betman 선택값 오류",
+      "betman_value_source_missing": "Betman 가치 신호 없음",
       "heldByRecommendationGate": "추천 게이트 보류",
       "variant_market_price_only": "시장 가격만 있음",
       "variant_model_inputs_missing": "모델 입력 부족",
@@ -298,6 +303,10 @@
       "breakdownTitle": "신뢰도 분석",
       "noBetReasons": {
         "low_confidence": "신뢰도 부족",
+        "betman_market_missing": "Betman 구매 가능 경기 없음",
+        "betman_value_edge_missing": "Betman 가치 엣지 없음",
+        "betman_value_pick_invalid": "Betman 선택값 오류",
+        "betman_value_source_missing": "Betman 가치 신호 없음",
         "unsupported_high_confidence_fallback": "분석 정합성 부족"
       },
       "breakdown": {

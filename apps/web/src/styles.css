@@ -775,33 +775,117 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 
 .dailyPicksDiagnostics {
   margin: 14px auto 0;
-  max-width: 520px;
-  padding: 14px;
+  width: min(560px, 100%);
+  padding: 16px;
   border: 1px solid rgba(148, 163, 184, 0.28);
-  border-radius: 10px;
+  border-radius: 14px;
   background: #f8fafc;
+  text-align: left;
 }
 
-.dailyPicksDiagnosticsGrid,
-.dailyPicksDiagnosticsReasons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+.dailyPicksDiagnosticsHeader {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 12px;
+}
+
+.dailyPicksDiagnosticsHeader strong,
+.dailyPicksDiagnosticsReasons > strong {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.dailyPicksDiagnosticsHeader span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.dailyPicksDiagnosticsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 8px;
 }
 
-.dailyPicksDiagnosticsGrid span,
-.dailyPicksDiagnosticsReasons span {
-  padding: 6px 9px;
-  border-radius: 8px;
+.dailyPicksFunnelStep {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 10px;
   background: #ffffff;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
+}
+
+.dailyPicksFunnelStep small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dailyPicksFunnelStep strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.dailyPicksFunnelArrow {
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
 .dailyPicksDiagnosticsReasons {
-  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.dailyPicksReasonRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(72px, 0.8fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.dailyPicksReasonRow span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.dailyPicksReasonRow strong {
+  min-width: 2ch;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-align: right;
+}
+
+.dailyPicksReasonBarTrack {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.dailyPicksReasonBarTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-primary);
 }
 
 .text-success { color: var(--accent-success); }

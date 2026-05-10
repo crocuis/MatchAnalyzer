@@ -336,7 +336,11 @@ function formatNoBetReason(
   if (!noBetReason) {
     return null;
   }
-  return t(`modal.prediction.noBetReasons.${noBetReason}`);
+  return t(`modal.prediction.noBetReasons.${noBetReason}`, {
+    defaultValue: t(`dailyPicks.noBetReasons.${noBetReason}`, {
+      defaultValue: noBetReason,
+    }),
+  });
 }
 
 function summarizeLineupEdge(
