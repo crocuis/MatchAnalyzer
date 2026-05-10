@@ -56,6 +56,10 @@ const DEPLOYABILITY_EXCLUDED_BASE_MODEL_SOURCES = new Set([
   "centroid_poisson_blend",
 ]);
 
+function isBetmanMarketSource(value: string | null): boolean {
+  return value !== null && value.toLowerCase().includes("betman");
+}
+
 export type DailyPickMarketFamily = "moneyline" | "spreads" | "totals";
 
 export type DailyPickItem = {
@@ -1041,8 +1045,14 @@ function buildMoneylineAndVariantPicks(
       ? valueRecommendation
       : null;
   const reliabilityHoldReason = resolveReliabilityHoldReason(base);
+  const betmanHoldReason = resolveMoneylineBetmanHoldReason(
+    representative,
+    valueRecommendation,
+    alignedValueRecommendation,
+  );
   const moneylineHoldReason =
-    reliabilityHoldReason
+    betmanHoldReason
+    ?? reliabilityHoldReason
     ?? resolveMoneylineDailyPickHoldReason(base, mainRecommendation);
   const status =
     mainRecommendation.recommended && moneylineHoldReason === null
@@ -1081,6 +1091,44 @@ function buildMoneylineAndVariantPicks(
       .map((variant) => buildVariantPick(base, variant))
       .filter((item): item is DailyPickItem => item !== null),
   ];
+}
+
+function resolveMoneylineBetmanHoldReason(
+  representative: PredictionCandidate,
+  valueRecommendation: ReturnType<typeof normalizeValueRecommendationFromSummary>,
+  alignedValueRecommendation: ReturnType<typeof normalizeValueRecommendationFromSummary>,
+): string | null {
+  const summaryPayload = readRecord(representative.summaryPayload);
+  const betmanMarketAvailable =
+    readBoolean(summaryPayload?.betman_market_available)
+    ?? readBoolean(summaryPayload?.betmanMarketAvailable);
+  const valueMarketSource =
+    valueRecommendation?.marketSource
+    ?? representative.valueRecommendationMarketSource
+    ?? null;
+  const valueIsBetman = isBetmanMarketSource(valueMarketSource);
+
+  if (betmanMarketAvailable === false) {
+    return "betman_market_missing";
+  }
+  if (
+    betmanMarketAvailable !== true
+    && valueMarketSource !== null
+    && !valueIsBetman
+  ) {
+    return "betman_market_missing";
+  }
+  if (
+    (betmanMarketAvailable === true || valueIsBetman)
+    && (
+      !valueIsBetman
+      || valueRecommendation?.recommended !== true
+      || alignedValueRecommendation === null
+    )
+  ) {
+    return "betman_value_edge_missing";
+  }
+  return null;
 }
 
 function buildVariantPick(

@@ -1134,7 +1134,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -1176,7 +1176,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.52,
           value_recommendation_model_probability: 0.62,
           value_recommendation_market_probability: 0.52,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -1218,7 +1218,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.5,
           value_recommendation_model_probability: 0.58,
           value_recommendation_market_probability: 0.5,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -1260,7 +1260,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.49,
           value_recommendation_model_probability: 0.55,
           value_recommendation_market_probability: 0.49,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -1566,7 +1566,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -2187,7 +2187,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -2307,7 +2307,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [
             {
               market_family: "spreads",
@@ -2470,7 +2470,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.33,
           value_recommendation_model_probability: 0.55,
           value_recommendation_market_probability: 0.33,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [],
           summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
@@ -2484,14 +2484,17 @@ describe("prediction API", () => {
       includeHeld: true,
     });
 
-    expect(view.items[0]).toMatchObject({
+    expect(view.items).toEqual([]);
+    expect(view.heldItems[0]).toMatchObject({
       marketFamily: "moneyline",
       selectionLabel: "HOME",
+      status: "held",
       edge: null,
       expectedValue: null,
       marketPrice: null,
       modelProbability: null,
       marketProbability: null,
+      noBetReason: "betman_value_edge_missing",
     });
   });
 
@@ -2553,7 +2556,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [],
           summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
           explanation_payload: {},
@@ -2632,7 +2635,7 @@ describe("prediction API", () => {
             value_recommendation_market_price: 0.001,
             value_recommendation_model_probability: 0.64,
             value_recommendation_market_probability: 0.001,
-            value_recommendation_market_source: "prediction_market",
+            value_recommendation_market_source: "betman_moneyline_3way",
             summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.9 }),
             created_at: "2026-04-24T19:00:00Z",
           },
@@ -2653,7 +2656,7 @@ describe("prediction API", () => {
             value_recommendation_market_price: 0.41,
             value_recommendation_model_probability: 0.52,
             value_recommendation_market_probability: 0.43,
-            value_recommendation_market_source: "prediction_market",
+            value_recommendation_market_source: "betman_moneyline_3way",
             summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.8 }),
             created_at: "2026-04-24T19:30:00Z",
           },
@@ -2828,7 +2831,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [],
           summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.7 }),
           explanation_payload: {},
@@ -2851,7 +2854,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.41,
           value_recommendation_model_probability: 0.61,
           value_recommendation_market_probability: 0.41,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [],
           summary_payload: validatedDailyPickSummary({ source_agreement_ratio: 0.84 }),
           explanation_payload: {},
@@ -2915,7 +2918,7 @@ describe("prediction API", () => {
           value_recommendation_market_price: 0.54,
           value_recommendation_model_probability: 0.69,
           value_recommendation_market_probability: 0.57,
-          value_recommendation_market_source: "prediction_market",
+          value_recommendation_market_source: "betman_moneyline_3way",
           variant_markets_summary: [],
           created_at: "2026-04-24T08:00:00Z",
         },
@@ -4167,6 +4170,99 @@ describe("prediction API", () => {
         marketFamily: "moneyline",
       }),
     ]);
+  });
+
+  it("classifies computed daily picks with only non-Betman value source as Betman market missing", async () => {
+    setDailyPicksClock();
+    const baseDbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.76,
+          home_prob: 0.62,
+          draw_prob: 0.23,
+          away_prob: 0.15,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.76,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          value_recommendation_edge: 0.08,
+          value_recommendation_expected_value: 0.15,
+          value_recommendation_market_price: 0.52,
+          value_recommendation_model_probability: 0.6,
+          value_recommendation_market_probability: 0.52,
+          value_recommendation_market_source: "odds_api_io_moneyline_3way",
+          summary_payload: validatedDailyPickSummary({
+            high_confidence_eligible: false,
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+      daily_pick_performance_summary: [
+        {
+          id: "all",
+          sample_count: 76,
+          hit_rate: 0.75,
+          wilson_lower_bound: 0.6422,
+        },
+      ],
+    });
+    const baseFrom = baseDbClient.from.bind(baseDbClient);
+    const missingTrackingQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'relation "daily_pick_items" does not exist' },
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn((tableName: string) => (
+        tableName === "daily_pick_items"
+          ? missingTrackingQuery
+          : baseFrom(tableName)
+      )),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-match-analyzer-artifact")).toBe("fallback");
+    const body = await response.json() as {
+      items: unknown[];
+      heldItems: unknown[];
+      diagnostics: { holdReasonCounts: Record<string, number> } | null;
+    };
+    expect(body.items).toEqual([]);
+    expect(body.heldItems).toEqual([]);
+    expect(body.diagnostics?.holdReasonCounts).toEqual({
+      betman_market_missing: 1,
+    });
   });
 
   it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {

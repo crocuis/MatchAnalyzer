@@ -413,10 +413,11 @@ def build_moneyline_pick_candidate(
         validation_metadata if isinstance(validation_metadata, dict) else {}
     )
     betman_market_available = validation_metadata.get("betman_market_available")
-    betman_market_known = (
-        base.get("betman_market_available") is not None
-        or isinstance(betman_market_available, bool)
-        or value_market_source is not None
+    betman_market_known = isinstance(betman_market_available, bool) or value_is_betman
+    non_betman_value_source_without_betman_market = (
+        not betman_market_known
+        and value_market_source is not None
+        and not value_is_betman
     )
     selection_label = (
         value_pick
@@ -502,6 +503,8 @@ def build_moneyline_pick_candidate(
             candidate_base,
             "betman_market_missing",
         )
+    elif non_betman_value_source_without_betman_market:
+        candidate_base = _with_daily_pick_betman_market_missing(candidate_base)
     elif betman_market_known and (
         not value_is_betman or not value_aligned or not value_recommended
     ):
@@ -656,6 +659,15 @@ def _with_daily_pick_hold_reason(base: dict, hold_reason: str) -> dict:
         "validation_metadata": metadata,
         "reliability_hold_reason": hold_reason,
     }
+
+
+def _with_daily_pick_betman_market_missing(base: dict) -> dict:
+    metadata = dict(base.get("validation_metadata") or {})
+    metadata["betman_market_available"] = False
+    return _with_daily_pick_hold_reason(
+        {**base, "validation_metadata": metadata},
+        "betman_market_missing",
+    )
 
 
 def _promote_precision_moneyline_candidate(base: dict) -> dict:
