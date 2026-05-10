@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from batch.src.jobs.evaluate_confidence_validation_job import (
     build_confidence_validation_report,
 )
@@ -198,8 +200,8 @@ def test_build_prediction_validation_record_uses_settled_match_outcome():
             "match_id": "match-1",
             "model_version_id": "model-v2",
             "recommended_pick": "HOME",
-            "confidence_score": 0.81,
-            "value_recommendation_market_probability": 0.59,
+            "confidence_score": Decimal("0.81"),
+            "value_recommendation_market_probability": Decimal("0.59"),
         },
         {
             "id": "match-1",

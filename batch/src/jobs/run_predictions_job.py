@@ -4,6 +4,7 @@ import os
 import re
 from copy import deepcopy
 from datetime import datetime
+from decimal import Decimal
 from hashlib import sha256
 from time import perf_counter
 from typing import Any
@@ -2342,8 +2343,15 @@ def build_confidence_bucket_summary_from_predictions(
 
 
 def _read_numeric(value: object) -> float | None:
-    if isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
     return None
 
 

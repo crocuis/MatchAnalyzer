@@ -1017,33 +1017,55 @@ def settle_daily_pick_items(
         for row in selected_items
         if row.get("run_id")
     }
-    runs = [
-        {
-            "id": run_id,
-            "pick_date": run_dates_by_id[run_id],
-            "status": "settled",
-            "metadata": {
-                "settled_item_count": sum(
-                    1 for row in selected_items if str(row.get("run_id") or "") == run_id
-                ),
-                "settled_recommended_item_count": sum(
-                    1
-                    for row in selected_items
-                    if str(row.get("run_id") or "") == run_id
-                    and row.get("status") == "recommended"
-                ),
-                "settled_betman_watchlist_item_count": sum(
-                    1
-                    for row in selected_items
-                    if str(row.get("run_id") or "") == run_id
-                    and row.get("status") != "recommended"
-                    and is_betman_daily_pick_item(row)
-                ),
-                "settled_at": datetime.now(timezone.utc).isoformat(),
-            },
+    results_by_item_id = {
+        str(row.get("pick_item_id") or ""): row
+        for row in results
+    }
+    def item_result_status(item: dict) -> str:
+        result = results_by_item_id.get(str(item.get("id") or ""))
+        if result is None:
+            return "pending"
+        return str(result.get("result_status") or "pending")
+
+    runs = []
+    for run_id in sorted(run_dates_by_id):
+        run_items = [
+            row for row in selected_items if str(row.get("run_id") or "") == run_id
+        ]
+        pending_count = sum(
+            1
+            for row in run_items
+            if item_result_status(row) == "pending"
+        )
+        metadata = {
+            "settled_item_count": len(run_items) - pending_count,
+            "settled_recommended_item_count": sum(
+                1
+                for row in run_items
+                if row.get("status") == "recommended"
+                and item_result_status(row) != "pending"
+            ),
+            "settled_betman_watchlist_item_count": sum(
+                1
+                for row in run_items
+                if row.get("status") != "recommended"
+                and is_betman_daily_pick_item(row)
+                and item_result_status(row) != "pending"
+            ),
         }
-        for run_id in sorted(run_dates_by_id)
-    ]
+        if pending_count:
+            metadata["pending_item_count"] = pending_count
+            metadata["settlement_checked_at"] = datetime.now(timezone.utc).isoformat()
+        else:
+            metadata["settled_at"] = datetime.now(timezone.utc).isoformat()
+        runs.append(
+            {
+                "id": run_id,
+                "pick_date": run_dates_by_id[run_id],
+                "status": "pending" if pending_count else "settled",
+                "metadata": metadata,
+            }
+        )
     return results, runs
 
 
@@ -1312,6 +1334,15 @@ def read_rows_by_values(
     ]
 
 
+def daily_pick_date_matches_are_settled(matches: list[dict], sync_date: str) -> bool:
+    dated_matches = [
+        row for row in matches if str(row.get("kickoff_at") or "")[:10] == sync_date
+    ]
+    if not dated_matches:
+        return True
+    return all(bool(row.get("final_result")) for row in dated_matches)
+
+
 def run_job(
     *,
     sync_date: str | None,
@@ -1332,14 +1363,25 @@ def run_job(
             (row for row in existing_runs if str(row.get("id") or "") == run_id),
             None,
         )
+        matches = None
+        settled_run_can_skip = False
         if existing_run and existing_run.get("status") == "settled" and not force_resync:
+            matches = read_rows(client, "matches", columns=DAILY_PICK_MATCH_COLUMNS)
+            settled_run_can_skip = daily_pick_date_matches_are_settled(matches, sync_date)
+        if (
+            existing_run
+            and existing_run.get("status") == "settled"
+            and not force_resync
+            and settled_run_can_skip
+        ):
             result["sync_skipped"] = "settled_run_exists"
             result["sync_diagnostics"] = {
                 "sync_date": sync_date,
                 "existing_run_status": existing_run.get("status"),
             }
         else:
-            matches = read_rows(client, "matches", columns=DAILY_PICK_MATCH_COLUMNS)
+            if matches is None:
+                matches = read_rows(client, "matches", columns=DAILY_PICK_MATCH_COLUMNS)
             sync_match_ids = sorted(
                 {
                     str(row.get("id") or "")
