@@ -327,7 +327,49 @@ def _select_validation_summary(
             and lower_bound >= minimum_wilson_lower_bound
         ):
             return {**summary, "validation_scope": summary.get("validation_scope") or scope}
-    return {**exact_summary, "validation_scope": exact_summary.get("validation_scope") or "exact"}
+    diagnostic_candidates = [
+        (scope, summary)
+        for scope, summary in candidates
+        if summary
+    ]
+    if not diagnostic_candidates:
+        return {
+            **exact_summary,
+            "validation_scope": exact_summary.get("validation_scope") or "exact",
+        }
+    diagnostic_scope, diagnostic_summary = max(
+        diagnostic_candidates,
+        key=lambda row: _validation_diagnostic_rank(
+            row[1],
+            minimum_sample_count=minimum_sample_count,
+            target_hit_rate=target_hit_rate,
+            minimum_wilson_lower_bound=minimum_wilson_lower_bound,
+        ),
+    )
+    return {
+        **diagnostic_summary,
+        "validation_scope": diagnostic_summary.get("validation_scope") or diagnostic_scope,
+    }
+
+
+def _validation_diagnostic_rank(
+    summary: dict,
+    *,
+    minimum_sample_count: int,
+    target_hit_rate: float,
+    minimum_wilson_lower_bound: float,
+) -> tuple[bool, bool, bool, int, float, float]:
+    sample_count = int(summary.get("sample_count") or 0)
+    hit_rate = _read_numeric(summary.get("hit_rate")) or 0.0
+    lower_bound = _read_numeric(summary.get("wilson_lower_bound")) or 0.0
+    return (
+        sample_count >= minimum_sample_count,
+        hit_rate >= target_hit_rate,
+        lower_bound >= minimum_wilson_lower_bound,
+        sample_count,
+        lower_bound,
+        hit_rate,
+    )
 
 
 def _summary_segment_metadata(summary: dict, fallback_key: ValidationSegmentKey) -> dict[str, str]:

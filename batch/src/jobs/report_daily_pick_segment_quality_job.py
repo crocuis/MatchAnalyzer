@@ -274,6 +274,8 @@ def enrich_daily_pick_item(item: dict, result: dict | None) -> dict:
         "validation_minimum_wilson_lower_bound": read_float(
             metadata.get("minimum_wilson_lower_bound")
         ),
+        "validation_scope": str(metadata.get("validation_scope") or ""),
+        "validation_segment_id": str(metadata.get("segment_id") or ""),
         "hold_reason": str(
             metadata.get("confidence_reliability")
             or item.get("reliability_hold_reason")
@@ -646,6 +648,12 @@ def build_validation_gap_summary(row: dict) -> dict:
         "validation_wilson_lower_bound": wilson_lower_bound,
         "validation_minimum_wilson_lower_bound": minimum_wilson_lower_bound,
         "validation_wilson_gap": wilson_gap,
+        "validation_scope": str(
+            row.get("validation_scope") or metadata.get("validation_scope") or ""
+        ) or None,
+        "validation_segment_id": str(
+            row.get("validation_segment_id") or metadata.get("segment_id") or ""
+        ) or None,
     }
 
 

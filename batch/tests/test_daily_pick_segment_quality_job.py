@@ -63,6 +63,8 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
                 "hit_rate": 0.75,
                 "wilson_lower_bound": 0.46,
                 "minimum_wilson_lower_bound": 0.7,
+                "validation_scope": "global_confidence_implied",
+                "segment_id": "model_v1|all|moneyline|0.7-0.8|0.2-0.3",
                 "source_agreement_ratio": 0.5,
                 "moneyline_signal_score": 1.2,
             },
@@ -128,6 +130,10 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
     assert report["betman_held_candidates"][0]["validation_sample_count"] == 12
     assert report["betman_held_candidates"][0]["validation_sample_shortfall"] == 38
     assert report["betman_held_candidates"][0]["validation_wilson_gap"] == 0.24
+    assert (
+        report["betman_held_candidates"][0]["validation_scope"]
+        == "global_confidence_implied"
+    )
     assert "betman_settled_sample_below_floor" in (
         report["betman_held_candidates"][0]["blockers"]
     )
