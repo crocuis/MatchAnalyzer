@@ -1242,6 +1242,8 @@ it("explains an empty daily picks modal with gate diagnostics", async () => {
         betman_value_edge_missing: 7,
         insufficient_sample: 5,
         below_segment_reliability: 4,
+        betman_value_source_missing: 3,
+        betman_value_pick_invalid: 2,
       },
     },
   });
@@ -1269,10 +1271,14 @@ it("explains an empty daily picks modal with gate diagnostics", async () => {
   expect(within(dialog).getByText("Betman value edge missing")).toBeInTheDocument();
   expect(within(dialog).getByText("Insufficient sample")).toBeInTheDocument();
   expect(within(dialog).getByText("Below segment reliability")).toBeInTheDocument();
+  expect(within(dialog).getByText("Betman value signal missing")).toBeInTheDocument();
+  expect(within(dialog).getByText("Betman value pick invalid")).toBeInTheDocument();
   expect(within(dialog).getByText("8")).toBeInTheDocument();
   expect(within(dialog).getByText("7")).toBeInTheDocument();
   expect(within(dialog).getByText("5")).toBeInTheDocument();
   expect(within(dialog).getByText("4")).toBeInTheDocument();
+  expect(within(dialog).getByText("3")).toBeInTheDocument();
+  expect(within(dialog).getByText("2")).toBeInTheDocument();
 });
 
 it("hides unavailable daily picks diagnostic counts", async () => {
