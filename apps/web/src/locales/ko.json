@@ -21,6 +21,12 @@
     "empty": "오늘 조건을 통과한 추천이 없습니다.",
     "error": "Daily Picks를 불러오지 못했습니다.",
     "showHeldCandidates": "보류 후보 {{count}}건 보기",
+    "diagnostics": {
+      "title": "Daily Picks 진단",
+      "candidates": "평가 후보 {{count}}건",
+      "passed": "통과 {{count}}건",
+      "matches": "경기 {{count}}건"
+    },
     "summary": {
       "recommendations": "추천 수",
       "candidates": "추천 후보",
@@ -101,6 +107,10 @@
     },
     "noBetReasons": {
       "low_confidence": "신뢰도 부족",
+      "below_target_hit_rate": "목표 적중률 미달",
+      "insufficient_sample": "검증 표본 부족",
+      "betman_market_missing": "Betman 구매 가능 경기 없음",
+      "betman_value_edge_missing": "Betman 가치 엣지 없음",
       "heldByRecommendationGate": "추천 게이트 보류",
       "variant_market_price_only": "시장 가격만 있음",
       "variant_model_inputs_missing": "모델 입력 부족",

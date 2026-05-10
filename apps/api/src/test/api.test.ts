@@ -902,6 +902,7 @@ describe("prediction API", () => {
       },
       items: [],
       heldItems: [],
+      diagnostics: null,
     });
     vi.useRealTimers();
   });
@@ -3268,7 +3269,7 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(dbClient.from).toHaveBeenCalledTimes(4);
+    expect(dbClient.from).toHaveBeenCalledTimes(5);
   });
 
   it("ignores stale daily pick artifacts when tracked rows were regenerated later", async () => {
@@ -3658,7 +3659,16 @@ describe("prediction API", () => {
           pick_date: "2026-04-24",
           generated_at: "2026-04-24T04:00:00Z",
           metadata: {
+            match_count: 24,
+            prediction_count: 24,
+            candidate_count: 24,
+            recommended_count: 0,
+            held_count: 0,
             selected_count: 0,
+            hold_reason_counts: {
+              low_confidence: 12,
+              below_target_hit_rate: 8,
+            },
           },
         },
       ],
@@ -3757,6 +3767,15 @@ describe("prediction API", () => {
       items: unknown[];
       heldItems: unknown[];
       coverage: Record<string, number>;
+      diagnostics: {
+        matchCount: number | null;
+        predictionCount: number | null;
+        candidateCount: number | null;
+        recommendedCount: number | null;
+        heldCount: number | null;
+        selectedCount: number | null;
+        holdReasonCounts: Record<string, number>;
+      } | null;
     };
     expect(body.generatedAt).toBe("2026-04-24T04:00:00Z");
     expect(body.items).toEqual([]);
@@ -3766,6 +3785,18 @@ describe("prediction API", () => {
       spreads: 0,
       totals: 0,
       held: 0,
+    });
+    expect(body.diagnostics).toEqual({
+      matchCount: 24,
+      predictionCount: 24,
+      candidateCount: 24,
+      recommendedCount: 0,
+      heldCount: 0,
+      selectedCount: 0,
+      holdReasonCounts: {
+        low_confidence: 12,
+        below_target_hit_rate: 8,
+      },
     });
   });
 

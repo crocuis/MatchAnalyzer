@@ -450,6 +450,15 @@ export interface DailyPicksResponse {
   coverage: Record<DailyPickMarketFamily | "held", number>;
   items: DailyPickItem[];
   heldItems: DailyPickItem[];
+  diagnostics?: {
+    matchCount: number | null;
+    predictionCount: number | null;
+    candidateCount: number | null;
+    recommendedCount: number | null;
+    heldCount: number | null;
+    selectedCount: number | null;
+    holdReasonCounts: Record<string, number>;
+  } | null;
 }
 
 export interface BetmanPolicyCandidateSummary {
