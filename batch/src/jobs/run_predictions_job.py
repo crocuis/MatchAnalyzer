@@ -5,6 +5,7 @@ import re
 from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 
 from batch.src.features.feature_builder import (
@@ -509,6 +510,43 @@ def attach_prediction_output_payload(
     result_payload["payload_omitted"] = len(payload)
     if not read_env_flag("MATCH_ANALYZER_OMIT_PREDICTION_OUTPUT_SAMPLE"):
         result_payload["payload_sample"] = payload[:3]
+    return result_payload
+
+
+def new_prediction_runtime_metrics() -> dict[str, Any]:
+    return {
+        "timings_ms": {},
+        "counters": {},
+        "flags": {},
+    }
+
+
+def record_runtime_timing(
+    runtime_metrics: dict[str, Any],
+    key: str,
+    started_at: float,
+) -> None:
+    timings = runtime_metrics.setdefault("timings_ms", {})
+    elapsed_ms = round((perf_counter() - started_at) * 1000, 1)
+    timings[key] = round(float(timings.get(key, 0.0)) + elapsed_ms, 1)
+
+
+def attach_prediction_runtime_metrics(
+    result_payload: dict[str, Any],
+    runtime_metrics: dict[str, Any],
+    *,
+    started_at: float,
+    counters: dict[str, Any],
+    flags: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    runtime_metrics.setdefault("counters", {}).update(counters)
+    if flags:
+        runtime_metrics.setdefault("flags", {}).update(flags)
+    runtime_metrics.setdefault("timings_ms", {})["total"] = round(
+        (perf_counter() - started_at) * 1000,
+        1,
+    )
+    result_payload["runtime_metrics"] = make_json_safe(runtime_metrics)
     return result_payload
 
 
@@ -2900,6 +2938,9 @@ def build_prediction_llm_context(
 
 
 def main() -> None:
+    job_started_at = perf_counter()
+    runtime_metrics = new_prediction_runtime_metrics()
+    setup_started_at = perf_counter()
     settings = load_settings()
     local_dataset_dir = resolve_local_prediction_dataset_dir()
     client = (
@@ -2950,8 +2991,11 @@ def main() -> None:
         if prediction_llm_enabled and prediction_llm_api_key
         else None
     )
+    record_runtime_timing(runtime_metrics, "setup", setup_started_at)
+    source_read_started_at = perf_counter()
     snapshot_rows = client.read_rows("match_snapshots")
     market_rows = client.read_rows("market_probabilities")
+    record_runtime_timing(runtime_metrics, "read_core_sources", source_read_started_at)
     use_real_predictions = os.environ.get("REAL_PREDICTION_DATE")
     target_match_ids = parse_match_id_targets(os.environ.get("REAL_PREDICTION_MATCH_IDS"))
     use_real_prediction_targets = bool(use_real_predictions or target_match_ids)
@@ -2964,6 +3008,7 @@ def main() -> None:
         raise ValueError("market_probabilities must exist before running predictions")
 
     match_rows: list[dict] = []
+    target_select_started_at = perf_counter()
     if use_real_prediction_targets:
         match_rows = client.read_rows("matches")
         target_snapshots, target_market_rows = select_real_prediction_inputs(
@@ -2994,11 +3039,19 @@ def main() -> None:
             )
         if len(target_snapshots) != 4:
             raise ValueError("sample pipeline expects exactly 4 snapshots")
+    record_runtime_timing(runtime_metrics, "select_targets", target_select_started_at)
     target_snapshot_ids = [
         str(row.get("id") or "")
         for row in target_snapshots
         if row.get("id")
     ]
+    target_checkpoint_counts: dict[str, int] = {}
+    for snapshot in target_snapshots:
+        checkpoint = str(snapshot.get("checkpoint_type") or "unknown")
+        target_checkpoint_counts[checkpoint] = (
+            target_checkpoint_counts.get(checkpoint, 0) + 1
+        )
+    auxiliary_read_started_at = perf_counter()
     if use_real_prediction_targets:
         prediction_rows = read_optional_rows_by_values(
             client,
@@ -3028,6 +3081,11 @@ def main() -> None:
         validation_prediction_rows = prediction_rows
         historical_prediction_rows = prediction_rows
         variant_rows = read_optional_rows(client, "market_variants")
+    record_runtime_timing(
+        runtime_metrics,
+        "read_auxiliary_sources",
+        auxiliary_read_started_at,
+    )
     market_by_snapshot = index_market_rows_by_snapshot(market_rows)
     latest_fusion_policy = read_latest_fusion_policy(client)
     existing_predictions_by_id = {
@@ -3045,9 +3103,15 @@ def main() -> None:
     skipped_snapshots = []
     locked_prediction_ids = []
     match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
+    validation_started_at = perf_counter()
     validation_records = build_validation_records(
         prediction_rows=validation_prediction_rows,
         match_by_id=match_by_id,
+    )
+    record_runtime_timing(
+        runtime_metrics,
+        "build_validation_records",
+        validation_started_at,
     )
     validation_segment_cache: dict[str | None, dict[str, dict]] = {}
     teams_by_id = {
@@ -3084,6 +3148,7 @@ def main() -> None:
     archive_prediction_artifacts = archive_prediction_artifacts and persist_side_effects
     from batch.src.model.raw_signal_backtest import build_moneyline_signal_score
 
+    prediction_loop_started_at = perf_counter()
     for snapshot in target_snapshots:
         match = match_by_id.get(snapshot.get("match_id"), {})
         prediction_id = f"{snapshot['id']}_{SAMPLE_MODEL_VERSION_ID}"
@@ -3764,6 +3829,31 @@ def main() -> None:
                 model_version_id=SAMPLE_MODEL_VERSION_ID,
             )
         )
+    record_runtime_timing(runtime_metrics, "prediction_loop", prediction_loop_started_at)
+    runtime_counters = {
+        "target_match_count": len(
+            {
+                str(row.get("match_id") or "")
+                for row in target_snapshots
+                if row.get("match_id")
+            }
+        ),
+        "target_snapshot_count": len(target_snapshots),
+        "target_checkpoint_counts": target_checkpoint_counts,
+        "prediction_payload_rows": len(payload),
+        "validation_prediction_rows": len(validation_prediction_rows),
+        "validation_records": len(validation_records),
+        "training_dataset_cache_entries": len(training_dataset_cache),
+        "baseline_model_cache_entries": len(baseline_model_cache),
+        "historical_source_cache_entries": len(historical_source_prediction_rows_cache),
+        "confidence_bucket_cache_entries": len(confidence_bucket_cache),
+        "current_fused_candidates_cache_entries": len(current_fused_candidates_cache),
+    }
+    runtime_flags = {
+        "real_prediction_targets": use_real_prediction_targets,
+        "current_fused_selector_enabled": current_fused_selector_enabled,
+        "persist_side_effects": persist_side_effects,
+    }
 
     if not payload and use_real_prediction_targets and locked_prediction_ids:
         result_payload = {
@@ -3778,6 +3868,13 @@ def main() -> None:
             "skipped_snapshots": skipped_snapshots,
             "locked_prediction_ids": locked_prediction_ids,
         }
+        attach_prediction_runtime_metrics(
+            result_payload,
+            runtime_metrics,
+            started_at=job_started_at,
+            counters=runtime_counters,
+            flags=runtime_flags,
+        )
         attach_prediction_output_payload(
             result_payload,
             payload=[],
@@ -3790,6 +3887,7 @@ def main() -> None:
     if not use_real_prediction_targets and len(payload) != len(target_snapshots):
         raise ValueError("sample prediction pipeline requires a payload per snapshot")
 
+    persist_started_at = perf_counter()
     model_rows = (
         client.upsert_rows(
             "model_versions",
@@ -3811,8 +3909,10 @@ def main() -> None:
     feature_snapshots_inserted = client.upsert_rows(
         "prediction_feature_snapshots", feature_snapshot_payload
     )
+    record_runtime_timing(runtime_metrics, "persist_predictions", persist_started_at)
     daily_pick_sync_dates = []
     daily_pick_tracking_results = []
+    daily_pick_sync_started_at = perf_counter()
     if should_sync_daily_pick_tracking_after_predictions(
         persist_side_effects=persist_side_effects,
         use_real_prediction_targets=use_real_prediction_targets,
@@ -3828,6 +3928,11 @@ def main() -> None:
             sync_dates=daily_pick_sync_dates,
             force_resync_date=use_real_predictions,
         )
+    record_runtime_timing(
+        runtime_metrics,
+        "daily_pick_tracking_sync",
+        daily_pick_sync_started_at,
+    )
     result_payload = {
         "snapshot_rows": len(snapshot_rows),
         "target_snapshot_rows": len(target_snapshots),
@@ -3840,6 +3945,13 @@ def main() -> None:
         "skipped_snapshots": skipped_snapshots,
         "locked_prediction_ids": locked_prediction_ids,
     }
+    attach_prediction_runtime_metrics(
+        result_payload,
+        runtime_metrics,
+        started_at=job_started_at,
+        counters=runtime_counters,
+        flags=runtime_flags,
+    )
     attach_prediction_output_payload(
         result_payload,
         payload,

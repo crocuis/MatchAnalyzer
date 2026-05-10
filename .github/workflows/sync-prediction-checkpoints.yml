@@ -99,10 +99,15 @@ jobs:
             --clubelo-date-stride-days 1
       - name: Refresh changed predictions
         if: ${{ env.SYNC_TARGET_MATCH_IDS != '' }}
+        shell: bash
         run: |
+          PREDICTION_LOG="$(mktemp)"
           MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1 \
             REAL_PREDICTION_MATCH_IDS="$SYNC_TARGET_MATCH_IDS" \
-            python3 -m batch.src.jobs.run_predictions_job
+            python3 -m batch.src.jobs.run_predictions_job | tee "$PREDICTION_LOG"
+          python3 -m batch.src.jobs.render_prediction_runtime_summary_job \
+            "$PREDICTION_LOG" \
+            "$GITHUB_STEP_SUMMARY"
       - name: Skip empty prediction refresh
         if: ${{ env.SYNC_TARGET_MATCH_IDS == '' }}
         run: echo "No due prediction checkpoints detected; skipping prediction refresh."
