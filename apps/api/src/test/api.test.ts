@@ -1162,6 +1162,15 @@ describe("prediction API", () => {
     });
   });
 
+  it("requests a fresh database client for Betman policy because report artifacts update after jobs", async () => {
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
+
+    const response = await app.request("/betman-ticket-policy/latest");
+
+    expect(response.status).toBe(200);
+    expect(spy.mock.calls[0]?.[1]).toEqual({ freshness: "fresh" });
+  });
+
   it("derives daily pick validation from settled results before stale summary rows", async () => {
     const dbClient = buildTableDbClient({
       matches: [],

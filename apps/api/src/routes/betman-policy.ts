@@ -259,7 +259,7 @@ export async function loadLatestBetmanPolicySummary(
 
 betmanPolicy.get("/latest", async (c) => {
   return cachedResponse(c, async () => {
-    const dbClient = getDbClient(c.env);
+    const dbClient = getDbClient(c.env, { freshness: "fresh" });
     const policy = dbClient
       ? await loadLatestBetmanPolicySummary(dbClient, c.env)
       : null;
