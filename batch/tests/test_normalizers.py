@@ -92,6 +92,7 @@ from batch.src.jobs.ingest_fixtures_job import (
     build_team_translation_rows,
     collect_changed_fixture_match_ids,
     filter_changed_fixture_snapshot_rows,
+    main as run_ingest_fixtures_job,
     prepare_sync_asset_rows,
     resolve_external_signal_as_of_date,
     should_backfill_real_fixture_team_assets,
@@ -6302,6 +6303,60 @@ def test_polymarket_sport_for_competition_uses_supported_competitions_only():
     assert polymarket_sport_for_competition("uecl", "UEFA Conference League") == "ucol"
     assert polymarket_sport_for_competition("k-league", "K League 1") == "kor"
     assert polymarket_sport_for_competition("mls", "MLS") is None
+
+
+def test_ingest_fixtures_schedule_mode_skips_snapshot_diff_without_full_sync(
+    monkeypatch,
+    capsys,
+):
+    class FakeClient:
+        def __init__(self, *_args):
+            pass
+
+        def read_rows(self, _table_name):
+            return []
+
+        def upsert_rows(self, _table_name, rows):
+            return len(rows)
+
+    class FakeR2Client:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def archive_json(self, key, _payload):
+            return f"r2://fixtures/{key}"
+
+    monkeypatch.setenv("REAL_FIXTURE_DATE", "2026-05-10")
+    monkeypatch.setenv("REAL_FIXTURE_SYNC_MODE", "schedule")
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+                "r2_bucket": "ma-bucket",
+                "r2_access_key_id": None,
+                "r2_secret_access_key": None,
+                "r2_s3_endpoint": None,
+            },
+        )(),
+    )
+    monkeypatch.setattr("batch.src.jobs.ingest_fixtures_job.DbClient", FakeClient)
+    monkeypatch.setattr("batch.src.jobs.ingest_fixtures_job.R2Client", FakeR2Client)
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_fixtures_job.fetch_daily_schedule",
+        lambda _date: {"data": {"events": []}},
+    )
+
+    run_ingest_fixtures_job()
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["fixture_rows"] == 0
+    assert payload["snapshot_rows"] == 0
+    assert payload["changed_match_ids"] == []
 
 
 def test_build_prediction_market_snapshot_contexts_includes_conference_league():
