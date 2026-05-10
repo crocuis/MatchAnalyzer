@@ -3158,7 +3158,7 @@ describe("prediction API", () => {
           modelProbability: 0.39,
           marketProbability: 0.24,
           sourceAgreementRatio: 1,
-          confidenceReliability: "insufficient_sample",
+          confidenceReliability: "diagnosticCandidate",
           highConfidenceEligible: false,
           validationMetadata: {
             confidence_reliability: "insufficient_sample",
@@ -3172,6 +3172,7 @@ describe("prediction API", () => {
             "betmanValue",
             "heldByRecommendationGate",
             "insufficient_sample",
+            "diagnosticCandidate",
           ],
         },
         {
@@ -3927,6 +3928,7 @@ describe("prediction API", () => {
             "mainRecommendation",
             "heldByRecommendationGate",
             "insufficient_sample",
+            "diagnosticCandidate",
           ],
         },
         {

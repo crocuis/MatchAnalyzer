@@ -1485,6 +1485,31 @@ function recomputeCoverage(items: DailyPickItem[], heldItems: DailyPickItem[]) {
   };
 }
 
+const nonBlockingTrackedReasonLabels = new Set([
+  "diagnosticCandidate",
+  "heldByRecommendationGate",
+  "mainRecommendation",
+]);
+
+function isNonBlockingTrackedReasonLabel(label: string | null | undefined) {
+  return typeof label === "string" && nonBlockingTrackedReasonLabels.has(label);
+}
+
+function resolveTrackedHeldBlockerReason(
+  labels: string[],
+  status: DailyPickItem["status"],
+): string | null {
+  if (status !== "held") {
+    return null;
+  }
+  for (const label of [...labels].reverse()) {
+    if (!isNonBlockingTrackedReasonLabel(label)) {
+      return label;
+    }
+  }
+  return "held";
+}
+
 function normalizeDailyPickRecommendationSubset(items: DailyPickItem[]) {
   return items.map((item) => {
     const metadata = item.validationMetadata ?? {};
@@ -1495,8 +1520,15 @@ function normalizeDailyPickRecommendationSubset(items: DailyPickItem[]) {
     if (highConfidenceEligible !== false) {
       return item;
     }
+    const labelReason = resolveTrackedHeldBlockerReason(
+      item.reasonLabels,
+      "held",
+    );
     const reason =
-      item.confidenceReliability
+      labelReason
+      ?? (isNonBlockingTrackedReasonLabel(item.confidenceReliability)
+        ? null
+        : item.confidenceReliability)
       ?? readString(metadata.confidence_reliability)
       ?? readString(metadata.confidenceReliability)
       ?? "confidence_reliability_missing";
@@ -1510,7 +1542,9 @@ function normalizeDailyPickRecommendationSubset(items: DailyPickItem[]) {
     return {
       ...item,
       status: "held" as const,
-      noBetReason: item.noBetReason ?? reason,
+      noBetReason: isNonBlockingTrackedReasonLabel(item.noBetReason)
+        ? reason
+        : item.noBetReason ?? reason,
       confidenceReliability: reason,
       highConfidenceEligible: false,
       reasonLabels,
@@ -1989,15 +2023,7 @@ function resolveTrackedNoBetReason(
   labels: string[],
   status: DailyPickItem["status"],
 ): string | null {
-  if (status !== "held") {
-    return null;
-  }
-  for (const label of [...labels].reverse()) {
-    if (label !== "heldByRecommendationGate" && label !== "mainRecommendation") {
-      return label;
-    }
-  }
-  return "held";
+  return resolveTrackedHeldBlockerReason(labels, status);
 }
 
 dailyPicks.get("/", async (c) => {

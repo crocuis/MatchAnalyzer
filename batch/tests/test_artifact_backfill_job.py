@@ -348,6 +348,7 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
                     "variantRecommendation",
                     "heldByRecommendationGate",
                     "variant_market_reliability_gap",
+                    "diagnosticCandidate",
                 ],
             }
         ],
