@@ -49,6 +49,7 @@ def build_betman_ticket_opportunity_report(
     max_leg_decimal_odds: float | None = None,
     max_leg_expected_value: float | None = None,
     max_ticket_decimal_odds: float | None = None,
+    current_market_diagnostics: dict | None = None,
 ) -> dict:
     risk_controls = resolve_betman_ticket_risk_controls(
         risk_profile,
@@ -98,6 +99,18 @@ def build_betman_ticket_opportunity_report(
         limit=limit,
         max_decimal_odds=risk_controls["max_ticket_decimal_odds"],
     )
+    current_betman = {
+        "enabled": current_market_filter_enabled,
+        "matched_match_count": len(current_prices_by_match),
+        "excluded_unavailable_item_count": (
+            len(candidate_items) - len(available_candidate_items)
+            if current_market_filter_enabled
+            else 0
+        ),
+    }
+    if current_market_diagnostics:
+        current_betman.update(current_market_diagnostics)
+
     return {
         "pick_date": resolved_pick_date,
         "candidate_item_count": len(candidate_items),
@@ -112,15 +125,7 @@ def build_betman_ticket_opportunity_report(
             "max_ticket_decimal_odds": risk_controls["max_ticket_decimal_odds"],
             "ranking": "expected_value_probability_decimal_odds",
         },
-        "current_betman": {
-            "enabled": current_market_filter_enabled,
-            "matched_match_count": len(current_prices_by_match),
-            "excluded_unavailable_item_count": (
-                len(candidate_items) - len(available_candidate_items)
-                if current_market_filter_enabled
-                else 0
-            ),
-        },
+        "current_betman": current_betman,
         "tickets": tickets,
     }
 

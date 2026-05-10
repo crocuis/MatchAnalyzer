@@ -12,6 +12,7 @@ from batch.src.model.betman_ticket_optimizer import (
 )
 from batch.src.jobs.report_betman_ticket_opportunities_job import (
     build_report_candidate_items,
+    fetch_current_proto_victory_market_context,
     fetch_current_proto_victory_detail_payloads,
     format_ticket_opportunity_lines,
     parse_args,
@@ -1858,6 +1859,37 @@ def test_fetch_current_proto_victory_detail_payloads_uses_selected_rounds() -> N
     ]
 
 
+def test_fetch_current_proto_victory_market_context_reports_missing_victory_round() -> None:
+    calls = []
+
+    def fake_fetch_buyable() -> dict:
+        return {
+            "protoGames": [
+                {"gmId": "G102", "gmTs": 260031, "gmOsidTsYear": 2026},
+            ]
+        }
+
+    def fake_fetch_detail(gm_id: str, gm_ts: int, *, game_year: int | None = None) -> dict:
+        calls.append((gm_id, gm_ts, game_year))
+        return {}
+
+    context = fetch_current_proto_victory_market_context(
+        fetch_buyable=fake_fetch_buyable,
+        fetch_detail=fake_fetch_detail,
+        fetched_at="2026-05-10T00:00:00Z",
+    )
+
+    assert calls == []
+    assert context["detail_payloads"] == []
+    assert context["diagnostics"] == {
+        "buyable_game_count": 1,
+        "buyable_gm_ids": ["G102"],
+        "selected_victory_game_count": 0,
+        "detail_payload_count": 0,
+        "unavailable_reason": "proto_victory_round_missing",
+    }
+
+
 def test_format_ticket_opportunity_lines_prints_purchase_unit_summary() -> None:
     lines = format_ticket_opportunity_lines(
         {
@@ -1869,6 +1901,7 @@ def test_format_ticket_opportunity_lines_prints_purchase_unit_summary() -> None:
                 "enabled": True,
                 "matched_match_count": 2,
                 "excluded_unavailable_item_count": 0,
+                "unavailable_reason": None,
             },
             "tickets": [
                 {
@@ -1904,6 +1937,39 @@ def test_format_ticket_opportunity_lines_prints_purchase_unit_summary() -> None:
         "#1 2-leg p=39.00% odds=4.00 EV=56.00%",
         "  - match-a moneyline HOME p=65.00% odds=2.00",
         "  - match-b moneyline AWAY p=60.00% odds=2.00",
+    ]
+
+
+def test_format_ticket_opportunity_lines_prints_current_betman_unavailable_reason() -> None:
+    lines = format_ticket_opportunity_lines(
+        {
+            "pick_date": "2026-05-11",
+            "candidate_item_count": 0,
+            "eligible_leg_count": 0,
+            "ticket_count": 0,
+            "current_betman": {
+                "enabled": False,
+                "matched_match_count": 0,
+                "excluded_unavailable_item_count": 0,
+                "buyable_game_count": 1,
+                "buyable_gm_ids": ["G102"],
+                "selected_victory_game_count": 0,
+                "detail_payload_count": 0,
+                "market_row_count": 0,
+                "unavailable_reason": "proto_victory_round_missing",
+            },
+            "tickets": [],
+        }
+    )
+
+    assert lines == [
+        "Betman ticket opportunities for 2026-05-11: candidates=0 eligible_legs=0 tickets=0",
+        (
+            "Current Betman filter: enabled=false matched_matches=0 "
+            "excluded_unavailable=0 reason=proto_victory_round_missing "
+            "buyable_games=1 buyable_gm_ids=G102 victory_rounds=0 "
+            "detail_payloads=0 market_rows=0"
+        ),
     ]
 
 
