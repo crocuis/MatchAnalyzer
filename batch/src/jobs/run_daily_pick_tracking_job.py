@@ -297,6 +297,9 @@ def build_recommended_pick_candidates(
         summary_payload,
         prediction=prediction,
     )
+    if reliability_hold_reason:
+        validation_metadata.setdefault("confidence_reliability", reliability_hold_reason)
+        validation_metadata.setdefault("high_confidence_eligible", False)
 
     match_id = str(match.get("id") or "")
     base = {
@@ -487,7 +490,10 @@ def build_moneyline_pick_candidate(
         or (value_is_betman and value_aligned and value_recommended)
     )
     if precision_moneyline_eligible and betman_executable_value:
-        candidate_base = _promote_precision_moneyline_candidate(candidate_base)
+        if candidate_base.get("status") == "held":
+            candidate_base = _mark_precision_moneyline_candidate(candidate_base)
+        else:
+            candidate_base = _promote_precision_moneyline_candidate(candidate_base)
     elif candidate_base.get("status") != "held":
         candidate_base = _with_daily_pick_hold_reason(
             candidate_base,
@@ -629,6 +635,7 @@ def _with_daily_pick_hold_reason(base: dict, hold_reason: str) -> dict:
 
 
 def _promote_precision_moneyline_candidate(base: dict) -> dict:
+    base = _mark_precision_moneyline_candidate(base)
     metadata = dict(base.get("validation_metadata") or {})
     original_reliability = (
         metadata.get("confidence_reliability") or base.get("reliability_hold_reason")
@@ -636,10 +643,25 @@ def _promote_precision_moneyline_candidate(base: dict) -> dict:
     if original_reliability:
         metadata.setdefault("precision_gate_original_reliability", original_reliability)
     metadata["confidence_reliability"] = "precision_moneyline_supported"
-    metadata["high_confidence_eligible"] = False
+    return {
+        **base,
+        "status": "recommended",
+        "validation_metadata": metadata,
+        "reliability_hold_reason": None,
+    }
+
+
+def _mark_precision_moneyline_candidate(base: dict) -> dict:
+    metadata = dict(base.get("validation_metadata") or {})
+    original_reliability = (
+        metadata.get("confidence_reliability") or base.get("reliability_hold_reason")
+    )
+    if original_reliability:
+        metadata.setdefault("precision_gate_original_reliability", original_reliability)
     metadata["daily_pick_precision_gate"] = (
         "covered_league_moneyline_signal_agreement_or_high_signal"
     )
+    metadata["precision_gate_candidate"] = True
     metadata["minimum_signal_score"] = DAILY_PICK_PRECISION_MIN_SIGNAL_SCORE
     metadata["minimum_source_agreement_ratio"] = (
         DAILY_PICK_PRECISION_MIN_SOURCE_AGREEMENT
@@ -648,12 +670,7 @@ def _promote_precision_moneyline_candidate(base: dict) -> dict:
     metadata["expansion_minimum_source_agreement_ratio"] = (
         DAILY_PICK_EXPANSION_MIN_SOURCE_AGREEMENT
     )
-    return {
-        **base,
-        "status": "recommended",
-        "validation_metadata": metadata,
-        "reliability_hold_reason": None,
-    }
+    return {**base, "validation_metadata": metadata}
 
 
 def recommendation_score(

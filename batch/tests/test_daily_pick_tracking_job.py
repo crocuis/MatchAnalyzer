@@ -230,8 +230,8 @@ def test_sync_daily_picks_requires_betman_value_source_when_market_is_available(
                 "away_prob": 0.15,
                 "main_recommendation_pick": "HOME",
                 "main_recommendation_confidence": 0.76,
-                "main_recommendation_recommended": False,
-                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "main_recommendation_recommended": True,
+                "main_recommendation_no_bet_reason": None,
                 "value_recommendation_pick": "HOME",
                 "value_recommendation_recommended": True,
                 "summary_payload": {
@@ -342,14 +342,15 @@ def test_sync_daily_picks_preserves_prediction_provenance_and_bookmaker_price() 
                 "confidence_score": 0.76,
                 "main_recommendation_pick": "HOME",
                 "main_recommendation_confidence": 0.76,
-                "main_recommendation_recommended": False,
-                "main_recommendation_no_bet_reason": "below_target_hit_rate",
+                "main_recommendation_recommended": True,
+                "main_recommendation_no_bet_reason": None,
                 "value_recommendation_pick": "HOME",
                 "value_recommendation_recommended": True,
                 "value_recommendation_market_source": "betman_moneyline_3way",
                 "summary_payload": {
                     "betman_market_available": True,
                     "base_model_source": "trained_baseline",
+                    "high_confidence_eligible": True,
                     "max_abs_divergence": 0.01,
                     "moneyline_signal_score": 3.0,
                     "source_agreement_ratio": 0.0,
@@ -366,9 +367,9 @@ def test_sync_daily_picks_preserves_prediction_provenance_and_bookmaker_price() 
                         }
                     },
                     "validation_metadata": {
-                        "sample_count": 30,
-                        "hit_rate": 0.69,
-                        "wilson_lower_bound": 0.5,
+                        "sample_count": 250,
+                        "hit_rate": 0.8,
+                        "wilson_lower_bound": 0.75,
                     },
                 },
                 "created_at": "2026-04-24T08:00:00Z",
@@ -1075,7 +1076,7 @@ def test_sync_daily_picks_keeps_precision_gate_moneyline_only() -> None:
     moneyline_items = [row for row in items if row["market_family"] == "moneyline"]
     total_items = [row for row in items if row["market_family"] == "totals"]
 
-    assert moneyline_items[0]["status"] == "recommended"
+    assert moneyline_items[0]["status"] == "held"
     assert total_items[0]["status"] == "held"
     assert total_items[0]["reason_labels"] == [
         "totals",
@@ -1085,7 +1086,7 @@ def test_sync_daily_picks_keeps_precision_gate_moneyline_only() -> None:
     ]
 
 
-def test_sync_daily_picks_allows_precision_gate_for_covered_european_leagues() -> None:
+def test_sync_daily_picks_keeps_covered_league_precision_candidate_held_without_dashboard_recommendation() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -1130,8 +1131,12 @@ def test_sync_daily_picks_allows_precision_gate_for_covered_european_leagues() -
     )
 
     assert len(items) == 1
-    assert items[0]["status"] == "recommended"
-    assert items[0]["reason_labels"] == ["mainRecommendation"]
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
 
 
 def test_sync_daily_picks_holds_weak_validated_competition_segments() -> None:
@@ -1187,7 +1192,7 @@ def test_sync_daily_picks_holds_weak_validated_competition_segments() -> None:
     ]
 
 
-def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> None:
+def test_sync_daily_picks_keeps_precision_moneyline_held_without_dashboard_recommendation() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -1236,11 +1241,23 @@ def test_sync_daily_picks_allows_precise_moneyline_with_pre_match_signals() -> N
     )
 
     assert len(items) == 1
-    assert items[0]["status"] == "recommended"
-    assert items[0]["reason_labels"] == ["mainRecommendation"]
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
+    assert (
+        items[0]["validation_metadata"]["daily_pick_precision_gate"]
+        == "covered_league_moneyline_signal_agreement_or_high_signal"
+    )
+    assert (
+        items[0]["validation_metadata"]["precision_gate_candidate"]
+        is True
+    )
     assert (
         items[0]["validation_metadata"]["confidence_reliability"]
-        == "precision_moneyline_supported"
+        == "below_target_hit_rate"
     )
     assert (
         items[0]["validation_metadata"]["precision_gate_original_reliability"]
@@ -1336,10 +1353,10 @@ def test_sync_daily_picks_prefers_t24_checkpoint_over_later_pre_match_rows() -> 
 
     assert len(items) == 1
     assert items[0]["prediction_id"] == "prediction-t24"
-    assert items[0]["status"] == "recommended"
+    assert items[0]["status"] == "held"
 
 
-def test_sync_daily_picks_allows_high_signal_moneyline_without_source_agreement() -> None:
+def test_sync_daily_picks_keeps_high_signal_moneyline_held_without_dashboard_recommendation() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -1388,10 +1405,15 @@ def test_sync_daily_picks_allows_high_signal_moneyline_without_source_agreement(
     )
 
     assert len(items) == 1
-    assert items[0]["status"] == "recommended"
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
     assert (
         items[0]["validation_metadata"]["confidence_reliability"]
-        == "precision_moneyline_supported"
+        == "below_target_hit_rate"
     )
 
 
@@ -1452,7 +1474,7 @@ def test_sync_daily_picks_holds_precision_moneyline_below_signal_floor() -> None
     ]
 
 
-def test_sync_daily_picks_allows_precision_poisson_blend_at_calibrated_threshold() -> None:
+def test_sync_daily_picks_keeps_precision_poisson_blend_held_without_dashboard_recommendation() -> None:
     _run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",
         matches=[
@@ -1501,10 +1523,15 @@ def test_sync_daily_picks_allows_precision_poisson_blend_at_calibrated_threshold
     )
 
     assert len(items) == 1
-    assert items[0]["status"] == "recommended"
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "below_target_hit_rate",
+    ]
     assert (
         items[0]["validation_metadata"]["confidence_reliability"]
-        == "precision_moneyline_supported"
+        == "below_target_hit_rate"
     )
 
 
@@ -1647,7 +1674,10 @@ def test_sync_daily_picks_tracks_missing_validation_as_held() -> None:
 
     assert len(items) == 1
     assert items[0]["status"] == "held"
-    assert items[0]["validation_metadata"] == {"high_confidence_eligible": False}
+    assert items[0]["validation_metadata"] == {
+        "confidence_reliability": "confidence_reliability_missing",
+        "high_confidence_eligible": False,
+    }
     assert items[0]["reason_labels"] == [
         "mainRecommendation",
         "heldByRecommendationGate",
