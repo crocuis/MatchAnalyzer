@@ -6238,6 +6238,76 @@ def test_build_confidence_bucket_summary_accepts_postgres_datetime_kickoff():
     }
 
 
+def test_build_historical_source_performance_summary_uses_persisted_prediction_payloads():
+    summary = run_predictions_job.build_historical_source_performance_summary_from_predictions(
+        prediction_rows=[
+            {
+                "id": "hist_prediction",
+                "snapshot_id": "hist_snapshot",
+                "match_id": "hist_match",
+                "created_at": "2026-04-10T20:00:00+00:00",
+                "home_prob": 0.66,
+                "draw_prob": 0.20,
+                "away_prob": 0.14,
+                "summary_payload": {
+                    "base_model_probs": {"home": 0.62, "draw": 0.22, "away": 0.16},
+                    "raw_current_fused_probs": {"home": 0.66, "draw": 0.20, "away": 0.14},
+                    "source_metadata": {
+                        "market_segment": "with_prediction_market",
+                        "market_sources": {
+                            "bookmaker": {
+                                "probabilities": {
+                                    "home": 0.60,
+                                    "draw": 0.24,
+                                    "away": 0.16,
+                                },
+                            },
+                            "prediction_market": {
+                                "probabilities": {
+                                    "home": 0.64,
+                                    "draw": 0.21,
+                                    "away": 0.15,
+                                },
+                            },
+                            "base_model": {
+                                "probabilities": {
+                                    "home": 0.62,
+                                    "draw": 0.22,
+                                    "away": 0.16,
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "hist_snapshot",
+                "match_id": "hist_match",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        match_rows=[
+            {
+                "id": "hist_match",
+                "competition_id": "premier-league",
+                "kickoff_at": datetime(2026, 4, 10, 18, tzinfo=timezone.utc),
+                "final_result": "HOME",
+            }
+        ],
+        checkpoint_type="T_MINUS_24H",
+        target_date="2026-04-11",
+        market_segment="with_prediction_market",
+    )
+
+    assert summary["base_model"]["count"] == 1
+    assert summary["base_model"]["hit_rate"] == 1.0
+    assert summary["bookmaker"]["hit_rate"] == 1.0
+    assert summary["prediction_market"]["hit_rate"] == 1.0
+    assert summary["current_fused"]["hit_rate"] == 1.0
+
+
 def test_parse_iso_datetime_rejects_naive_datetime_objects():
     assert run_predictions_job.parse_iso_datetime(datetime(2026, 4, 10, 18)) is None
 

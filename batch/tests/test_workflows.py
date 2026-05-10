@@ -196,6 +196,7 @@ def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick
 
     assert 'cron: "5 * * * *"' in workflow
     assert "PREDICTION_SYNC_LOOKBACK_MINUTES:" in workflow
+    assert "timeout-minutes: 15" in workflow
     assert "github.event.inputs.lookback_minutes || '60'" in workflow
     assert "LLM_PREDICTION_ADVISORY_ENABLED:" in workflow
     assert "python3 -m batch.src.jobs.sync_prediction_checkpoints_job" in workflow

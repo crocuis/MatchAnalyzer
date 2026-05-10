@@ -219,6 +219,17 @@ PREDICTION_VALIDATION_COLUMNS = (
     "value_recommendation_market_price",
     "value_recommendation_market_probability",
 )
+PREDICTION_SOURCE_HISTORY_COLUMNS = (
+    "id",
+    "snapshot_id",
+    "match_id",
+    "created_at",
+    "home_prob",
+    "draw_prob",
+    "away_prob",
+    "confidence_score",
+    "summary_payload",
+)
 
 
 def parse_match_id_targets(raw_match_ids: str | None) -> set[str]:
@@ -1373,6 +1384,142 @@ def build_historical_source_performance_summary(
                 bookmaker_probs=book_probs,
                 prediction_market_probs=prediction_market_probs,
                 base_model_probs=base_probs,
+                poisson_probs=poisson_probs,
+                fused_probs=fused_probs,
+            )
+        )
+    return summarize_variant_metrics(rows) if rows else {}
+
+
+def select_historical_source_snapshot_ids(
+    *,
+    snapshot_rows: list[dict],
+    match_rows: list[dict],
+    checkpoint_type: str,
+    target_date: str | None,
+) -> list[str]:
+    if not target_date:
+        return []
+    match_by_id = {row["id"]: row for row in match_rows if row.get("id")}
+    historical_snapshots = sorted(
+        [
+            snapshot
+            for snapshot in snapshot_rows
+            if snapshot.get("id")
+            and snapshot.get("checkpoint_type") == checkpoint_type
+            and match_by_id.get(snapshot["match_id"], {}).get("final_result")
+            and date_prefix(
+                match_by_id.get(snapshot["match_id"], {}).get("kickoff_at")
+            )
+            < target_date
+        ],
+        key=lambda snapshot: timestamp_sort_key(
+            match_by_id[snapshot["match_id"]].get("kickoff_at")
+        ),
+    )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
+    return [str(snapshot["id"]) for snapshot in historical_snapshots]
+
+
+def build_historical_source_performance_summary_from_predictions(
+    *,
+    prediction_rows: list[dict],
+    snapshot_rows: list[dict],
+    match_rows: list[dict],
+    checkpoint_type: str,
+    target_date: str | None,
+    market_segment: str,
+) -> dict[str, dict[str, float | int]]:
+    if not target_date:
+        return {}
+    snapshot_by_id = {
+        row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")
+    }
+    match_by_id = {
+        row["id"]: row for row in match_rows if isinstance(row, dict) and row.get("id")
+    }
+    latest_prediction_by_snapshot: dict[str, dict] = {}
+    for prediction in prediction_rows:
+        snapshot_id = prediction.get("snapshot_id")
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            continue
+        current = latest_prediction_by_snapshot.get(snapshot_id)
+        if current is None or timestamp_sort_key(
+            prediction.get("created_at")
+        ) > timestamp_sort_key(current.get("created_at")):
+            latest_prediction_by_snapshot[snapshot_id] = prediction
+
+    rows: list[dict] = []
+    for prediction in latest_prediction_by_snapshot.values():
+        snapshot = snapshot_by_id.get(str(prediction.get("snapshot_id") or ""))
+        if not snapshot or snapshot.get("checkpoint_type") != checkpoint_type:
+            continue
+        match = match_by_id.get(
+            str(prediction.get("match_id") or snapshot.get("match_id") or "")
+        )
+        if (
+            not match
+            or not match.get("final_result")
+            or date_prefix(match.get("kickoff_at")) >= target_date
+        ):
+            continue
+
+        prediction_payload = read_prediction_payload(prediction)
+        source_metadata = prediction_payload.get("source_metadata")
+        if not isinstance(source_metadata, dict):
+            source_metadata = {}
+        stored_market_segment = source_metadata.get("market_segment")
+        if not stored_market_segment:
+            stored_market_segment = (
+                "with_prediction_market"
+                if prediction_payload.get("prediction_market_available")
+                else "without_prediction_market"
+            )
+        if stored_market_segment != market_segment:
+            continue
+
+        base_model_probs = read_probability_map(prediction_payload.get("base_model_probs"))
+        if base_model_probs is None:
+            base_model_probs = read_prediction_source_probabilities(
+                prediction_payload,
+                "base_model",
+            )
+        fused_probs = read_prediction_fused_probabilities(prediction)
+        if base_model_probs is None or fused_probs is None:
+            continue
+        bookmaker_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "bookmaker",
+        )
+        prediction_market_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "prediction_market",
+        )
+        poisson_probs = read_prediction_source_probabilities(
+            prediction_payload,
+            "poisson",
+        )
+        if poisson_probs is None:
+            model_selection = prediction_payload.get("model_selection")
+            poisson_probs = read_probability_map(
+                model_selection.get("poisson_probs")
+                if isinstance(model_selection, dict)
+                else None
+            )
+
+        rows.extend(
+            build_variant_evaluation_rows(
+                match_id=str(match["id"]),
+                snapshot_id=str(snapshot["id"]),
+                checkpoint=str(snapshot["checkpoint_type"]),
+                competition_id=str(match.get("competition_id") or "unknown"),
+                actual_outcome=str(match["final_result"]),
+                bookmaker_available=bookmaker_probs is not None,
+                prediction_market_available=prediction_market_probs is not None,
+                bookmaker_probs=bookmaker_probs or base_model_probs,
+                prediction_market_probs=(
+                    prediction_market_probs or bookmaker_probs or base_model_probs
+                ),
+                base_model_probs=base_model_probs,
                 poisson_probs=poisson_probs,
                 fused_probs=fused_probs,
             )
@@ -2922,6 +3069,10 @@ def main() -> None:
         tuple[str, str | None, bool],
         object | None,
     ] = {}
+    historical_source_prediction_rows_cache: dict[
+        tuple[str, str | None],
+        list[dict],
+    ] = {}
     training_dataset_cache: dict[
         tuple[str, str], tuple[list[list[float]], list[str]]
     ] = {}
@@ -3044,6 +3195,35 @@ def main() -> None:
             )
         )
         if should_load_historical_performance:
+            source_history_key = (
+                signal_snapshot["checkpoint_type"],
+                snapshot_target_date,
+            )
+            if source_history_key not in historical_source_prediction_rows_cache:
+                snapshot_ids = select_historical_source_snapshot_ids(
+                    snapshot_rows=snapshot_rows,
+                    match_rows=match_rows,
+                    checkpoint_type=signal_snapshot["checkpoint_type"],
+                    target_date=snapshot_target_date,
+                )
+                historical_source_prediction_rows_cache[source_history_key] = (
+                    historical_prediction_rows
+                    if current_fused_selector_enabled
+                    else (
+                        read_optional_rows_by_values(
+                            client,
+                            "predictions",
+                            "snapshot_id",
+                            snapshot_ids,
+                            columns=PREDICTION_SOURCE_HISTORY_COLUMNS,
+                        )
+                        if snapshot_ids
+                        else []
+                    )
+                )
+            historical_source_prediction_rows = (
+                historical_source_prediction_rows_cache[source_history_key]
+            )
             performance_key = (
                 signal_snapshot["checkpoint_type"],
                 snapshot_target_date,
@@ -3051,7 +3231,15 @@ def main() -> None:
             )
             if performance_key not in historical_performance_cache:
                 historical_performance_cache[performance_key] = (
-                    build_historical_source_performance_summary(
+                    build_historical_source_performance_summary_from_predictions(
+                        prediction_rows=historical_source_prediction_rows,
+                        snapshot_rows=snapshot_rows,
+                        match_rows=match_rows,
+                        checkpoint_type=signal_snapshot["checkpoint_type"],
+                        target_date=snapshot_target_date,
+                        market_segment=market_segment,
+                    )
+                    or build_historical_source_performance_summary(
                         snapshot_rows=snapshot_rows,
                         market_by_snapshot=market_by_snapshot,
                         match_rows=match_rows,
@@ -3076,7 +3264,15 @@ def main() -> None:
                 )
                 if fallback_key not in historical_performance_cache:
                     historical_performance_cache[fallback_key] = (
-                        build_historical_source_performance_summary(
+                        build_historical_source_performance_summary_from_predictions(
+                            prediction_rows=historical_source_prediction_rows,
+                            snapshot_rows=snapshot_rows,
+                            match_rows=match_rows,
+                            checkpoint_type=signal_snapshot["checkpoint_type"],
+                            target_date=snapshot_target_date,
+                            market_segment=fallback_segment,
+                        )
+                        or build_historical_source_performance_summary(
                             snapshot_rows=snapshot_rows,
                             market_by_snapshot=market_by_snapshot,
                             match_rows=match_rows,
