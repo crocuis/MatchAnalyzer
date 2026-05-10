@@ -70,6 +70,7 @@ DAILY_PICK_BETMAN_WATCHLIST_BLOCKED_HOLD_REASONS = {
 DAILY_PICK_DIAGNOSTIC_HELD_REASONS = {
     "below_segment_reliability",
     "below_target_hit_rate",
+    "betman_market_missing",
     "betman_value_source_missing",
     "daily_pick_precision_gate_required",
     "unvalidated_centroid_fallback",
