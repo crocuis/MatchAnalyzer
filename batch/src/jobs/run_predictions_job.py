@@ -3159,6 +3159,7 @@ def main() -> None:
         ):
             locked_prediction_ids.append(prediction_id)
             continue
+        loop_signal_started_at = perf_counter()
         signal_snapshot = refresh_snapshot_long_signals_if_stale(
             snapshot,
             match=match,
@@ -3185,6 +3186,12 @@ def main() -> None:
             prediction_market,
             bookmaker_available=bookmaker_available,
         )
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_signal_context",
+            loop_signal_started_at,
+        )
+        loop_base_model_started_at = perf_counter()
         base_probs, base_model_source, model_selection = predict_base_probabilities(
             snapshot=signal_snapshot,
             feature_context=feature_context,
@@ -3196,6 +3203,12 @@ def main() -> None:
             training_dataset_cache=training_dataset_cache,
             baseline_model_cache=baseline_model_cache,
         )
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_base_model",
+            loop_base_model_started_at,
+        )
+        loop_market_started_at = perf_counter()
         poisson_probs = read_probability_map(model_selection.get("poisson_probs"))
         prediction_market_probs = prediction_market_probabilities(
             prediction_market,
@@ -3251,6 +3264,12 @@ def main() -> None:
             allowed_variants=available_variants,
             competition_id=str(match.get("competition_id") or ""),
         )
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_market_and_policy",
+            loop_market_started_at,
+        )
+        loop_historical_performance_started_at = perf_counter()
         historical_performance = {}
         should_load_historical_performance = (
             use_real_prediction_targets
@@ -3349,6 +3368,12 @@ def main() -> None:
                         )
                     )
                 historical_performance = historical_performance_cache[fallback_key]
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_historical_performance",
+            loop_historical_performance_started_at,
+        )
+        loop_fusion_started_at = perf_counter()
         source_weights = (
             persisted_policy["weights"]
             if persisted_policy
@@ -3490,6 +3515,12 @@ def main() -> None:
                     "selected_source": selected_source,
                     "historical_candidate_count": len(historical_current_fused_candidates),
                 }
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_fusion_and_selector",
+            loop_fusion_started_at,
+        )
+        loop_recommendation_started_at = perf_counter()
         row, prior_repair = apply_pre_match_prior_repair_to_prediction_row(
             row,
             match=match,
@@ -3578,6 +3609,12 @@ def main() -> None:
             if preserved_variant_markets:
                 variant_markets = preserved_variant_markets
                 preserved_market_enrichment = True
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_recommendations",
+            loop_recommendation_started_at,
+        )
+        loop_explanation_started_at = perf_counter()
         feature_metadata = build_feature_metadata(
             signal_snapshot,
             feature_context,
@@ -3683,12 +3720,24 @@ def main() -> None:
                 preserved_market_enrichment=preserved_market_enrichment,
             ),
         }
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_explanation_payload",
+            loop_explanation_started_at,
+        )
+        loop_moneyline_started_at = perf_counter()
         explanation_payload["moneyline_signal_score"] = build_moneyline_signal_score(
             {"summary_payload": explanation_payload},
             match=match,
             snapshot=signal_snapshot,
             historical_matches=match_rows,
         )
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_moneyline_signal",
+            loop_moneyline_started_at,
+        )
+        loop_validation_started_at = perf_counter()
         if use_real_prediction_targets:
             if snapshot_target_date not in validation_segment_cache:
                 validation_segment_cache[snapshot_target_date] = summarize_validation_segments(
@@ -3746,13 +3795,25 @@ def main() -> None:
         explanation_payload = make_json_safe(explanation_payload)
         summary_payload = build_prediction_summary_payload(explanation_payload)
         model_selection_by_checkpoint[signal_snapshot["checkpoint_type"]] = model_selection
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_validation_and_summary",
+            loop_validation_started_at,
+        )
+        loop_artifact_reference_started_at = perf_counter()
         artifact_reference = build_prediction_artifact_reference(
             prediction_id=prediction_id,
             match_id=row["match_id"],
             explanation_payload=explanation_payload,
         )
         artifact_id = artifact_reference["id"]
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_artifact_reference",
+            loop_artifact_reference_started_at,
+        )
         if archive_prediction_artifacts:
+            loop_artifact_archive_started_at = perf_counter()
             artifact_payload.append(
                 archive_json_artifact(
                     r2_client=r2_client,
@@ -3775,6 +3836,12 @@ def main() -> None:
                     },
                 )
             )
+            record_runtime_timing(
+                runtime_metrics,
+                "loop_artifact_archive",
+                loop_artifact_archive_started_at,
+            )
+        loop_payload_build_started_at = perf_counter()
         payload.append(
             {
                 "id": prediction_id,
@@ -3828,6 +3895,11 @@ def main() -> None:
                 match_id=row["match_id"],
                 model_version_id=SAMPLE_MODEL_VERSION_ID,
             )
+        )
+        record_runtime_timing(
+            runtime_metrics,
+            "loop_payload_build",
+            loop_payload_build_started_at,
         )
     record_runtime_timing(runtime_metrics, "prediction_loop", prediction_loop_started_at)
     runtime_counters = {

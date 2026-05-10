@@ -2935,6 +2935,8 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(
     assert metrics["counters"]["target_checkpoint_counts"] == {"T_MINUS_24H": 1}
     assert metrics["flags"]["real_prediction_targets"] is True
     assert "prediction_loop" in metrics["timings_ms"]
+    assert "loop_base_model" in metrics["timings_ms"]
+    assert "loop_recommendations" in metrics["timings_ms"]
     assert "total" in metrics["timings_ms"]
 
 
