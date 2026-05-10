@@ -644,7 +644,7 @@ def test_build_variant_markets_does_not_recommend_ultra_longshot_variant_prices(
             "market_price": 0.98,
             "model_probability": pytest.approx(0.8177, abs=1e-4),
             "market_probability": 0.98,
-        }
+            }
     ]
 
 
@@ -2552,7 +2552,7 @@ def test_run_predictions_job_surfaces_divergence_features_and_market_availabilit
                     {"id": "match_a", "kickoff_at": "2026-04-12T18:00:00+00:00"},
                     {"id": "match_b", "kickoff_at": "2026-04-12T21:00:00+00:00"},
                 ],
-            }
+        }
 
         def read_rows(self, table_name: str) -> list[dict]:
             return list(self.tables[table_name])
@@ -2879,8 +2879,36 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch
                 ],
             }
 
-        def read_rows(self, table_name: str) -> list[dict]:
+        def read_rows(
+            self,
+            table_name: str,
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            if table_name == "predictions":
+                if columns is None or "summary_payload" in columns:
+                    raise AssertionError(
+                        "real prediction mode should not read all wide predictions"
+                    )
+                return []
             return list(self.tables[table_name])
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            if table_name == "predictions":
+                assert column == "snapshot_id"
+                assert values == ["match_b_t_minus_24h"]
+                assert columns == run_predictions_job.PREDICTION_EXISTING_COLUMNS
+                return []
+            if table_name == "market_variants":
+                assert column == "snapshot_id"
+                assert values == ["match_b_t_minus_24h"]
+                return []
+            raise AssertionError(f"unexpected filtered read: {table_name}")
 
         def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
             state[table_name] = rows

@@ -38,6 +38,15 @@ PREDICTION_BACKTEST_COLUMNS = (
     "away_prob",
     "summary_payload",
 )
+PREDICTION_VALUE_THRESHOLD_COLUMNS = (
+    "id",
+    "match_id",
+    "snapshot_id",
+    "created_at",
+    "home_prob",
+    "draw_prob",
+    "away_prob",
+)
 RISK_FLAG_MIN_ITEM_COUNT = 2
 RISK_FLAG_MAX_HIT_RATE = 0.5
 RISK_FLAG_MAX_BUCKETS = 8
@@ -45,6 +54,36 @@ GATE_RECOMMENDATION_MAX_REMOVED_ITEM_SHARE = 0.5
 GATE_RECOMMENDATION_PROMOTION_MIN_SETTLED_TICKETS = 5
 GATE_RECOMMENDATION_STABLE_MIN_SETTLED_TICKETS = 10
 GATE_RECOMMENDATION_SPLIT_MIN_SETTLED_TICKETS = 5
+
+
+def read_optional_rows_by_values(
+    client: DbClient,
+    table_name: str,
+    column: str,
+    values: list[str],
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
+    try:
+        return client.read_rows_by_values(
+            table_name,
+            column,
+            values,
+            columns=columns,
+        )
+    except AttributeError:
+        value_set = {str(value) for value in values if value}
+        return [
+            row
+            for row in read_optional_rows(client, table_name, columns=columns)
+            if str(row.get(column) or "") in value_set
+        ]
+    except KeyError:
+        return []
+    except ValueError as exc:
+        message = str(exc).lower()
+        if "does not exist" in message or "relation" in message:
+            return []
+        raise
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1454,14 +1493,25 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     settings = load_settings()
     client = DbClient(settings_db_url(settings), settings_db_key(settings))
-    predictions = read_optional_rows(
+    daily_pick_items = read_optional_rows(client, "daily_pick_items")
+    daily_pick_results = read_optional_rows(client, "daily_pick_results")
+    daily_pick_prediction_ids = sorted(
+        {
+            str(item.get("prediction_id") or "")
+            for item in daily_pick_items
+            if item.get("prediction_id") is not None
+        }
+    )
+    predictions = read_optional_rows_by_values(
         client,
         "predictions",
+        "id",
+        daily_pick_prediction_ids,
         columns=PREDICTION_BACKTEST_COLUMNS,
     )
     items = build_backtest_items_with_results(
-        items=read_optional_rows(client, "daily_pick_items"),
-        results=read_optional_rows(client, "daily_pick_results"),
+        items=daily_pick_items,
+        results=daily_pick_results,
         predictions=predictions,
     )
     profiles = parse_profile_names(args.profiles)
@@ -1475,8 +1525,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     value_thresholds = parse_value_thresholds(args.value_thresholds)
     if value_thresholds:
+        value_threshold_predictions = read_optional_rows(
+            client,
+            "predictions",
+            columns=PREDICTION_VALUE_THRESHOLD_COLUMNS,
+        )
         report["value_threshold_backtest"] = build_betman_value_threshold_backtest(
-            predictions=predictions,
+            predictions=value_threshold_predictions,
             matches=read_optional_rows(client, "matches"),
             market_rows=read_optional_rows(client, "market_probabilities"),
             thresholds=value_thresholds,
