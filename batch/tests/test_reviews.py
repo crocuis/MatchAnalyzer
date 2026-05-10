@@ -6251,6 +6251,43 @@ def test_build_confidence_bucket_summary_accepts_postgres_datetime_kickoff():
     }
 
 
+def test_build_confidence_bucket_summary_from_predictions_accepts_postgres_numeric():
+    summary = run_predictions_job.build_confidence_bucket_summary_from_predictions(
+        prediction_rows=[
+            {
+                "id": "prediction-1",
+                "snapshot_id": "hist_snapshot",
+                "match_id": "hist_match",
+                "recommended_pick": "HOME",
+                "confidence_score": Decimal("0.84"),
+            }
+        ],
+        snapshot_rows=[
+            {
+                "id": "hist_snapshot",
+                "match_id": "hist_match",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        match_rows=[
+            {
+                "id": "hist_match",
+                "kickoff_at": "2026-04-10T18:00:00+00:00",
+                "final_result": "HOME",
+            }
+        ],
+        checkpoint_type="T_MINUS_24H",
+        target_date="2026-04-11",
+    )
+
+    assert summary == {
+        "0.8-0.9": {
+            "count": 1,
+            "hit_rate": 1.0,
+        }
+    }
+
+
 def test_build_historical_source_performance_summary_uses_persisted_prediction_payloads():
     summary = run_predictions_job.build_historical_source_performance_summary_from_predictions(
         prediction_rows=[

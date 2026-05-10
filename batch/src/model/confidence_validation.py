@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from math import sqrt
 from typing import Iterable
 
@@ -431,8 +432,15 @@ def _parse_datetime(value: object) -> datetime | None:
 
 
 def _read_numeric(value: object) -> float | None:
-    if isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
     return None
 
 

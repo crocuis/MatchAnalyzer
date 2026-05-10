@@ -2048,6 +2048,40 @@ def test_settle_daily_picks_tracks_held_betman_candidates_without_summary_pollut
     assert summaries[0]["miss_count"] == 0
 
 
+def test_settle_daily_picks_keeps_run_pending_until_match_result_arrives() -> None:
+    items = [
+        {
+            "id": "item-pending",
+            "run_id": "daily_pick_run_2026-04-24",
+            "pick_date": "2026-04-24",
+            "match_id": "match-1",
+            "market_family": "moneyline",
+            "selection_label": "HOME",
+            "market_price": 0.5,
+            "status": "recommended",
+        }
+    ]
+
+    results, runs = settle_daily_pick_items(
+        settle_date="2026-04-24",
+        items=items,
+        matches=[
+            {
+                "id": "match-1",
+                "home_score": None,
+                "away_score": None,
+            }
+        ],
+        teams=[],
+    )
+
+    assert results[0]["result_status"] == "pending"
+    assert results[0]["metadata"]["reason"] == "final_result_missing"
+    assert runs[0]["status"] == "pending"
+    assert runs[0]["metadata"]["settled_item_count"] == 0
+    assert runs[0]["metadata"]["pending_item_count"] == 1
+
+
 def test_settle_daily_picks_retries_previous_pending_results() -> None:
     items = [
         {
@@ -2145,6 +2179,89 @@ def test_run_job_does_not_rewrite_settled_daily_pick_runs() -> None:
     assert result["synced_items"] == 0
     assert result["sync_skipped"] == "settled_run_exists"
     assert state["daily_pick_results"][0]["result_status"] == "hit"
+
+
+def test_run_job_resyncs_prematurely_settled_daily_pick_run_with_unsettled_match() -> None:
+    state = {
+        "daily_pick_runs": [
+            {
+                "id": "daily_pick_run_2026-04-24",
+                "pick_date": "2026-04-24",
+                "status": "settled",
+            }
+        ],
+        "daily_pick_items": [
+            {
+                "id": "item-existing",
+                "run_id": "daily_pick_run_2026-04-24",
+                "pick_date": "2026-04-24",
+            }
+        ],
+        "daily_pick_results": [
+            {
+                "id": "result-existing",
+                "pick_item_id": "item-existing",
+                "result_status": "pending",
+            }
+        ],
+        "matches": [
+            {
+                "id": "match-1",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        "match_snapshots": [
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        "predictions": [
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.82,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.82,
+                "main_recommendation_recommended": True,
+                "summary_payload": {
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            }
+        ],
+    }
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state.get(table_name, []))
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            state[table_name] = rows
+            return len(rows)
+
+        def delete_rows(self, table_name: str, column: str, values: list[str]) -> int:
+            value_set = set(values)
+            state[table_name] = [
+                row
+                for row in state.get(table_name, [])
+                if str(row.get(column) or "") not in value_set
+            ]
+            return len(value_set)
+
+    result = run_job(
+        sync_date="2026-04-24",
+        settle_date=None,
+        client=FakeClient(),
+    )
+
+    assert "sync_skipped" not in result
+    assert result["synced_items"] == 1
+    assert state["daily_pick_items"][0]["id"] != "item-existing"
+    assert state["daily_pick_results"] == []
 
 
 def test_backfill_daily_pick_tracking_does_not_resettle_skipped_settled_runs() -> None:
