@@ -90,6 +90,28 @@ def collect_changed_fixture_match_ids(
     return sorted(changed_match_ids)
 
 
+def filter_changed_fixture_snapshot_rows(
+    *,
+    snapshot_rows: list[dict],
+    existing_snapshot_rows: list[dict],
+) -> list[dict]:
+    existing_snapshots_by_id = {
+        row["id"]: row
+        for row in existing_snapshot_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    return [
+        row
+        for row in snapshot_rows
+        if row.get("id")
+        and rows_differ(
+            existing_snapshots_by_id.get(row["id"]),
+            row,
+            ignored_fields={"captured_at"},
+        )
+    ]
+
+
 def merge_existing_asset_fields(
     rows: list[dict],
     existing_rows: list[dict],
@@ -492,9 +514,13 @@ def main() -> None:
         else 0
     )
     fixture_rows = client.upsert_rows("matches", payload)
+    changed_snapshot_rows_payload = filter_changed_fixture_snapshot_rows(
+        snapshot_rows=snapshot_rows_payload,
+        existing_snapshot_rows=existing_snapshot_rows if use_real_schedule else [],
+    )
     snapshot_rows = (
-        client.upsert_rows("match_snapshots", snapshot_rows_payload)
-        if snapshot_rows_payload
+        client.upsert_rows("match_snapshots", changed_snapshot_rows_payload)
+        if changed_snapshot_rows_payload
         else 0
     )
 
@@ -507,6 +533,7 @@ def main() -> None:
                 "team_translation_rows": team_translation_count,
                 "fixture_rows": fixture_rows,
                 "snapshot_rows": snapshot_rows,
+                "candidate_snapshot_rows": len(snapshot_rows_payload),
                 "changed_match_ids": changed_match_ids,
                 "payload": payload,
             },

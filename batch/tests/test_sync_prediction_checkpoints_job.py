@@ -183,6 +183,55 @@ def test_sync_prediction_checkpoints_accepts_market_target_date(monkeypatch):
     assert rows_by_id["same_day_future_t_minus_6h"]["checkpoint_type"] == "T_MINUS_6H"
 
 
+def test_sync_prediction_checkpoints_skips_capture_time_only_snapshot_updates(
+    monkeypatch,
+):
+    now = datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+    existing_snapshot = {
+        "id": "same_day_future_t_minus_24h",
+        "match_id": "same_day_future",
+        "checkpoint_type": "T_MINUS_24H",
+        "captured_at": "2026-04-26T10:00:00+00:00",
+        "lineup_status": "unknown",
+        "snapshot_quality": "complete",
+        "home_points_last_5": 7,
+        "away_points_last_5": 5,
+    }
+    built_snapshot = {
+        **existing_snapshot,
+        "captured_at": "2026-04-26T12:00:00+00:00",
+    }
+    state = {
+        "matches": [_match("same_day_future", "2026-04-26T17:30:00+00:00")],
+        "match_snapshots": [existing_snapshot],
+        "teams": [],
+    }
+
+    class FakeClient:
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(state[table_name])
+
+        def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
+            raise AssertionError("unchanged snapshots should not be upserted")
+
+    monkeypatch.setattr(
+        sync_job,
+        "build_due_snapshot_rows",
+        lambda **_kwargs: [built_snapshot],
+    )
+
+    result = sync_job.sync_prediction_checkpoints(
+        FakeClient(),
+        now=now,
+        target_date="2026-04-26",
+        target_checkpoint_types=("T_MINUS_24H",),
+    )
+
+    assert result["snapshot_rows"] == 1
+    assert result["changed_snapshot_rows"] == 0
+    assert result["upserted_rows"] == 0
+
+
 def test_external_signal_source_summary_alone_does_not_skip_backfill():
     targets = [
         sync_job.PredictionSyncTarget(
