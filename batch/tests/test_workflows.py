@@ -208,6 +208,9 @@ def test_sync_prediction_checkpoints_workflow_targets_due_matches_and_daily_pick
     assert '--match-ids "$SYNC_EXTERNAL_SIGNAL_MATCH_IDS"' in workflow
     assert "REAL_PREDICTION_MATCH_IDS=\"$SYNC_TARGET_MATCH_IDS\"" in workflow
     assert "MATCH_ANALYZER_DISABLE_DAILY_PICK_TRACKING_SYNC=1" in workflow
+    assert "PREDICTION_LOG=\"$(mktemp)\"" in workflow
+    assert "tee \"$PREDICTION_LOG\"" in workflow
+    assert "render_prediction_runtime_summary_job" in workflow
     assert "No daily-pick prediction checkpoints changed; skipping daily pick refresh." in workflow
     assert "DAILY_PICK_SYNC_DATE=\"$TARGET_DATE\"" in workflow
     assert "DAILY_PICK_ARTIFACT_DATE=\"$TARGET_DATE\"" in workflow

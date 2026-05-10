@@ -2831,7 +2831,10 @@ def test_run_predictions_job_returns_noop_when_all_real_targets_are_locked(
     assert state == {}
 
 
-def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch):
+def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(
+    monkeypatch,
+    capsys,
+):
     state: dict[str, list[dict]] = {}
 
     class FakeClient:
@@ -2924,7 +2927,15 @@ def test_run_predictions_job_filters_real_mode_by_explicit_match_ids(monkeypatch
 
     run_predictions_job.main()
 
+    output = json.loads(capsys.readouterr().out)
     assert [row["match_id"] for row in state["predictions"]] == ["match_b"]
+    metrics = output["runtime_metrics"]
+    assert metrics["counters"]["target_match_count"] == 1
+    assert metrics["counters"]["target_snapshot_count"] == 1
+    assert metrics["counters"]["target_checkpoint_counts"] == {"T_MINUS_24H": 1}
+    assert metrics["flags"]["real_prediction_targets"] is True
+    assert "prediction_loop" in metrics["timings_ms"]
+    assert "total" in metrics["timings_ms"]
 
 
 def test_select_real_prediction_inputs_can_limit_date_backfills_to_exact_day(
