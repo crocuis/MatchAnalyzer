@@ -11,6 +11,7 @@ export type AppBindings = {
     NEON_DEVELOPMENT_DATABASE_URL?: string;
     OPERATIONAL_REPORTS_API_KEY?: string;
     MATCH_ANALYZER_ARTIFACT_BASE_URL?: string;
+    MATCH_ANALYZER_TRUST_HYPERDRIVE_FRESH?: string;
   };
 };
 
@@ -27,13 +28,18 @@ export const getEnv = (bindings?: AppBindings["Bindings"]): AppEnv => {
     bindings?.NEON_DATABASE_URL ??
     bindings?.NEON_DEVELOPMENT_DATABASE_URL ??
     null;
+  const trustedFreshHyperdriveUrl =
+    bindings?.MATCH_ANALYZER_TRUST_HYPERDRIVE_FRESH === "true"
+      ? bindings?.HYPERDRIVE_FRESH?.connectionString
+      : null;
   return {
     databaseUrl:
       bindings?.HYPERDRIVE?.connectionString ??
       directDatabaseUrl,
     freshDatabaseUrl:
-      bindings?.HYPERDRIVE_FRESH?.connectionString ??
+      trustedFreshHyperdriveUrl ??
       directDatabaseUrl ??
+      bindings?.HYPERDRIVE_FRESH?.connectionString ??
       bindings?.HYPERDRIVE?.connectionString ??
       null,
     operationalReportsApiKey: bindings?.OPERATIONAL_REPORTS_API_KEY ?? null,

@@ -66,7 +66,7 @@ describe("db client boundary", () => {
     expect(client?.from("matches")).toHaveProperty("select");
   });
 
-  it("uses the fresh Hyperdrive binding before the direct URL for freshness-sensitive reads", async () => {
+  it("uses the direct URL before fresh Hyperdrive unless the fresh binding is trusted", async () => {
     const client = getDbClient({
       HYPERDRIVE_FRESH: {
         connectionString: "postgresql://fresh-user:password@example.com/db",
@@ -75,6 +75,32 @@ describe("db client boundary", () => {
         connectionString: "postgresql://cached-user:password@example.com/db",
       },
       DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
+    }, { freshness: "fresh" });
+
+    const query = client?.query("select 1");
+    await vi.waitFor(() => {
+      expect(pgState.connectionStrings).toContain(
+        "postgresql://direct-user:password@example.neon.tech/neondb",
+      );
+    });
+
+    for (const resolve of pgState.resolvers.splice(0)) {
+      resolve();
+    }
+
+    await query;
+  });
+
+  it("uses the fresh Hyperdrive binding first when explicitly trusted", async () => {
+    const client = getDbClient({
+      HYPERDRIVE_FRESH: {
+        connectionString: "postgresql://fresh-user:password@example.com/db",
+      },
+      HYPERDRIVE: {
+        connectionString: "postgresql://cached-user:password@example.com/db",
+      },
+      DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
+      MATCH_ANALYZER_TRUST_HYPERDRIVE_FRESH: "true",
     }, { freshness: "fresh" });
 
     const query = client?.query("select 1");
