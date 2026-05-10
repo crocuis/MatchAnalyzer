@@ -510,6 +510,8 @@ def local_dataset_side_effects_enabled(local_dataset_dir: object) -> bool:
 def parse_iso_datetime(value: object) -> datetime | None:
     if not value:
         return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else None
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
@@ -517,6 +519,18 @@ def parse_iso_datetime(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         return None
     return parsed
+
+
+def date_prefix(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    return str(value or "")[:10]
+
+
+def timestamp_sort_key(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value or "")
 
 
 def is_market_observed_before_kickoff(
@@ -1271,10 +1285,14 @@ def build_historical_source_performance_summary(
             for snapshot in snapshot_rows
             if snapshot.get("checkpoint_type") == checkpoint_type
             and match_by_id.get(snapshot["match_id"], {}).get("final_result")
-            and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10]
+            and date_prefix(
+                match_by_id.get(snapshot["match_id"], {}).get("kickoff_at")
+            )
             < target_date
         ],
-        key=lambda snapshot: match_by_id[snapshot["match_id"]]["kickoff_at"],
+        key=lambda snapshot: timestamp_sort_key(
+            match_by_id[snapshot["match_id"]].get("kickoff_at")
+        ),
     )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
     for snapshot in historical_snapshots:
         match = match_by_id[snapshot["match_id"]]
@@ -2012,9 +2030,14 @@ def build_confidence_bucket_summary(
             for snapshot in snapshot_rows
             if snapshot.get("checkpoint_type") == checkpoint_type
             and match_by_id.get(snapshot["match_id"], {}).get("final_result")
-            and match_by_id.get(snapshot["match_id"], {}).get("kickoff_at", "")[:10] < target_date
+            and date_prefix(
+                match_by_id.get(snapshot["match_id"], {}).get("kickoff_at")
+            )
+            < target_date
         ],
-        key=lambda snapshot: match_by_id[snapshot["match_id"]]["kickoff_at"],
+        key=lambda snapshot: timestamp_sort_key(
+            match_by_id[snapshot["match_id"]].get("kickoff_at")
+        ),
     )[-TRAINING_RECENT_SNAPSHOT_LIMIT:]
     records: list[dict] = []
     training_dataset_cache: dict[
@@ -2022,7 +2045,7 @@ def build_confidence_bucket_summary(
     ] = {}
     baseline_model_cache: dict[tuple[str, str], object] = {}
     for snapshot in historical_snapshots:
-        kickoff_date = match_by_id[snapshot["match_id"]]["kickoff_at"][:10]
+        kickoff_date = date_prefix(match_by_id[snapshot["match_id"]].get("kickoff_at"))
         book_probs, prediction_market = build_market_probabilities(
             snapshot["id"],
             market_by_snapshot,
