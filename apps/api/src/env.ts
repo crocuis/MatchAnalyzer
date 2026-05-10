@@ -32,8 +32,8 @@ export const getEnv = (bindings?: AppBindings["Bindings"]): AppEnv => {
       bindings?.HYPERDRIVE?.connectionString ??
       directDatabaseUrl,
     freshDatabaseUrl:
-      directDatabaseUrl ??
       bindings?.HYPERDRIVE_FRESH?.connectionString ??
+      directDatabaseUrl ??
       bindings?.HYPERDRIVE?.connectionString ??
       null,
     operationalReportsApiKey: bindings?.OPERATIONAL_REPORTS_API_KEY ?? null,

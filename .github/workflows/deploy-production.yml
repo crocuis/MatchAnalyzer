@@ -87,6 +87,17 @@ jobs:
           print(f"Neon database smoke ok: matches={len(rows)}")
           PY
 
+      - name: Synchronize Cloudflare Hyperdrive origin
+        run: |
+          if [ -z "${CLOUDFLARE_HYPERDRIVE_FRESH_ID:-}" ]; then
+            npm --workspace apps/api exec -- wrangler hyperdrive update "$CLOUDFLARE_HYPERDRIVE_ID" --connection-string "$DATABASE_URL"
+          elif [ "$CLOUDFLARE_HYPERDRIVE_ID" = "$CLOUDFLARE_HYPERDRIVE_FRESH_ID" ]; then
+            npm --workspace apps/api exec -- wrangler hyperdrive update "$CLOUDFLARE_HYPERDRIVE_ID" --connection-string "$DATABASE_URL" --caching-disabled
+          else
+            npm --workspace apps/api exec -- wrangler hyperdrive update "$CLOUDFLARE_HYPERDRIVE_ID" --connection-string "$DATABASE_URL"
+            npm --workspace apps/api exec -- wrangler hyperdrive update "$CLOUDFLARE_HYPERDRIVE_FRESH_ID" --connection-string "$DATABASE_URL" --caching-disabled
+          fi
+
       - name: Configure Cloudflare Worker secrets
         run: |
           printf '%s' "$DATABASE_URL" | npm --workspace apps/api exec -- wrangler secret put DATABASE_URL
@@ -112,3 +123,73 @@ jobs:
         run: |
           curl --fail --silent --show-error "${VITE_API_BASE_URL}/health"
           curl --fail --silent --show-error "${VITE_API_BASE_URL}/matches"
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.parse import urlencode
+          from urllib.request import urlopen
+
+          import psycopg
+          from psycopg.rows import dict_row
+
+          database_url = os.environ["DATABASE_URL"]
+          api_base_url = os.environ["VITE_API_BASE_URL"].rstrip("/")
+
+          with psycopg.connect(database_url, row_factory=dict_row) as conn:
+              with conn.cursor() as cursor:
+                  cursor.execute(
+                      """
+                      select id, league_id, final_result, home_score, away_score
+                      from match_cards
+                      where final_result is not null
+                      order by kickoff_at desc nulls last, id desc
+                      limit 1
+                      """
+                  )
+                  sentinel = cursor.fetchone()
+
+          if not sentinel:
+              print("No settled match_cards rows available for API freshness smoke check")
+              raise SystemExit(0)
+
+          query = urlencode({
+              "leagueId": sentinel["league_id"],
+              "view": "recent",
+              "limit": "20",
+              "smoke": "deploy",
+          })
+          url = f"{api_base_url}/matches?{query}"
+          with urlopen(url, timeout=60) as response:
+              payload = json.loads(response.read().decode("utf-8"))
+
+          api_match = next(
+              (
+                  item
+                  for item in payload.get("items", [])
+                  if str(item.get("id")) == str(sentinel["id"])
+              ),
+              None,
+          )
+          if not api_match:
+              raise SystemExit(
+                  f"Production API did not return settled sentinel match {sentinel['id']}"
+              )
+
+          expected = {
+              "finalResult": sentinel["final_result"],
+              "homeScore": sentinel["home_score"],
+              "awayScore": sentinel["away_score"],
+          }
+          actual = {
+              "finalResult": api_match.get("finalResult"),
+              "homeScore": api_match.get("homeScore"),
+              "awayScore": api_match.get("awayScore"),
+          }
+          if actual != expected:
+              raise SystemExit(
+                  "Production API freshness mismatch for "
+                  f"{sentinel['id']}: expected={expected} actual={actual}"
+              )
+
+          print(f"Production API freshness smoke ok: match={sentinel['id']}")
+          PY
