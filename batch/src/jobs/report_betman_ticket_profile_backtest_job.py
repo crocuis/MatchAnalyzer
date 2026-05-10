@@ -3,7 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime, timezone
+from typing import Callable
 
+from batch.src.jobs.report_betman_ticket_opportunities_job import (
+    build_current_betman_market_rows,
+    fetch_current_proto_victory_market_context,
+)
+from batch.src.ingest.fetch_markets import (
+    build_betman_match_market_groups,
+    parse_utc_minute,
+)
 from batch.src.model.betman_ticket_optimizer import (
     BETMAN_TICKET_RISK_PROFILES,
     DEFAULT_MAX_LEGS,
@@ -1466,6 +1475,127 @@ def build_betman_ticket_policy_report_artifact_row(
     )
 
 
+def _read_int(value: object) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def build_current_betman_market_match_diagnostics(
+    *,
+    detail_payloads: list[dict],
+    snapshot_rows: list[dict],
+    market_rows: list[dict],
+) -> dict:
+    grouped = build_betman_match_market_groups(detail_payloads)
+    grouped_keys = {
+        (competition_id, kickoff_at)
+        for competition_id, kickoff_at, _game_key in grouped.keys()
+    }
+    candidate_snapshot_count = 0
+    for snapshot in snapshot_rows:
+        competition_id = str(snapshot.get("competition_id") or "").strip().lower()
+        kickoff_at = str(snapshot.get("kickoff_at") or "")
+        if not competition_id or not kickoff_at:
+            continue
+        kickoff_key = parse_utc_minute(kickoff_at).isoformat().replace("+00:00", "Z")
+        if (competition_id, kickoff_key) in grouped_keys:
+            candidate_snapshot_count += 1
+    matched_snapshot_ids = {
+        str(row.get("snapshot_id") or "")
+        for row in market_rows
+        if row.get("snapshot_id") is not None
+    }
+    return {
+        "snapshot_row_count": len(snapshot_rows),
+        "market_group_count": len(grouped),
+        "candidate_snapshot_count": candidate_snapshot_count,
+        "matched_snapshot_count": len(matched_snapshot_ids),
+    }
+
+
+def build_current_betman_policy_status(
+    *,
+    fetch_context: Callable[[], dict] = fetch_current_proto_victory_market_context,
+    build_market_rows: Callable[..., tuple[list[dict], list[dict]]] = (
+        build_current_betman_market_rows
+    ),
+    matches: list[dict] | None = None,
+    snapshots: list[dict] | None = None,
+    teams: list[dict] | None = None,
+    team_translations: list[dict] | None = None,
+    bookmaker_rows: list[dict] | None = None,
+) -> dict:
+    try:
+        context = fetch_context()
+    except Exception:
+        return {
+            "enabled": False,
+            "matched_match_count": 0,
+            "excluded_unavailable_item_count": 0,
+            "buyable_game_count": 0,
+            "buyable_gm_ids": [],
+            "selected_victory_game_count": 0,
+            "detail_payload_count": 0,
+            "market_row_count": 0,
+            "unavailable_reason": "proto_victory_fetch_failed",
+        }
+    diagnostics = context.get("diagnostics")
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    detail_payloads = context.get("detail_payloads")
+    detail_payloads = detail_payloads if isinstance(detail_payloads, list) else []
+    market_rows: list[dict] = []
+    if detail_payloads:
+        market_rows, _snapshot_rows = build_market_rows(
+            matches=matches or [],
+            snapshots=snapshots or [],
+            teams=teams or [],
+            team_translations=team_translations or [],
+            bookmaker_rows=bookmaker_rows or [],
+            detail_payloads=detail_payloads,
+        )
+        snapshot_rows = _snapshot_rows
+    else:
+        snapshot_rows = []
+    match_diagnostics = build_current_betman_market_match_diagnostics(
+        detail_payloads=detail_payloads,
+        snapshot_rows=snapshot_rows,
+        market_rows=market_rows,
+    )
+    unavailable_reason = diagnostics.get("unavailable_reason")
+    unavailable_reason = str(unavailable_reason) if unavailable_reason else None
+    if unavailable_reason is None and not market_rows:
+        unavailable_reason = "proto_victory_market_match_missing"
+    buyable_gm_ids = diagnostics.get("buyable_gm_ids")
+    buyable_gm_ids = buyable_gm_ids if isinstance(buyable_gm_ids, list) else []
+    proto_game_summaries = diagnostics.get("proto_game_summaries")
+    proto_game_summaries = (
+        proto_game_summaries if isinstance(proto_game_summaries, list) else []
+    )
+    selected_victory_game_count = _read_int(
+        diagnostics.get("selected_victory_game_count")
+    )
+    detail_payload_count = _read_int(diagnostics.get("detail_payload_count"))
+    return {
+        "enabled": unavailable_reason is None and len(market_rows) > 0,
+        "matched_match_count": 0,
+        "excluded_unavailable_item_count": 0,
+        "buyable_game_count": _read_int(diagnostics.get("buyable_game_count")),
+        "buyable_gm_ids": [str(value) for value in buyable_gm_ids if value],
+        "proto_game_summaries": [
+            row for row in proto_game_summaries if isinstance(row, dict)
+        ],
+        "selected_victory_game_count": selected_victory_game_count,
+        "detail_payload_count": detail_payload_count,
+        "market_row_count": len(market_rows),
+        "market_match_diagnostics": match_diagnostics,
+        "unavailable_reason": unavailable_reason,
+    }
+
+
 def require_remote_r2_artifact_client(r2_client: R2Client) -> None:
     if not (
         getattr(r2_client, "access_key_id", None)
@@ -1543,6 +1673,13 @@ def main(argv: list[str] | None = None) -> None:
         )
     if args.archive_artifact:
         generated_at = datetime.now(timezone.utc).isoformat()
+        report["current_betman"] = build_current_betman_policy_status(
+            matches=read_optional_rows(client, "matches"),
+            snapshots=read_optional_rows(client, "match_snapshots"),
+            teams=read_optional_rows(client, "teams"),
+            team_translations=read_optional_rows(client, "team_translations"),
+            bookmaker_rows=read_optional_rows(client, "market_probabilities"),
+        )
         artifact_row = build_betman_ticket_policy_report_artifact_row(
             report=report,
             r2_client=R2Client(

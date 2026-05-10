@@ -74,12 +74,22 @@
       "reportStatus": "정책 리포트",
       "topCandidateValue": "EV {{threshold}}에서 {{gate}} 제외",
       "topCandidateMeta": "ROI {{roi}} / 표본 {{quality}} / 분할 {{split}}",
+      "currentBetman": "현재 Betman",
+      "currentAvailable": "구매 가능 승부식 라운드 있음",
+      "currentUnavailable": "구매 가능 라운드 없음",
+      "currentMetaWithGmIds": "{{reason}} · 목록 {{gmIds}}",
       "updated": "{{generatedAt}} 업데이트",
       "stale": "오래된 리포트 · {{generatedAt}} 업데이트",
       "ageUnknown": "리포트 생성 시각 알 수 없음",
       "unavailable": "정책 리포트 없음",
       "unavailableHint": "Betman 정책 리포트 artifact와 API 상태를 확인해야 합니다.",
       "unknown": "알 수 없음",
+      "currentReasons": {
+        "proto_victory_round_missing": "승부식 라운드 없음",
+        "proto_victory_detail_missing": "승부식 상세 없음",
+        "proto_victory_market_match_missing": "시장 매칭 없음",
+        "proto_victory_fetch_failed": "Betman 조회 실패"
+      },
       "quality": {
         "stable": "안정",
         "limited": "제한적",

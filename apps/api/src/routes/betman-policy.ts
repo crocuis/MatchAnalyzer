@@ -32,10 +32,39 @@ export type BetmanPolicyCandidateSummary = {
   };
 };
 
+export type BetmanCurrentRoundStatus = {
+  enabled: boolean;
+  matchedMatchCount: number | null;
+  excludedUnavailableItemCount: number | null;
+  buyableGameCount: number | null;
+  buyableGmIds: string[];
+  protoGameSummaries: {
+    gmId: string | null;
+    gameName: string | null;
+    gameTypeName: string | null;
+    mainState: string | null;
+    saleProgress: boolean | null;
+    statusMessage: string | null;
+    valid: boolean | null;
+  }[];
+  selectedVictoryGameCount: number | null;
+  detailPayloadCount: number | null;
+  marketRowCount: number | null;
+  marketMatchDiagnostics: {
+    snapshotRowCount: number | null;
+    marketGroupCount: number | null;
+    candidateSnapshotCount: number | null;
+    matchedSnapshotCount: number | null;
+  } | null;
+  unavailableReason: string | null;
+};
+type BetmanProtoGameSummary = BetmanCurrentRoundStatus["protoGameSummaries"][number];
+
 export type BetmanPolicySummary = {
   generatedAt: string | null;
   policyCandidateCount: number;
   promotionReadyCount: number;
+  currentBetman: BetmanCurrentRoundStatus | null;
   topCandidates: BetmanPolicyCandidateSummary[];
 };
 
@@ -71,6 +100,19 @@ function readBoolean(value: unknown): boolean {
   return typeof value === "boolean" ? value : false;
 }
 
+function readOptionalBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(readString)
+    .filter((row): row is string => row !== null);
+}
+
 function normalizePolicyCandidate(value: unknown): BetmanPolicyCandidateSummary | null {
   const row = readRecord(value);
   if (!row) {
@@ -102,6 +144,63 @@ function normalizePolicyCandidate(value: unknown): BetmanPolicyCandidateSummary 
   };
 }
 
+function normalizeProtoGameSummary(
+  value: unknown,
+): BetmanProtoGameSummary | null {
+  const row = readRecord(value);
+  if (!row) {
+    return null;
+  }
+  return {
+    gmId: readString(row.gm_id),
+    gameName: readString(row.game_name),
+    gameTypeName: readString(row.game_type_name),
+    mainState: readString(row.main_state),
+    saleProgress: readOptionalBoolean(row.sale_progress),
+    statusMessage: readString(row.status_message),
+    valid: readOptionalBoolean(row.valid),
+  };
+}
+
+function normalizeMarketMatchDiagnostics(
+  value: unknown,
+): BetmanCurrentRoundStatus["marketMatchDiagnostics"] {
+  const row = readRecord(value);
+  if (!row) {
+    return null;
+  }
+  return {
+    snapshotRowCount: readNumber(row.snapshot_row_count),
+    marketGroupCount: readNumber(row.market_group_count),
+    candidateSnapshotCount: readNumber(row.candidate_snapshot_count),
+    matchedSnapshotCount: readNumber(row.matched_snapshot_count),
+  };
+}
+
+function normalizeCurrentBetmanStatus(value: unknown): BetmanCurrentRoundStatus | null {
+  const row = readRecord(value);
+  if (!row) {
+    return null;
+  }
+  return {
+    enabled: readBoolean(row.enabled),
+    matchedMatchCount: readNumber(row.matched_match_count),
+    excludedUnavailableItemCount: readNumber(row.excluded_unavailable_item_count),
+    buyableGameCount: readNumber(row.buyable_game_count),
+    buyableGmIds: readStringArray(row.buyable_gm_ids),
+    protoGameSummaries: Array.isArray(row.proto_game_summaries)
+      ? row.proto_game_summaries
+          .map(normalizeProtoGameSummary)
+          .filter((summary): summary is BetmanProtoGameSummary => summary !== null)
+      : [],
+    selectedVictoryGameCount: readNumber(row.selected_victory_game_count),
+    detailPayloadCount: readNumber(row.detail_payload_count),
+    marketRowCount: readNumber(row.market_row_count),
+    marketMatchDiagnostics: normalizeMarketMatchDiagnostics(row.market_match_diagnostics),
+    unavailableReason: readString(row.unavailable_reason),
+  };
+}
+
 export function normalizeBetmanPolicyReport(
   payload: unknown,
   generatedAt: string | null,
@@ -119,6 +218,7 @@ export function normalizeBetmanPolicyReport(
     generatedAt,
     policyCandidateCount: candidates.length,
     promotionReadyCount: candidates.filter((row) => row.promotionReady).length,
+    currentBetman: normalizeCurrentBetmanStatus(report?.current_betman),
     topCandidates: candidates.slice(0, 3),
   };
 }

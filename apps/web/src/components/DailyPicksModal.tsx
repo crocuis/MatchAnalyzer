@@ -5,6 +5,7 @@ import {
   fetchBetmanPolicySummary,
   fetchDailyPicks,
   resolveDailyPicksDate,
+  type BetmanCurrentRoundStatus,
   type BetmanPolicyCandidateSummary,
   type BetmanPolicySummary,
   type DailyPickMarketFamily,
@@ -64,6 +65,38 @@ function formatPolicyStatusLabel(
   }
   return t(`dailyPicks.betmanPolicy.${category}.${value}`, {
     defaultValue: fallback,
+  });
+}
+
+function formatCurrentBetmanStatus(
+  t: Translate,
+  currentBetman: BetmanCurrentRoundStatus,
+): string {
+  const reason = currentBetman.unavailableReason
+    ? t(`dailyPicks.betmanPolicy.currentReasons.${currentBetman.unavailableReason}`, {
+        defaultValue: currentBetman.unavailableReason,
+      })
+    : t(
+        currentBetman.enabled
+          ? "dailyPicks.betmanPolicy.currentAvailable"
+          : "dailyPicks.betmanPolicy.currentUnavailable",
+      );
+  const protoGames = currentBetman.protoGameSummaries
+    .map((game) => [
+      game.gmId,
+      game.gameName || game.gameTypeName,
+      game.statusMessage,
+    ].filter(Boolean).join(" "))
+    .filter(Boolean);
+  const buyableGames = protoGames.length > 0
+    ? protoGames.join(", ")
+    : currentBetman.buyableGmIds.join(", ");
+  if (!buyableGames) {
+    return reason;
+  }
+  return t("dailyPicks.betmanPolicy.currentMetaWithGmIds", {
+    reason,
+    gmIds: buyableGames,
   });
 }
 
@@ -408,6 +441,12 @@ export default function DailyPicksModal({
                     ) : (
                       <small>{t("dailyPicks.betmanPolicy.reportStatus")}</small>
                     )}
+                    {betmanPolicy.currentBetman ? (
+                      <>
+                        <small>{t("dailyPicks.betmanPolicy.currentBetman")}</small>
+                        <span>{formatCurrentBetmanStatus(t, betmanPolicy.currentBetman)}</span>
+                      </>
+                    ) : null}
                     <span
                       className={
                         betmanPolicyIsStale
