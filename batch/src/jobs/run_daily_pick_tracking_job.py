@@ -36,6 +36,8 @@ from batch.src.storage.db_client import DbClient
 MAX_DAILY_RECOMMENDATIONS = 10
 MAX_DAILY_HELD_CANDIDATES = 10
 TRACKED_MARKET_FAMILIES = {"moneyline", "spreads", "totals"}
+DAILY_PICK_DIAGNOSTIC_TRACKING_SCOPE = "diagnostic"
+DAILY_PICK_SETTLEMENT_TRACKING_SCOPE = "settlement"
 MONEYLINE_SELECTION_PROBABILITY_FIELDS = {
     "HOME": "home_prob",
     "DRAW": "draw_prob",
@@ -65,6 +67,14 @@ DAILY_PICK_BETMAN_WATCHLIST_BLOCKED_HOLD_REASONS = {
     "confidence_reliability_missing",
     "low_confidence",
 }
+DAILY_PICK_DIAGNOSTIC_HELD_REASONS = {
+    "below_segment_reliability",
+    "below_target_hit_rate",
+    "betman_value_source_missing",
+    "daily_pick_precision_gate_required",
+    "unvalidated_centroid_fallback",
+}
+DAILY_PICK_DIAGNOSTIC_HELD_MIN_CONFIDENCE = 0.65
 DAILY_PICK_PRE_MATCH_CHECKPOINTS = {
     "T_MINUS_24H",
     "T_MINUS_6H",
@@ -136,6 +146,19 @@ def is_betman_daily_pick_item(item: dict) -> bool:
     )
 
 
+def is_diagnostic_daily_pick_item(item: dict) -> bool:
+    metadata = item.get("validation_metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    return (
+        metadata.get("daily_pick_tracking_scope")
+        == DAILY_PICK_DIAGNOSTIC_TRACKING_SCOPE
+    )
+
+
+def is_settlement_tracked_daily_pick_item(item: dict) -> bool:
+    return is_betman_daily_pick_item(item) and not is_diagnostic_daily_pick_item(item)
+
+
 def _is_daily_pick_held_tracking_candidate(candidate: dict) -> bool:
     if candidate.get("status") != "held":
         return False
@@ -167,7 +190,56 @@ def _is_daily_pick_held_tracking_candidate(candidate: dict) -> bool:
         and source_agreement < DAILY_PICK_BETMAN_WATCHLIST_MIN_SOURCE_AGREEMENT
     ):
         return False
+    metadata["daily_pick_tracking_scope"] = DAILY_PICK_SETTLEMENT_TRACKING_SCOPE
+    metadata["settlement_tracked"] = True
+    candidate["validation_metadata"] = metadata
     return True
+
+
+def _daily_pick_hold_reasons(candidate: dict) -> set[str]:
+    metadata = candidate.get("validation_metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    return {
+        str(value)
+        for value in (
+            candidate.get("reliability_hold_reason"),
+            metadata.get("confidence_reliability"),
+        )
+        if value
+    }
+
+
+def _is_daily_pick_held_diagnostic_candidate(candidate: dict) -> bool:
+    if candidate.get("status") != "held":
+        return False
+    if candidate.get("market_family") != "moneyline":
+        return False
+    hold_reasons = _daily_pick_hold_reasons(candidate)
+    if not (hold_reasons & DAILY_PICK_DIAGNOSTIC_HELD_REASONS):
+        return False
+    confidence = _read_numeric(candidate.get("confidence"))
+    return (
+        confidence is not None
+        and confidence >= DAILY_PICK_DIAGNOSTIC_HELD_MIN_CONFIDENCE
+    )
+
+
+def _mark_daily_pick_diagnostic_candidate(candidate: dict) -> dict:
+    metadata = dict(candidate.get("validation_metadata") or {})
+    metadata["daily_pick_tracking_scope"] = DAILY_PICK_DIAGNOSTIC_TRACKING_SCOPE
+    metadata["settlement_tracked"] = False
+    reason_labels = [
+        str(label)
+        for label in candidate.get("reason_labels") or []
+        if label
+    ]
+    if "diagnosticCandidate" not in reason_labels:
+        reason_labels.append("diagnosticCandidate")
+    return {
+        **candidate,
+        "validation_metadata": metadata,
+        "reason_labels": reason_labels,
+    }
 
 
 def sync_daily_picks_for_date(
@@ -231,9 +303,13 @@ def sync_daily_picks_for_date(
     held_candidates = [row for row in candidates if row.get("status") == "held"]
     hold_reason_counts = summarize_daily_pick_hold_reasons(held_candidates)
     selected_held_candidates = select_daily_pick_held_candidates(held_candidates)
+    selected_held_items = selected_held_candidates[:MAX_DAILY_HELD_CANDIDATES]
+    selected_diagnostic_held_count = sum(
+        1 for row in selected_held_items if is_diagnostic_daily_pick_item(row)
+    )
     selected_candidates = (
         recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]
-        + selected_held_candidates[:MAX_DAILY_HELD_CANDIDATES]
+        + selected_held_items
     )
     selected_items_by_id: dict[str, dict] = {}
     for row in selected_candidates:
@@ -273,7 +349,8 @@ def sync_daily_picks_for_date(
             "candidate_count": len(candidates),
             "selected_count": len(selected_items),
             "recommended_count": len(recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]),
-            "held_count": len(selected_held_candidates[:MAX_DAILY_HELD_CANDIDATES]),
+            "held_count": len(selected_held_items),
+            "diagnostic_held_count": selected_diagnostic_held_count,
             "hold_reason_counts": hold_reason_counts,
             "ranking": "expected_value_edge_probability_confidence",
         },
@@ -296,11 +373,26 @@ def summarize_daily_pick_hold_reasons(candidates: list[dict]) -> dict[str, int]:
 
 
 def select_daily_pick_held_candidates(candidates: list[dict]) -> list[dict]:
-    return [
+    selected = [
         row
         for row in candidates
         if _is_daily_pick_held_tracking_candidate(row)
     ]
+    selected_ids = {
+        build_daily_pick_item_id("diagnostic", row)
+        for row in selected
+    }
+    for row in candidates:
+        if len(selected) >= MAX_DAILY_HELD_CANDIDATES:
+            break
+        item_id = build_daily_pick_item_id("diagnostic", row)
+        if item_id in selected_ids:
+            continue
+        if not _is_daily_pick_held_diagnostic_candidate(row):
+            continue
+        selected.append(_mark_daily_pick_diagnostic_candidate(row))
+        selected_ids.add(item_id)
+    return selected
 
 
 def build_recommended_pick_candidates(
@@ -1000,7 +1092,7 @@ def settle_daily_pick_items(
         )
         and (
             row.get("status") == "recommended"
-            or is_betman_daily_pick_item(row)
+            or is_settlement_tracked_daily_pick_item(row)
         )
     ]
 

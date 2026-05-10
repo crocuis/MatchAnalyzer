@@ -256,14 +256,43 @@ def test_sync_daily_picks_requires_betman_value_source_when_market_is_available(
         ],
     )
 
-    assert items == []
+    assert len(items) == 1
     assert run["metadata"]["match_count"] == 1
     assert run["metadata"]["snapshot_count"] == 1
     assert run["metadata"]["prediction_count"] == 1
     assert run["metadata"]["candidate_count"] == 1
     assert run["metadata"]["recommended_count"] == 0
-    assert run["metadata"]["held_count"] == 0
+    assert run["metadata"]["held_count"] == 1
+    assert run["metadata"]["diagnostic_held_count"] == 1
     assert run["metadata"]["hold_reason_counts"] == {"betman_value_source_missing": 1}
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "betman_value_source_missing",
+        "diagnosticCandidate",
+    ]
+    assert items[0]["validation_metadata"]["daily_pick_tracking_scope"] == (
+        "diagnostic"
+    )
+    assert items[0]["validation_metadata"]["settlement_tracked"] is False
+
+    results, runs = settle_daily_pick_items(
+        settle_date="2026-04-24",
+        items=items,
+        matches=[
+            {
+                "id": "match-1",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            }
+        ],
+        teams=[],
+    )
+
+    assert results == []
+    assert runs == []
 
 
 def test_sync_daily_picks_reports_betman_value_edge_missing_when_betman_value_is_not_recommended() -> None:
@@ -2426,6 +2455,7 @@ def test_run_job_can_force_resync_settled_daily_pick_runs() -> None:
         "selected_count": 1,
         "recommended_count": 0,
         "held_count": 1,
+        "diagnostic_held_count": 0,
         "hold_reason_counts": {
             "daily_pick_precision_gate_required": 1,
         },
