@@ -380,6 +380,7 @@ def main() -> None:
             },
         }
         archive_key = f"fixtures/{use_real_schedule}.json"
+        existing_snapshot_rows = []
         if real_fixture_sync_mode() == "full":
             lineup_context_by_match = build_lineup_context_by_match(events)
             rotowire_lineup_context_by_match = build_rotowire_lineup_context_by_match(
