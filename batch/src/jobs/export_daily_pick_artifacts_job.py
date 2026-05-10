@@ -139,7 +139,11 @@ def resolve_held_reason(reason_labels: list[str], status: str) -> str | None:
     if status != "held":
         return None
     for label in reversed(reason_labels):
-        if label not in {"heldByRecommendationGate", "mainRecommendation"}:
+        if label not in {
+            "diagnosticCandidate",
+            "heldByRecommendationGate",
+            "mainRecommendation",
+        }:
             return label
     return "held"
 
