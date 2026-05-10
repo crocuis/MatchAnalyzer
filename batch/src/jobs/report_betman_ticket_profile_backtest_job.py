@@ -1456,6 +1456,16 @@ def build_betman_ticket_policy_report_artifact_row(
     policy_candidates = value_report.get("policy_candidates")
     policy_candidates = policy_candidates if isinstance(policy_candidates, list) else []
     artifact_id = "betman_ticket_policy_report_latest"
+    summary_payload = {
+        "policy_candidate_count": len(policy_candidates),
+        "promotion_ready_count": sum(
+            1 for row in policy_candidates if bool(row.get("promotion_ready"))
+        ),
+        "generated_at": generated_at,
+    }
+    current_betman = report.get("current_betman")
+    if current_betman is not None:
+        summary_payload["current_betman"] = current_betman
     return archive_json_artifact(
         r2_client=r2_client,
         artifact_id=artifact_id,
@@ -1464,13 +1474,7 @@ def build_betman_ticket_policy_report_artifact_row(
         artifact_kind="betman_ticket_policy_report",
         key="reports/betman-ticket-policy/latest.json",
         payload=report,
-        summary_payload={
-            "policy_candidate_count": len(policy_candidates),
-            "promotion_ready_count": sum(
-                1 for row in policy_candidates if bool(row.get("promotion_ready"))
-            ),
-            "generated_at": generated_at,
-        },
+        summary_payload=summary_payload,
         metadata={"generated_at": generated_at},
     )
 

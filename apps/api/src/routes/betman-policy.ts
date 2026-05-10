@@ -201,6 +201,23 @@ function normalizeCurrentBetmanStatus(value: unknown): BetmanCurrentRoundStatus 
   };
 }
 
+function normalizeBetmanPolicySummaryPayload(
+  payload: unknown,
+  generatedAt: string | null,
+): BetmanPolicySummary | null {
+  const summary = readRecord(payload);
+  if (!summary) {
+    return null;
+  }
+  return {
+    generatedAt,
+    policyCandidateCount: readNumber(summary.policy_candidate_count) ?? 0,
+    promotionReadyCount: readNumber(summary.promotion_ready_count) ?? 0,
+    currentBetman: normalizeCurrentBetmanStatus(summary.current_betman),
+    topCandidates: [],
+  };
+}
+
 export function normalizeBetmanPolicyReport(
   payload: unknown,
   generatedAt: string | null,
@@ -236,7 +253,8 @@ export async function loadLatestBetmanPolicySummary(
     return null;
   }
   const payload = await loadStoredArtifactJson(row, bindings);
-  return normalizeBetmanPolicyReport(payload, row.created_at);
+  return normalizeBetmanPolicyReport(payload, row.created_at)
+    ?? normalizeBetmanPolicySummaryPayload(row.summary_payload, row.created_at);
 }
 
 betmanPolicy.get("/latest", async (c) => {
