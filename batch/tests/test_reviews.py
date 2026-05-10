@@ -6208,6 +6208,40 @@ def test_build_confidence_bucket_summary_includes_prior_fallback_snapshots_witho
     }
 
 
+def test_build_confidence_bucket_summary_accepts_postgres_datetime_kickoff():
+    summary = run_predictions_job.build_confidence_bucket_summary(
+        snapshot_rows=[
+            {
+                "id": "hist_snapshot",
+                "match_id": "hist_match",
+                "checkpoint_type": "T_MINUS_24H",
+                "snapshot_quality": "partial",
+            }
+        ],
+        market_by_snapshot={},
+        match_rows=[
+            {
+                "id": "hist_match",
+                "kickoff_at": datetime(2026, 4, 10, 18, tzinfo=timezone.utc),
+                "final_result": "HOME",
+            }
+        ],
+        checkpoint_type="T_MINUS_24H",
+        target_date="2026-04-11",
+    )
+
+    assert summary == {
+        "0.2-0.3": {
+            "count": 1,
+            "hit_rate": 1.0,
+        }
+    }
+
+
+def test_parse_iso_datetime_rejects_naive_datetime_objects():
+    assert run_predictions_job.parse_iso_datetime(datetime(2026, 4, 10, 18)) is None
+
+
 def test_build_prediction_row_uses_prediction_market_when_prior_fallback_has_no_bookmaker():
     prediction = build_prediction_row(
         match_id="match_a",
