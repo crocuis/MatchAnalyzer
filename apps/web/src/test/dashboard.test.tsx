@@ -1182,7 +1182,7 @@ function hasTextContent(text: string) {
     node?.textContent?.replace(/\s+/g, " ").trim() === text;
 }
 
-function stubDailyPicksModalFetch(policy: unknown) {
+function stubDailyPicksModalFetch(policy: unknown, dailyPicksOverrides: Record<string, unknown> = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -1209,6 +1209,7 @@ function stubDailyPicksModalFetch(policy: unknown) {
             coverage: { moneyline: 0, spreads: 0, totals: 0, held: 0 },
             items: [],
             heldItems: [],
+            ...dailyPicksOverrides,
           }),
         };
       }
@@ -1225,6 +1226,40 @@ function stubDailyPicksModalFetch(policy: unknown) {
     }),
   );
 }
+
+it("explains an empty daily picks modal with gate diagnostics", async () => {
+  stubDailyPicksModalFetch(null, {
+    diagnostics: {
+      matchCount: 24,
+      predictionCount: 24,
+      candidateCount: 24,
+      recommendedCount: 0,
+      heldCount: 0,
+      selectedCount: 0,
+      holdReasonCounts: {
+        low_confidence: 12,
+        below_target_hit_rate: 8,
+      },
+    },
+  });
+
+  render(
+    <DailyPicksModal
+      allMatches={[]}
+      initialLeagueId={null}
+      isOpen
+      leagues={[]}
+      onClose={() => {}}
+      onOpenMatch={() => {}}
+    />,
+  );
+
+  const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+  expect(await within(dialog).findByText("24 evaluated candidates")).toBeInTheDocument();
+  expect(within(dialog).getByText("0 passed")).toBeInTheDocument();
+  expect(within(dialog).getByText("Low confidence 12")).toBeInTheDocument();
+  expect(within(dialog).getByText("Below target hit rate 8")).toBeInTheDocument();
+});
 
 it("fetches daily picks with filters", async () => {
   const fetchMock = vi.fn(async () => ({

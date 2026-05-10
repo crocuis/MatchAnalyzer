@@ -773,6 +773,37 @@ button { font: inherit; border: 0; background: none; cursor: pointer; transition
 .dailyPicksList > *:nth-child(5) { animation-delay: 0.25s; }
 .dailyPicksList > *:nth-child(6) { animation-delay: 0.3s; }
 
+.dailyPicksDiagnostics {
+  margin: 14px auto 0;
+  max-width: 520px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.dailyPicksDiagnosticsGrid,
+.dailyPicksDiagnosticsReasons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.dailyPicksDiagnosticsGrid span,
+.dailyPicksDiagnosticsReasons span {
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.dailyPicksDiagnosticsReasons {
+  margin-top: 8px;
+}
+
 .text-success { color: var(--accent-success); }
 
 /* Tabs */

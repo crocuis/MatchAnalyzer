@@ -100,6 +100,16 @@ export type DailyPicksValidationSummary = {
   modelScope: string | null;
 };
 
+export type DailyPicksDiagnostics = {
+  matchCount: number | null;
+  predictionCount: number | null;
+  candidateCount: number | null;
+  recommendedCount: number | null;
+  heldCount: number | null;
+  selectedCount: number | null;
+  holdReasonCounts: Record<string, number>;
+};
+
 export type DailyPicksView = {
   generatedAt: string | null;
   date: string | null;
@@ -113,6 +123,7 @@ export type DailyPicksView = {
   coverage: Record<DailyPickMarketFamily | "held", number>;
   items: DailyPickItem[];
   heldItems: DailyPickItem[];
+  diagnostics: DailyPicksDiagnostics | null;
 };
 
 export const EMPTY_VIEW: DailyPicksView = {
@@ -139,6 +150,7 @@ export const EMPTY_VIEW: DailyPicksView = {
   },
   items: [],
   heldItems: [],
+  diagnostics: null,
 };
 
 export type LoadDailyPicksOptions = {
@@ -273,6 +285,95 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function readCountMap(value: unknown): Record<string, number> {
+  const record = readRecord(value);
+  if (!record) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(record).flatMap(([key, rawValue]) => {
+      const count = readNumber(rawValue);
+      return count === null ? [] : [[key, count]];
+    }),
+  );
+}
+
+function buildDailyPickDiagnosticsFromRun(
+  run: DailyPickRow | null | undefined,
+): DailyPicksDiagnostics | null {
+  const metadata = readRecord(run?.metadata);
+  if (!metadata) {
+    return null;
+  }
+  const diagnostics = {
+    matchCount: readNumber(metadata.match_count ?? metadata.matchCount),
+    predictionCount: readNumber(metadata.prediction_count ?? metadata.predictionCount),
+    candidateCount: readNumber(metadata.candidate_count ?? metadata.candidateCount),
+    recommendedCount: readNumber(metadata.recommended_count ?? metadata.recommendedCount),
+    heldCount: readNumber(metadata.held_count ?? metadata.heldCount),
+    selectedCount: readNumber(metadata.selected_count ?? metadata.selectedCount),
+    holdReasonCounts: readCountMap(
+      metadata.hold_reason_counts ?? metadata.holdReasonCounts,
+    ),
+  };
+  return Object.values(diagnostics).some((value) =>
+    typeof value === "number"
+    || (
+      typeof value === "object"
+      && value !== null
+      && Object.keys(value).length > 0
+    ),
+  )
+    ? diagnostics
+    : null;
+}
+
+function buildDailyPickDiagnosticsFromItems(args: {
+  matchCount: number;
+  predictionCount: number;
+  items: DailyPickItem[];
+  heldItems: DailyPickItem[];
+}): DailyPicksDiagnostics {
+  const holdReasonCounts: Record<string, number> = {};
+  for (const item of args.heldItems) {
+    const reason = item.noBetReason ?? item.confidenceReliability ?? "unknown";
+    holdReasonCounts[reason] = (holdReasonCounts[reason] ?? 0) + 1;
+  }
+  return {
+    matchCount: args.matchCount,
+    predictionCount: args.predictionCount,
+    candidateCount: args.items.length + args.heldItems.length,
+    recommendedCount: args.items.length,
+    heldCount: args.heldItems.length,
+    selectedCount: args.items.length + args.heldItems.length,
+    holdReasonCounts,
+  };
+}
+
+function latestDailyPickRun(runs: DailyPickRow[]): DailyPickRow | null {
+  return [...runs].sort((left, right) => (
+    (readTimestampMillis(right.generated_at) ?? 0)
+    - (readTimestampMillis(left.generated_at) ?? 0)
+  ))[0] ?? null;
+}
+
+async function readDailyPickRunDiagnostics(
+  dbClient: ApiDbClient,
+  date: string,
+): Promise<DailyPicksDiagnostics | null> {
+  try {
+    const runs = await readRowsByColumnValue(
+      dbClient,
+      "daily_pick_runs",
+      "pick_date",
+      date,
+    );
+    return buildDailyPickDiagnosticsFromRun(latestDailyPickRun(runs));
+  } catch {
+    return null;
+  }
 }
 
 async function readRowsByIds(
@@ -831,6 +932,12 @@ function buildDailyPicksView(args: BuildDailyPicksArgs): DailyPicksView {
     },
     items: visibleItems,
     heldItems: visibleHeldItems,
+    diagnostics: buildDailyPickDiagnosticsFromItems({
+      matchCount: args.matches.length,
+      predictionCount: args.predictions.length,
+      items: sortedItems,
+      heldItems: sortedHeldItems,
+    }),
   };
 }
 
@@ -1311,6 +1418,7 @@ async function loadDailyPicksArtifactView(
     options.locale,
   );
   const performanceSummary = await readDailyPickRuntimePerformanceSummary(dbClient);
+  const diagnostics = await readDailyPickRunDiagnostics(dbClient, date);
 
   return {
     ...loaded,
@@ -1319,6 +1427,7 @@ async function loadDailyPicksArtifactView(
     coverage: recomputeCoverage(localizedItems, localizedHeldItems),
     items: localizedItems,
     heldItems: localizedHeldItems,
+    diagnostics: diagnostics ?? loaded.diagnostics ?? null,
   };
 }
 
@@ -1406,6 +1515,7 @@ async function loadTrackedDailyPicksView(
         generatedAt: readString(emptyRun.generated_at) ?? new Date().toISOString(),
         date: normalizedOptions.date,
         validation: performanceSummary ?? EMPTY_VIEW.validation,
+        diagnostics: buildDailyPickDiagnosticsFromRun(emptyRun),
       };
     }
     return null;
@@ -1507,9 +1617,10 @@ async function loadTrackedDailyPicksView(
   const visibleHeldItems = normalizedOptions.includeHeld
     ? heldItems.slice(0, 10)
     : [];
+  const latestRun = latestDailyPickRun(runs);
 
   return {
-    generatedAt: readString(runs[0]?.generated_at) ?? new Date().toISOString(),
+    generatedAt: readString(latestRun?.generated_at) ?? new Date().toISOString(),
     date: normalizedOptions.date,
     target: EMPTY_VIEW.target,
     validation: performanceSummary ?? buildRuntimePerformanceSummary(results),
@@ -1521,6 +1632,14 @@ async function loadTrackedDailyPicksView(
     },
     items: visibleItems,
     heldItems: visibleHeldItems,
+    diagnostics:
+      buildDailyPickDiagnosticsFromRun(latestRun)
+      ?? buildDailyPickDiagnosticsFromItems({
+        matchCount: matches.length,
+        predictionCount: pickRows.length,
+        items: recommendedItems,
+        heldItems,
+      }),
   };
 }
 

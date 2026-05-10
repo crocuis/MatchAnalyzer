@@ -227,6 +227,7 @@ def sync_daily_picks_for_date(
     run_id = build_daily_pick_run_id(pick_date)
     recommended_candidates = [row for row in candidates if row.get("status") == "recommended"]
     held_candidates = [row for row in candidates if row.get("status") == "held"]
+    hold_reason_counts = summarize_daily_pick_hold_reasons(held_candidates)
     selected_held_candidates = select_daily_pick_held_candidates(held_candidates)
     selected_candidates = (
         recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]
@@ -263,10 +264,25 @@ def sync_daily_picks_for_date(
             "selected_count": len(selected_items),
             "recommended_count": len(recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]),
             "held_count": len(selected_held_candidates[:MAX_DAILY_HELD_CANDIDATES]),
+            "hold_reason_counts": hold_reason_counts,
             "ranking": "expected_value_edge_probability_confidence",
         },
     }
     return run, selected_items
+
+
+def summarize_daily_pick_hold_reasons(candidates: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in candidates:
+        metadata = row.get("validation_metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        reason = str(
+            row.get("reliability_hold_reason")
+            or metadata.get("confidence_reliability")
+            or "unknown"
+        )
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
 
 
 def select_daily_pick_held_candidates(candidates: list[dict]) -> list[dict]:

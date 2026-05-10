@@ -93,6 +93,14 @@ function matchesActiveFilters(
   return true;
 }
 
+function topDailyPickHoldReasons(
+  diagnostics: DailyPicksResponse["diagnostics"],
+) {
+  return Object.entries(diagnostics?.holdReasonCounts ?? {})
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 3);
+}
+
 export default function DailyPicksModal({
   isOpen,
   isActive = true,
@@ -257,6 +265,8 @@ export default function DailyPicksModal({
       })
     : null;
   const betmanPolicyIsStale = isBetmanPolicyStale(betmanPolicy?.generatedAt ?? null);
+  const emptyDiagnostics = payload?.diagnostics ?? null;
+  const topHoldReasons = topDailyPickHoldReasons(emptyDiagnostics);
 
   if (!isOpen) return null;
 
@@ -450,6 +460,36 @@ export default function DailyPicksModal({
             {status === "ready" && visibleItems.length === 0 ? (
               <div className="dailyPicksEmpty">
                 <p className="timelineNote">{t("dailyPicks.empty")}</p>
+                {emptyDiagnostics ? (
+                  <div className="dailyPicksDiagnostics" aria-label={t("dailyPicks.diagnostics.title")}>
+                    <div className="dailyPicksDiagnosticsGrid">
+                      <span>
+                        {t("dailyPicks.diagnostics.candidates", {
+                          count: emptyDiagnostics.candidateCount ?? 0,
+                        })}
+                      </span>
+                      <span>
+                        {t("dailyPicks.diagnostics.passed", {
+                          count: emptyDiagnostics.recommendedCount ?? 0,
+                        })}
+                      </span>
+                      <span>
+                        {t("dailyPicks.diagnostics.matches", {
+                          count: emptyDiagnostics.matchCount ?? 0,
+                        })}
+                      </span>
+                    </div>
+                    {topHoldReasons.length > 0 ? (
+                      <div className="dailyPicksDiagnosticsReasons">
+                        {topHoldReasons.map(([reason, count]) => (
+                          <span key={reason}>
+                            {t(`dailyPicks.noBetReasons.${reason}`, { defaultValue: reason })} {count}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {!includeHeld && hiddenHeldCount > 0 ? (
                   <button type="button" className="loadMoreBtn" onClick={() => setIncludeHeld(true)}>
                     {t("dailyPicks.showHeldCandidates", { count: hiddenHeldCount })}

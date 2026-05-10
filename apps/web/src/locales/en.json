@@ -21,6 +21,12 @@
     "empty": "No recommendations passed today's filters.",
     "error": "Daily Picks could not be loaded.",
     "showHeldCandidates": "Show {{count}} held candidates",
+    "diagnostics": {
+      "title": "Daily pick diagnostics",
+      "candidates": "{{count}} evaluated candidates",
+      "passed": "{{count}} passed",
+      "matches": "{{count}} matches"
+    },
     "summary": {
       "recommendations": "Recommendations",
       "candidates": "Candidates",
@@ -101,6 +107,10 @@
     },
     "noBetReasons": {
       "low_confidence": "Low confidence",
+      "below_target_hit_rate": "Below target hit rate",
+      "insufficient_sample": "Insufficient sample",
+      "betman_market_missing": "Betman market missing",
+      "betman_value_edge_missing": "Betman value edge missing",
       "heldByRecommendationGate": "Held by recommendation gate",
       "variant_market_price_only": "Market price only",
       "variant_model_inputs_missing": "Model inputs missing",
