@@ -196,13 +196,43 @@ def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
         ],
     )
 
-    assert items == []
+    assert len(items) == 1
     assert run["metadata"]["match_count"] == 1
     assert run["metadata"]["snapshot_count"] == 1
     assert run["metadata"]["prediction_count"] == 1
     assert run["metadata"]["candidate_count"] == 1
-    assert run["metadata"]["held_count"] == 0
+    assert run["metadata"]["recommended_count"] == 0
+    assert run["metadata"]["held_count"] == 1
+    assert run["metadata"]["diagnostic_held_count"] == 1
     assert run["metadata"]["hold_reason_counts"] == {"betman_market_missing": 1}
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "betman_market_missing",
+        "diagnosticCandidate",
+    ]
+    assert items[0]["validation_metadata"]["daily_pick_tracking_scope"] == (
+        "diagnostic"
+    )
+    assert items[0]["validation_metadata"]["settlement_tracked"] is False
+
+    results, runs = settle_daily_pick_items(
+        settle_date="2026-04-24",
+        items=items,
+        matches=[
+            {
+                "id": "match-1",
+                "final_result": "HOME",
+                "home_score": 1,
+                "away_score": 0,
+            }
+        ],
+        teams=[],
+    )
+
+    assert results == []
+    assert runs == []
 
 
 def test_sync_daily_picks_requires_betman_value_source_when_market_is_available() -> None:
@@ -464,11 +494,23 @@ def test_sync_daily_picks_reports_betman_market_missing_for_non_betman_value_sou
         ],
     )
 
-    assert items == []
+    assert len(items) == 1
     assert run["metadata"]["candidate_count"] == 1
     assert run["metadata"]["recommended_count"] == 0
-    assert run["metadata"]["held_count"] == 0
+    assert run["metadata"]["held_count"] == 1
+    assert run["metadata"]["diagnostic_held_count"] == 1
     assert run["metadata"]["hold_reason_counts"] == {"betman_market_missing": 1}
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "betman_market_missing",
+        "diagnosticCandidate",
+    ]
+    assert items[0]["validation_metadata"]["daily_pick_tracking_scope"] == (
+        "diagnostic"
+    )
+    assert items[0]["validation_metadata"]["settlement_tracked"] is False
 
 
 def test_sync_daily_picks_uses_betman_value_pick_for_moneyline() -> None:
