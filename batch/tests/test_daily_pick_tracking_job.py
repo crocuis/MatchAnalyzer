@@ -263,6 +263,65 @@ def test_sync_daily_picks_requires_betman_value_source_when_market_is_available(
     assert run["metadata"]["candidate_count"] == 1
     assert run["metadata"]["recommended_count"] == 0
     assert run["metadata"]["held_count"] == 0
+    assert run["metadata"]["hold_reason_counts"] == {"betman_value_source_missing": 1}
+
+
+def test_sync_daily_picks_reports_betman_value_edge_missing_when_betman_value_is_not_recommended() -> None:
+    run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.76,
+                "home_prob": 0.62,
+                "draw_prob": 0.23,
+                "away_prob": 0.15,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.76,
+                "main_recommendation_recommended": True,
+                "main_recommendation_no_bet_reason": None,
+                "value_recommendation_pick": "HOME",
+                "value_recommendation_recommended": False,
+                "value_recommendation_market_source": "betman_moneyline_3way",
+                "summary_payload": {
+                    "betman_market_available": True,
+                    "base_model_source": "trained_baseline",
+                    "high_confidence_eligible": False,
+                    "max_abs_divergence": 0.01,
+                    "moneyline_signal_score": 4.0,
+                    "source_agreement_ratio": 0.67,
+                    "feature_context": {"external_rating_available": 1},
+                    "validation_metadata": {
+                        "sample_count": 30,
+                        "hit_rate": 0.69,
+                        "wilson_lower_bound": 0.5,
+                    },
+                },
+            }
+        ],
+    )
+
+    assert items == []
+    assert run["metadata"]["candidate_count"] == 1
+    assert run["metadata"]["recommended_count"] == 0
+    assert run["metadata"]["held_count"] == 0
     assert run["metadata"]["hold_reason_counts"] == {"betman_value_edge_missing": 1}
 
 

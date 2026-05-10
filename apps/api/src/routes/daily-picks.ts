@@ -1147,9 +1147,40 @@ function resolveMoneylineBetmanHoldReason(
       || alignedValueRecommendation === null
     )
   ) {
-    return "betman_value_edge_missing";
+    return resolveBetmanValueHoldReason({
+      valueIsBetman,
+      valuePick: valueRecommendation?.pick ?? null,
+      valueRecommended: valueRecommendation?.recommended ?? null,
+      valueAligned: alignedValueRecommendation !== null,
+    });
   }
   return null;
+}
+
+function resolveBetmanValueHoldReason({
+  valueIsBetman,
+  valuePick,
+  valueRecommended,
+  valueAligned,
+}: {
+  valueIsBetman: boolean;
+  valuePick: string | null;
+  valueRecommended: boolean | null;
+  valueAligned: boolean;
+}): string {
+  if (!valueIsBetman) {
+    return "betman_value_source_missing";
+  }
+  if (valuePick === null || !MONEYLINE_OUTCOME_LABELS.has(valuePick.toUpperCase())) {
+    return "betman_value_pick_invalid";
+  }
+  if (valueRecommended !== true) {
+    return "betman_value_edge_missing";
+  }
+  if (!valueAligned) {
+    return "betman_value_pick_invalid";
+  }
+  return "betman_value_edge_missing";
 }
 
 function buildVariantPick(

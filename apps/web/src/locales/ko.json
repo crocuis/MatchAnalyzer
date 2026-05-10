@@ -115,6 +115,8 @@
       "below_segment_reliability": "세그먼트 신뢰도 미달",
       "betman_market_missing": "Betman 구매 가능 경기 없음",
       "betman_value_edge_missing": "Betman 가치 엣지 없음",
+      "betman_value_pick_invalid": "Betman 선택값 오류",
+      "betman_value_source_missing": "Betman 가치 신호 없음",
       "heldByRecommendationGate": "추천 게이트 보류",
       "variant_market_price_only": "시장 가격만 있음",
       "variant_model_inputs_missing": "모델 입력 부족",

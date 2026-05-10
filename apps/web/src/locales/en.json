@@ -115,6 +115,8 @@
       "below_segment_reliability": "Below segment reliability",
       "betman_market_missing": "Betman market missing",
       "betman_value_edge_missing": "Betman value edge missing",
+      "betman_value_pick_invalid": "Betman value pick invalid",
+      "betman_value_source_missing": "Betman value signal missing",
       "heldByRecommendationGate": "Held by recommendation gate",
       "variant_market_price_only": "Market price only",
       "variant_model_inputs_missing": "Model inputs missing",

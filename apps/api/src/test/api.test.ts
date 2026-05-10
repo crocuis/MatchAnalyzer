@@ -4265,6 +4265,69 @@ describe("prediction API", () => {
     });
   });
 
+  it("classifies computed daily picks with Betman market but no Betman value source as value signal missing", async () => {
+    setDailyPicksClock();
+    const dbClient = buildTableDbClient({
+      matches: [
+        {
+          id: "match-1",
+          competition_id: "premier-league",
+          kickoff_at: "2026-04-24T19:00:00Z",
+          home_team_id: "chelsea",
+          away_team_id: "man-city",
+        },
+      ],
+      teams: [
+        { id: "chelsea", name: "Chelsea" },
+        { id: "man-city", name: "Manchester City" },
+      ],
+      competitions: [
+        { id: "premier-league", name: "Premier League" },
+      ],
+      match_snapshots: [
+        { id: "snapshot-1", match_id: "match-1", checkpoint_type: "T_MINUS_24H" },
+      ],
+      predictions: [
+        {
+          id: "prediction-1",
+          match_id: "match-1",
+          snapshot_id: "snapshot-1",
+          recommended_pick: "HOME",
+          confidence_score: 0.76,
+          home_prob: 0.62,
+          draw_prob: 0.23,
+          away_prob: 0.15,
+          main_recommendation_pick: "HOME",
+          main_recommendation_confidence: 0.76,
+          main_recommendation_recommended: true,
+          main_recommendation_no_bet_reason: null,
+          value_recommendation_pick: "HOME",
+          value_recommendation_recommended: true,
+          summary_payload: validatedDailyPickSummary({
+            betman_market_available: true,
+          }),
+          created_at: "2026-04-24T08:00:00Z",
+        },
+      ],
+    });
+
+    const view = await loadDailyPicksView(dbClient, {
+      date: "2026-04-24",
+      includeHeld: true,
+    });
+
+    expect(view.items).toEqual([]);
+    expect(view.heldItems[0]).toMatchObject({
+      marketFamily: "moneyline",
+      selectionLabel: "HOME",
+      status: "held",
+      noBetReason: "betman_value_source_missing",
+    });
+    expect(view.diagnostics?.holdReasonCounts).toEqual({
+      betman_value_source_missing: 1,
+    });
+  });
+
   it("uses explicit field lists for report endpoints instead of selecting all columns", async () => {
     const selectedColumns: string[] = [];
     const query = {

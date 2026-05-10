@@ -59,6 +59,8 @@ DAILY_PICK_BETMAN_WATCHLIST_BLOCKED_HOLD_REASONS = {
     "below_segment_reliability",
     "betman_market_missing",
     "betman_value_edge_missing",
+    "betman_value_pick_invalid",
+    "betman_value_source_missing",
     "calibration_gap",
     "confidence_reliability_missing",
     "low_confidence",
@@ -510,7 +512,12 @@ def build_moneyline_pick_candidate(
     ):
         candidate_base = _with_daily_pick_hold_reason(
             candidate_base,
-            "betman_value_edge_missing",
+            _resolve_betman_value_hold_reason(
+                value_is_betman=value_is_betman,
+                value_pick=value_pick,
+                value_recommended=value_recommended,
+                value_aligned=value_aligned,
+            ),
         )
     betman_executable_value = (
         not betman_market_known
@@ -647,6 +654,24 @@ def _resolve_moneyline_daily_pick_gate(
     if selection_label != "AWAY" or confidence >= DAILY_PICK_AWAY_CONFIDENCE_MINIMUM:
         return base
     return _with_daily_pick_hold_reason(base, "away_confidence_reliability_gap")
+
+
+def _resolve_betman_value_hold_reason(
+    *,
+    value_is_betman: bool,
+    value_pick: str,
+    value_recommended: bool,
+    value_aligned: bool,
+) -> str:
+    if not value_is_betman:
+        return "betman_value_source_missing"
+    if value_pick not in {"HOME", "DRAW", "AWAY"}:
+        return "betman_value_pick_invalid"
+    if not value_recommended:
+        return "betman_value_edge_missing"
+    if not value_aligned:
+        return "betman_value_pick_invalid"
+    return "betman_value_edge_missing"
 
 
 def _with_daily_pick_hold_reason(base: dict, hold_reason: str) -> dict:
