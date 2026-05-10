@@ -98,9 +98,23 @@ def fetch_current_proto_victory_detail_payloads(
     fetch_detail: Callable[..., dict] = fetch_betman_game_detail,
     fetched_at: str | None = None,
 ) -> list[dict]:
+    return fetch_current_proto_victory_market_context(
+        fetch_buyable=fetch_buyable,
+        fetch_detail=fetch_detail,
+        fetched_at=fetched_at,
+    )["detail_payloads"]
+
+
+def fetch_current_proto_victory_market_context(
+    *,
+    fetch_buyable: Callable[[], dict] = fetch_betman_buyable_games,
+    fetch_detail: Callable[..., dict] = fetch_betman_game_detail,
+    fetched_at: str | None = None,
+) -> dict:
     buyable_games = fetch_buyable()
+    selected_games = select_proto_victory_games(buyable_games)
     resolved_fetched_at = fetched_at or format_utc_minute(datetime.now(timezone.utc))
-    return [
+    detail_payloads = [
         attach_betman_fetch_timestamp(
             fetch_detail(
                 str(game["gmId"]),
@@ -109,8 +123,30 @@ def fetch_current_proto_victory_detail_payloads(
             ),
             resolved_fetched_at,
         )
-        for game in select_proto_victory_games(buyable_games)
+        for game in selected_games
     ]
+    buyable_proto_games = buyable_games.get("protoGames")
+    buyable_proto_games = buyable_proto_games if isinstance(buyable_proto_games, list) else []
+    buyable_gm_ids = sorted({
+        str(game.get("gmId") or "")
+        for game in buyable_proto_games
+        if isinstance(game, dict) and str(game.get("gmId") or "")
+    })
+    unavailable_reason = None
+    if not selected_games:
+        unavailable_reason = "proto_victory_round_missing"
+    elif not detail_payloads:
+        unavailable_reason = "proto_victory_detail_missing"
+    return {
+        "detail_payloads": detail_payloads,
+        "diagnostics": {
+            "buyable_game_count": len(buyable_proto_games),
+            "buyable_gm_ids": buyable_gm_ids,
+            "selected_victory_game_count": len(selected_games),
+            "detail_payload_count": len(detail_payloads),
+            "unavailable_reason": unavailable_reason,
+        },
+    }
 
 
 def build_snapshot_rows_for_betman_matching(
@@ -233,12 +269,27 @@ def format_ticket_opportunity_lines(report: dict) -> list[str]:
         )
     ]
     if current_betman:
-        lines.append(
+        line = (
             "Current Betman filter: "
             f"enabled={str(bool(current_betman.get('enabled'))).lower()} "
             f"matched_matches={current_betman.get('matched_match_count', 0)} "
             f"excluded_unavailable={current_betman.get('excluded_unavailable_item_count', 0)}"
         )
+        if current_betman.get("unavailable_reason"):
+            buyable_gm_ids = current_betman.get("buyable_gm_ids") or []
+            if isinstance(buyable_gm_ids, list):
+                buyable_gm_ids_text = ",".join(str(value) for value in buyable_gm_ids)
+            else:
+                buyable_gm_ids_text = str(buyable_gm_ids)
+            line = (
+                f"{line} reason={current_betman.get('unavailable_reason')} "
+                f"buyable_games={current_betman.get('buyable_game_count', 0)} "
+                f"buyable_gm_ids={buyable_gm_ids_text or 'none'} "
+                f"victory_rounds={current_betman.get('selected_victory_game_count', 0)} "
+                f"detail_payloads={current_betman.get('detail_payload_count', 0)} "
+                f"market_rows={current_betman.get('market_row_count', 0)}"
+            )
+        lines.append(line)
     for index, ticket in enumerate(report.get("tickets") or [], start=1):
         lines.append(
             "#"
@@ -293,6 +344,7 @@ def main(argv: list[str] | None = None) -> None:
     items = read_optional_rows(client, "daily_pick_items")
     predictions = []
     current_market_rows = None
+    current_market_diagnostics = None
     snapshot_rows = None
     if not args.skip_current_betman:
         predictions = read_optional_rows(
@@ -300,7 +352,8 @@ def main(argv: list[str] | None = None) -> None:
             "predictions",
             columns=PREDICTION_TICKET_COLUMNS,
         )
-        detail_payloads = fetch_current_proto_victory_detail_payloads()
+        current_context = fetch_current_proto_victory_market_context()
+        detail_payloads = current_context["detail_payloads"]
         current_market_rows, snapshot_rows = build_current_betman_market_rows(
             matches=read_optional_rows(client, "matches"),
             snapshots=read_optional_rows(client, "match_snapshots"),
@@ -309,6 +362,17 @@ def main(argv: list[str] | None = None) -> None:
             bookmaker_rows=read_optional_rows(client, "market_probabilities"),
             detail_payloads=detail_payloads,
         )
+        current_market_diagnostics = {
+            **current_context["diagnostics"],
+            "market_row_count": len(current_market_rows),
+        }
+        if (
+            current_market_diagnostics.get("unavailable_reason") is None
+            and not current_market_rows
+        ):
+            current_market_diagnostics["unavailable_reason"] = (
+                "proto_victory_market_match_missing"
+            )
     report_items = build_report_candidate_items(
         stored_items=items,
         predictions=predictions,
@@ -329,6 +393,7 @@ def main(argv: list[str] | None = None) -> None:
         max_leg_decimal_odds=risk_controls["max_leg_decimal_odds"],
         max_leg_expected_value=risk_controls["max_leg_expected_value"],
         max_ticket_decimal_odds=risk_controls["max_ticket_decimal_odds"],
+        current_market_diagnostics=current_market_diagnostics,
     )
     if args.json:
         print(json.dumps(report, sort_keys=True))
