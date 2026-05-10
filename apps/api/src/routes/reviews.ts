@@ -211,7 +211,7 @@ export async function loadReviewView(
   }
 
   const artifact = data
-    ? await loadArtifactById(dbClient, data.review_artifact_id)
+    ? await loadArtifactById(dbClient, readString(data.review_artifact_id))
     : null;
 
   return {
