@@ -6,6 +6,7 @@ from batch.src.model.evaluate_walk_forward import (
     split_walk_forward_windows,
     summarize_confidence_buckets,
 )
+from batch.src.model.train_baseline import build_baseline_candidate_estimators
 from batch.src.model.train_baseline import train_baseline_model
 
 
@@ -46,6 +47,22 @@ def test_train_baseline_model_exposes_predict_proba():
     assert hasattr(model, "predict_proba")
     probabilities = model.predict_proba([[0.15], [1.15]])
     assert probabilities.shape == (2, 2)
+
+
+def test_baseline_logistic_regression_uses_newton_cg_by_default(monkeypatch):
+    monkeypatch.delenv("MATCH_ANALYZER_BASELINE_LOGISTIC_SOLVER", raising=False)
+
+    estimator = build_baseline_candidate_estimators()["logistic_regression"]
+
+    assert estimator[-1].solver == "newton-cg"
+
+
+def test_baseline_logistic_regression_allows_solver_override(monkeypatch):
+    monkeypatch.setenv("MATCH_ANALYZER_BASELINE_LOGISTIC_SOLVER", "saga")
+
+    estimator = build_baseline_candidate_estimators()["logistic_regression"]
+
+    assert estimator[-1].solver == "saga"
 
 
 def test_train_baseline_model_rejects_classes_with_fewer_than_three_samples():

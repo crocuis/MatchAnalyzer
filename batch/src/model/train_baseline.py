@@ -20,9 +20,7 @@ def read_env_flag(name: str) -> bool:
 
 def build_baseline_candidate_estimators() -> dict[str, object]:
     logistic_solver = (
-        "lbfgs"
-        if read_env_flag("MATCH_ANALYZER_FAST_BASELINE_TRAINING")
-        else "saga"
+        os.environ.get("MATCH_ANALYZER_BASELINE_LOGISTIC_SOLVER") or "newton-cg"
     )
     estimators = {
         "logistic_regression": make_pipeline(
