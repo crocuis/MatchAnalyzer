@@ -303,6 +303,10 @@
       "breakdownTitle": "Confidence Breakdown",
       "noBetReasons": {
         "low_confidence": "Low confidence",
+        "betman_market_missing": "Betman market missing",
+        "betman_value_edge_missing": "Betman value edge missing",
+        "betman_value_pick_invalid": "Betman value pick invalid",
+        "betman_value_source_missing": "Betman value signal missing",
         "unsupported_high_confidence_fallback": "Insufficient analysis integrity"
       },
       "breakdown": {

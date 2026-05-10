@@ -303,6 +303,10 @@
       "breakdownTitle": "신뢰도 분석",
       "noBetReasons": {
         "low_confidence": "신뢰도 부족",
+        "betman_market_missing": "Betman 구매 가능 경기 없음",
+        "betman_value_edge_missing": "Betman 가치 엣지 없음",
+        "betman_value_pick_invalid": "Betman 선택값 오류",
+        "betman_value_source_missing": "Betman 가치 신호 없음",
         "unsupported_high_confidence_fallback": "분석 정합성 부족"
       },
       "breakdown": {

@@ -9,6 +9,7 @@ import DailyPicksTeaser from "../components/DailyPicksTeaser";
 import FullReportView from "../components/FullReportView";
 import MatchCard from "../components/MatchCard";
 import MatchDetailModal from "../components/MatchDetailModal";
+import PredictionCard from "../components/PredictionCard";
 import i18n from "../i18n/config";
 import { fetchDailyPicks } from "../lib/api";
 import type { MatchCardRow, PredictionSummary } from "../lib/api";
@@ -1714,11 +1715,39 @@ describe("dashboard redesign", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /moneyline/i }));
 
-    expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
-  });
+  expect(await screen.findByText(/low confidence/i)).toBeInTheDocument();
+});
 
-  it("opens the teaser CTA with all league daily picks and updates cards when the league select changes", async () => {
-    render(<App />);
+it("renders Betman no-bet reasons in prediction cards", () => {
+  render(
+    <PredictionCard
+      confidence={null}
+      recommendedPick={null}
+      prediction={{
+        matchId: "match-001",
+        checkpointLabel: "T-24H",
+        homeWinProbability: 62,
+        drawProbability: 23,
+        awayWinProbability: 15,
+        mainRecommendation: {
+          pick: "HOME",
+          confidence: 0.76,
+          recommended: false,
+          noBetReason: "betman_value_source_missing",
+        },
+        valueRecommendation: null,
+        variantMarkets: [],
+        explanationPayload: {},
+      } as PredictionSummary}
+    />,
+  );
+
+  expect(screen.getByText("Betman value signal missing")).toBeInTheDocument();
+  expect(screen.queryByText("betman_value_source_missing")).not.toBeInTheDocument();
+});
+
+it("opens the teaser CTA with all league daily picks and updates cards when the league select changes", async () => {
+  render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: /^view$/i }));
     const dailyPicksDialog = await screen.findByRole("dialog", { name: /daily picks/i });
