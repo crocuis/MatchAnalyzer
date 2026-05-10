@@ -91,6 +91,7 @@ from batch.src.jobs.ingest_fixtures_job import (
     build_sync_snapshot_rows,
     build_team_translation_rows,
     collect_changed_fixture_match_ids,
+    filter_changed_fixture_snapshot_rows,
     prepare_sync_asset_rows,
     resolve_external_signal_as_of_date,
     should_backfill_real_fixture_team_assets,
@@ -5930,6 +5931,48 @@ def test_collect_changed_fixture_match_ids_ignores_snapshot_capture_time_only_up
     )
 
     assert changed_match_ids == []
+
+
+def test_filter_changed_fixture_snapshot_rows_skips_capture_time_only_updates():
+    rows = filter_changed_fixture_snapshot_rows(
+        snapshot_rows=[
+            {
+                "id": "match_a_t_minus_24h",
+                "match_id": "match_a",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-20T00:00:00+00:00",
+            },
+            {
+                "id": "match_b_t_minus_24h",
+                "match_id": "match_b",
+                "lineup_status": "confirmed",
+                "captured_at": "2026-04-20T00:00:00+00:00",
+            },
+        ],
+        existing_snapshot_rows=[
+            {
+                "id": "match_a_t_minus_24h",
+                "match_id": "match_a",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-19T23:00:00+00:00",
+            },
+            {
+                "id": "match_b_t_minus_24h",
+                "match_id": "match_b",
+                "lineup_status": "unknown",
+                "captured_at": "2026-04-19T23:00:00+00:00",
+            },
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": "match_b_t_minus_24h",
+            "match_id": "match_b",
+            "lineup_status": "confirmed",
+            "captured_at": "2026-04-20T00:00:00+00:00",
+        }
+    ]
 
 
 def test_collect_changed_market_match_ids_tracks_market_variant_and_snapshot_updates():

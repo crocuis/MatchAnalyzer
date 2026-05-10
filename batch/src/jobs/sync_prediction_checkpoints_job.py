@@ -272,6 +272,39 @@ def external_signal_match_ids_for_targets(
     )
 
 
+def snapshot_rows_differ(
+    previous_row: dict | None,
+    next_row: dict,
+    *,
+    ignored_fields: set[str] | None = None,
+) -> bool:
+    if previous_row is None:
+        return True
+    keys = (set(previous_row) | set(next_row)) - (ignored_fields or set())
+    return any(previous_row.get(key) != next_row.get(key) for key in keys)
+
+
+def filter_changed_snapshot_rows(
+    snapshot_rows: list[dict],
+    existing_snapshots: list[dict],
+) -> list[dict]:
+    existing_by_id = {
+        str(row.get("id") or ""): row
+        for row in existing_snapshots
+        if isinstance(row, dict) and row.get("id")
+    }
+    return [
+        row
+        for row in snapshot_rows
+        if row.get("id")
+        and snapshot_rows_differ(
+            existing_by_id.get(str(row.get("id") or "")),
+            row,
+            ignored_fields={"captured_at"},
+        )
+    ]
+
+
 def build_due_snapshot_rows(
     *,
     targets: list[PredictionSyncTarget],
@@ -445,9 +478,13 @@ def sync_prediction_checkpoints(
         captured_at=observed_at.isoformat(),
         lineup_context_updates_by_match=lineup_contexts,
     )
+    changed_snapshot_rows = filter_changed_snapshot_rows(
+        snapshot_rows,
+        existing_snapshots,
+    )
     upserted_rows = (
-        client.upsert_rows("match_snapshots", snapshot_rows)
-        if snapshot_rows
+        client.upsert_rows("match_snapshots", changed_snapshot_rows)
+        if changed_snapshot_rows
         else 0
     )
     target_match_ids = sorted({target.match_id for target in targets})
@@ -471,6 +508,7 @@ def sync_prediction_checkpoints(
         "daily_pick_dates": daily_pick_dates,
         "target_count": len(targets),
         "snapshot_rows": len(snapshot_rows),
+        "changed_snapshot_rows": len(changed_snapshot_rows),
         "upserted_rows": upserted_rows,
         "rotowire_lineup_contexts": len(rotowire_lineup_contexts),
         "bsd_lineup_contexts": len(bsd_lineup_contexts),
