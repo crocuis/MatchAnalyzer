@@ -58,6 +58,11 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
                 "confidence_bucket": "0.7-0.8",
                 "implied_probability_bucket": "0.2-0.3",
                 "confidence_reliability": "insufficient_sample",
+                "sample_count": 12,
+                "minimum_sample_count": 50,
+                "hit_rate": 0.75,
+                "wilson_lower_bound": 0.46,
+                "minimum_wilson_lower_bound": 0.7,
                 "source_agreement_ratio": 0.5,
                 "moneyline_signal_score": 1.2,
             },
@@ -120,6 +125,9 @@ def test_daily_pick_segment_quality_reports_betman_blockers() -> None:
         "final_result_available_pending_match_ids": ["match-betman"],
     }
     assert report["betman_held_candidates"][0]["promotion_status"] == "blocked"
+    assert report["betman_held_candidates"][0]["validation_sample_count"] == 12
+    assert report["betman_held_candidates"][0]["validation_sample_shortfall"] == 38
+    assert report["betman_held_candidates"][0]["validation_wilson_gap"] == 0.24
     assert "betman_settled_sample_below_floor" in (
         report["betman_held_candidates"][0]["blockers"]
     )

@@ -365,6 +365,31 @@ function buildDailyPickDiagnosticsFromItems(args: {
   };
 }
 
+function mergeDailyPickDiagnostics(
+  fallback: DailyPicksDiagnostics,
+  ...overrides: Array<DailyPicksDiagnostics | null | undefined>
+): DailyPicksDiagnostics {
+  let merged = fallback;
+  for (const override of overrides) {
+    if (!override) {
+      continue;
+    }
+    const holdReasonCounts = Object.keys(override.holdReasonCounts).length > 0
+      ? override.holdReasonCounts
+      : merged.holdReasonCounts;
+    merged = {
+      matchCount: override.matchCount ?? merged.matchCount,
+      predictionCount: override.predictionCount ?? merged.predictionCount,
+      candidateCount: override.candidateCount ?? merged.candidateCount,
+      recommendedCount: override.recommendedCount ?? merged.recommendedCount,
+      heldCount: override.heldCount ?? merged.heldCount,
+      selectedCount: override.selectedCount ?? merged.selectedCount,
+      holdReasonCounts,
+    };
+  }
+  return merged;
+}
+
 function latestDailyPickRun(runs: DailyPickRow[]): DailyPickRow | null {
   return [...runs].sort((left, right) => (
     (readTimestampMillis(right.generated_at) ?? 0)
@@ -1462,9 +1487,6 @@ function recomputeCoverage(items: DailyPickItem[], heldItems: DailyPickItem[]) {
 
 function normalizeDailyPickRecommendationSubset(items: DailyPickItem[]) {
   return items.map((item) => {
-    if (item.status !== "recommended") {
-      return item;
-    }
     const metadata = item.validationMetadata ?? {};
     const highConfidenceEligible =
       item.highConfidenceEligible
@@ -1478,9 +1500,13 @@ function normalizeDailyPickRecommendationSubset(items: DailyPickItem[]) {
       ?? readString(metadata.confidence_reliability)
       ?? readString(metadata.confidenceReliability)
       ?? "confidence_reliability_missing";
-    const reasonLabels = item.reasonLabels.includes("heldByRecommendationGate")
-      ? item.reasonLabels
-      : [...item.reasonLabels, "heldByRecommendationGate", reason];
+    const reasonLabels = [...item.reasonLabels];
+    if (!reasonLabels.includes("heldByRecommendationGate")) {
+      reasonLabels.push("heldByRecommendationGate");
+    }
+    if (!reasonLabels.includes(reason)) {
+      reasonLabels.push(reason);
+    }
     return {
       ...item,
       status: "held" as const,
@@ -1544,14 +1570,17 @@ async function loadDailyPicksArtifactView(
   if (await hasNewerTrackedDailyPickRun(dbClient, date, loaded.generatedAt)) {
     return null;
   }
-  const filteredItems = filterDailyPickItems(loaded.items, options).slice(0, 10);
-  const filteredHeldItems = options.includeHeld
-    ? filterDailyPickItems(loaded.heldItems, options).slice(0, 10)
-    : [];
+  const filteredItems = filterDailyPickItems(loaded.items, options);
+  const filteredHeldItems = filterDailyPickItems(loaded.heldItems, options);
   const normalizedItems = normalizeDailyPickRecommendationSubset(filteredItems);
   const normalizedHeldItems = normalizeDailyPickRecommendationSubset(filteredHeldItems);
   const downgradedHeldItems = normalizedItems.filter((item) => item.status === "held");
-  const recommendedItems = normalizedItems.filter((item) => item.status !== "held");
+  const recommendedItems = normalizedItems
+    .filter((item) => item.status !== "held")
+    .slice(0, 10);
+  const heldItems = options.includeHeld
+    ? [...downgradedHeldItems, ...normalizedHeldItems].slice(0, 10)
+    : [];
   const localizedItems = await localizeDailyPickItems(
     dbClient,
     recommendedItems,
@@ -1559,11 +1588,17 @@ async function loadDailyPicksArtifactView(
   );
   const localizedHeldItems = await localizeDailyPickItems(
     dbClient,
-    options.includeHeld ? [...downgradedHeldItems, ...normalizedHeldItems] : [],
+    heldItems,
     options.locale,
   );
   const performanceSummary = await readDailyPickRuntimePerformanceSummary(dbClient);
   const diagnostics = await readDailyPickRunDiagnostics(dbClient, date);
+  const fallbackDiagnostics = buildDailyPickDiagnosticsFromItems({
+    matchCount: normalizedItems.length + normalizedHeldItems.length,
+    predictionCount: normalizedItems.length + normalizedHeldItems.length,
+    items: normalizedItems.filter((item) => item.status !== "held"),
+    heldItems: [...downgradedHeldItems, ...normalizedHeldItems],
+  });
 
   return {
     ...loaded,
@@ -1572,7 +1607,11 @@ async function loadDailyPicksArtifactView(
     coverage: recomputeCoverage(localizedItems, localizedHeldItems),
     items: localizedItems,
     heldItems: localizedHeldItems,
-    diagnostics: diagnostics ?? loaded.diagnostics ?? null,
+    diagnostics: mergeDailyPickDiagnostics(
+      fallbackDiagnostics,
+      loaded.diagnostics,
+      diagnostics,
+    ),
   };
 }
 
@@ -1805,6 +1844,10 @@ function readTrackedStatus(
   pick: DailyPickRow,
   result?: DailyPickRow,
 ): DailyPickItem["status"] {
+  const pickStatus = readString(pick.status);
+  if (pickStatus === "held") {
+    return "held";
+  }
   const resultStatus = readString(result?.result_status);
   if (
     resultStatus === "pending"
@@ -1814,8 +1857,7 @@ function readTrackedStatus(
   ) {
     return resultStatus;
   }
-  const pickStatus = readString(pick.status);
-  return pickStatus === "held" ? "held" : "recommended";
+  return "recommended";
 }
 
 function calculateWilsonLowerBound(hitCount: number, sampleCount: number): number | null {
