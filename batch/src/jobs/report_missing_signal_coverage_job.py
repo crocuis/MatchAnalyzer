@@ -14,6 +14,12 @@ from batch.src.storage.prediction_payload_hydration import (
 )
 from batch.src.storage.rollout_state import read_optional_rows
 
+PREDICTION_COVERAGE_COLUMNS = (
+    "id",
+    "summary_payload",
+    "explanation_artifact_id",
+)
+
 
 def build_sample_feature_snapshot_rows() -> list[dict]:
     return [
@@ -293,6 +299,33 @@ def filter_feature_snapshot_rows_by_target_date(
     return filtered_feature_rows, filtered_match_rows
 
 
+def read_rows_by_values(
+    client: DbClient,
+    table_name: str,
+    column: str,
+    values: list[str],
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
+    if not values:
+        return []
+    reader = getattr(client, "read_rows_by_values", None)
+    if callable(reader):
+        try:
+            return reader(table_name, column, values, columns=columns)
+        except TypeError:
+            return reader(table_name, column, values)
+    value_set = set(values)
+    try:
+        rows = client.read_rows(table_name, columns=columns)
+    except TypeError:
+        rows = client.read_rows(table_name)
+    return [
+        row
+        for row in rows
+        if str(row.get(column) or "") in value_set
+    ]
+
+
 def load_live_rows(*, target_date: str | None) -> tuple[list[dict], list[dict]]:
     settings = load_settings()
     client = DbClient(settings_db_url(settings), settings_db_key(settings))
@@ -308,11 +341,19 @@ def load_live_rows(*, target_date: str | None) -> tuple[list[dict], list[dict]]:
         for row in feature_snapshot_rows
         if row.get("prediction_id") or row.get("id")
     }
-    predictions = [
-        row
-        for row in client.read_rows("predictions")
-        if not target_prediction_ids or str(row.get("id") or "") in target_prediction_ids
-    ]
+    predictions = (
+        read_rows_by_values(
+            client,
+            "predictions",
+            "id",
+            sorted(target_prediction_ids),
+            columns=PREDICTION_COVERAGE_COLUMNS,
+        )
+        if target_prediction_ids
+        else client.read_rows("predictions")
+        if target_date is None
+        else []
+    )
     stored_artifacts = read_optional_rows(client, "stored_artifacts")
     predictions, _artifact_payloads = hydrate_prediction_summary_payloads_from_artifacts(
         settings=settings,

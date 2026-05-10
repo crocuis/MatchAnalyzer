@@ -2227,6 +2227,10 @@ def test_run_post_match_review_job_skips_when_no_completed_predictions_exist(
             }
 
         def read_rows(self, table_name: str) -> list[dict]:
+            if table_name in {"predictions", "market_probabilities"}:
+                raise AssertionError(
+                    f"{table_name} should not be read when the target date has no completed matches"
+                )
             return list(self.tables[table_name])
 
         def upsert_rows(self, _table_name: str, _rows: list[dict]) -> int:
@@ -2360,7 +2364,25 @@ def test_run_post_match_review_job_persists_latest_review_aggregation(monkeypatc
             }
 
         def read_rows(self, table_name: str) -> list[dict]:
+            if table_name in {"predictions", "market_probabilities"}:
+                raise AssertionError(f"{table_name} should be read through filtered lookups")
             return list(self.tables.get(table_name, state.get(table_name, [])))
+
+        def read_rows_by_values(
+            self,
+            table_name: str,
+            column: str,
+            values: list[str],
+            columns: tuple[str, ...] | None = None,
+        ) -> list[dict]:
+            del columns
+            value_set = set(values)
+            rows = self.tables.get(table_name, state.get(table_name, []))
+            return [
+                row
+                for row in rows
+                if str(row.get(column) or "") in value_set
+            ]
 
         def upsert_rows(self, table_name: str, rows: list[dict]) -> int:
             existing = {row["id"]: row for row in state.get(table_name, [])}

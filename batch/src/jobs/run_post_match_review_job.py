@@ -32,6 +32,33 @@ from batch.src.storage.rollout_state import (
 )
 from batch.src.storage.db_client import DbClient
 
+PREDICTION_REVIEW_COLUMNS = (
+    "id",
+    "snapshot_id",
+    "match_id",
+    "recommended_pick",
+    "confidence_score",
+    "home_prob",
+    "draw_prob",
+    "away_prob",
+    "summary_payload",
+    "main_recommendation_recommended",
+)
+MARKET_REVIEW_COLUMNS = (
+    "id",
+    "snapshot_id",
+    "source_type",
+    "source_name",
+    "market_family",
+    "home_prob",
+    "draw_prob",
+    "away_prob",
+    "home_price",
+    "draw_price",
+    "away_price",
+    "observed_at",
+)
+
 
 def is_no_bet_prediction(prediction: dict) -> bool:
     if prediction.get("main_recommendation_recommended") is False:
@@ -66,6 +93,33 @@ def kickoff_matches_target_date(value: object, target_date: str | None) -> bool:
         )
         return resolved.date().isoformat() == target_date
     return isinstance(value, str) and value.startswith(target_date)
+
+
+def read_rows_by_values(
+    client: DbClient,
+    table_name: str,
+    column: str,
+    values: list[str],
+    columns: tuple[str, ...] | None = None,
+) -> list[dict]:
+    if not values:
+        return []
+    reader = getattr(client, "read_rows_by_values", None)
+    if callable(reader):
+        try:
+            return reader(table_name, column, values, columns=columns)
+        except TypeError:
+            return reader(table_name, column, values)
+    value_set = set(values)
+    try:
+        rows = client.read_rows(table_name, columns=columns)
+    except TypeError:
+        rows = client.read_rows(table_name)
+    return [
+        row
+        for row in rows
+        if str(row.get(column) or "") in value_set
+    ]
 
 
 def build_post_match_llm_context(
@@ -399,13 +453,6 @@ def run_review_job(
     supabase_storage_client=None,
     llm_review_builder=None,
 ) -> dict:
-    predictions = client.read_rows("predictions")
-    market_rows = client.read_rows("market_probabilities")
-    if not predictions:
-        raise ValueError("predictions must exist before post-match review")
-    if not market_rows and not target_date:
-        raise ValueError("market_probabilities must exist before post-match review")
-
     if target_date:
         match_rows = client.read_rows("matches")
         completed_match_ids = {
@@ -414,19 +461,7 @@ def run_review_job(
             if kickoff_matches_target_date(row.get("kickoff_at"), target_date)
             and row.get("final_result")
         }
-        completed_predictions = [
-            prediction
-            for prediction in predictions
-            if prediction.get("match_id") in completed_match_ids
-        ]
-        payload, skipped_predictions = build_review_payload(
-            predictions=predictions,
-            match_rows=match_rows,
-            market_rows=market_rows,
-            target_date=target_date,
-            llm_review_builder=llm_review_builder,
-        )
-        if not completed_predictions:
+        if not completed_match_ids:
             return {
                 "result_rows": 0,
                 "inserted_rows": 0,
@@ -435,6 +470,48 @@ def run_review_job(
                 "skip_reason": "no_completed_predictions",
                 "target_date": target_date,
             }
+
+        predictions = read_rows_by_values(
+            client,
+            "predictions",
+            "match_id",
+            sorted(completed_match_ids),
+            columns=PREDICTION_REVIEW_COLUMNS,
+        )
+        completed_predictions = [
+            prediction
+            for prediction in predictions
+            if prediction.get("match_id") in completed_match_ids
+        ]
+        if not completed_predictions:
+            return {
+                "result_rows": len(completed_match_ids),
+                "inserted_rows": 0,
+                "skipped_predictions": [],
+                "payload": [],
+                "skip_reason": "no_completed_predictions",
+                "target_date": target_date,
+            }
+
+        snapshot_ids = sorted({
+            str(prediction.get("snapshot_id") or "")
+            for prediction in completed_predictions
+            if prediction.get("snapshot_id")
+        })
+        market_rows = read_rows_by_values(
+            client,
+            "market_probabilities",
+            "snapshot_id",
+            snapshot_ids,
+            columns=MARKET_REVIEW_COLUMNS,
+        )
+        payload, skipped_predictions = build_review_payload(
+            predictions=completed_predictions,
+            match_rows=match_rows,
+            market_rows=market_rows,
+            target_date=target_date,
+            llm_review_builder=llm_review_builder,
+        )
         if not payload:
             return {
                 "result_rows": len(completed_match_ids),
@@ -454,6 +531,12 @@ def run_review_job(
         )
         expected_review_count = len(completed_predictions)
     else:
+        predictions = client.read_rows("predictions")
+        market_rows = client.read_rows("market_probabilities")
+        if not predictions:
+            raise ValueError("predictions must exist before post-match review")
+        if not market_rows:
+            raise ValueError("market_probabilities must exist before post-match review")
         predictions = [
             prediction
             for prediction in predictions
