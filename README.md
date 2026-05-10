@@ -257,12 +257,16 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 
 운영 배포는 GitHub secret `NEON_DATABASE_URL` 또는 `DATABASE_URL`을 migration/smoke check와 Hyperdrive 원본 설정용 Neon/Postgres 연결 문자열로 사용한다.
 값은 `postgresql://user:password@host/db?...` 형태의 전체 연결 문자열이어야 하며, 비밀번호가 빠지거나 `#`, `@`, `:` 같은 특수문자가 URL 인코딩되지 않으면 배포 전 migration 단계에서 실패한다.
-API Worker는 배포 시 production variable `CLOUDFLARE_HYPERDRIVE_ID`로 Wrangler Hyperdrive 바인딩을 렌더링하고 `HYPERDRIVE.connectionString`을 우선 사용한다.
-Hyperdrive 구성은 아래처럼 Cloudflare에서 한 번 생성한 뒤 출력된 `id`를 production variable `CLOUDFLARE_HYPERDRIVE_ID`에 저장한다.
+API Worker는 배포 시 production variable `CLOUDFLARE_HYPERDRIVE_ID`와 `CLOUDFLARE_HYPERDRIVE_FRESH_ID`로 Wrangler Hyperdrive 바인딩을 렌더링한다.
+일반 읽기 경로는 `HYPERDRIVE.connectionString`을 우선 사용하고, `/matches`, `/daily-picks`처럼 batch 업데이트 직후 최신성이 중요한 경로는 query cache를 끈 fresh Hyperdrive 바인딩 `HYPERDRIVE_FRESH.connectionString`을 우선 사용한다.
+Hyperdrive 구성은 아래처럼 Cloudflare에서 생성한 뒤 출력된 `id`를 production variable에 저장한다.
 
 ```bash
 npm --workspace apps/api exec -- wrangler hyperdrive create match-analyzer-postgres \
   --connection-string="$DATABASE_URL"
+npm --workspace apps/api exec -- wrangler hyperdrive create match-analyzer-postgres-fresh \
+  --connection-string="$DATABASE_URL" \
+  --caching-disabled true
 ```
 
 `deploy-production`은 `scripts/apply_postgres_migrations.py`로 `supabase/migrations/*.sql`을 파일명 순서대로 적용한 뒤 Neon smoke check를 수행하고, Cloudflare Worker secret에 fallback용 `DATABASE_URL`을 주입한다.
@@ -275,6 +279,7 @@ npm --workspace apps/api exec -- wrangler hyperdrive create match-analyzer-postg
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_HYPERDRIVE_ID` (production variable)
+- `CLOUDFLARE_HYPERDRIVE_FRESH_ID` (production variable)
 - `CLOUDFLARE_PAGES_PROJECT_NAME`
 - `VITE_API_BASE_URL`
 

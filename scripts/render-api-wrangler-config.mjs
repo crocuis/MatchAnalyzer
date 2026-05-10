@@ -10,15 +10,25 @@ const outputPath = path.join(apiDir, "wrangler.hyperdrive.toml");
 
 const hyperdriveId =
   process.env.CLOUDFLARE_HYPERDRIVE_ID ?? process.env.HYPERDRIVE_ID;
+const freshHyperdriveId =
+  process.env.CLOUDFLARE_HYPERDRIVE_FRESH_ID
+  ?? process.env.HYPERDRIVE_FRESH_ID;
 
 if (!hyperdriveId) {
   throw new Error(
     "CLOUDFLARE_HYPERDRIVE_ID is required to deploy the API with Hyperdrive.",
   );
 }
+if (!freshHyperdriveId) {
+  throw new Error(
+    "CLOUDFLARE_HYPERDRIVE_FRESH_ID is required to deploy freshness-sensitive API reads.",
+  );
+}
 
 const localConnectionString =
   process.env.CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE;
+const freshLocalConnectionString =
+  process.env.CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE_FRESH;
 
 const baseConfig = await readFile(sourcePath, "utf8");
 const withoutExistingHyperdrive = baseConfig.replace(
@@ -32,6 +42,13 @@ const hyperdriveConfig = [
   `id = ${JSON.stringify(hyperdriveId)}`,
   ...(localConnectionString
     ? [`localConnectionString = ${JSON.stringify(localConnectionString)}`]
+    : []),
+  "",
+  "[[hyperdrive]]",
+  'binding = "HYPERDRIVE_FRESH"',
+  `id = ${JSON.stringify(freshHyperdriveId)}`,
+  ...(freshLocalConnectionString
+    ? [`localConnectionString = ${JSON.stringify(freshLocalConnectionString)}`]
     : []),
   "",
 ].join("\n");

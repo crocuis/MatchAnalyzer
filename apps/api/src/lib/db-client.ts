@@ -33,6 +33,10 @@ export type ApiQueryBuilder = PromiseLike<ApiDbResult> & {
 };
 
 export type ApiDbClient = any;
+export type DbClientFreshness = "cached" | "fresh";
+export type GetDbClientOptions = {
+  freshness?: DbClientFreshness;
+};
 
 function validateIdentifier(value: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
@@ -277,12 +281,15 @@ class PostgresClient {
 
 export const getDbClient = (
   bindings: AppBindings["Bindings"],
+  options: GetDbClientOptions = {},
 ): ApiDbClient | null => {
   const env = getEnv(bindings);
+  const databaseUrl =
+    options.freshness === "fresh" ? env.freshDatabaseUrl : env.databaseUrl;
 
-  if (!env.databaseUrl) {
+  if (!databaseUrl) {
     return null;
   }
 
-  return new PostgresClient(env.databaseUrl);
+  return new PostgresClient(databaseUrl);
 };

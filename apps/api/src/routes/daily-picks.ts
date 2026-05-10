@@ -1688,7 +1688,7 @@ function resolveTrackedNoBetReason(
 
 dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
-    const dbClient = getDbClient(c.env);
+    const dbClient = getDbClient(c.env, { freshness: "fresh" });
     const marketFamilyQuery = c.req.query("marketFamily");
     const marketFamily: LoadDailyPicksOptions["marketFamily"] =
       marketFamilyQuery === "moneyline"

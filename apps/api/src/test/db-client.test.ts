@@ -5,34 +5,39 @@ import { getDbClient } from "../lib/db-client";
 const pgState = vi.hoisted(() => ({
   activeQueries: 0,
   maxActiveQueries: 0,
+  connectionStrings: [] as string[],
   resolvers: [] as Array<() => void>,
 }));
 
 vi.mock("pg", () => ({
-  Client: vi.fn().mockImplementation(() => ({
-    connect: vi.fn(async () => undefined),
-    query: vi.fn(async () => {
-      pgState.activeQueries += 1;
-      pgState.maxActiveQueries = Math.max(
-        pgState.maxActiveQueries,
-        pgState.activeQueries,
-      );
+  Client: vi.fn().mockImplementation((config: { connectionString?: string }) => {
+    pgState.connectionStrings.push(config.connectionString ?? "");
+    return {
+      connect: vi.fn(async () => undefined),
+      query: vi.fn(async () => {
+        pgState.activeQueries += 1;
+        pgState.maxActiveQueries = Math.max(
+          pgState.maxActiveQueries,
+          pgState.activeQueries,
+        );
 
-      await new Promise<void>((resolve) => {
-        pgState.resolvers.push(resolve);
-      });
+        await new Promise<void>((resolve) => {
+          pgState.resolvers.push(resolve);
+        });
 
-      pgState.activeQueries -= 1;
-      return { rows: [] };
-    }),
-    end: vi.fn(async () => undefined),
-  })),
+        pgState.activeQueries -= 1;
+        return { rows: [] };
+      }),
+      end: vi.fn(async () => undefined),
+    };
+  }),
 }));
 
 describe("db client boundary", () => {
   beforeEach(() => {
     pgState.activeQueries = 0;
     pgState.maxActiveQueries = 0;
+    pgState.connectionStrings = [];
     pgState.resolvers = [];
   });
 
@@ -59,6 +64,53 @@ describe("db client boundary", () => {
 
     expect(client).not.toBeNull();
     expect(client?.from("matches")).toHaveProperty("select");
+  });
+
+  it("uses the fresh Hyperdrive binding for freshness-sensitive reads", async () => {
+    const client = getDbClient({
+      HYPERDRIVE_FRESH: {
+        connectionString: "postgresql://fresh-user:password@example.com/db",
+      },
+      HYPERDRIVE: {
+        connectionString: "postgresql://cached-user:password@example.com/db",
+      },
+      DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
+    }, { freshness: "fresh" });
+
+    const query = client?.query("select 1");
+    await vi.waitFor(() => {
+      expect(pgState.connectionStrings).toContain(
+        "postgresql://fresh-user:password@example.com/db",
+      );
+    });
+
+    for (const resolve of pgState.resolvers.splice(0)) {
+      resolve();
+    }
+
+    await query;
+  });
+
+  it("falls back to the direct database URL for fresh reads when the fresh binding is absent", async () => {
+    const client = getDbClient({
+      HYPERDRIVE: {
+        connectionString: "postgresql://cached-user:password@example.com/db",
+      },
+      DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
+    }, { freshness: "fresh" });
+
+    const query = client?.query("select 1");
+    await vi.waitFor(() => {
+      expect(pgState.connectionStrings).toContain(
+        "postgresql://direct-user:password@example.neon.tech/neondb",
+      );
+    });
+
+    for (const resolve of pgState.resolvers.splice(0)) {
+      resolve();
+    }
+
+    await query;
   });
 
   it("does not serialize independent direct queries", async () => {

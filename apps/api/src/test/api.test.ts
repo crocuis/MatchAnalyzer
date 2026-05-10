@@ -2994,6 +2994,15 @@ describe("prediction API", () => {
     );
   });
 
+  it("requests a fresh database client for matches to avoid stale Hyperdrive query cache", async () => {
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
+
+    const response = await app.request("/matches");
+
+    expect(response.status).toBe(200);
+    expect(spy.mock.calls[0]?.[1]).toEqual({ freshness: "fresh" });
+  });
+
   it("serves repeated matches requests from cache without querying the database", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
@@ -3078,6 +3087,16 @@ describe("prediction API", () => {
     expect(secondResponse.status).toBe(200);
     await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests a fresh database client for daily picks because tracking rows update after jobs", async () => {
+    setDailyPicksClock();
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(spy.mock.calls[0]?.[1]).toEqual({ freshness: "fresh" });
   });
 
   it("serves daily picks from a date artifact before rebuilding from database tables", async () => {
