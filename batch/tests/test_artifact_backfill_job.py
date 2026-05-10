@@ -302,6 +302,7 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
             "id": "daily_pick_run_2026-04-24",
             "pick_date": "2026-04-24",
             "generated_at": "2026-04-24T03:00:00Z",
+            "metadata": {"selected_count": 3},
         },
         items=[
             {
@@ -375,6 +376,10 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
                 "away_score": 1,
                 "profit": Decimal("0.82"),
             },
+            "daily_pick_item_held": {
+                "pick_item_id": "daily_pick_item_held",
+                "result_status": "pending",
+            },
             "historical_miss": {
                 "pick_item_id": "historical_miss",
                 "result_status": "miss",
@@ -396,6 +401,15 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
     }
     assert view["coverage"]["spreads"] == 2
     assert view["coverage"]["held"] == 1
+    assert view["diagnostics"] == {
+        "matchCount": None,
+        "predictionCount": None,
+        "candidateCount": 2,
+        "recommendedCount": 1,
+        "heldCount": 1,
+        "selectedCount": 3,
+        "holdReasonCounts": {"variant_market_reliability_gap": 1},
+    }
     assert view["items"][0]["matchId"] == "match_001"
     assert view["items"][0]["homeTeamId"] == "team_home"
     assert view["items"][0]["status"] == "hit"

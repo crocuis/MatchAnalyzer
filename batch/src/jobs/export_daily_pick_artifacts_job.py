@@ -125,11 +125,14 @@ def resolve_result_status(
     item: dict[str, Any],
     results_by_item_id: dict[str, dict[str, Any]],
 ) -> str:
+    item_status = read_text(item.get("status")) or "recommended"
+    if item_status == "held":
+        return "held"
     result = results_by_item_id.get(str(item.get("id") or ""))
     status = read_text(result.get("result_status") if result else None)
     if status in {"hit", "miss", "pending", "void"}:
         return status
-    return read_text(item.get("status")) or "recommended"
+    return item_status
 
 
 def resolve_held_reason(reason_labels: list[str], status: str) -> str | None:
@@ -223,6 +226,108 @@ def build_daily_pick_item(
     }
 
 
+def read_count_map(value: Any) -> dict[str, int]:
+    record = read_record(value)
+    return {
+        str(key): int(count)
+        for key, raw_count in record.items()
+        if (count := read_number(raw_count)) is not None
+    }
+
+
+def build_item_derived_daily_pick_diagnostics(
+    built_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    held_items = [row for row in built_items if row.get("status") == "held"]
+    hold_reason_counts: dict[str, int] = {}
+    for item in held_items:
+        reason = (
+            read_text(item.get("noBetReason"))
+            or read_text(item.get("confidenceReliability"))
+            or "unknown"
+        )
+        hold_reason_counts[reason] = hold_reason_counts.get(reason, 0) + 1
+    return {
+        "matchCount": None,
+        "predictionCount": None,
+        "candidateCount": len(built_items),
+        "recommendedCount": sum(1 for row in built_items if row.get("status") != "held"),
+        "heldCount": len(held_items),
+        "selectedCount": len(built_items),
+        "holdReasonCounts": hold_reason_counts,
+    }
+
+
+def resolve_metadata_number(
+    metadata: dict[str, Any],
+    snake_case_key: str,
+    camel_case_key: str,
+    fallback: int | float | None,
+) -> int | float | None:
+    value = read_number(metadata.get(snake_case_key))
+    if value is None:
+        value = read_number(metadata.get(camel_case_key))
+    return fallback if value is None else value
+
+
+def build_daily_pick_diagnostics(
+    *,
+    run: dict[str, Any] | None,
+    built_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    derived = build_item_derived_daily_pick_diagnostics(built_items)
+    metadata = read_record(run.get("metadata") if run else None)
+    if not metadata:
+        return derived
+
+    metadata_hold_reason_counts = read_count_map(
+        metadata.get("hold_reason_counts") or metadata.get("holdReasonCounts")
+    )
+    return {
+        "matchCount": resolve_metadata_number(
+            metadata,
+            "match_count",
+            "matchCount",
+            derived["matchCount"],
+        ),
+        "predictionCount": resolve_metadata_number(
+            metadata,
+            "prediction_count",
+            "predictionCount",
+            derived["predictionCount"],
+        ),
+        "candidateCount": resolve_metadata_number(
+            metadata,
+            "candidate_count",
+            "candidateCount",
+            derived["candidateCount"],
+        ),
+        "recommendedCount": resolve_metadata_number(
+            metadata,
+            "recommended_count",
+            "recommendedCount",
+            derived["recommendedCount"],
+        ),
+        "heldCount": resolve_metadata_number(
+            metadata,
+            "held_count",
+            "heldCount",
+            derived["heldCount"],
+        ),
+        "selectedCount": resolve_metadata_number(
+            metadata,
+            "selected_count",
+            "selectedCount",
+            derived["selectedCount"],
+        ),
+        "holdReasonCounts": (
+            metadata_hold_reason_counts
+            if metadata_hold_reason_counts
+            else derived["holdReasonCounts"]
+        ),
+    }
+
+
 def build_daily_picks_view(
     *,
     pick_date: str,
@@ -295,6 +400,10 @@ def build_daily_picks_view(
         },
         "items": visible_items,
         "heldItems": visible_held_items,
+        "diagnostics": build_daily_pick_diagnostics(
+            run=run,
+            built_items=built_items,
+        ),
     }
 
 

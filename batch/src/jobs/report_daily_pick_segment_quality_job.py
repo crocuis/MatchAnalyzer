@@ -262,6 +262,18 @@ def enrich_daily_pick_item(item: dict, result: dict | None) -> dict:
         "score": read_float(item.get("score")) or 0.0,
         "source_agreement_ratio": read_float(metadata.get("source_agreement_ratio")),
         "moneyline_signal_score": read_float(metadata.get("moneyline_signal_score")),
+        "validation_sample_count": read_float(metadata.get("sample_count")),
+        "validation_minimum_sample_count": read_float(
+            metadata.get("minimum_sample_count")
+        ),
+        "validation_hit_rate": read_float(metadata.get("hit_rate")),
+        "validation_target_hit_rate": read_float(metadata.get("target_hit_rate")),
+        "validation_wilson_lower_bound": read_float(
+            metadata.get("wilson_lower_bound")
+        ),
+        "validation_minimum_wilson_lower_bound": read_float(
+            metadata.get("minimum_wilson_lower_bound")
+        ),
         "hold_reason": str(
             metadata.get("confidence_reliability")
             or item.get("reliability_hold_reason")
@@ -571,6 +583,7 @@ def build_betman_held_candidates(
                 "source_agreement_ratio": row["source_agreement_ratio"],
                 "moneyline_signal_score": row["moneyline_signal_score"],
                 "hold_reason": row["hold_reason"],
+                **build_validation_gap_summary(row),
                 "promotion_status": "watchlist" if not blockers else "blocked",
                 "blockers": blockers,
             }
@@ -578,6 +591,62 @@ def build_betman_held_candidates(
         if len(candidates) >= limit:
             break
     return candidates
+
+
+def build_validation_gap_summary(row: dict) -> dict:
+    metadata = row.get("validation_metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    sample_count = read_float(row.get("validation_sample_count"))
+    if sample_count is None:
+        sample_count = read_float(metadata.get("sample_count"))
+    minimum_sample_count = read_float(row.get("validation_minimum_sample_count"))
+    if minimum_sample_count is None:
+        minimum_sample_count = read_float(metadata.get("minimum_sample_count"))
+    wilson_lower_bound = read_float(row.get("validation_wilson_lower_bound"))
+    if wilson_lower_bound is None:
+        wilson_lower_bound = read_float(metadata.get("wilson_lower_bound"))
+    minimum_wilson_lower_bound = read_float(
+        row.get("validation_minimum_wilson_lower_bound")
+    )
+    if minimum_wilson_lower_bound is None:
+        minimum_wilson_lower_bound = read_float(
+            metadata.get("minimum_wilson_lower_bound")
+        )
+    hit_rate = read_float(row.get("validation_hit_rate"))
+    if hit_rate is None:
+        hit_rate = read_float(metadata.get("hit_rate"))
+    target_hit_rate = read_float(row.get("validation_target_hit_rate"))
+    if target_hit_rate is None:
+        target_hit_rate = read_float(metadata.get("target_hit_rate"))
+    sample_shortfall = (
+        max(int(minimum_sample_count - sample_count), 0)
+        if sample_count is not None and minimum_sample_count is not None
+        else None
+    )
+    wilson_gap = (
+        round(max(minimum_wilson_lower_bound - wilson_lower_bound, 0.0), 4)
+        if wilson_lower_bound is not None
+        and minimum_wilson_lower_bound is not None
+        else None
+    )
+    hit_rate_gap = (
+        round(max(target_hit_rate - hit_rate, 0.0), 4)
+        if hit_rate is not None and target_hit_rate is not None
+        else None
+    )
+    return {
+        "validation_sample_count": int(sample_count) if sample_count is not None else None,
+        "validation_minimum_sample_count": (
+            int(minimum_sample_count) if minimum_sample_count is not None else None
+        ),
+        "validation_sample_shortfall": sample_shortfall,
+        "validation_hit_rate": hit_rate,
+        "validation_target_hit_rate": target_hit_rate,
+        "validation_hit_rate_gap": hit_rate_gap,
+        "validation_wilson_lower_bound": wilson_lower_bound,
+        "validation_minimum_wilson_lower_bound": minimum_wilson_lower_bound,
+        "validation_wilson_gap": wilson_gap,
+    }
 
 
 def build_betman_promotion_blockers(

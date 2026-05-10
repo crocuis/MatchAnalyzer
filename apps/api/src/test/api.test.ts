@@ -3121,12 +3121,59 @@ describe("prediction API", () => {
         modelScope: "daily_pick_settled",
       },
       coverage: {
-        moneyline: 1,
+        moneyline: 2,
         spreads: 1,
         totals: 0,
-        held: 0,
+        held: 1,
+      },
+      diagnostics: {
+        matchCount: null,
+        predictionCount: null,
+        candidateCount: null,
+        recommendedCount: null,
+        heldCount: null,
+        selectedCount: 9,
+        holdReasonCounts: {},
       },
       items: [
+        {
+          id: "daily_pick_item_pending_held",
+          matchId: "match-1",
+          predictionId: "prediction-held",
+          leagueId: "league-1",
+          leagueLabel: "Premier League",
+          homeTeamId: "team-home",
+          homeTeam: "Arsenal",
+          homeTeamLogoUrl: null,
+          awayTeamId: "team-away",
+          awayTeam: "Chelsea",
+          awayTeamLogoUrl: null,
+          kickoffAt: "2026-04-24T12:00:00Z",
+          marketFamily: "moneyline",
+          selectionLabel: "DRAW",
+          confidence: 0.85,
+          edge: 0.16,
+          expectedValue: 0.45,
+          marketPrice: 0.27,
+          modelProbability: 0.39,
+          marketProbability: 0.24,
+          sourceAgreementRatio: 1,
+          confidenceReliability: "insufficient_sample",
+          highConfidenceEligible: false,
+          validationMetadata: {
+            confidence_reliability: "insufficient_sample",
+            high_confidence_eligible: false,
+            sample_count: 0,
+          },
+          status: "pending",
+          noBetReason: null,
+          reasonLabels: [
+            "mainRecommendation",
+            "betmanValue",
+            "heldByRecommendationGate",
+            "insufficient_sample",
+          ],
+        },
         {
           id: "daily_pick_item_1",
           matchId: "match-1",
@@ -3248,6 +3295,9 @@ describe("prediction API", () => {
     const response = await app.request(
       "/daily-picks?date=2026-04-24&marketFamily=spreads",
     );
+    const heldResponse = await app.request(
+      "/daily-picks?date=2026-04-24&includeHeld=true",
+    );
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-match-analyzer-artifact")).toBe("hit");
@@ -3272,7 +3322,42 @@ describe("prediction API", () => {
       totals: 0,
       held: 0,
     });
-    expect(dbClient.from).toHaveBeenCalledTimes(5);
+    const heldBody = await heldResponse.json() as {
+      items: Array<{ id: string }>;
+      heldItems: Array<{
+        id: string;
+        status: string;
+        noBetReason: string | null;
+        confidenceReliability: string | null;
+      }>;
+      coverage: Record<string, number>;
+      diagnostics: {
+        candidateCount: number | null;
+        recommendedCount: number | null;
+        heldCount: number | null;
+        selectedCount: number | null;
+        holdReasonCounts: Record<string, number>;
+      };
+    };
+    expect(heldBody.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "daily_pick_item_pending_held" }),
+    ]));
+    expect(heldBody.heldItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "daily_pick_item_pending_held",
+        status: "held",
+        noBetReason: "insufficient_sample",
+        confidenceReliability: "insufficient_sample",
+      }),
+    ]));
+    expect(heldBody.coverage).toMatchObject({ held: 1 });
+    expect(heldBody.diagnostics).toMatchObject({
+      candidateCount: 3,
+      recommendedCount: 2,
+      heldCount: 1,
+      selectedCount: 9,
+      holdReasonCounts: { insufficient_sample: 1 },
+    });
   });
 
   it("ignores stale daily pick artifacts when tracked rows were regenerated later", async () => {
