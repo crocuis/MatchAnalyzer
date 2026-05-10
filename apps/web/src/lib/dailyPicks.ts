@@ -1,3 +1,5 @@
+import { deriveMatchStatus } from "@match-analyzer/contracts";
+
 import type { DailyPickItem, MatchCardRow } from "./api";
 
 function resolveLogoUrl(
@@ -25,6 +27,7 @@ export function buildMatchFromDailyPick(
   fallbackMatches: MatchCardRow[] = [],
 ): MatchCardRow {
   const enrichedItem = enrichDailyPickWithMatchLogos(item, fallbackMatches);
+  const finalResult = enrichedItem.finalResult ?? null;
   const dailyPickContext = {
     marketFamily: enrichedItem.marketFamily,
     selectionLabel: enrichedItem.selectionLabel,
@@ -51,7 +54,15 @@ export function buildMatchFromDailyPick(
     awayTeam: enrichedItem.awayTeam,
     awayTeamLogoUrl: enrichedItem.awayTeamLogoUrl,
     kickoffAt: enrichedItem.kickoffAt,
-    status: "Prediction Ready",
+    status: deriveMatchStatus({
+      finalResult,
+      hasPrediction: true,
+      needsReview: false,
+      kickoffAt: enrichedItem.kickoffAt,
+    }),
+    finalResult,
+    homeScore: enrichedItem.homeScore ?? null,
+    awayScore: enrichedItem.awayScore ?? null,
     recommendedPick: moneylineRecommendation?.recommended ? enrichedItem.selectionLabel : null,
     confidence: enrichedItem.confidence,
     mainRecommendation: moneylineRecommendation,

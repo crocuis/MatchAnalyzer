@@ -370,6 +370,10 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
             "daily_pick_item_001": {
                 "pick_item_id": "daily_pick_item_001",
                 "result_status": "hit",
+                "final_result": "HOME",
+                "home_score": 2,
+                "away_score": 1,
+                "profit": Decimal("0.82"),
             },
             "historical_miss": {
                 "pick_item_id": "historical_miss",
@@ -395,6 +399,10 @@ def test_export_daily_pick_artifacts_builds_cached_view_from_tracking_tables():
     assert view["items"][0]["matchId"] == "match_001"
     assert view["items"][0]["homeTeamId"] == "team_home"
     assert view["items"][0]["status"] == "hit"
+    assert view["items"][0]["finalResult"] == "HOME"
+    assert view["items"][0]["homeScore"] == 2
+    assert view["items"][0]["awayScore"] == 1
+    assert view["items"][0]["profit"] == 0.82
     assert view["items"][0]["expectedValue"] == 0.18
     assert view["items"][0]["marketPrice"] == 0.55
     assert view["items"][0]["modelProbability"] == 0.67

@@ -423,6 +423,10 @@ export interface DailyPickItem {
   highConfidenceEligible: boolean | null;
   validationMetadata: Record<string, unknown> | null;
   status: DailyPickStatus;
+  finalResult?: string | null;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  profit?: number | null;
   noBetReason: string | null;
   reasonLabels: string[];
 }
