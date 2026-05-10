@@ -23,7 +23,13 @@ def test_render_prediction_runtime_summary_includes_runtime_counters() -> None:
     summary = render_prediction_runtime_summary(
         {
             "runtime_metrics": {
-                "timings_ms": {"total": 1234.5, "prediction_loop": 987.6},
+                "timings_ms": {
+                    "total": 1234.5,
+                    "prediction_loop": 987.6,
+                    "loop_base_model": 321.0,
+                    "loop_artifact_archive": 123.0,
+                    "loop_moneyline_signal": 45.0,
+                },
                 "counters": {
                     "target_match_count": 2,
                     "target_snapshot_count": 8,
@@ -39,6 +45,9 @@ def test_render_prediction_runtime_summary_includes_runtime_counters() -> None:
     assert "- target matches: 2" in summary
     assert '- target checkpoints: {"T_MINUS_24H": 2, "T_MINUS_6H": 6}' in summary
     assert "- prediction loop ms: 987.6" in summary
+    assert "- loop base model ms: 321.0" in summary
+    assert "- loop artifact archive ms: 123.0" in summary
+    assert "- loop moneyline signal ms: 45.0" in summary
 
 
 def test_main_writes_summary_from_prediction_log(tmp_path) -> None:
