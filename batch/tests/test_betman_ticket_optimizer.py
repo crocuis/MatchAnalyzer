@@ -22,6 +22,7 @@ from batch.src.jobs.report_betman_ticket_profile_backtest_job import (
     add_value_threshold_split_validation,
     add_value_threshold_shadow_projection,
     build_backtest_items_with_results,
+    build_current_betman_policy_status,
     build_betman_value_threshold_backtest,
     build_betman_ticket_policy_report_artifact_row,
     build_value_threshold_policy_candidates,
@@ -874,6 +875,141 @@ def test_build_betman_ticket_policy_report_artifact_row_requires_remote_r2() -> 
         assert "requires remote R2 credentials" in str(exc)
     else:
         raise AssertionError("expected missing remote R2 credentials to fail")
+
+
+def test_build_current_betman_policy_status_reports_missing_victory_round() -> None:
+    def fake_fetch_context() -> dict:
+        return {
+            "detail_payloads": [],
+            "diagnostics": {
+                "buyable_game_count": 1,
+                "buyable_gm_ids": ["G102"],
+                "proto_game_summaries": [
+                    {
+                        "gm_id": "G102",
+                        "game_name": "프로토 기록식",
+                        "game_type_name": "기록식",
+                        "main_state": "2",
+                        "sale_progress": False,
+                        "status_message": "발매 마감",
+                        "valid": False,
+                    }
+                ],
+                "selected_victory_game_count": 0,
+                "detail_payload_count": 0,
+                "unavailable_reason": "proto_victory_round_missing",
+            },
+        }
+
+    assert build_current_betman_policy_status(fetch_context=fake_fetch_context) == {
+        "enabled": False,
+        "matched_match_count": 0,
+        "excluded_unavailable_item_count": 0,
+        "buyable_game_count": 1,
+        "buyable_gm_ids": ["G102"],
+        "proto_game_summaries": [
+            {
+                "gm_id": "G102",
+                "game_name": "프로토 기록식",
+                "game_type_name": "기록식",
+                "main_state": "2",
+                "sale_progress": False,
+                "status_message": "발매 마감",
+                "valid": False,
+            }
+        ],
+        "selected_victory_game_count": 0,
+        "detail_payload_count": 0,
+        "market_row_count": 0,
+        "market_match_diagnostics": {
+            "snapshot_row_count": 0,
+            "market_group_count": 0,
+            "candidate_snapshot_count": 0,
+            "matched_snapshot_count": 0,
+        },
+        "unavailable_reason": "proto_victory_round_missing",
+    }
+
+
+def test_build_current_betman_policy_status_requires_matched_market_rows() -> None:
+    def fake_fetch_context() -> dict:
+        return {
+            "detail_payloads": [{"currentLottery": {"gmId": "G101"}}],
+            "diagnostics": {
+                "buyable_game_count": 1,
+                "buyable_gm_ids": ["G101"],
+                "selected_victory_game_count": 1,
+                "detail_payload_count": 1,
+                "unavailable_reason": None,
+            },
+        }
+
+    def fake_build_market_rows(**kwargs) -> tuple[list[dict], list[dict]]:
+        assert kwargs["detail_payloads"] == [{"currentLottery": {"gmId": "G101"}}]
+        return [], []
+
+    assert build_current_betman_policy_status(
+        fetch_context=fake_fetch_context,
+        build_market_rows=fake_build_market_rows,
+    ) == {
+        "enabled": False,
+        "matched_match_count": 0,
+        "excluded_unavailable_item_count": 0,
+        "buyable_game_count": 1,
+        "buyable_gm_ids": ["G101"],
+        "proto_game_summaries": [],
+        "selected_victory_game_count": 1,
+        "detail_payload_count": 1,
+        "market_row_count": 0,
+        "market_match_diagnostics": {
+            "snapshot_row_count": 0,
+            "market_group_count": 0,
+            "candidate_snapshot_count": 0,
+            "matched_snapshot_count": 0,
+        },
+        "unavailable_reason": "proto_victory_market_match_missing",
+    }
+
+
+def test_build_current_betman_policy_status_reports_available_market_rows() -> None:
+    def fake_fetch_context() -> dict:
+        return {
+            "detail_payloads": [{"currentLottery": {"gmId": "G101"}}],
+            "diagnostics": {
+                "buyable_game_count": 1,
+                "buyable_gm_ids": ["G101"],
+                "selected_victory_game_count": 1,
+                "detail_payload_count": 1,
+                "unavailable_reason": None,
+            },
+        }
+
+    def fake_build_market_rows(**kwargs) -> tuple[list[dict], list[dict]]:
+        assert kwargs["matches"] == [{"id": "match-a"}]
+        return [{"match_id": "match-a", "snapshot_id": "snapshot-a"}], [{"id": "snapshot-a"}]
+
+    assert build_current_betman_policy_status(
+        fetch_context=fake_fetch_context,
+        build_market_rows=fake_build_market_rows,
+        matches=[{"id": "match-a"}],
+    ) == {
+        "enabled": True,
+        "matched_match_count": 0,
+        "excluded_unavailable_item_count": 0,
+        "buyable_game_count": 1,
+        "buyable_gm_ids": ["G101"],
+        "proto_game_summaries": [],
+        "selected_victory_game_count": 1,
+        "detail_payload_count": 1,
+        "market_row_count": 1,
+        "market_match_diagnostics": {
+            "snapshot_row_count": 1,
+            "market_group_count": 0,
+            "candidate_snapshot_count": 0,
+            "matched_snapshot_count": 1,
+        },
+        "unavailable_reason": None,
+    }
 
 
 def test_build_betman_ticket_profile_backtest_accepts_untagged_settled_moneyline_rows() -> None:
@@ -1884,6 +2020,17 @@ def test_fetch_current_proto_victory_market_context_reports_missing_victory_roun
     assert context["diagnostics"] == {
         "buyable_game_count": 1,
         "buyable_gm_ids": ["G102"],
+        "proto_game_summaries": [
+            {
+                "gm_id": "G102",
+                "game_name": None,
+                "game_type_name": None,
+                "main_state": None,
+                "sale_progress": None,
+                "status_message": None,
+                "valid": None,
+            }
+        ],
         "selected_victory_game_count": 0,
         "detail_payload_count": 0,
         "unavailable_reason": "proto_victory_round_missing",

@@ -74,12 +74,22 @@
       "reportStatus": "Policy report",
       "topCandidateValue": "Exclude {{gate}} at EV {{threshold}}",
       "topCandidateMeta": "ROI {{roi}} / {{quality}} / split {{split}}",
+      "currentBetman": "Current Betman",
+      "currentAvailable": "Buyable victory round available",
+      "currentUnavailable": "Buyable round unavailable",
+      "currentMetaWithGmIds": "{{reason}} · listed {{gmIds}}",
       "updated": "Updated {{generatedAt}}",
       "stale": "Stale report · updated {{generatedAt}}",
       "ageUnknown": "Report age unknown",
       "unavailable": "Policy report unavailable",
       "unavailableHint": "Check the Betman policy report artifact and API availability.",
       "unknown": "Unknown",
+      "currentReasons": {
+        "proto_victory_round_missing": "Victory round missing",
+        "proto_victory_detail_missing": "Victory detail missing",
+        "proto_victory_market_match_missing": "Market match missing",
+        "proto_victory_fetch_failed": "Betman fetch failed"
+      },
       "quality": {
         "stable": "stable",
         "limited": "limited",

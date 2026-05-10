@@ -92,6 +92,20 @@ def select_proto_victory_games(buyable_games: dict) -> list[dict]:
     ]
 
 
+def summarize_proto_game(game: dict) -> dict:
+    game_master = game.get("gameMaster")
+    game_master = game_master if isinstance(game_master, dict) else {}
+    return {
+        "gm_id": str(game.get("gmId") or "") or None,
+        "game_name": game_master.get("gameName") or game.get("gameName"),
+        "game_type_name": game_master.get("gameTypeName"),
+        "main_state": game.get("mainState"),
+        "sale_progress": game.get("saleProgress"),
+        "status_message": game.get("mainStatusMessage") or game.get("statusMessage"),
+        "valid": game.get("valid"),
+    }
+
+
 def fetch_current_proto_victory_detail_payloads(
     *,
     fetch_buyable: Callable[[], dict] = fetch_betman_buyable_games,
@@ -132,6 +146,11 @@ def fetch_current_proto_victory_market_context(
         for game in buyable_proto_games
         if isinstance(game, dict) and str(game.get("gmId") or "")
     })
+    proto_game_summaries = [
+        summarize_proto_game(game)
+        for game in buyable_proto_games
+        if isinstance(game, dict)
+    ]
     unavailable_reason = None
     if not selected_games:
         unavailable_reason = "proto_victory_round_missing"
@@ -142,6 +161,7 @@ def fetch_current_proto_victory_market_context(
         "diagnostics": {
             "buyable_game_count": len(buyable_proto_games),
             "buyable_gm_ids": buyable_gm_ids,
+            "proto_game_summaries": proto_game_summaries,
             "selected_victory_game_count": len(selected_games),
             "detail_payload_count": len(detail_payloads),
             "unavailable_reason": unavailable_reason,

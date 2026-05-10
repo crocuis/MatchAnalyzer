@@ -479,10 +479,38 @@ export interface BetmanPolicyCandidateSummary {
   };
 }
 
+export interface BetmanCurrentRoundStatus {
+  enabled: boolean;
+  matchedMatchCount: number | null;
+  excludedUnavailableItemCount: number | null;
+  buyableGameCount: number | null;
+  buyableGmIds: string[];
+  protoGameSummaries: {
+    gmId: string | null;
+    gameName: string | null;
+    gameTypeName: string | null;
+    mainState: string | null;
+    saleProgress: boolean | null;
+    statusMessage: string | null;
+    valid: boolean | null;
+  }[];
+  selectedVictoryGameCount: number | null;
+  detailPayloadCount: number | null;
+  marketRowCount: number | null;
+  marketMatchDiagnostics: {
+    snapshotRowCount: number | null;
+    marketGroupCount: number | null;
+    candidateSnapshotCount: number | null;
+    matchedSnapshotCount: number | null;
+  } | null;
+  unavailableReason: string | null;
+}
+
 export interface BetmanPolicySummary {
   generatedAt: string | null;
   policyCandidateCount: number;
   promotionReadyCount: number;
+  currentBetman: BetmanCurrentRoundStatus | null;
   topCandidates: BetmanPolicyCandidateSummary[];
 }
 

@@ -1640,6 +1640,98 @@ describe("dashboard redesign", () => {
     expect(within(dialog).queryByText("Top policy")).not.toBeInTheDocument();
   });
 
+  it("shows the current Betman buyable round status in the daily picks modal", async () => {
+    stubDailyPicksModalFetch({
+      generatedAt: "2026-05-10T01:00:00Z",
+      policyCandidateCount: 0,
+      promotionReadyCount: 0,
+      topCandidates: [],
+      currentBetman: {
+        enabled: false,
+        matchedMatchCount: 0,
+        excludedUnavailableItemCount: 0,
+        buyableGameCount: 1,
+        buyableGmIds: ["G102"],
+        protoGameSummaries: [
+          {
+            gmId: "G102",
+            gameName: "프로토 기록식",
+            gameTypeName: "기록식",
+            mainState: "2",
+            saleProgress: false,
+            statusMessage: "발매 마감",
+            valid: false,
+          },
+        ],
+        selectedVictoryGameCount: 0,
+        detailPayloadCount: 0,
+        marketRowCount: 0,
+        marketMatchDiagnostics: null,
+        unavailableReason: "proto_victory_round_missing",
+      },
+    });
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(await within(dialog).findByText("Current Betman")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Victory round missing · listed G102 프로토 기록식 발매 마감"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a market-match diagnostic when the buyable Betman round is not usable", async () => {
+    stubDailyPicksModalFetch({
+      generatedAt: "2026-05-10T01:00:00Z",
+      policyCandidateCount: 0,
+      promotionReadyCount: 0,
+      topCandidates: [],
+      currentBetman: {
+        enabled: false,
+        matchedMatchCount: 0,
+        excludedUnavailableItemCount: 0,
+        buyableGameCount: 1,
+        buyableGmIds: ["G101"],
+        protoGameSummaries: [],
+        selectedVictoryGameCount: 1,
+        detailPayloadCount: 1,
+        marketRowCount: 0,
+        marketMatchDiagnostics: {
+          snapshotRowCount: 24,
+          marketGroupCount: 1,
+          candidateSnapshotCount: 1,
+          matchedSnapshotCount: 0,
+        },
+        unavailableReason: "proto_victory_market_match_missing",
+      },
+    });
+
+    render(
+      <DailyPicksModal
+        allMatches={[]}
+        initialLeagueId={null}
+        isOpen
+        leagues={[]}
+        onClose={() => {}}
+        onOpenMatch={() => {}}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+    expect(
+      await within(dialog).findByText("Market match missing · listed G101"),
+    ).toBeInTheDocument();
+  });
+
   it("opens match detail from a daily pick outside the dashboard league page", async () => {
     render(<App />);
 
