@@ -61,7 +61,6 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$CLOUDFLARE_HYPERDRIVE_ID"
-          test -n "$CLOUDFLARE_HYPERDRIVE_FRESH_ID"
           test -n "$CLOUDFLARE_PAGES_PROJECT_NAME"
           test -n "$VITE_API_BASE_URL"
           test -n "$MATCH_ANALYZER_ARTIFACT_BASE_URL"

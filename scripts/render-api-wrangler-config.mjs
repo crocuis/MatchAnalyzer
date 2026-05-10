@@ -19,11 +19,6 @@ if (!hyperdriveId) {
     "CLOUDFLARE_HYPERDRIVE_ID is required to deploy the API with Hyperdrive.",
   );
 }
-if (!freshHyperdriveId) {
-  throw new Error(
-    "CLOUDFLARE_HYPERDRIVE_FRESH_ID is required to deploy freshness-sensitive API reads.",
-  );
-}
 
 const localConnectionString =
   process.env.CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE;
@@ -43,12 +38,16 @@ const hyperdriveConfig = [
   ...(localConnectionString
     ? [`localConnectionString = ${JSON.stringify(localConnectionString)}`]
     : []),
-  "",
-  "[[hyperdrive]]",
-  'binding = "HYPERDRIVE_FRESH"',
-  `id = ${JSON.stringify(freshHyperdriveId)}`,
-  ...(freshLocalConnectionString
-    ? [`localConnectionString = ${JSON.stringify(freshLocalConnectionString)}`]
+  ...(freshHyperdriveId
+    ? [
+        "",
+        "[[hyperdrive]]",
+        'binding = "HYPERDRIVE_FRESH"',
+        `id = ${JSON.stringify(freshHyperdriveId)}`,
+        ...(freshLocalConnectionString
+          ? [`localConnectionString = ${JSON.stringify(freshLocalConnectionString)}`]
+          : []),
+      ]
     : []),
   "",
 ].join("\n");
