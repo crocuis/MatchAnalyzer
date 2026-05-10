@@ -23,9 +23,12 @@
     "showHeldCandidates": "Show {{count}} held candidates",
     "diagnostics": {
       "title": "Daily pick diagnostics",
-      "candidates": "{{count}} evaluated candidates",
-      "passed": "{{count}} passed",
-      "matches": "{{count}} matches"
+      "funnelTitle": "Recommendation funnel",
+      "funnelSummary": "Today's picks were evaluated, but none cleared every gate.",
+      "blockersTitle": "Blockers",
+      "candidates": "Candidates",
+      "passed": "Passed",
+      "matches": "Matches"
     },
     "summary": {
       "recommendations": "Recommendations",

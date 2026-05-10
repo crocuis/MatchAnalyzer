@@ -1237,8 +1237,10 @@ it("explains an empty daily picks modal with gate diagnostics", async () => {
       heldCount: 0,
       selectedCount: 0,
       holdReasonCounts: {
-        low_confidence: 12,
-        below_target_hit_rate: 8,
+        low_confidence: 8,
+        betman_value_edge_missing: 7,
+        insufficient_sample: 5,
+        below_segment_reliability: 4,
       },
     },
   });
@@ -1255,10 +1257,21 @@ it("explains an empty daily picks modal with gate diagnostics", async () => {
   );
 
   const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
-  expect(await within(dialog).findByText("24 evaluated candidates")).toBeInTheDocument();
-  expect(within(dialog).getByText("0 passed")).toBeInTheDocument();
-  expect(within(dialog).getByText("Low confidence 12")).toBeInTheDocument();
-  expect(within(dialog).getByText("Below target hit rate 8")).toBeInTheDocument();
+  expect(await within(dialog).findByText("Recommendation funnel")).toBeInTheDocument();
+  expect(within(dialog).getByText("Matches")).toBeInTheDocument();
+  expect(within(dialog).getByText("Candidates")).toBeInTheDocument();
+  expect(within(dialog).getByText("Passed")).toBeInTheDocument();
+  expect(within(dialog).getAllByText("24")).toHaveLength(2);
+  expect(within(dialog).getByText("0")).toBeInTheDocument();
+  expect(within(dialog).getByText("Blockers")).toBeInTheDocument();
+  expect(within(dialog).getByText("Low confidence")).toBeInTheDocument();
+  expect(within(dialog).getByText("Betman value edge missing")).toBeInTheDocument();
+  expect(within(dialog).getByText("Insufficient sample")).toBeInTheDocument();
+  expect(within(dialog).getByText("Below segment reliability")).toBeInTheDocument();
+  expect(within(dialog).getByText("8")).toBeInTheDocument();
+  expect(within(dialog).getByText("7")).toBeInTheDocument();
+  expect(within(dialog).getByText("5")).toBeInTheDocument();
+  expect(within(dialog).getByText("4")).toBeInTheDocument();
 });
 
 it("hides unavailable daily picks diagnostic counts", async () => {
@@ -1288,9 +1301,11 @@ it("hides unavailable daily picks diagnostic counts", async () => {
   );
 
   const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
-  expect(await within(dialog).findByText("24 evaluated candidates")).toBeInTheDocument();
-  expect(within(dialog).queryByText("0 matches")).not.toBeInTheDocument();
-  expect(within(dialog).getByText("Below segment reliability 4")).toBeInTheDocument();
+  expect(await within(dialog).findByText("Recommendation funnel")).toBeInTheDocument();
+  expect(within(dialog).getByText("Candidates")).toBeInTheDocument();
+  expect(within(dialog).queryByText("Matches")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Below segment reliability")).toBeInTheDocument();
+  expect(within(dialog).getByText("4")).toBeInTheDocument();
 });
 
 it("fetches daily picks with filters", async () => {

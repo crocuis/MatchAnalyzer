@@ -23,9 +23,12 @@
     "showHeldCandidates": "보류 후보 {{count}}건 보기",
     "diagnostics": {
       "title": "Daily Picks 진단",
-      "candidates": "평가 후보 {{count}}건",
-      "passed": "통과 {{count}}건",
-      "matches": "경기 {{count}}건"
+      "funnelTitle": "추천 전환 흐름",
+      "funnelSummary": "오늘 후보는 평가됐지만 모든 gate를 통과한 추천은 없습니다.",
+      "blockersTitle": "주요 차단 사유",
+      "candidates": "평가 후보",
+      "passed": "통과",
+      "matches": "경기"
     },
     "summary": {
       "recommendations": "추천 수",
