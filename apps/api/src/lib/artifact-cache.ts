@@ -18,6 +18,7 @@ export type StoredArtifactRow = {
   content_type: string;
   size_bytes: number | null;
   checksum_sha256: string | null;
+  summary_payload?: unknown;
   created_at: string | null;
 };
 
@@ -64,7 +65,7 @@ export async function loadLatestStoredArtifact(
   const { data, error } = await dbClient
     .from("stored_artifacts")
     .select(
-      "id, owner_type, owner_id, artifact_kind, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256, created_at",
+      "id, owner_type, owner_id, artifact_kind, storage_backend, bucket_name, object_key, storage_uri, content_type, size_bytes, checksum_sha256, summary_payload, created_at",
     )
     .eq("owner_type", ownerType)
     .eq("owner_id", ownerId)

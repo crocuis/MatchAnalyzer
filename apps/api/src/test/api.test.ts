@@ -1074,6 +1074,94 @@ describe("prediction API", () => {
     });
   });
 
+  it("falls back to the Betman policy artifact summary when the archived JSON is unavailable", async () => {
+    const artifactQuery = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({
+        data: {
+          id: "betman_ticket_policy_report_latest",
+          owner_type: "betman_ticket_policy_report",
+          owner_id: "latest",
+          artifact_kind: "betman_ticket_policy_report",
+          storage_backend: "r2",
+          bucket_name: "workflow-artifacts",
+          object_key: "reports/betman-ticket-policy/latest.json",
+          storage_uri: "r2://workflow-artifacts/reports/betman-ticket-policy/latest.json",
+          content_type: "application/json",
+          size_bytes: 123,
+          checksum_sha256: "abc",
+          created_at: "2026-05-10T01:00:00Z",
+          summary_payload: {
+            policy_candidate_count: 2,
+            promotion_ready_count: 1,
+            generated_at: "2026-05-10T01:00:00+00:00",
+            current_betman: {
+              enabled: false,
+              matched_match_count: 0,
+              excluded_unavailable_item_count: 0,
+              buyable_game_count: 1,
+              buyable_gm_ids: ["G102"],
+              proto_game_summaries: [
+                {
+                  gm_id: "G102",
+                  game_name: "프로토 기록식",
+                  game_type_name: "기록식",
+                  main_state: "2",
+                  sale_progress: false,
+                  status_message: "발매 마감",
+                  valid: false,
+                },
+              ],
+              selected_victory_game_count: 0,
+              detail_payload_count: 0,
+              market_row_count: 0,
+              market_match_diagnostics: {
+                snapshot_row_count: 0,
+                market_group_count: 0,
+                candidate_snapshot_count: 0,
+                matched_snapshot_count: 0,
+              },
+              unavailable_reason: "proto_victory_round_missing",
+            },
+          },
+        },
+        error: null,
+      }),
+    };
+    const dbClient: MockDbClient = {
+      from: vi.fn().mockReturnValue(artifactQuery),
+    };
+    vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(dbClient as never);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
+
+    const response = await app.request("/betman-ticket-policy/latest");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      policy: {
+        generatedAt: "2026-05-10T01:00:00Z",
+        policyCandidateCount: 2,
+        promotionReadyCount: 1,
+        topCandidates: [],
+        currentBetman: {
+          enabled: false,
+          buyableGmIds: ["G102"],
+          unavailableReason: "proto_victory_round_missing",
+          protoGameSummaries: [
+            {
+              gmId: "G102",
+              gameName: "프로토 기록식",
+              statusMessage: "발매 마감",
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("derives daily pick validation from settled results before stale summary rows", async () => {
     const dbClient = buildTableDbClient({
       matches: [],
