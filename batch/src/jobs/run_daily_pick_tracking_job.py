@@ -260,6 +260,14 @@ def sync_daily_picks_for_date(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model_version_id": model_version_id,
         "metadata": {
+            "match_count": sum(
+                1
+                for row in matches
+                if str(row.get("kickoff_at") or "")[:10] == pick_date
+                and row.get("id") is not None
+            ),
+            "snapshot_count": len(snapshots),
+            "prediction_count": len(predictions),
             "candidate_count": len(candidates),
             "selected_count": len(selected_items),
             "recommended_count": len(recommended_candidates[:MAX_DAILY_RECOMMENDATIONS]),

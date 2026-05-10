@@ -101,6 +101,29 @@ function topDailyPickHoldReasons(
     .slice(0, 3);
 }
 
+function dailyPickDiagnosticMetrics(diagnostics: DailyPicksResponse["diagnostics"], t: Translate) {
+  if (!diagnostics) {
+    return [];
+  }
+  return [
+    diagnostics.candidateCount === null
+      ? null
+      : t("dailyPicks.diagnostics.candidates", {
+        count: diagnostics.candidateCount,
+      }),
+    diagnostics.recommendedCount === null
+      ? null
+      : t("dailyPicks.diagnostics.passed", {
+        count: diagnostics.recommendedCount,
+      }),
+    diagnostics.matchCount === null
+      ? null
+      : t("dailyPicks.diagnostics.matches", {
+        count: diagnostics.matchCount,
+      }),
+  ].filter((value): value is string => value !== null);
+}
+
 export default function DailyPicksModal({
   isOpen,
   isActive = true,
@@ -267,6 +290,7 @@ export default function DailyPicksModal({
   const betmanPolicyIsStale = isBetmanPolicyStale(betmanPolicy?.generatedAt ?? null);
   const emptyDiagnostics = payload?.diagnostics ?? null;
   const topHoldReasons = topDailyPickHoldReasons(emptyDiagnostics);
+  const emptyDiagnosticMetrics = dailyPickDiagnosticMetrics(emptyDiagnostics, t);
 
   if (!isOpen) return null;
 
@@ -463,21 +487,9 @@ export default function DailyPicksModal({
                 {emptyDiagnostics ? (
                   <div className="dailyPicksDiagnostics" aria-label={t("dailyPicks.diagnostics.title")}>
                     <div className="dailyPicksDiagnosticsGrid">
-                      <span>
-                        {t("dailyPicks.diagnostics.candidates", {
-                          count: emptyDiagnostics.candidateCount ?? 0,
-                        })}
-                      </span>
-                      <span>
-                        {t("dailyPicks.diagnostics.passed", {
-                          count: emptyDiagnostics.recommendedCount ?? 0,
-                        })}
-                      </span>
-                      <span>
-                        {t("dailyPicks.diagnostics.matches", {
-                          count: emptyDiagnostics.matchCount ?? 0,
-                        })}
-                      </span>
+                      {emptyDiagnosticMetrics.map((metric) => (
+                        <span key={metric}>{metric}</span>
+                      ))}
                     </div>
                     {topHoldReasons.length > 0 ? (
                       <div className="dailyPicksDiagnosticsReasons">

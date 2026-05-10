@@ -197,6 +197,9 @@ def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
     )
 
     assert items == []
+    assert run["metadata"]["match_count"] == 1
+    assert run["metadata"]["snapshot_count"] == 1
+    assert run["metadata"]["prediction_count"] == 1
     assert run["metadata"]["candidate_count"] == 1
     assert run["metadata"]["held_count"] == 0
     assert run["metadata"]["hold_reason_counts"] == {"betman_market_missing": 1}
@@ -254,6 +257,9 @@ def test_sync_daily_picks_requires_betman_value_source_when_market_is_available(
     )
 
     assert items == []
+    assert run["metadata"]["match_count"] == 1
+    assert run["metadata"]["snapshot_count"] == 1
+    assert run["metadata"]["prediction_count"] == 1
     assert run["metadata"]["candidate_count"] == 1
     assert run["metadata"]["recommended_count"] == 0
     assert run["metadata"]["held_count"] == 0

@@ -1261,6 +1261,38 @@ it("explains an empty daily picks modal with gate diagnostics", async () => {
   expect(within(dialog).getByText("Below target hit rate 8")).toBeInTheDocument();
 });
 
+it("hides unavailable daily picks diagnostic counts", async () => {
+  stubDailyPicksModalFetch(null, {
+    diagnostics: {
+      matchCount: null,
+      predictionCount: null,
+      candidateCount: 24,
+      recommendedCount: 0,
+      heldCount: 2,
+      selectedCount: 2,
+      holdReasonCounts: {
+        below_segment_reliability: 4,
+      },
+    },
+  });
+
+  render(
+    <DailyPicksModal
+      allMatches={[]}
+      initialLeagueId={null}
+      isOpen
+      leagues={[]}
+      onClose={() => {}}
+      onOpenMatch={() => {}}
+    />,
+  );
+
+  const dialog = await screen.findByRole("dialog", { name: /daily picks/i });
+  expect(await within(dialog).findByText("24 evaluated candidates")).toBeInTheDocument();
+  expect(within(dialog).queryByText("0 matches")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Below segment reliability 4")).toBeInTheDocument();
+});
+
 it("fetches daily picks with filters", async () => {
   const fetchMock = vi.fn(async () => ({
     ok: true,
