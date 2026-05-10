@@ -2430,7 +2430,7 @@ describe("prediction API", () => {
     ]);
   });
 
-  it("does not graft opposite-side value recommendation metadata onto the moneyline pick", async () => {
+  it("uses the Betman value recommendation as the computed moneyline pick", async () => {
     setDailyPicksClock(new Date("2026-04-25T12:00:00Z"));
     const dbClient = buildTableDbClient({
       matches: [
@@ -2484,18 +2484,18 @@ describe("prediction API", () => {
       includeHeld: true,
     });
 
-    expect(view.items).toEqual([]);
-    expect(view.heldItems[0]).toMatchObject({
+    expect(view.items[0]).toMatchObject({
       marketFamily: "moneyline",
-      selectionLabel: "HOME",
-      status: "held",
-      edge: null,
-      expectedValue: null,
-      marketPrice: null,
-      modelProbability: null,
-      marketProbability: null,
-      noBetReason: "betman_value_edge_missing",
+      selectionLabel: "AWAY",
+      status: "recommended",
+      edge: 0.22,
+      expectedValue: 0.51,
+      marketPrice: 0.33,
+      modelProbability: 0.55,
+      marketProbability: 0.33,
+      noBetReason: null,
     });
+    expect(view.heldItems).toEqual([]);
   });
 
   it("localizes team labels in daily picks when locale-specific translations exist", async () => {

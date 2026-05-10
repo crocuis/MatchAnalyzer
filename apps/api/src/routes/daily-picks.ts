@@ -55,6 +55,7 @@ const DEPLOYABILITY_EXCLUDED_BASE_MODEL_SOURCES = new Set([
   "centroid_fallback",
   "centroid_poisson_blend",
 ]);
+const MONEYLINE_OUTCOME_LABELS = new Set(["HOME", "DRAW", "AWAY"]);
 
 function isBetmanMarketSource(value: string | null): boolean {
   return value !== null && value.toLowerCase().includes("betman");
@@ -1040,8 +1041,12 @@ function buildMoneylineAndVariantPicks(
       variantMarketsSummary: representative.variantMarketsSummary,
     } satisfies PredictionLaneSummaryFields,
   );
+  const selectionLabel = resolveMoneylineSelectionLabel(
+    mainRecommendation,
+    valueRecommendation,
+  );
   const alignedValueRecommendation =
-    valueRecommendation?.pick === mainRecommendation.pick
+    valueRecommendation?.pick === selectionLabel
       ? valueRecommendation
       : null;
   const reliabilityHoldReason = resolveReliabilityHoldReason(base);
@@ -1063,7 +1068,7 @@ function buildMoneylineAndVariantPicks(
     ...base,
     id: `${base.matchId}:moneyline`,
     marketFamily: "moneyline",
-    selectionLabel: mainRecommendation.pick,
+    selectionLabel,
     confidence: mainRecommendation.confidence,
     edge: alignedValueRecommendation?.edge ?? null,
     expectedValue: alignedValueRecommendation?.expectedValue ?? null,
@@ -1091,6 +1096,22 @@ function buildMoneylineAndVariantPicks(
       .map((variant) => buildVariantPick(base, variant))
       .filter((item): item is DailyPickItem => item !== null),
   ];
+}
+
+function resolveMoneylineSelectionLabel(
+  mainRecommendation: { pick: string },
+  valueRecommendation: ReturnType<typeof normalizeValueRecommendationFromSummary>,
+): string {
+  const valuePick = valueRecommendation?.pick.toUpperCase() ?? null;
+  if (
+    valueRecommendation?.recommended === true
+    && valuePick !== null
+    && MONEYLINE_OUTCOME_LABELS.has(valuePick)
+    && isBetmanMarketSource(valueRecommendation.marketSource)
+  ) {
+    return valuePick;
+  }
+  return mainRecommendation.pick;
 }
 
 function resolveMoneylineBetmanHoldReason(
