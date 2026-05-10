@@ -235,6 +235,62 @@ def test_sync_daily_picks_requires_betman_executable_moneyline_market() -> None:
     assert runs == []
 
 
+def test_sync_daily_picks_keeps_low_confidence_betman_missing_candidate_for_diagnostics() -> None:
+    run, items = sync_daily_picks_for_date(
+        pick_date="2026-04-24",
+        matches=[
+            {
+                "id": "match-1",
+                "competition_id": "premier-league",
+                "kickoff_at": "2026-04-24T19:00:00Z",
+            }
+        ],
+        snapshots=[
+            {
+                "id": "snapshot-1",
+                "match_id": "match-1",
+                "checkpoint_type": "T_MINUS_24H",
+            }
+        ],
+        predictions=[
+            {
+                "id": "prediction-1",
+                "match_id": "match-1",
+                "snapshot_id": "snapshot-1",
+                "recommended_pick": "HOME",
+                "confidence_score": 0.58,
+                "main_recommendation_pick": "HOME",
+                "main_recommendation_confidence": 0.58,
+                "main_recommendation_recommended": True,
+                "value_recommendation_pick": "HOME",
+                "value_recommendation_recommended": True,
+                "value_recommendation_market_source": "odds_api_io_moneyline_3way",
+                "summary_payload": {
+                    "betman_market_available": False,
+                    "high_confidence_eligible": True,
+                    "validation_metadata": {"sample_count": 90},
+                },
+            }
+        ],
+    )
+
+    assert len(items) == 1
+    assert run["metadata"]["held_count"] == 1
+    assert run["metadata"]["diagnostic_held_count"] == 1
+    assert run["metadata"]["hold_reason_counts"] == {"betman_market_missing": 1}
+    assert items[0]["status"] == "held"
+    assert items[0]["reason_labels"] == [
+        "mainRecommendation",
+        "heldByRecommendationGate",
+        "betman_market_missing",
+        "diagnosticCandidate",
+    ]
+    assert items[0]["validation_metadata"]["daily_pick_tracking_scope"] == (
+        "diagnostic"
+    )
+    assert items[0]["validation_metadata"]["settlement_tracked"] is False
+
+
 def test_sync_daily_picks_requires_betman_value_source_when_market_is_available() -> None:
     run, items = sync_daily_picks_for_date(
         pick_date="2026-04-24",

@@ -218,6 +218,8 @@ def _is_daily_pick_held_diagnostic_candidate(candidate: dict) -> bool:
     hold_reasons = _daily_pick_hold_reasons(candidate)
     if not (hold_reasons & DAILY_PICK_DIAGNOSTIC_HELD_REASONS):
         return False
+    if "betman_market_missing" in hold_reasons:
+        return True
     confidence = _read_numeric(candidate.get("confidence"))
     return (
         confidence is not None
