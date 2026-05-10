@@ -40,6 +40,7 @@ jobs:
       VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
       MATCH_ANALYZER_ARTIFACT_BASE_URL: ${{ secrets.MATCH_ANALYZER_ARTIFACT_BASE_URL || vars.MATCH_ANALYZER_ARTIFACT_BASE_URL }}
       OPERATIONAL_REPORTS_API_KEY: ${{ secrets.OPERATIONAL_REPORTS_API_KEY }}
+      CLOUDFLARE_HYPERDRIVE_SYNC_ENABLED: ${{ vars.CLOUDFLARE_HYPERDRIVE_SYNC_ENABLED }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,6 +89,7 @@ jobs:
           PY
 
       - name: Synchronize Cloudflare Hyperdrive origin
+        if: env.CLOUDFLARE_HYPERDRIVE_SYNC_ENABLED == 'true'
         run: |
           if [ -z "${CLOUDFLARE_HYPERDRIVE_FRESH_ID:-}" ]; then
             npm --workspace apps/api exec -- wrangler hyperdrive update "$CLOUDFLARE_HYPERDRIVE_ID" --connection-string "$DATABASE_URL"

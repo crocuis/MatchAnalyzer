@@ -349,6 +349,8 @@ def test_deploy_production_workflow_documents_required_production_secrets() -> N
     assert "CLOUDFLARE_ACCOUNT_ID" in workflow
     assert "CLOUDFLARE_HYPERDRIVE_ID" in workflow
     assert "CLOUDFLARE_HYPERDRIVE_FRESH_ID" in workflow
+    assert "CLOUDFLARE_HYPERDRIVE_SYNC_ENABLED" in workflow
+    assert "if: env.CLOUDFLARE_HYPERDRIVE_SYNC_ENABLED == 'true'" in workflow
     assert 'test -n "$CLOUDFLARE_HYPERDRIVE_FRESH_ID"' not in workflow
     assert "CLOUDFLARE_PAGES_PROJECT_NAME" in workflow
     assert "VITE_API_BASE_URL" in workflow
