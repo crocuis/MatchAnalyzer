@@ -1370,6 +1370,8 @@ matches.get("/", async (c) => {
         500,
         { "cache-control": API_EGRESS_CACHE_CONTROL },
       );
+    } finally {
+      await dbClient.close?.();
     }
   }, { cacheKeyTtlSeconds: API_EGRESS_CACHE_TTL_SECONDS });
 });

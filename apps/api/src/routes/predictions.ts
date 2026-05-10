@@ -978,6 +978,14 @@ export async function loadPredictionView(
     throw new Error("prediction queries failed");
   }
 
+  const matchResultRow = matchRow as
+    | {
+        kickoff_at?: unknown;
+        final_result?: unknown;
+        home_score?: unknown;
+        away_score?: unknown;
+      }
+    | null;
   const snapshotsById = new Map<
     string,
     { checkpoint_type?: string; captured_at?: string | null }
@@ -992,7 +1000,7 @@ export async function loadPredictionView(
     .filter((prediction) =>
       isSnapshotBeforeKickoff(
         snapshotsById.get(prediction.snapshot_id),
-        matchRow?.kickoff_at ?? null,
+        readString(matchResultRow?.kickoff_at),
       ),
     )
     .sort((left, right) => comparePredictionRows(left, right, snapshotsById));
@@ -1043,10 +1051,10 @@ export async function loadPredictionView(
     sortedPredictions as any,
   );
   const settledOutcome = resolveSettledOutcome({
-    finalResult: matchRow?.final_result ?? null,
-    kickoffAt: matchRow?.kickoff_at ?? null,
-    homeScore: readNumber(matchRow?.home_score),
-    awayScore: readNumber(matchRow?.away_score),
+    finalResult: readString(matchResultRow?.final_result),
+    kickoffAt: readString(matchResultRow?.kickoff_at),
+    homeScore: readNumber(matchResultRow?.home_score),
+    awayScore: readNumber(matchResultRow?.away_score),
   });
   const artifact = latestPrediction
     ? await loadArtifactById(dbClient, latestPrediction.explanation_artifact_id)

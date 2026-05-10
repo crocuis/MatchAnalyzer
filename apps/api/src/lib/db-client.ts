@@ -32,7 +32,11 @@ export type ApiQueryBuilder = PromiseLike<ApiDbResult> & {
   maybeSingle(): PromiseLike<ApiDbResult<Record<string, unknown> | null>>;
 };
 
-export type ApiDbClient = any;
+export type ApiDbClient = {
+  from(tableName: string): ApiQueryBuilder;
+  query?(text: string, params?: unknown[]): Promise<ApiDbResult>;
+  close?(): Promise<void>;
+};
 export type DbClientFreshness = "cached" | "fresh";
 export type GetDbClientOptions = {
   freshness?: DbClientFreshness;
@@ -190,13 +194,16 @@ class PostgresQueryBuilder implements ApiQueryBuilder {
 
 type PostgresQueryExecutor = {
   query(text: string, params?: unknown[]): Promise<Record<string, unknown>[]>;
+  close(): Promise<void>;
 };
 
 const MAX_WORKER_POSTGRES_CONNECTIONS = 5;
 
 class PgQueryExecutor implements PostgresQueryExecutor {
-  private activeQueryCount = 0;
-  private readonly pendingQueryStarts: Array<() => void> = [];
+  private connectingClientCount = 0;
+  private readonly allClients = new Set<Client>();
+  private readonly idleClients: Client[] = [];
+  private readonly pendingClientAcquires: Array<(client: Client) => void> = [];
 
   constructor(private readonly connectionString: string) {}
 
@@ -204,57 +211,64 @@ class PgQueryExecutor implements PostgresQueryExecutor {
     text: string,
     params: unknown[] = [],
   ): Promise<Record<string, unknown>[]> {
-    const releaseQuerySlot = await this.acquireQuerySlot();
+    const client = await this.acquireClient();
 
     try {
-      return await this.runQuery(text, params);
+      const result = await client.query(text, params);
+      return result.rows as Record<string, unknown>[];
     } finally {
-      releaseQuerySlot();
+      this.releaseClient(client);
     }
   }
 
-  private acquireQuerySlot(): Promise<() => void> {
-    if (this.activeQueryCount < MAX_WORKER_POSTGRES_CONNECTIONS) {
-      this.activeQueryCount += 1;
-      return Promise.resolve(() => this.releaseQuerySlot());
+  private async acquireClient(): Promise<Client> {
+    const idleClient = this.idleClients.pop();
+    if (idleClient) {
+      return idleClient;
+    }
+
+    if (
+      this.allClients.size + this.connectingClientCount
+      < MAX_WORKER_POSTGRES_CONNECTIONS
+    ) {
+      return this.connectClient();
     }
 
     return new Promise((resolve) => {
-      this.pendingQueryStarts.push(() => {
-        this.activeQueryCount += 1;
-        resolve(() => this.releaseQuerySlot());
-      });
+      this.pendingClientAcquires.push(resolve);
     });
   }
 
-  private releaseQuerySlot(): void {
-    this.activeQueryCount = Math.max(0, this.activeQueryCount - 1);
-    this.pendingQueryStarts.shift()?.();
-  }
-
-  private async runQuery(
-    text: string,
-    params: unknown[],
-  ): Promise<Record<string, unknown>[]> {
+  private async connectClient(): Promise<Client> {
+    this.connectingClientCount += 1;
     const client = new Client({ connectionString: this.connectionString });
-    let queryError: unknown;
-
     try {
       await client.connect();
-      const result = await client.query(text, params);
-      return result.rows as Record<string, unknown>[];
-    } catch (error) {
-      queryError = error;
-      throw error;
+      this.allClients.add(client);
+      return client;
     } finally {
-      try {
-        await client.end();
-      } catch (closeError) {
-        if (!queryError) {
-          throw closeError;
-        }
-      }
+      this.connectingClientCount = Math.max(0, this.connectingClientCount - 1);
     }
+  }
+
+  private releaseClient(client: Client): void {
+    const nextAcquire = this.pendingClientAcquires.shift();
+    if (nextAcquire) {
+      nextAcquire(client);
+      return;
+    }
+
+    if (this.allClients.has(client)) {
+      this.idleClients.push(client);
+    }
+  }
+
+  async close(): Promise<void> {
+    const clients = [...this.allClients];
+    this.allClients.clear();
+    this.idleClients.length = 0;
+    this.pendingClientAcquires.length = 0;
+    await Promise.allSettled(clients.map((client) => client.end()));
   }
 }
 
@@ -276,6 +290,10 @@ class PostgresClient {
     } catch (error) {
       return { data: null, error: normalizeError(error) };
     }
+  }
+
+  async close(): Promise<void> {
+    await this.sql.close();
   }
 }
 

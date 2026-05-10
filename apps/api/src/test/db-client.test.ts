@@ -6,6 +6,8 @@ const pgState = vi.hoisted(() => ({
   activeQueries: 0,
   maxActiveQueries: 0,
   connectionStrings: [] as string[],
+  connectCount: 0,
+  endCount: 0,
   resolvers: [] as Array<() => void>,
 }));
 
@@ -13,7 +15,9 @@ vi.mock("pg", () => ({
   Client: vi.fn().mockImplementation((config: { connectionString?: string }) => {
     pgState.connectionStrings.push(config.connectionString ?? "");
     return {
-      connect: vi.fn(async () => undefined),
+      connect: vi.fn(async () => {
+        pgState.connectCount += 1;
+      }),
       query: vi.fn(async () => {
         pgState.activeQueries += 1;
         pgState.maxActiveQueries = Math.max(
@@ -28,7 +32,9 @@ vi.mock("pg", () => ({
         pgState.activeQueries -= 1;
         return { rows: [] };
       }),
-      end: vi.fn(async () => undefined),
+      end: vi.fn(async () => {
+        pgState.endCount += 1;
+      }),
     };
   }),
 }));
@@ -38,6 +44,8 @@ describe("db client boundary", () => {
     pgState.activeQueries = 0;
     pgState.maxActiveQueries = 0;
     pgState.connectionStrings = [];
+    pgState.connectCount = 0;
+    pgState.endCount = 0;
     pgState.resolvers = [];
   });
 
@@ -77,11 +85,12 @@ describe("db client boundary", () => {
       DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
     }, { freshness: "fresh" });
 
-    const query = client?.query("select 1");
+    const query = client?.query?.("select 1");
     await vi.waitFor(() => {
       expect(pgState.connectionStrings).toContain(
         "postgresql://direct-user:password@example.neon.tech/neondb",
       );
+      expect(pgState.resolvers).toHaveLength(1);
     });
 
     for (const resolve of pgState.resolvers.splice(0)) {
@@ -103,11 +112,12 @@ describe("db client boundary", () => {
       MATCH_ANALYZER_TRUST_HYPERDRIVE_FRESH: "true",
     }, { freshness: "fresh" });
 
-    const query = client?.query("select 1");
+    const query = client?.query?.("select 1");
     await vi.waitFor(() => {
       expect(pgState.connectionStrings).toContain(
         "postgresql://fresh-user:password@example.com/db",
       );
+      expect(pgState.resolvers).toHaveLength(1);
     });
 
     for (const resolve of pgState.resolvers.splice(0)) {
@@ -127,11 +137,12 @@ describe("db client boundary", () => {
       },
     }, { freshness: "fresh" });
 
-    const query = client?.query("select 1");
+    const query = client?.query?.("select 1");
     await vi.waitFor(() => {
       expect(pgState.connectionStrings).toContain(
         "postgresql://fresh-user:password@example.com/db",
       );
+      expect(pgState.resolvers).toHaveLength(1);
     });
 
     for (const resolve of pgState.resolvers.splice(0)) {
@@ -149,11 +160,12 @@ describe("db client boundary", () => {
       DATABASE_URL: "postgresql://direct-user:password@example.neon.tech/neondb",
     }, { freshness: "fresh" });
 
-    const query = client?.query("select 1");
+    const query = client?.query?.("select 1");
     await vi.waitFor(() => {
       expect(pgState.connectionStrings).toContain(
         "postgresql://direct-user:password@example.neon.tech/neondb",
       );
+      expect(pgState.resolvers).toHaveLength(1);
     });
 
     for (const resolve of pgState.resolvers.splice(0)) {
@@ -169,9 +181,9 @@ describe("db client boundary", () => {
     });
 
     const queries = [
-      client?.query("select 1"),
-      client?.query("select 2"),
-      client?.query("select 3"),
+      client?.query?.("select 1"),
+      client?.query?.("select 2"),
+      client?.query?.("select 3"),
     ];
 
     await vi.waitFor(() => {
@@ -184,6 +196,33 @@ describe("db client boundary", () => {
 
     await Promise.all(queries);
     expect(pgState.maxActiveQueries).toBe(3);
+    expect(pgState.connectCount).toBe(3);
+  });
+
+  it("reuses a Postgres connection for sequential queries until closed", async () => {
+    const client = getDbClient({
+      DATABASE_URL: "postgresql://user:password@example.neon.tech/neondb",
+    });
+
+    const firstQuery = client?.query?.("select 1");
+    await vi.waitFor(() => {
+      expect(pgState.resolvers).toHaveLength(1);
+    });
+    pgState.resolvers.splice(0).forEach((resolve) => resolve());
+    await firstQuery;
+
+    const secondQuery = client?.query?.("select 2");
+    await vi.waitFor(() => {
+      expect(pgState.resolvers).toHaveLength(1);
+    });
+    pgState.resolvers.splice(0).forEach((resolve) => resolve());
+    await secondQuery;
+
+    expect(pgState.connectCount).toBe(1);
+    expect(pgState.endCount).toBe(0);
+
+    await client?.close?.();
+    expect(pgState.endCount).toBe(1);
   });
 
   it("keeps direct query concurrency below the Worker connection limit", async () => {
@@ -192,7 +231,7 @@ describe("db client boundary", () => {
     });
 
     const queries = Array.from({ length: 6 }, (_, index) =>
-      client?.query(`select ${index}`),
+      client?.query?.(`select ${index}`),
     );
 
     await vi.waitFor(() => {
@@ -214,5 +253,6 @@ describe("db client boundary", () => {
 
     await Promise.all(queries);
     expect(pgState.maxActiveQueries).toBe(5);
+    expect(pgState.connectCount).toBe(5);
   });
 });

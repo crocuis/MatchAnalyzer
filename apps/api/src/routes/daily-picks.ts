@@ -1697,54 +1697,58 @@ function resolveTrackedNoBetReason(
 dailyPicks.get("/", async (c) => {
   return cachedResponse(c, async () => {
     const dbClient = getDbClient(c.env, { freshness: "fresh" });
-    const marketFamilyQuery = c.req.query("marketFamily");
-    const marketFamily: LoadDailyPicksOptions["marketFamily"] =
-      marketFamilyQuery === "moneyline"
-      || marketFamilyQuery === "spreads"
-      || marketFamilyQuery === "totals"
-        ? marketFamilyQuery
-        : "all";
+    try {
+      const marketFamilyQuery = c.req.query("marketFamily");
+      const marketFamily: LoadDailyPicksOptions["marketFamily"] =
+        marketFamilyQuery === "moneyline"
+        || marketFamilyQuery === "spreads"
+        || marketFamilyQuery === "totals"
+          ? marketFamilyQuery
+          : "all";
 
-    const options = {
-      date: c.req.query("date") ?? undefined,
-      leagueId: c.req.query("leagueId") ?? null,
-      marketFamily,
-      includeHeld: c.req.query("includeHeld") === "true",
-      locale: normalizeLocale(c.req.query("locale")),
-    };
-    const artifactView = dbClient
-      ? await loadDailyPicksArtifactView(dbClient, c.env, options)
-      : null;
+      const options = {
+        date: c.req.query("date") ?? undefined,
+        leagueId: c.req.query("leagueId") ?? null,
+        marketFamily,
+        includeHeld: c.req.query("includeHeld") === "true",
+        locale: normalizeLocale(c.req.query("locale")),
+      };
+      const artifactView = dbClient
+        ? await loadDailyPicksArtifactView(dbClient, c.env, options)
+        : null;
 
-    if (artifactView) {
-      return c.json(artifactView, 200, {
-        "cache-control": API_SHORT_CACHE_CONTROL,
-        "x-match-analyzer-artifact": "hit",
-      });
-    }
-
-    let trackedView: DailyPicksView | null = null;
-    if (dbClient) {
-      try {
-        trackedView = await loadTrackedDailyPicksView(dbClient, options);
-      } catch {
-        trackedView = null;
+      if (artifactView) {
+        return c.json(artifactView, 200, {
+          "cache-control": API_SHORT_CACHE_CONTROL,
+          "x-match-analyzer-artifact": "hit",
+        });
       }
-    }
 
-    if (trackedView) {
-      return c.json(trackedView, 200, {
+      let trackedView: DailyPicksView | null = null;
+      if (dbClient) {
+        try {
+          trackedView = await loadTrackedDailyPicksView(dbClient, options);
+        } catch {
+          trackedView = null;
+        }
+      }
+
+      if (trackedView) {
+        return c.json(trackedView, 200, {
+          "cache-control": API_SHORT_CACHE_CONTROL,
+          "x-match-analyzer-artifact": "tracked-fallback",
+        });
+      }
+
+      const view = await loadDailyPicksView(dbClient, options, c.env);
+
+      return c.json(view, 200, {
         "cache-control": API_SHORT_CACHE_CONTROL,
-        "x-match-analyzer-artifact": "tracked-fallback",
+        "x-match-analyzer-artifact": "fallback",
       });
+    } finally {
+      await dbClient?.close?.();
     }
-
-    const view = await loadDailyPicksView(dbClient, options, c.env);
-
-    return c.json(view, 200, {
-      "cache-control": API_SHORT_CACHE_CONTROL,
-      "x-match-analyzer-artifact": "fallback",
-    });
   });
 });
 
