@@ -53,7 +53,7 @@ jobs:
       LLM_PREDICTION_ADVISORY_ENABLED: ${{ github.event.inputs.enable_llm_advisory == 'true' && '1' || '0' }}
       LLM_PROVIDER: ${{ github.event.inputs.llm_provider || 'nvidia' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
