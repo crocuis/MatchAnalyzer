@@ -2994,7 +2994,18 @@ describe("prediction API", () => {
     );
   });
 
+  it("requests a fresh database client for matches to avoid stale Hyperdrive query cache", async () => {
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
+
+    const response = await app.request("/matches");
+
+    expect(response.status).toBe(200);
+    expect(spy.mock.calls[0]?.[1]).toEqual({ freshness: "fresh" });
+  });
+
   it("serves repeated matches requests from cache without querying the database", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
     const cacheRows = new Map<string, Response>();
     vi.stubGlobal("caches", {
       default: {
@@ -3019,6 +3030,35 @@ describe("prediction API", () => {
     expect(secondResponse.status).toBe(200);
     await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes matches cache after the short mutable API window expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-10T00:00:00Z"));
+    const cacheRows = new Map<string, Response>();
+    vi.stubGlobal("caches", {
+      default: {
+        match: vi.fn(async (request: Request) => {
+          return cacheRows.get(request.url)?.clone();
+        }),
+        put: vi.fn(async (request: Request, response: Response) => {
+          cacheRows.set(request.url, response.clone());
+        }),
+      },
+    });
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
+
+    const firstResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+    vi.setSystemTime(new Date("2026-05-10T00:00:31Z"));
+    const secondResponse = await app.request("/matches?limit=1", {
+      headers: { host: "localhost" },
+    });
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it("serves repeated daily picks requests from cache without querying the database", async () => {
@@ -3047,6 +3087,16 @@ describe("prediction API", () => {
     expect(secondResponse.status).toBe(200);
     await expect(secondResponse.json()).resolves.toEqual(await firstResponse.json());
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests a fresh database client for daily picks because tracking rows update after jobs", async () => {
+    setDailyPicksClock();
+    const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
+
+    const response = await app.request("/daily-picks?date=2026-04-24");
+
+    expect(response.status).toBe(200);
+    expect(spy.mock.calls[0]?.[1]).toEqual({ freshness: "fresh" });
   });
 
   it("serves daily picks from a date artifact before rebuilding from database tables", async () => {

@@ -4,6 +4,7 @@ import { deriveMatchStatus } from "@match-analyzer/contracts";
 import type { AppBindings } from "../env";
 import {
   API_EGRESS_CACHE_CONTROL,
+  API_EGRESS_CACHE_TTL_SECONDS,
   cachedResponse,
 } from "../lib/edge-cache";
 import {
@@ -1297,7 +1298,7 @@ export async function loadMatchItems(
 
 matches.get("/", async (c) => {
   return cachedResponse(c, async () => {
-    const dbClient = getDbClient(c.env);
+    const dbClient = getDbClient(c.env, { freshness: "fresh" });
     const leagueId = c.req.query("leagueId") ?? undefined;
     const cursor = c.req.query("cursor") ?? undefined;
     const limit = c.req.query("limit") ?? undefined;
@@ -1370,7 +1371,7 @@ matches.get("/", async (c) => {
         { "cache-control": API_EGRESS_CACHE_CONTROL },
       );
     }
-  });
+  }, { cacheKeyTtlSeconds: API_EGRESS_CACHE_TTL_SECONDS });
 });
 
 export default matches;
