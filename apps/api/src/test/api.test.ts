@@ -3300,7 +3300,16 @@ describe("prediction API", () => {
           generated_at: "2026-04-24T04:00:00Z",
         },
       ],
-      daily_pick_results: [],
+      daily_pick_results: [
+        {
+          pick_item_id: "daily_pick_item_current",
+          result_status: "hit",
+          final_result: "HOME",
+          home_score: 3,
+          away_score: 0,
+          profit: 0.4526,
+        },
+      ],
       daily_pick_performance_summary: [],
       matches: [
         {
@@ -3382,10 +3391,24 @@ describe("prediction API", () => {
     expect(response.headers.get("x-match-analyzer-artifact")).toBe("tracked-fallback");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = await response.json() as {
-      items: Array<{ id: string }>;
+      items: Array<{
+        id: string;
+        status: string;
+        finalResult: string | null;
+        homeScore: number | null;
+        awayScore: number | null;
+        profit: number | null;
+      }>;
     };
     expect(body.items).toEqual([
-      expect.objectContaining({ id: "daily_pick_item_current" }),
+      expect.objectContaining({
+        id: "daily_pick_item_current",
+        status: "hit",
+        finalResult: "HOME",
+        homeScore: 3,
+        awayScore: 0,
+        profit: 0.4526,
+      }),
     ]);
   });
 

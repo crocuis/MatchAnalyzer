@@ -165,6 +165,7 @@ def build_daily_pick_item(
 ) -> dict[str, Any]:
     validation_metadata = read_record(item.get("validation_metadata"))
     market_family = read_text(item.get("market_family")) or "moneyline"
+    result = results_by_item_id.get(str(item.get("id") or ""))
     status = resolve_result_status(item, results_by_item_id)
     reason_labels = [
         value
@@ -213,6 +214,10 @@ def build_daily_pick_item(
         ),
         "validationMetadata": validation_metadata or None,
         "status": status,
+        "finalResult": read_text(result.get("final_result") if result else None),
+        "homeScore": read_number(result.get("home_score") if result else None),
+        "awayScore": read_number(result.get("away_score") if result else None),
+        "profit": read_number(result.get("profit") if result else None),
         "noBetReason": no_bet_reason,
         "reasonLabels": reason_labels,
     }

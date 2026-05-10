@@ -84,6 +84,10 @@ export type DailyPickItem = {
   highConfidenceEligible: boolean | null;
   validationMetadata: Record<string, unknown> | null;
   status: "recommended" | "held" | "pending" | "hit" | "miss" | "void";
+  finalResult?: string | null;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  profit?: number | null;
   noBetReason: string | null;
   reasonLabels: string[];
 };
@@ -1666,6 +1670,10 @@ function buildTrackedDailyPickItem({
       ?? (status === "held" ? false : true),
     validationMetadata,
     status,
+    finalResult: readString(result?.final_result),
+    homeScore: readNumber(result?.home_score),
+    awayScore: readNumber(result?.away_score),
+    profit: readNumber(result?.profit),
     noBetReason,
     reasonLabels,
   };
