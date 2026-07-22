@@ -258,6 +258,96 @@ def test_fetch_team_schedule_falls_back_to_espn_public_schedule(monkeypatch):
     assert schedule["team"]["id"] == "384"
 
 
+def test_fetch_daily_schedule_overrides_stale_world_cup_status_from_espn(monkeypatch):
+    class FakeFootball:
+        def get_daily_schedule(self, *, date):
+            assert date == "2026-07-07"
+            return {
+                "data": {
+                    "events": [
+                        {
+                            "id": "760508",
+                            "status": "not_started",
+                            "competition": {"id": "world-cup"},
+                            "scores": {"home": 0, "away": 0},
+                        }
+                    ]
+                }
+            }
+
+    class FakeResponse(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _traceback):
+            self.close()
+
+    captured: dict[str, str] = {}
+
+    def fake_urlopen(request, timeout=20):
+        captured["url"] = request.full_url
+        captured["timeout"] = str(timeout)
+        payload = {
+            "events": [
+                {
+                    "id": "760508",
+                    "date": "2026-07-07T20:00Z",
+                    "season": {"year": 2026},
+                    "league": {"slug": "fifa.world", "name": "FIFA World Cup"},
+                    "competitions": [
+                        {
+                            "date": "2026-07-07T20:00Z",
+                            "status": {
+                                "type": {
+                                    "name": "STATUS_FINAL_PEN",
+                                    "completed": True,
+                                }
+                            },
+                            "competitors": [
+                                {
+                                    "homeAway": "home",
+                                    "team": {"id": "475", "displayName": "Switzerland"},
+                                    "score": "0",
+                                    "winner": True,
+                                    "shootoutScore": 4,
+                                },
+                                {
+                                    "homeAway": "away",
+                                    "team": {"id": "208", "displayName": "Colombia"},
+                                    "score": "0",
+                                    "winner": False,
+                                    "shootoutScore": 3,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        return FakeResponse(json.dumps(payload).encode())
+
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "load_sports_skills_football",
+        FakeFootball,
+    )
+    monkeypatch.setattr(fetch_fixtures_module, "urlopen", fake_urlopen)
+
+    payload = fetch_fixtures_module.fetch_daily_schedule("2026-07-07")
+
+    [event] = payload["data"]["events"]
+    assert event["status"] == "closed"
+    assert event["scores"] == {"home": 0, "away": 0}
+    assert build_match_row_from_event(event)["final_result"] == "HOME"
+    assert captured == {
+        "url": (
+            "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+            "fifa.world/scoreboard?dates=20260707"
+        ),
+        "timeout": "30",
+    }
+
+
 def test_fetch_betman_json_falls_back_to_curl_when_urlopen_is_blocked(monkeypatch):
     def fake_urlopen(_request):
         raise URLError(ConnectionResetError("connection reset by peer"))
@@ -6286,6 +6376,55 @@ def test_ingest_markets_job_reports_noop_when_real_market_payload_is_empty(
     assert payload["betman_ingest_diagnostics"]["detail_payload_count"] == 0
     assert payload["betman_ingest_diagnostics"]["pre_match_moneyline_rows"] == 0
     assert payload["inserted_rows"] == 0
+
+
+def test_ingest_markets_job_reports_noop_when_target_date_has_no_matches(
+    monkeypatch,
+    capsys,
+):
+    class FakeClient:
+        def __init__(self, _base_url: str, _service_key: str) -> None:
+            self.state = {
+                "match_snapshots": [
+                    {
+                        "id": "unrelated_snapshot",
+                        "match_id": "unrelated_match",
+                        "checkpoint_type": "T_MINUS_24H",
+                        "captured_at": "2026-07-06T15:30:00+00:00",
+                    }
+                ],
+                "matches": [],
+                "teams": [],
+                "competitions": [],
+                "team_translations": [],
+                "market_probabilities": [],
+                "market_variants": [],
+            }
+
+        def read_rows(self, table_name: str) -> list[dict]:
+            return list(self.state.get(table_name, []))
+
+    monkeypatch.setenv("REAL_MARKET_DATE", "2026-07-08")
+    monkeypatch.setattr("batch.src.jobs.ingest_markets_job.DbClient", FakeClient)
+    monkeypatch.setattr(
+        "batch.src.jobs.ingest_markets_job.load_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "supabase_url": "https://example.supabase.co",
+                "supabase_key": "service-key",
+            },
+        )(),
+    )
+
+    run_ingest_markets_job()
+
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["skip_reason"] == "no_target_matches"
+    assert payload["snapshot_rows"] == 0
+    assert payload["changed_match_ids"] == []
 
 
 def test_polymarket_sport_for_competition_uses_supported_competitions_only():

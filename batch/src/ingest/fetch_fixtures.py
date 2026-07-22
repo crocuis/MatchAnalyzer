@@ -56,6 +56,7 @@ ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS = {
     "champions-league": "uefa.champions",
     "europa-league": "uefa.europa",
     "conference-league": "uefa.europa.conf",
+    "world-cup": "fifa.world",
 }
 
 ESPN_PUBLIC_SOCCER_COMPETITION_IDS = {
@@ -166,7 +167,10 @@ def _read_espn_score_value(value: Any) -> int:
 def _espn_public_status(event: dict[str, Any]) -> str:
     competition = (event.get("competitions") or [{}])[0]
     status = competition.get("status", {})
-    status_name = status.get("type", {}).get("name", "")
+    status_type = status.get("type", {})
+    if status_type.get("completed") is True:
+        return "closed"
+    status_name = status_type.get("name", "")
     return {
         "STATUS_SCHEDULED": "not_started",
         "STATUS_IN_PROGRESS": "live",
@@ -232,6 +236,7 @@ def _espn_public_event_to_schedule_event(
                 },
                 "qualifier": "home",
                 "score": home_score,
+                "winner": home.get("winner"),
             },
             {
                 "team": {
@@ -242,6 +247,7 @@ def _espn_public_event_to_schedule_event(
                 },
                 "qualifier": "away",
                 "score": away_score,
+                "winner": away.get("winner"),
             },
         ],
         "scores": {
@@ -339,7 +345,68 @@ def fetch_espn_public_season_events(
 
 def fetch_daily_schedule(date: str) -> dict[str, Any]:
     football = load_sports_skills_football()
-    return football.get_daily_schedule(date=date)
+    schedule = football.get_daily_schedule(date=date)
+    data = schedule.get("data") if isinstance(schedule, dict) else None
+    if not isinstance(data, dict):
+        return schedule
+
+    primary_events = data.get("events")
+    if not isinstance(primary_events, list):
+        return schedule
+
+    world_cup_events = fetch_espn_public_daily_events(
+        competition_id="world-cup",
+        date=date,
+    )
+    if not world_cup_events:
+        return schedule
+
+    merged_events = {
+        str(event.get("id") or ""): event
+        for event in primary_events
+        if isinstance(event, dict) and event.get("id")
+    }
+    for event in world_cup_events:
+        if event.get("id"):
+            merged_events[str(event["id"])] = event
+
+    return {
+        **schedule,
+        "data": {
+            **data,
+            "events": list(merged_events.values()),
+        },
+    }
+
+
+def fetch_espn_public_daily_events(
+    *,
+    competition_id: str,
+    date: str,
+) -> list[dict[str, Any]]:
+    league_slug = ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS.get(competition_id)
+    if not league_slug:
+        return []
+
+    url = (
+        "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+        f"{league_slug}/scoreboard?{urlencode({'dates': date.replace('-', '')})}"
+    )
+    request = Request(url, headers={"User-Agent": "MatchAnalyzer/1.0"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+
+    return [
+        _espn_public_event_to_schedule_event(
+            event,
+            fallback_competition_id=competition_id,
+        )
+        for event in payload.get("events", [])
+        if isinstance(event, dict)
+    ]
 
 
 def fetch_bsd_json(
@@ -1509,16 +1576,18 @@ def build_match_row_from_event(
     *,
     result_observed_at: str | None = None,
 ) -> dict[str, Any]:
-    home_team = next(
-        competitor["team"]
+    home_competitor = next(
+        competitor
         for competitor in event["competitors"]
         if competitor["qualifier"] == "home"
     )
-    away_team = next(
-        competitor["team"]
+    away_competitor = next(
+        competitor
         for competitor in event["competitors"]
         if competitor["qualifier"] == "away"
     )
+    home_team = home_competitor["team"]
+    away_team = away_competitor["team"]
     status = event["status"]
     final_result = None
     home_score = None
@@ -1529,6 +1598,10 @@ def build_match_row_from_event(
         if home_score > away_score:
             final_result = "HOME"
         elif home_score < away_score:
+            final_result = "AWAY"
+        elif home_competitor.get("winner") is True:
+            final_result = "HOME"
+        elif away_competitor.get("winner") is True:
             final_result = "AWAY"
         else:
             final_result = "DRAW"

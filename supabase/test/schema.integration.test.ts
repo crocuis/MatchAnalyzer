@@ -21,6 +21,21 @@ async function createDb() {
 }
 
 describe("supabase schema integration", () => {
+  it("allows daily pick runs to remain pending until every pick is settled", async () => {
+    const db = await createDb();
+
+    await db.exec(
+      `insert into daily_pick_runs (id, pick_date, status)
+       values ('daily-pick-run-pending', '2026-07-22', 'pending')`,
+    );
+
+    const result = await db.query<{ status: string }>(
+      "select status from daily_pick_runs where id = 'daily-pick-run-pending'",
+    );
+
+    expect(result.rows).toEqual([{ status: "pending" }]);
+  });
+
   it("repairs restored market probability tables missing raw payload", async () => {
     const db = new PGlite();
     const migration = await readFile(

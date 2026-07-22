@@ -3151,13 +3151,13 @@ describe("prediction API", () => {
     );
   });
 
-  it("requests a fresh database client for matches to avoid stale Hyperdrive query cache", async () => {
+  it("uses the cached Hyperdrive client for the public match dashboard", async () => {
     const spy = vi.spyOn(dbClientModule, "getDbClient").mockReturnValue(null);
 
     const response = await app.request("/matches");
 
     expect(response.status).toBe(200);
-    expect(spy.mock.calls[0]?.[1]).toEqual({ freshness: "fresh" });
+    expect(spy.mock.calls[0]?.[1]).toBeUndefined();
   });
 
   it("serves repeated matches requests from cache without querying the database", async () => {
