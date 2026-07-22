@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from hashlib import sha256
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -12,6 +13,8 @@ REMOTE_READ_PAGE_SIZE = 1000
 REMOTE_FILTER_VALUE_BATCH_SIZE = 50
 REMOTE_UPSERT_BATCH_SIZE = 250
 REMOTE_TRANSIENT_RETRY_COUNT = 3
+POSTGRES_CONNECT_TIMEOUT_SECONDS = 10
+POSTGRES_CONNECT_RETRY_DELAYS_SECONDS = (1, 2)
 
 REMOTE_READ_DEFAULT_COLUMNS = {
     "prediction_feature_snapshots": (
@@ -115,7 +118,20 @@ class DbClient:
             raise RuntimeError(
                 "psycopg is required for PostgreSQL storage. Install batch/requirements.txt."
             ) from exc
-        return psycopg.connect(self.base_url, row_factory=dict_row)
+        retry_delays = POSTGRES_CONNECT_RETRY_DELAYS_SECONDS
+        for attempt in range(len(retry_delays) + 1):
+            try:
+                return psycopg.connect(
+                    self.base_url,
+                    row_factory=dict_row,
+                    connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS,
+                )
+            except psycopg.OperationalError:
+                if attempt >= len(retry_delays):
+                    raise
+                time.sleep(retry_delays[attempt])
+
+        raise RuntimeError("PostgreSQL connection retries were exhausted")
 
     def _postgres_select_columns(self, table_name: str, columns: tuple[str, ...] | None) -> str:
         selected_columns = columns or REMOTE_READ_DEFAULT_COLUMNS.get(table_name)

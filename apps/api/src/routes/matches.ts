@@ -1298,7 +1298,7 @@ export async function loadMatchItems(
 
 matches.get("/", async (c) => {
   return cachedResponse(c, async () => {
-    const dbClient = getDbClient(c.env, { freshness: "fresh" });
+    const dbClient = getDbClient(c.env);
     const leagueId = c.req.query("leagueId") ?? undefined;
     const cursor = c.req.query("cursor") ?? undefined;
     const limit = c.req.query("limit") ?? undefined;

@@ -258,8 +258,8 @@ export MATCH_ANALYZER_API_ORIGIN=https://your-api-origin.example.com
 운영 배포는 GitHub secret `NEON_DATABASE_URL` 또는 `DATABASE_URL`을 migration/smoke check와 Hyperdrive 원본 설정용 Neon/Postgres 연결 문자열로 사용한다.
 값은 `postgresql://user:password@host/db?...` 형태의 전체 연결 문자열이어야 하며, 비밀번호가 빠지거나 `#`, `@`, `:` 같은 특수문자가 URL 인코딩되지 않으면 배포 전 migration 단계에서 실패한다.
 API Worker는 배포 시 production variable `CLOUDFLARE_HYPERDRIVE_ID`와 선택 variable `CLOUDFLARE_HYPERDRIVE_FRESH_ID`로 Wrangler Hyperdrive 바인딩을 렌더링한다.
-일반 읽기 경로는 `HYPERDRIVE.connectionString`을 우선 사용하고, `/matches`, `/daily-picks`처럼 batch 업데이트 직후 최신성이 중요한 경로는 query cache를 끈 fresh Hyperdrive 바인딩 `HYPERDRIVE_FRESH.connectionString`을 우선 사용한다.
-fresh Hyperdrive ID가 아직 없으면 해당 경로는 Worker secret `DATABASE_URL`로 직접 연결해 Hyperdrive query cache stale 가능성을 피한다.
+일반 읽기 경로와 공개 `/matches`는 `HYPERDRIVE.connectionString`을 우선 사용하고, `/daily-picks`처럼 batch 업데이트 직후 최신성이 중요한 경로만 query cache를 끈 fresh Hyperdrive 바인딩 `HYPERDRIVE_FRESH.connectionString`을 우선 사용한다.
+fresh Hyperdrive ID가 아직 없으면 `/daily-picks`는 Worker secret `DATABASE_URL`로 직접 연결해 Hyperdrive query cache stale 가능성을 피한다.
 Hyperdrive 구성은 아래처럼 Cloudflare에서 생성한 뒤 출력된 `id`를 production variable에 저장한다.
 
 ```bash

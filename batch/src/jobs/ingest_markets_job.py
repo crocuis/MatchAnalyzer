@@ -667,6 +667,28 @@ def main() -> None:
             team_translation_rows,
         )
         if not snapshot_rows:
+            target_matches = [
+                row
+                for row in match_rows
+                if (
+                    (kickoff_at := parse_iso_datetime(row.get("kickoff_at")))
+                    and kickoff_at.date().isoformat() == use_real_schedule
+                )
+            ]
+            if not target_matches:
+                print(
+                    json.dumps(
+                        {
+                            "changed_match_ids": [],
+                            "inserted_rows": 0,
+                            "skip_reason": "no_target_matches",
+                            "snapshot_rows": 0,
+                            "variant_rows": 0,
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return
             raise ValueError(
                 "T_MINUS_24H match_snapshots must exist before ingesting real markets"
             )
