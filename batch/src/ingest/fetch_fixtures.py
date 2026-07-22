@@ -62,6 +62,8 @@ ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS = {
 ESPN_PUBLIC_SOCCER_COMPETITION_IDS = {
     value: key for key, value in ESPN_PUBLIC_SOCCER_LEAGUE_SLUGS.items()
 }
+ESPN_WORLD_CUP_DAILY_START_DATE = "2026-06-11"
+ESPN_WORLD_CUP_DAILY_END_DATE = "2026-07-19"
 
 BASE_ELO = 1500.0
 ELO_K_FACTOR = 20.0
@@ -352,6 +354,8 @@ def fetch_daily_schedule(date: str) -> dict[str, Any]:
 
     primary_events = data.get("events")
     if not isinstance(primary_events, list):
+        return schedule
+    if not ESPN_WORLD_CUP_DAILY_START_DATE <= date <= ESPN_WORLD_CUP_DAILY_END_DATE:
         return schedule
 
     world_cup_events = fetch_espn_public_daily_events(

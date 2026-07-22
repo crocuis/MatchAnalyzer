@@ -348,6 +348,27 @@ def test_fetch_daily_schedule_overrides_stale_world_cup_status_from_espn(monkeyp
     }
 
 
+def test_fetch_daily_schedule_skips_espn_outside_world_cup_window(monkeypatch):
+    class FakeFootball:
+        def get_daily_schedule(self, *, date):
+            assert date == "2026-08-01"
+            return {"data": {"events": []}}
+
+    def fail_urlopen(*_args, **_kwargs):
+        raise AssertionError("ESPN should not be queried outside the World Cup window")
+
+    monkeypatch.setattr(
+        fetch_fixtures_module,
+        "load_sports_skills_football",
+        FakeFootball,
+    )
+    monkeypatch.setattr(fetch_fixtures_module, "urlopen", fail_urlopen)
+
+    payload = fetch_fixtures_module.fetch_daily_schedule("2026-08-01")
+
+    assert payload == {"data": {"events": []}}
+
+
 def test_fetch_betman_json_falls_back_to_curl_when_urlopen_is_blocked(monkeypatch):
     def fake_urlopen(_request):
         raise URLError(ConnectionResetError("connection reset by peer"))
